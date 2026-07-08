@@ -98,7 +98,18 @@ export default class CampaignMapPlugin extends Plugin {
       },
     });
 
-    this.app.workspace.onLayoutReady(() => this.rescanCampaigns());
+    this.addCommand({
+      id: "switch-campaign-theme",
+      name: "Switch map theme",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) view.switchTheme();
+        return true;
+      },
+    });
+
+    this.app.workspace.onLayoutReady(() => this.rescanAll());
 
     this.registerEvent(this.app.vault.on("create", (f) => this.onVaultChange(f)));
     this.registerEvent(this.app.vault.on("modify", (f) => this.onVaultChange(f)));
@@ -186,8 +197,20 @@ export default class CampaignMapPlugin extends Plugin {
       }
     }
 
+    const previous = this.campaigns;
     this.campaigns = next;
     this.syncPerCampaignCommands();
+
+    // Push config changes (e.g. theme switch) into any open views for that campaign;
+    // cheap identity check so ordinary location-only rescans don't thrash map styles.
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_MAP)) {
+      if (!(leaf.view instanceof MapView) || !leaf.view.campaign) continue;
+      const updated = next.get(leaf.view.campaign.id);
+      const before = previous.get(leaf.view.campaign.id);
+      if (updated && JSON.stringify(updated.config) !== JSON.stringify(before?.config)) {
+        leaf.view.setCampaign(updated);
+      }
+    }
   }
 
   private rescanLocations(): void {

@@ -1,13 +1,16 @@
 import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Notice, TFile } from "obsidian";
-import maplibregl, { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature } from "maplibre-gl";
+import maplibregl, { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature, StyleSpecification } from "maplibre-gl";
 import type { ParsedCampaign } from "../model/campaignConfig";
 import type { ParsedLocation } from "../model/locationNote";
 import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
 import { obsidianNativeStyle, readObsidianCssTokens } from "../map/theme";
 import { glyphsUrlTemplate, createTransformRequest } from "../map/glyphs";
+import { registerVaultBasemap, vaultBasemapBounds } from "../map/pmtilesVaultProtocol";
+import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
 import { cultureForCampaign } from "../gen/naming/cultures";
 import { QuickAddModal } from "./QuickAddModal";
 import { LocationSearchModal } from "./LocationSearchModal";
+import { ThemeSwitcherModal } from "./ThemeSwitcherModal";
 import type CampaignMapPlugin from "../main";
 
 export const VIEW_TYPE_MAP = "campaign-map-view";
@@ -26,6 +29,7 @@ export class MapView extends ItemView {
   private droppedPinPopup: maplibregl.Popup | null = null;
   private placeCardPopup: maplibregl.Popup | null = null;
   private hoverPopup: maplibregl.Popup | null = null;
+  private scaleControl: maplibregl.ScaleControl | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: CampaignMapPlugin) {
     super(leaf);
@@ -58,9 +62,44 @@ export class MapView extends ItemView {
   }
 
   setCampaign(campaign: ParsedCampaign): void {
+    const isFirstApply = !this.campaign;
+    const themeChanged =
+      this.campaign?.config.theme !== campaign.config.theme ||
+      this.campaign?.config.basemap !== campaign.config.basemap;
     this.campaign = campaign;
     this.refreshHeaderTitle();
+    if (this.map && (isFirstApply || themeChanged)) {
+      this.map.setStyle(this.buildStyle(campaign));
+      this.map.once("styledata", () => this.refreshSource());
+    }
     if (this.map) this.applyCampaign();
+  }
+
+  switchTheme(): void {
+    if (!this.campaign) return;
+    new ThemeSwitcherModal(this.app, this.campaign.config.theme, (themeId) => {
+      void this.app.fileManager.processFrontMatter(
+        this.app.vault.getAbstractFileByPath(this.campaign!.path) as TFile,
+        (fm) => {
+          fm.theme = themeId;
+        }
+      );
+    }).open();
+  }
+
+  private buildStyle(campaign: ParsedCampaign): StyleSpecification {
+    const { config } = campaign;
+    let basemap: { sourceId: string; url: string } | undefined;
+    if (config.crs === "real" && config.basemap) {
+      basemap = {
+        sourceId: `basemap-${campaign.id}`,
+        url: registerVaultBasemap(this.app, config.basemap),
+      };
+    }
+    if (isHandcraftedTheme(config.theme)) {
+      return buildThemeStyle(HANDCRAFTED_THEMES[config.theme], glyphsUrlTemplate(), basemap);
+    }
+    return obsidianNativeStyle(readObsidianCssTokens(this.containerEl), glyphsUrlTemplate(), basemap);
   }
 
   private refreshHeaderTitle(): void {
@@ -87,7 +126,9 @@ export class MapView extends ItemView {
 
     this.map = new maplibregl.Map({
       container: this.mapContainer,
-      style: obsidianNativeStyle(readObsidianCssTokens(this.containerEl), glyphsUrlTemplate()),
+      style: this.campaign
+        ? this.buildStyle(this.campaign)
+        : obsidianNativeStyle(readObsidianCssTokens(this.containerEl), glyphsUrlTemplate()),
       transformRequest: createTransformRequest(this.app),
       center: [0, 0],
       zoom: 3,
@@ -168,8 +209,9 @@ export class MapView extends ItemView {
   private applyCampaign(): void {
     if (!this.map || !this.campaign) return;
     const { config } = this.campaign;
-    const bounds = config.crs === "fictional" ? config.bounds ?? defaultFictionalBounds() : undefined;
-    if (bounds) {
+
+    if (config.crs === "fictional") {
+      const bounds = config.bounds ?? defaultFictionalBounds();
       this.map.fitBounds(
         [
           [bounds[0], bounds[1]],
@@ -177,8 +219,27 @@ export class MapView extends ItemView {
         ],
         { padding: 40, animate: false }
       );
+    } else if (config.basemap) {
+      vaultBasemapBounds(this.app, config.basemap).then((bounds) => {
+        if (!this.map || !bounds || this.campaign?.config.basemap !== config.basemap) return;
+        this.map.fitBounds(
+          [
+            [bounds[0], bounds[1]],
+            [bounds[2], bounds[3]],
+          ],
+          { padding: 40, animate: false }
+        );
+      });
     }
+
     this.scaleBarEl.style.display = config.crs === "fictional" ? "" : "none";
+    if (config.crs === "real" && !this.scaleControl) {
+      this.scaleControl = new maplibregl.ScaleControl({ unit: "metric" });
+      this.map.addControl(this.scaleControl, "bottom-left");
+    } else if (config.crs === "fictional" && this.scaleControl) {
+      this.map.removeControl(this.scaleControl);
+      this.scaleControl = null;
+    }
   }
 
   private refreshSource(): void {
@@ -202,9 +263,10 @@ export class MapView extends ItemView {
   }
 
   private rebuildTheme(): void {
-    if (!this.map) return;
-    const style = obsidianNativeStyle(readObsidianCssTokens(this.containerEl), glyphsUrlTemplate());
-    this.map.setStyle(style);
+    // Only obsidian-native actually depends on live Obsidian CSS vars; handcrafted
+    // themes rebuild to an identical style, which is a harmless no-op.
+    if (!this.map || !this.campaign || isHandcraftedTheme(this.campaign.config.theme)) return;
+    this.map.setStyle(this.buildStyle(this.campaign));
     this.map.once("styledata", () => this.refreshSource());
   }
 
