@@ -1,0 +1,114 @@
+# Evals for the maplibre-pmtiles-patterns skill.
+# See evals/README.md for run commands and provider setup.
+
+description: Evals for the maplibre-pmtiles-patterns skill
+
+prompts:
+  - file://lib/skill-prompt.mjs
+
+providers:
+  - id: cerebras:gpt-oss-120b
+    label: cerebras-gpt-oss
+
+evaluateOptions:
+  delay: 500
+
+defaultTest:
+  vars:
+    skillFile: skills/maplibre-pmtiles-patterns/SKILL.md
+  options:
+    provider: cerebras:gpt-oss-120b
+
+tests:
+  - description: explicit — loading a PMTiles file in MapLibre
+    vars:
+      prompt: How do I load a .pmtiles file as a source in MapLibre GL JS?
+    assert:
+      - type: icontains
+        value: addProtocol
+      - type: icontains
+        value: pmtiles://
+      - type: llm-rubric
+        value: >
+          Mentions addProtocol or the pmtiles protocol handler (from the pmtiles
+          package). Includes or references the pmtiles npm package or CDN URL.
+          Does NOT suggest that a tile server is required to serve PMTiles. Does
+          NOT show the old v3 callback-style addProtocol signature as the solution.
+          Includes a source definition using the pmtiles:// URL prefix.
+
+  - description: implicit — serverless tile hosting on GitHub Pages
+    vars:
+      prompt: >
+        I want to host map tiles on GitHub Pages without running any
+        backend. Is that possible with MapLibre GL JS?
+    assert:
+      - type: icontains
+        value: pmtiles
+      - type: llm-rubric
+        value: >
+          Recommends PMTiles as the solution for serverless tile hosting.
+          Explains that PMTiles files can be served from static storage (e.g.
+          GitHub Pages, S3, R2) using HTTP range requests with no backend.
+          Does NOT suggest spinning up a tile server.
+
+  - description: anti-pattern — addProtocol broke after upgrading to v4
+    vars:
+      prompt: >
+        My code uses addProtocol with a callback function to serve custom
+        tiles, but after upgrading from MapLibre GL JS v3 to v4 it
+        stopped working. How do I fix it?
+    assert:
+      - type: icontains
+        value: addProtocol
+      - type: llm-rubric
+        value: >
+          Explains that the addProtocol API changed in v4: the callback
+          signature is no longer used. The response must show the v4
+          Promise-based signature and must NOT show the old callback-style
+          signature as the solution.
+
+  - description: implicit — raster-dem terrain with PMTiles
+    vars:
+      prompt: >
+        How do I add elevation terrain to my MapLibre GL JS map using
+        a PMTiles elevation file?
+    assert:
+      - type: icontains
+        value: raster-dem
+      - type: llm-rubric
+        value: >
+          Must use a raster-dem source type with a pmtiles:// URL pointing
+          to the elevation file. Must specify an encoding (terrarium or
+          mapbox) on the source. Must reference the terrain property in
+          the style to enable 3D terrain. Must not suggest a tile server
+          is required.
+
+  - description: explicit — inspect a PMTiles file before deploying
+    vars:
+      prompt: >
+        I generated a PMTiles file and want to check what layers it
+        contains and verify it is valid before uploading. How?
+    assert:
+      - type: icontains
+        value: pmtiles verify
+      - type: llm-rubric
+        value: >
+          Must mention the pmtiles show command to inspect metadata and
+          layer names. Must mention the pmtiles verify command to check
+          archive integrity. Must not suggest third-party tools as the
+          primary answer.
+
+  - description: negative — wrong tool for live PostGIS data
+    vars:
+      prompt: >
+        I'm building a map that shows bus positions updating every 30
+        seconds from a PostGIS database. Should I use PMTiles?
+    assert:
+      - type: llm-rubric
+        value: >
+          Must recommend against PMTiles for this use case. Must explain
+          that PMTiles is for static or infrequently updated datasets, not
+          live or frequently updated data. Must recommend a dynamic tile
+          server (such as Martin or tileserver-gl) or a live GeoJSON
+          source instead. Must not suggest PMTiles as a viable approach
+          for 30-second update intervals.

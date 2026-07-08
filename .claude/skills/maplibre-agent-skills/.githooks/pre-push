@@ -1,0 +1,41 @@
+#!/bin/sh
+# Pre-push hook that runs all CI checks locally
+# This prevents pushing code that will fail CI
+
+echo "🔍 Running pre-push checks..."
+echo ""
+
+CURRENT_BRANCH=$(git branch --show-current)
+echo "📌 Branch: $CURRENT_BRANCH"
+echo ""
+
+set -e
+
+# ensure deps are installed so checks like prettier are available
+if [ ! -d node_modules ]; then
+  echo "📦 Installing npm dependencies (npm ci)..."
+  npm ci
+fi
+
+echo "1️⃣  Formatting check..."
+npm run format:check
+echo "✅ Formatting passed"
+echo ""
+
+echo "2️⃣  Spell check..."
+npm run spellcheck
+echo "✅ Spell check passed"
+echo ""
+
+echo "3️⃣  Markdown lint..."
+npm run lint:markdown
+echo "✅ Markdown lint passed"
+echo ""
+
+echo "4️⃣  Validate skills..."
+npm run validate:skills
+echo "✅ Skills validation passed"
+echo ""
+
+echo "✨ All pre-push checks passed! Pushing..."
+echo ""
