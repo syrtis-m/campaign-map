@@ -57,6 +57,21 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
       },
     } as unknown as LayerSpecification,
     {
+      // Same "always a dot, even zoomed out past the type's normal range"
+      // treatment as canon-point-far (src/map/themes/canonLayers.ts) —
+      // provenance must stay invisible (F2), so generated settlements get
+      // the identical far-zoom affordance canon locations do.
+      id: "generated-point-far",
+      type: "circle",
+      source: "generated",
+      filter: ["all", ["==", ["get", "generatorId"], "world-settlement"], ["<", ["zoom"], ["get", "minZoom"]]],
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["get", "importance"], 1, 4, 7, 2],
+        "circle-color": t.accent,
+        "circle-opacity": 0.75,
+      },
+    } as unknown as LayerSpecification,
+    {
       id: "generated-point",
       type: "circle",
       source: "generated",

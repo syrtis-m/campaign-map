@@ -87,17 +87,25 @@
 - **Found and fixed a real theming bug while verifying screenshots**: `obsidian-native`'s `roadMinor` and `water` tokens both resolved to the same CSS variable — generated streets were rendering the exact same color as water, functionally invisible against the background. Root-caused and fixed (`roadMinor` now reads `--background-modifier-border`); see `review/001-generated-fabric-contrast.md` for the before/after and a residual Tier B question about whether the new contrast level is enough.
 - **Found and fixed a screenshot-tooling gap** (not a plugin bug): `dev:screenshot` captures the Electron window's composited back buffer, and macOS stops repainting occluded/unfocused windows — a CLI-only agent session was silently capturing stale frames. `scripts/lib/cli.ts`'s `screenshot()` now activates the Obsidian window first. This affects every phase's gate screenshots retroactively (they were likely fine, since a human wasn't stealing focus during those runs, but this closes a real gap for any future CLI-only session).
 - **Gate-script robustness under continuous background load**: raised `execFileSync`'s stdout buffer (dense city fabric can produce arrays the default 1MB limit rejects outright, not just slowly), converted several fixed-`setTimeout` waits to polling loops, and rewrote one Phase 3 check that compared the *global* `generated` getter before/after — no longer meaningful once a dispatcher is continuously, independently churning that same getter's contents.
-- **Observed, not chased**: gate runtimes and reported p95 fps degrade noticeably after many consecutive gate-script executions in one long-lived Obsidian session (a fresh `obsidian reload` restores clean numbers every time). This reads as ordinary session-load accumulation from *this build session's own testing intensity* (dozens of plugin reloads, campaign switches, and generated-content caching in one sitting), not a leak in the shipped plugin — but it's an honest data point, not fully root-caused, and worth keeping in mind if Jonah sees the map feel sluggish after a very long uninterrupted Obsidian session.
+- **Observed, not chased**: gate runtimes and reported p95 fps degrade noticeably after many consecutive gate-script executions in one long-lived Obsidian session — a fresh `obsidian reload` (full renderer-window reload, not an OS/process restart) restores clean numbers every time. That it takes a *window* reload rather than fading back on its own is a real clue pointing at retained state somewhere in the renderer (the dispatcher's own timers/Map entries are a plausible suspect, not ruled out) rather than generic OS load — **unconfirmed, not root-caused**. Flagging honestly rather than asserting it's clean: if the map feels sluggish after a long uninterrupted session, this is the first thing to profile.
+
+## Live feedback fixes (2026-07-08, mid-session — see DECISIONS.md for full detail)
+Jonah opened the app and flagged three things directly from a London screenshot; all three fixed and re-verified (all 5 gates green, 60/60):
+- [x] `modern-clean`'s land tuned #f8f7f2 → #eae7de — roads/buildings render white and were nearly invisible against the old near-white land fill, which was also making labels read as washed out even though their own color was technically fine.
+- [x] Place-card "Open note"/"Edit" buttons collapsed to one "Open note" button that opens straight to edit mode.
+- [x] Locations no longer vanish entirely below their type's `zoomMin` — a small persistent dot (`canon-point-far`/`generated-point-far`) now shows at any zoom, Google-Maps-saved-place-style. Per-type icons (Jonah floated this) deferred as a separate craft pass, not bundled into the quick fix.
+Currently paused mid-Phase-5 to do a full repo-review/de-slopping pass at Jonah's request (see below) before continuing feature work.
 
 ## Next 3 actions
-1. Poster export (docs/03 Phase 5) — highest-value "keepsake" deliverable, and the most self-contained piece to start with.
-2. Atlas export + campaign replay (`.mapcache/log.jsonl` already has everything replay needs — Phase 1 built the mutation log specifically for this).
-3. `scripts/gates/phase5.ts` once the above have something to gate.
+1. Full repo-review and de-slopping pass (in progress) — what's overwritten, what's brittle, what can be deleted.
+2. Resume Phase 5: poster export first (highest-value "keepsake," most self-contained).
+3. Atlas export + campaign replay, then `scripts/gates/phase5.ts`.
 
 ## Open blockers
 None.
 
 ## Awaiting Jonah's eyes
+- `shots/london-contrast-fix.png`, `shots/london-far-dots.png` — the three live fixes above, visually confirmed.
 - `shots/gate-phase0.png`, `shots/gate-phase1.png`, `shots/gate-phase2-london.png`, `shots/gate-phase3-ashfall-generated.png`, `shots/gate-phase4-dispatcher-city.png`, `shots/phase4-contrast-fix2.png` — screenshots of the pipeline end to end, including the Phase 4 before/after for the road-contrast fix.
 - **Perf numbers are real but CI-machine numbers, not Surface Pro verification** (docs/06 §6's honest limit): frame-time sampler shows p95 ≈ 50-57fps on this dev machine during a scripted pan, and index rebuild for a synthetic 500-note campaign is well under 1s (sub-millisecond, actually — `rescanLocations()` is not the bottleneck at that scale). Both are real, gate-enforced measurements, not estimates — but only you opening the map on the actual Surface Pro confirms the docs/06 §2 target that matters.
 - `review/001-generated-fabric-contrast.md` — a real contrast bug (roads rendering the same color as water) found and fixed this phase, with one remaining aesthetic judgment call: is the post-fix contrast level enough, or does it also want a line-width bump.

@@ -19,7 +19,14 @@ export interface ThemeTokens {
 
 export const MODERN_CLEAN: ThemeTokens = {
   id: "modern-clean",
-  land: "#f8f7f2",
+  // land tuned darker than the original #f8f7f2 pin (~6L in OKLCH, within the
+  // ±10% L/C budget above, logged in DECISIONS.md): white roads/buildings need
+  // real separation from the land fill to read at all — #f8f7f2 was close
+  // enough to #ffffff that minor roads all but vanished into the background,
+  // which was also dragging down how legible labelMajor text looked even
+  // though its own contrast ratio was technically fine. Real Google Maps'
+  // land tone is a soft gray for the same reason, not near-white.
+  land: "#eae7de",
   water: "#a8d0e8",
   roadMajor: "#ffffff",
   roadMajorCasing: "#f0c948",

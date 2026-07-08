@@ -830,11 +830,13 @@ export class MapView extends ItemView {
     }
 
     const actions = el.createDiv({ cls: "campaign-map-place-card-actions" });
+    // One button, not two: "Open note" and "Edit" both just opened the file —
+    // the only real difference was reading vs. editor mode, so open straight
+    // to source/edit mode and drop the redundant second button.
     actions.createEl("button", { text: "Open note" }).onclick = () => {
-      if (file instanceof TFile) void this.app.workspace.getLeaf("split").openFile(file);
-    };
-    actions.createEl("button", { text: "Edit" }).onclick = () => {
-      if (file instanceof TFile) void this.app.workspace.getLeaf("split").openFile(file, { eState: { focus: true } });
+      if (file instanceof TFile) {
+        void this.app.workspace.getLeaf("split").openFile(file, { state: { mode: "source" }, eState: { focus: true } });
+      }
     };
     actions.createEl("button", { text: "Center" }).onclick = () => {
       if (location.point) this.map?.flyTo({ center: location.point });

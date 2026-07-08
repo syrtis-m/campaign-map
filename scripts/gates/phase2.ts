@@ -4,7 +4,11 @@ import { readFileSync, existsSync } from "node:fs";
 import { Gate, obsidian, obsidianRaw, evalJs, clearErrors, devErrors, screenshot } from "../lib/cli.js";
 
 const HANDCRAFTED = {
-  "modern-clean": "#f8f7f2",
+  // modern-clean's land was tuned #f8f7f2 -> #eae7de post-Phase-2 (within the
+  // docs/06 §3 ±10% L/C-in-OKLCH tuning budget, logged in DECISIONS.md):
+  // white roads/buildings need real separation from the land fill to read at
+  // all, and #f8f7f2 was too close to white for that. See src/map/themes/tokens.ts.
+  "modern-clean": "#eae7de",
   parchment: "#f2e8cf",
   "ink-soot": "#22211f",
   "neon-sprawl": "#0d0d11",

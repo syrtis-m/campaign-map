@@ -16,6 +16,21 @@ export function canonLayers(opts: {
   const zoomFilter = ["all", ["<=", ["get", "minZoom"], ["zoom"]], ["<=", ["zoom"], ["get", "maxZoom"]]];
   return [
     {
+      // Google Maps keeps a small dot for saved places at any zoom, even when
+      // there's no room to show the full pin/label — a location shouldn't
+      // just vanish below its type's zoomMin. Filtered to *only* the zoomed-
+      // out-past-minZoom case so it never double-renders under canon-point.
+      id: "canon-point-far",
+      type: "circle",
+      source: "canon",
+      filter: ["<", ["zoom"], ["get", "minZoom"]],
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["get", "importance"], 1, 4, 7, 2],
+        "circle-color": opts.pointColor,
+        "circle-opacity": 0.75,
+      },
+    } as unknown as LayerSpecification,
+    {
       id: "canon-point",
       type: "circle",
       source: "canon",
