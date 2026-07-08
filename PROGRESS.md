@@ -96,8 +96,21 @@ Jonah opened the app and flagged three things directly from a London screenshot;
 - [x] Locations no longer vanish entirely below their type's `zoomMin` — a small persistent dot (`canon-point-far`/`generated-point-far`) now shows at any zoom, Google-Maps-saved-place-style. Per-type icons (Jonah floated this) deferred as a separate craft pass, not bundled into the quick fix.
 Currently paused mid-Phase-5 to do a full repo-review/de-slopping pass at Jonah's request (see below) before continuing feature work.
 
+## Naming culture grammar fix (2026-07-08 — see git log 899326c)
+Jonah, from a QuickAddModal screenshot: "what's the source of these recommended names? they suck." Two naming cultures had string-concatenation grammar bugs (`modern-mediterranean`'s connectors assumed proper-name `pre` values but several are common nouns → "Casa's Osteria"; `modern-anglo` had a bare no-space `"s"` connector → "MillsCorner Shop"). Fixed both, found the second proactively by spot-checking sibling cultures rather than waiting to be told.
+
+## Campaign creation / naming-culture / basemap UI (2026-07-08 — see DECISIONS.md for full detail)
+Immediately after the naming-culture fix, Jonah asked how to create a campaign, download basemap data, switch themes, and configure naming — correctly observing there was no UI for any of it beyond one undiscoverable theme-switch command. Built the whole surface:
+- [x] "Create new campaign" command/ribbon icon + `CreateCampaignModal` — writes the full docs/02 §3 vault layout (`.map.md` + `Locations/` + `Sessions/`), not a shortcut version.
+- [x] "Campaign settings" command/ribbon icon + `CampaignControlModal` — theme switch, naming-culture toggles, basemap status/attach, all in one place.
+- [x] Naming cultures are a real per-campaign setting now (`namingCultures` frontmatter), threaded through `culturesForGenre`/`cultureAt`/`GenerationConstraints` with a safe empty/non-intersecting fallback. Verified live (not just unit tests): toggling a culture off actually changes QuickAdd's suggested names.
+- [x] Found + fixed a real latent bug while wiring this: `generationService.ts` never set `namingGenre`, so every campaign (including real-city ones) silently generated fantasy-genre settlement names regardless of actual crs/theme.
+- [x] Basemap: attach-existing-file (vault-only, no binaries) + a guided `pmtiles extract` command generator (bbox from live viewport) — deliberately not one-click download; the `pmtiles` npm dep can't write archives, and auto-running a downloaded Go binary is the same risk class DECISIONS.md 2026-07-07 required explicit sign-off for.
+- [x] Found + fixed a second real bug during live verification: create-campaign's auto-open raced `metadataCache`'s async frontmatter parse and silently failed to open the new campaign (no error anywhere) — now waits for the "changed" event.
+- [x] 74/74 unit tests (up from 65), Phase 2 gate 15/15, Phase 4 gate 11/11 — no regressions.
+
 ## Next 3 actions
-1. Full repo-review and de-slopping pass (in progress) — what's overwritten, what's brittle, what can be deleted.
+1. Full repo-review and de-slopping pass (still open — Jonah's request, paused twice now for live feedback) — what's overwritten, what's brittle, what can be deleted.
 2. Resume Phase 5: poster export first (highest-value "keepsake," most self-contained).
 3. Atlas export + campaign replay, then `scripts/gates/phase5.ts`.
 
