@@ -7,7 +7,7 @@ import {
   type LocationParseError,
 } from "./model/locationNote";
 import { LocationIndex } from "./map/locationIndex";
-import { createLocationNote, moveLocationNote } from "./vault/locationOps";
+import { createLocationNote, createLocationNoteFromFeature, moveLocationNote } from "./vault/locationOps";
 import { readLog, campaignFolderFromConfigPath, type LogEntry } from "./model/mutationLog";
 
 const MAP_CONFIG_SUFFIX = ".map.md";
@@ -61,6 +61,9 @@ export default class CampaignMapPlugin extends Plugin {
   get log() {
     return { read: (campaignId: string) => this.readCampaignLog(campaignId) };
   }
+  get generated(): GeoJSON.Feature[] {
+    return this.activeMapView()?.generated ?? [];
+  }
 
   private activeMapView(): MapView | null {
     const active = this.app.workspace.getActiveViewOfType(MapView);
@@ -105,6 +108,61 @@ export default class CampaignMapPlugin extends Plugin {
         const view = this.activeMapView();
         if (!view?.campaign) return false;
         if (!checking) view.switchTheme();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "generate-city-here",
+      name: "Generate city fabric here",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.generateCityHere();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "regenerate-city-here",
+      name: "Regenerate city fabric here",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.generateCityHere(undefined, true);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "generate-world-here",
+      name: "Generate world fabric here",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.generateWorldHere();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "regenerate-world-here",
+      name: "Regenerate world fabric here",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.generateWorldHere(undefined, true);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "canonize-nearest-generated",
+      name: "Canonize nearest generated feature",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.canonizeGeneratedNear();
         return true;
       },
     });
@@ -154,6 +212,18 @@ export default class CampaignMapPlugin extends Plugin {
     const campaign = this.getCampaign(campaignId);
     if (!campaign) throw new Error(`Unknown campaign: ${campaignId}`);
     await moveLocationNote(this.app, campaign, location, newPoint);
+  }
+
+  /** Canonization entry point (docs/02 §5): Point → plain note, other geometry → note + sidecar .geojson. */
+  async createLocationFromFeature(
+    campaignId: string,
+    feature: GeoJSON.Feature,
+    name: string,
+    type: string
+  ): Promise<void> {
+    const campaign = this.getCampaign(campaignId);
+    if (!campaign) throw new Error(`Unknown campaign: ${campaignId}`);
+    await createLocationNoteFromFeature(this.app, campaign, feature, name, type);
   }
 
   private async readCampaignLog(campaignId: string): Promise<LogEntry[]> {

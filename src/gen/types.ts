@@ -1,4 +1,5 @@
 import type { BBox } from "./spatialHash";
+import type { NamingGenre } from "./naming/culture";
 
 /**
  * Shared constraints contract for every Phase 3+ generator: `(seed, bbox,
@@ -14,4 +15,7 @@ export interface GenerationConstraints {
   /** Existing canon location features in or near the requested tile+halo.
    * Generators route around them; regeneration never touches them. */
   canonFeatures?: GeoJSON.Feature[];
+  /** Naming culture genre for any generator that pre-names its output (e.g.
+   * settlements) — defaults per-generator if omitted. */
+  namingGenre?: NamingGenre;
 }

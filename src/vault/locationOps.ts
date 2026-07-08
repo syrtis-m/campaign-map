@@ -7,12 +7,12 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, "-").trim() || "New location";
 }
 
-async function uniquePath(app: App, folder: string, name: string): Promise<string> {
+async function uniquePath(app: App, folder: string, name: string, ext = "md"): Promise<string> {
   const base = sanitizeFilename(name);
-  let candidate = `${folder}/${base}.md`;
+  let candidate = `${folder}/${base}.${ext}`;
   let n = 2;
   while (await app.vault.adapter.exists(candidate)) {
-    candidate = `${folder}/${base} ${n}.md`;
+    candidate = `${folder}/${base} ${n}.${ext}`;
     n++;
   }
   return candidate;
@@ -50,6 +50,61 @@ export async function createLocationNote(
   });
 
   return file;
+}
+
+/**
+ * Non-point canon geometry (e.g. a canonized generated street) — "complex
+ * geometry → sidecar .geojson" (CLAUDE.md conventions). Frontmatter's
+ * `geometry` field holds the vault-relative sidecar path instead of a point
+ * tuple; `parseLocationNote` already accepts either shape.
+ */
+export async function createLocationNoteWithSidecar(
+  app: App,
+  campaign: ParsedCampaign,
+  geometry: GeoJSON.Geometry,
+  name: string,
+  type: string
+): Promise<TFile> {
+  const campaignFolder = campaignFolderFromConfigPath(campaign.path);
+  const locationsFolder = `${campaignFolder}/Locations`;
+  if (!(await app.vault.adapter.exists(locationsFolder))) {
+    await app.vault.createFolder(locationsFolder);
+  }
+
+  const geojsonPath = await uniquePath(app, locationsFolder, name, "geojson");
+  const sidecar: GeoJSON.Feature = { type: "Feature", geometry, properties: {} };
+  await app.vault.create(geojsonPath, JSON.stringify(sidecar, null, 2));
+
+  const path = await uniquePath(app, locationsFolder, name);
+  const frontmatter = { map: campaign.id, geometry: geojsonPath, type };
+  const body = `---\nmap: ${frontmatter.map}\ngeometry: "${geojsonPath}"\ntype: ${type}\n---\n`;
+  const file = await app.vault.create(path, body);
+
+  await appendLogEntry(app, campaignFolder, {
+    ts: Date.now(),
+    type: "create",
+    campaignId: campaign.id,
+    path,
+    data: frontmatter,
+  });
+
+  return file;
+}
+
+/** Canonizes any generated feature (Point → a plain location note; other
+ * geometry → note + sidecar .geojson). "Canonize = create the note, remove
+ * from cache" (docs/02 §5). */
+export async function createLocationNoteFromFeature(
+  app: App,
+  campaign: ParsedCampaign,
+  feature: GeoJSON.Feature,
+  name: string,
+  type: string
+): Promise<TFile> {
+  if (feature.geometry.type === "Point") {
+    return createLocationNote(app, campaign, feature.geometry.coordinates as [number, number], name, type);
+  }
+  return createLocationNoteWithSidecar(app, campaign, feature.geometry, name, type);
 }
 
 /** Drag-to-move: writes through Obsidian's frontmatter API (never hand-parse YAML). */

@@ -9,6 +9,11 @@ import { registerVaultBasemap, vaultBasemapBounds } from "../map/pmtilesVaultPro
 import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
 import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
+import { generateCityStreets, generateDistricts, generateCityBlocks } from "../gen/city";
+import { generateWorldRegions, generateSettlements, generateRoutes } from "../gen/world";
+import { tileXYForPoint } from "../gen/cache/tileGrid";
+import type { BBox } from "../gen/spatialHash";
+import { generateTile, regenerateTile, canonizeFeature, type GenerationContext } from "../map/generation/generationService";
 import { QuickAddModal } from "./QuickAddModal";
 import { LocationSearchModal } from "./LocationSearchModal";
 import { ThemeSwitcherModal } from "./ThemeSwitcherModal";
@@ -18,6 +23,41 @@ export const VIEW_TYPE_MAP = "campaign-map-view";
 
 function boundsToBBox(bounds: [number, number, number, number]): { minX: number; minY: number; maxX: number; maxY: number } {
   return { minX: bounds[0], minY: bounds[1], maxX: bounds[2], maxY: bounds[3] };
+}
+
+/**
+ * Generators (src/gen/) are sized in meters — tuned against docs/06 §3's
+ * ranges (streamline dsep 20-60m-equiv, block min-area 400m^2, etc). A
+ * fictional campaign's own coordinates are fake units where 1 unit =
+ * `scaleMetersPerUnit` meters (fictionalCRS.ts), so every point crossing
+ * that boundary needs converting or a small campaign (e.g. an 800m-wide
+ * town) would barely fill a fraction of one generation tile.
+ */
+function unitsToMeters(u: number, scaleMetersPerUnit: number): number {
+  return u * scaleMetersPerUnit;
+}
+function metersToUnits(m: number, scaleMetersPerUnit: number): number {
+  return m / scaleMetersPerUnit;
+}
+function bboxUnitsToMeters(b: BBox, scale: number): BBox {
+  return {
+    minX: unitsToMeters(b.minX, scale),
+    minY: unitsToMeters(b.minY, scale),
+    maxX: unitsToMeters(b.maxX, scale),
+    maxY: unitsToMeters(b.maxY, scale),
+  };
+}
+function mapCoordinates(coords: unknown, fn: (n: number) => number): unknown {
+  if (typeof coords === "number") return fn(coords);
+  if (Array.isArray(coords)) return coords.map((c) => mapCoordinates(c, fn));
+  return coords;
+}
+function transformFeatureUnits(feature: GeoJSON.Feature, fn: (n: number) => number): GeoJSON.Feature {
+  const geometry = feature.geometry as unknown as { type: string; coordinates: unknown };
+  return {
+    ...feature,
+    geometry: { ...geometry, coordinates: mapCoordinates(geometry.coordinates, fn) } as GeoJSON.Geometry,
+  };
 }
 
 interface MapViewState extends Record<string, unknown> {
@@ -35,6 +75,7 @@ export class MapView extends ItemView {
   private placeCardPopup: maplibregl.Popup | null = null;
   private hoverPopup: maplibregl.Popup | null = null;
   private scaleControl: maplibregl.ScaleControl | null = null;
+  private generatedFeatures: GeoJSON.Feature[] = [];
 
   constructor(leaf: WorkspaceLeaf, plugin: CampaignMapPlugin) {
     super(leaf);
@@ -71,11 +112,15 @@ export class MapView extends ItemView {
     const themeChanged =
       this.campaign?.config.theme !== campaign.config.theme ||
       this.campaign?.config.basemap !== campaign.config.basemap;
+    if (this.campaign && this.campaign.id !== campaign.id) this.generatedFeatures = [];
     this.campaign = campaign;
     this.refreshHeaderTitle();
     if (this.map && (isFirstApply || themeChanged)) {
       this.map.setStyle(this.buildStyle(campaign));
-      this.map.once("styledata", () => this.refreshSource());
+      this.map.once("styledata", () => {
+        this.refreshSource();
+        this.refreshGeneratedSource();
+      });
     }
     if (this.map) this.applyCampaign();
   }
@@ -215,6 +260,125 @@ export class MapView extends ItemView {
     new QuickAddModal(this.app, culture, this.campaign.config.seed, ({ name, type }) => {
       void this.plugin.createLocation(this.campaign!.id, point, name, type);
     }).open();
+  }
+
+  /** Generators work in meters (docs/06 §3 tuning ranges); a fictional
+   * campaign's own coordinates are fake units (1 unit = `scaleMetersPerUnit`
+   * meters). worldBounds/canonFeatures cross into generation-space here. */
+  private generationContext(): GenerationContext {
+    const config = this.campaign!.config;
+    const scale = config.scaleMetersPerUnit;
+    const worldBounds = bboxUnitsToMeters(boundsToBBox(config.bounds ?? defaultFictionalBounds()), scale);
+    const canonFeatures = this.plugin
+      .getCampaignState(this.campaign!.id)
+      .index.toFeatureCollection()
+      .features.map((f) => transformFeatureUnits(f, (n) => unitsToMeters(n, scale)));
+    return { app: this.app, campaign: this.campaign!, worldBounds, canonFeatures };
+  }
+
+  /** `this.generatedFeatures` stays in generation-space (meters) — the same
+   * space the cache keys tiles in — and is only converted to the campaign's
+   * display units when handed to MapLibre. */
+  private mergeGeneratedFeatures(newFeatures: GeoJSON.Feature[]): void {
+    const byId = new Map(this.generatedFeatures.map((f) => [f.id, f]));
+    for (const f of newFeatures) byId.set(f.id, f);
+    this.generatedFeatures = [...byId.values()];
+    this.refreshGeneratedSource();
+  }
+
+  private refreshGeneratedSource(): void {
+    if (!this.map || !this.campaign) return;
+    const source = this.map.getSource("generated") as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const display = this.generatedFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+    source.setData({ type: "FeatureCollection", features: display });
+  }
+
+  /** Display-space (fictional units) — matches what's actually rendered/queryable on the map. */
+  get generated(): GeoJSON.Feature[] {
+    if (!this.campaign) return this.generatedFeatures;
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    return this.generatedFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+  }
+
+  private mapCenterUnits(): [number, number] {
+    const { lng, lat } = this.map!.getCenter();
+    return [lng, lat];
+  }
+
+  /** "Generate city fabric here" (docs/03 3b/3d) — streets/districts/blocks
+   * for the tile at `point` (display-space; defaults to the map center).
+   * Procedural generation targets fictional worlds — real-city campaigns
+   * already have their fabric from the Protomaps basemap (Phase 2). */
+  async generateCityHere(point?: [number, number], force = false): Promise<GeoJSON.Feature[]> {
+    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const centerUnits = point ?? this.mapCenterUnits();
+    const centerMeters: [number, number] = [unitsToMeters(centerUnits[0], scale), unitsToMeters(centerUnits[1], scale)];
+    const ctx = this.generationContext();
+    const { tileX, tileY } = tileXYForPoint(centerMeters[0], centerMeters[1]);
+    const run = force ? regenerateTile : generateTile;
+    const [streets, districts, blocks] = await Promise.all([
+      run(ctx, tileX, tileY, "city-street", generateCityStreets),
+      run(ctx, tileX, tileY, "city-district", generateDistricts),
+      run(ctx, tileX, tileY, "city-block", generateCityBlocks),
+    ]);
+    const newFeatures = [...streets, ...districts, ...blocks];
+    this.mergeGeneratedFeatures(newFeatures);
+    return newFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+  }
+
+  /** "Generate world fabric here" (docs/03 3c) — regions/settlements/routes. */
+  async generateWorldHere(point?: [number, number], force = false): Promise<GeoJSON.Feature[]> {
+    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const centerUnits = point ?? this.mapCenterUnits();
+    const centerMeters: [number, number] = [unitsToMeters(centerUnits[0], scale), unitsToMeters(centerUnits[1], scale)];
+    const ctx = this.generationContext();
+    const { tileX, tileY } = tileXYForPoint(centerMeters[0], centerMeters[1]);
+    const run = force ? regenerateTile : generateTile;
+    const [regions, settlements, routes] = await Promise.all([
+      run(ctx, tileX, tileY, "world-region", generateWorldRegions),
+      run(ctx, tileX, tileY, "world-settlement", generateSettlements),
+      run(ctx, tileX, tileY, "world-route", generateRoutes),
+    ]);
+    const newFeatures = [...regions, ...settlements, ...routes];
+    this.mergeGeneratedFeatures(newFeatures);
+    return newFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+  }
+
+  /** Canonize whichever generated Point feature is nearest `point`
+   * (display-space; defaults to the map center) — docs/02 §5: "canonize =
+   * create the note, remove from cache." Uses the name/type the generator
+   * already assigned; no modal, consistent with the ≤5s add-location bar. */
+  async canonizeGeneratedNear(point?: [number, number], maxDistanceMeters = 40): Promise<boolean> {
+    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return false;
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const atUnits = point ?? this.mapCenterUnits();
+    const atMeters: [number, number] = [unitsToMeters(atUnits[0], scale), unitsToMeters(atUnits[1], scale)];
+
+    let best: GeoJSON.Feature | null = null;
+    let bestDist = Infinity;
+    for (const f of this.generatedFeatures) {
+      if (f.geometry.type !== "Point") continue;
+      const [fx, fy] = f.geometry.coordinates as [number, number];
+      const d = Math.hypot(fx - atMeters[0], fy - atMeters[1]);
+      if (d < bestDist) {
+        bestDist = d;
+        best = f;
+      }
+    }
+    if (!best || bestDist > maxDistanceMeters) return false;
+
+    const props = (best.properties ?? {}) as Record<string, unknown>;
+    const name = String(props.name ?? "Unnamed");
+    const type = String(props.type ?? "custom");
+    const noteFeature = transformFeatureUnits(best, (n) => metersToUnits(n, scale));
+    await canonizeFeature(this.generationContext(), this.plugin, best, name, type, noteFeature);
+    this.generatedFeatures = this.generatedFeatures.filter((f) => f.id !== best!.id);
+    this.refreshGeneratedSource();
+    return true;
   }
 
   private applyCampaign(): void {
