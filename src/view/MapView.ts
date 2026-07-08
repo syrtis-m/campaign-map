@@ -7,13 +7,18 @@ import { obsidianNativeStyle, readObsidianCssTokens } from "../map/theme";
 import { glyphsUrlTemplate, createTransformRequest } from "../map/glyphs";
 import { registerVaultBasemap, vaultBasemapBounds } from "../map/pmtilesVaultProtocol";
 import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
-import { cultureForCampaign } from "../gen/naming/cultures";
+import { genreForCampaign } from "../gen/naming/cultures";
+import { cultureAt } from "../gen/naming/regions";
 import { QuickAddModal } from "./QuickAddModal";
 import { LocationSearchModal } from "./LocationSearchModal";
 import { ThemeSwitcherModal } from "./ThemeSwitcherModal";
 import type CampaignMapPlugin from "../main";
 
 export const VIEW_TYPE_MAP = "campaign-map-view";
+
+function boundsToBBox(bounds: [number, number, number, number]): { minX: number; minY: number; maxX: number; maxY: number } {
+  return { minX: bounds[0], minY: bounds[1], maxX: bounds[2], maxY: bounds[3] };
+}
 
 interface MapViewState extends Record<string, unknown> {
   campaignId?: string;
@@ -200,7 +205,13 @@ export class MapView extends ItemView {
 
   openQuickAdd(point: [number, number]): void {
     if (!this.campaign) return;
-    const culture = cultureForCampaign(this.campaign.config.crs, this.campaign.config.theme);
+    const { config } = this.campaign;
+    const genre = genreForCampaign(config.crs, config.theme);
+    const worldBounds = boundsToBBox(config.bounds ?? defaultFictionalBounds());
+    // Region-based naming (docs/04 F5): suggestions reflect whichever
+    // culture territory the clicked point falls in, not one culture for the
+    // whole campaign.
+    const culture = cultureAt(config.seed, point[0], point[1], worldBounds, genre);
     new QuickAddModal(this.app, culture, this.campaign.config.seed, ({ name, type }) => {
       void this.plugin.createLocation(this.campaign!.id, point, name, type);
     }).open();

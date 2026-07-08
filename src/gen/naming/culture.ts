@@ -6,8 +6,11 @@ import { mulberry32, hashSeed, pick } from "../rng";
  * quick-add flow so typing a name isn't the only path. Full per-genre generator
  * depth (region inheritance, WFC-assisted variation) is Phase 3a — see roadmap.
  */
+export type NamingGenre = "fantasy" | "modern" | "neon";
+
 export interface NamingCulture {
   id: string;
+  genre: NamingGenre;
   pre: readonly string[];
   mid: readonly string[];
   suf: readonly string[];
