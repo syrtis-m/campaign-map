@@ -2,7 +2,7 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: Phase 2 complete (Tier A green) — starting Phase 3
+## Status: Phase 3 complete (Tier A green) — starting Phase 4
 
 ## Environment (done)
 - [x] `scripts/preflight.sh` written and green (Obsidian 1.12.7 running, `dev-vault` registered + CLI-reachable, restricted mode off, Node v22.14.0 installed locally, git repo initialized, GitHub remote `syrtis-m/campaign-map` created)
@@ -55,25 +55,42 @@
 - **VaultPMTilesSource caches the whole local file in memory** rather than doing true OS-level partial reads, because Obsidian's DataAdapter has no partial-read primitive. There's no bandwidth cost to save on a local disk file the way there would be over HTTP, so this preserves the intent of "byte-range reads" (format-correct, logical range access via the `pmtiles` library's `Source` interface) without needing a capability Obsidian doesn't expose.
 - **Alegreya and Oswald are variable fonts** with no separate static Bold cut published upstream — generated glyphs from their default-weight instance only; "bold" labels in `parchment`/`ink-soot` are approximated with size, not true font-weight switching. Documented as a deferred refinement, not a blocker.
 
-## Phase 3 — procedural generation (next)
-- [ ] 3a Naming + sigils: seeded per-genre name generators (extend Phase 1's 3-culture stub into full region-based naming cultures), seeded SVG sigil composition
-- [ ] 3b City gen: tensor-field streets → Voronoi districts → block subdivision → footprints; GM-placed field constraints
-- [ ] 3c World gen: Poisson → Voronoi → heightmap → biomes → settlements → routes
-- [ ] 3d Canonization + stitching: canonize = create the note, remove from cache; generators take canon as constraints; regenerate-region never touches notes; add-location snaps into fabric
-- [ ] Halo overlap + hierarchical seeding; 2×2 adjacent-tile seam snapshot tests mandatory; generation in a Web Worker
-- [ ] `scripts/gates/phase3.ts`
+## Phase 3 — procedural generation (DONE, gate green: `npx tsx scripts/gates/phase3.ts` → 11/11)
+- [x] **Deterministic seeding foundation** (`src/gen/spatialHash.ts`): the textbook algorithms for this phase (adaptive streamline seeding, Bridson Poisson-disc, MST route networks) are all order/global-coupling-dependent and would break the Tier A determinism/seam gate. Built every generator on `jitteredGridPoints()` instead — a coarse world-space grid where each cell independently hashes to zero-or-one jittered point via `hash(campaignSeed, cellX, cellY, salt)`. Callers generate over a halo-padded bbox (`expandBBox`) so a feature straddling a tile edge is computed identically by both neighboring tiles. Shared clipping (`src/gen/clip.ts`: hand-rolled Liang-Barsky for lines, Sutherland-Hodgman for polygons) gives exact matching endpoints at shared tile edges. Full rationale + the halo-sizing bug caught mid-build in DECISIONS.md.
+- [x] **3b City gen** (`src/gen/city/`): tensor-field streets (RK4-traced streamlines along a field that's a pure function of world coords + the campaign's *fixed* worldBounds, never the tile bbox) → Voronoi districts (`d3-delaunay`, via the shared `src/gen/voronoiCells.ts`) → block subdivision (recursive polygon bisection, min-area 400m² per docs/06 §3) → footprints. Canon locations repel street seeding (never overwritten).
+- [x] **3c World gen** (`src/gen/world/`): jittered-grid Poisson-substitute → Voronoi regions → seeded value-noise heightmap + moisture (with continental falloff toward campaign-bounds center, Azgaar "island template" lineage) → biome classification → independent-per-site settlement suitability roll (pre-named via region-based naming culture) → k-nearest-neighbor route connections (not a true MST — global coupling would break seams, logged as Tier B in DECISIONS.md).
+- [x] **3a Naming + sigils**: naming cultures as regions (docs/04 F5, Azgaar's model) — `src/gen/naming/regions.ts`'s `cultureAt()` assigns culture territory via nearest-seeded-culture-center (pure function of position, no BFS/flood-fill coupling). 3 new cultures (`fantasy-sunlit`, `modern-mediterranean`, `neon-street`) give each genre regional variety alongside Phase 1's three. Seeded SVG sigil generator (`src/gen/sigil/`, snapshot-tested) for the mid location-art tier (docs/02 §4).
+- [x] **3d Canonization + stitching**: `.mapcache/generated.jsonl` log-structured tile cache (`src/model/tileCache.ts`, mirrors `mutationLog.ts`'s append-only pattern) keyed by `hash(campaignSeed, tileX, tileY, zoom, generatorId)`. `src/map/generation/generationService.ts` wires cache-or-generate / force-regenerate / canonize (create the note — plain point note or note + sidecar `.geojson` for lines/polygons — then strip the feature from its cached tile, never touching other canon). MapView commands (`generate-city-here`, `regenerate-city-here`, `generate-world-here`, `regenerate-world-here`, `canonize-nearest-generated`) drive this live; generated fabric renders through its own theme-aware layers (`src/map/themes/generatedLayers.ts`) sharing canon's exact point/label recipe for settlements — provenance stays invisible per quality-bar F2.
+- [x] **Web Worker** (`src/gen/worker/generationWorker.ts` + `src/map/generation/workerClient.ts`): built, esbuild's second entry point, loaded via a Blob URL (sidesteps Electron-renderer origin/CSP friction with `new Worker(file://...)`). Verified live: output byte-identical to the same generator called directly on the main thread. **Scope call**: not yet wired into the live generate/canonize/regenerate commands — those stay on the tested synchronous path; Phase 4's continuous-pan LOD dispatcher is where worker-based stutter prevention actually matters and is the natural integration point. Full rationale in DECISIONS.md.
+- [x] `scripts/gates/phase3.ts` — 11 checks: generate-city-here/generate-world-here produce all expected feature types, generated fabric renders alongside canon through provenance-invisible layers, **cache-delete + regenerate produces hash-identical output** (docs/06 §2's canonical determinism assertion, verified live against the real `.mapcache/generated.jsonl` file, not just the pure-function unit tests), the full canonize flow (note created, stripped from cache, joins the canon index), regenerate-after-canonize (canon survives, surroundings adapt), full reload survival, screenshot
+- [x] 22 new unit tests: `src/gen/city/{city,districts}.test.ts` (10, incl. 2×2 seam tests), `src/gen/world/world.test.ts` (7, incl. seam tests), `src/gen/naming/regions.test.ts` (4), `src/gen/sigil/sigil.test.ts` (7, snapshot fixtures), `src/map/generation/generationService.test.ts` (5) — `npm test` → 60/60 passing
+- [x] Re-ran Phase 0 (10/10), Phase 1 (13/13), Phase 2 (15/15) gates after every Phase 3 milestone — no regressions at any point (49/49 total across all four gates)
+
+### Notable engineering calls this phase (full detail in DECISIONS.md)
+- **Position-deterministic seeding over classic order-dependent algorithms** — the single architectural decision the whole phase rests on; see DECISIONS.md for the full writeup including the halo-sizing bug it caught mid-build (a too-small halo let the halo bbox's own clip rectangle leak into Voronoi cell shapes near tile edges, differing between two tiles whose halo rectangles aren't the same shape — fixed by widening to `cellSize * 8`).
+- **Found and fixed a real scale bug**: generators are tuned in meters (docs/06 §3 ranges), but fictional campaigns store coordinates in fake units where 1 unit = `scaleMetersPerUnit` meters. Without a conversion boundary, a single generation tile (600m) would dwarf an entire small campaign (Ashfall is ~800m×600m). Added `unitsToMeters`/`metersToUnits` conversion in `MapView`'s generation methods — `generationContext()` converts worldBounds/canonFeatures into generation-space (meters), results convert back to display-space (fictional units) before rendering, and canonized notes get display-space geometry while cache lookups stay in generation-space.
+- **Settlement placement is intentionally not spacing-aware** (independent per-region-site roll rather than greedy placement with minimum distance) — a spacing-aware pass would be order-dependent and break the seam guarantee. May occasionally cluster; flagged as Tier B tuning, not a Tier A blocker.
+- **`Fairenford`** (`dev-vault/Campaigns/Ashfall/Locations/Fairenford.md`) is a real generated-then-canonized settlement, committed as a demonstration fixture of the full generate → canonize flow. Re-running `scripts/gates/phase3.ts` will create additional harmlessly-named duplicates over time (each gate run canonizes a genuine new note, by design) — expected, not a bug; `rm dev-vault/Campaigns/Ashfall/Locations/Fairenford*.md` if it ever needs tidying.
+
+## Phase 4 — continuous LOD (next)
+- [ ] Zoom-band dispatcher over `.mapcache/` chunks — this is where `GenerationWorkerClient` (built in Phase 3, not yet wired in) gets its real integration point
+- [ ] Loading shimmer; detail band (z16+) buildings/POIs
+- [ ] Perf pass: 60fps pan on the Surface Pro *inside Obsidian*; index rebuild time on vault open <1s for 500-note campaigns
+- [ ] `scripts/gates/phase4.ts`
 
 ## Next 3 actions
-1. `src/gen/rng.ts`/naming culture system already exists (Phase 1) — extend to region-based inheritance (3a) and add sigil generation before touching city/world gen, since it's the smallest/lowest-risk piece
-2. Tensor-field city street generator (3b) — pure/headless per CLAUDE.md, unit-tested with seeded snapshot fixtures, no DOM/map/Obsidian imports; this is the phase's load-bearing novel piece
-3. Determinism + 2×2 seam snapshot tests from the start, not bolted on after — docs/06 marks this mandatory "from phase 3 on"
+1. Design the zoom-band → generator mapping (world regions at low zoom, city fabric at high zoom, matching the existing `WORLD_REGION_CELL_SIZE`/`GENERATION_TILE_SIZE` constants to sensible zoom bands) and wire `GenerationWorkerClient` as the actual dispatch path, replacing direct generator calls in the MapView commands
+2. Loading shimmer + perf sampling harness (frame-time sampler during a scripted pan, p95 ≥ 50fps per docs/06 §2) before chasing specific optimizations
+3. Index rebuild time budget (<1s for 500-note campaigns) — profile `rescanLocations()` against a synthetic large campaign fixture
 
 ## Open blockers
 None.
 
 ## Awaiting Jonah's eyes
-- `shots/gate-phase0.png`, `shots/gate-phase1.png`, `shots/gate-phase2-london.png` — screenshots of the pipeline end to end, including the real London OSM basemap with a canon pin rendered indistinguishably alongside it.
+- `shots/gate-phase0.png`, `shots/gate-phase1.png`, `shots/gate-phase2-london.png`, `shots/gate-phase3-ashfall-generated.png`, `shots/phase3-city-fabric.png` — screenshots of the pipeline end to end, including generated city fabric (streets/districts) rendering alongside canon pins indistinguishably.
 - Right-click context menu: implemented correctly per standard API but unverified by CLI automation (see DECISIONS.md) — please try a real right-click on a location pin/empty map when you get a chance.
 - Undo is intentionally basic (single-step, no redo) — flag if you want that built out further before Phase 5's replay work depends on it.
 - The four handcrafted themes are visually verified (screenshots taken during the session) but only `modern-clean` (via London) has a committed reference screenshot — happy to add parchment/ink-soot/neon-sprawl reference shots to `shots/` if useful for review, just say the word.
 - Alegreya/Oswald bold-via-size-not-weight approximation (see DECISIONS.md) — low priority, flag if it reads wrong in practice.
+- **Generated fabric density/spacing** (streets, settlement clustering) is functionally correct and deterministic but not aesthetically tuned — Tier B per docs/06 §2, flagged for your eyes whenever convenient, not blocking.
+- **`Fairenford`** in the Ashfall dev-vault campaign is a real generated-then-canonized settlement (see DECISIONS.md) — a live demonstration of Phase 3's core exit test, not curated seed content like the original four locations.
