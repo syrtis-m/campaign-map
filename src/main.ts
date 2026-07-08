@@ -1,6 +1,8 @@
 import { Plugin, TFile, Notice, WorkspaceLeaf, FuzzySuggestModal } from "obsidian";
 import { MapView, VIEW_TYPE_MAP } from "./view/MapView";
 import { parseCampaignConfig, slugify, type ParsedCampaign } from "./model/campaignConfig";
+import { CreateCampaignModal } from "./view/CreateCampaignModal";
+import { CampaignControlModal } from "./view/CampaignControlModal";
 import {
   parseLocationNote,
   type ParsedLocation,
@@ -110,8 +112,27 @@ export default class CampaignMapPlugin extends Plugin {
     this.registerView(VIEW_TYPE_MAP, (leaf) => new MapView(leaf, this));
 
     this.addRibbonIcon("map", "Open campaign map", () => this.openMapCommand());
+    this.addRibbonIcon("plus-circle", "Create new campaign", () => this.createCampaignFlow());
+    this.addRibbonIcon("settings", "Campaign settings", () => this.openControlPanel());
 
     this.addCommand({ id: "open-map", name: "Open map", callback: () => this.openMapCommand() });
+
+    this.addCommand({
+      id: "create-new-campaign",
+      name: "Create new campaign",
+      callback: () => this.createCampaignFlow(),
+    });
+
+    this.addCommand({
+      id: "campaign-settings",
+      name: "Campaign settings (theme, naming, basemap)",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) this.openControlPanel();
+        return true;
+      },
+    });
 
     this.addCommand({
       id: "search-locations",
@@ -410,6 +431,52 @@ export default class CampaignMapPlugin extends Plugin {
       return;
     }
     new CampaignPickerModal(this, (campaign) => this.openCampaign(campaign)).open();
+  }
+
+  private createCampaignFlow(): void {
+    new CreateCampaignModal(this.app, (path) => void this.openNewlyCreatedCampaign(path)).open();
+  }
+
+  /** `vault.create()` resolving doesn't mean metadataCache has parsed the new
+   * file's frontmatter yet — that lags by an event-loop tick or more via a
+   * separate "changed" event. Calling rescanCampaigns() immediately raced
+   * that gap and silently found no campaign to open (confirmed live: the
+   * note was written correctly but nothing opened, no error). Wait for the
+   * cache to actually catch up instead of assuming it already has. */
+  private async openNewlyCreatedCampaign(path: string): Promise<void> {
+    const file = this.app.vault.getFileByPath(path);
+    if (file && !this.app.metadataCache.getFileCache(file)?.frontmatter) {
+      await new Promise<void>((resolve) => {
+        const ref = this.app.metadataCache.on("changed", (f) => {
+          if (f.path === path) {
+            this.app.metadataCache.offref(ref);
+            resolve();
+          }
+        });
+        setTimeout(() => {
+          this.app.metadataCache.offref(ref);
+          resolve();
+        }, 3000);
+      });
+    }
+
+    this.rescanCampaigns();
+    const campaign = [...this.campaigns.values()].find((c) => c.path === path);
+    if (campaign) {
+      void this.openCampaign(campaign);
+    } else {
+      console.error(`Campaign Map: created "${path}" but couldn't auto-open it — config didn't parse in time`);
+      new Notice(`Campaign Map: created "${path}" — open it from the command palette (config still indexing)`, 6000);
+    }
+  }
+
+  private openControlPanel(): void {
+    const view = this.activeMapView();
+    if (!view?.campaign) {
+      new Notice("Campaign Map: open a campaign map first");
+      return;
+    }
+    new CampaignControlModal(this.app, this, view.campaign).open();
   }
 
   private async openCampaign(campaign: ParsedCampaign): Promise<void> {

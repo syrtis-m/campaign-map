@@ -34,4 +34,16 @@ describe("cultureAt", () => {
     const b = cultureAt(SEED, 3.01, 2.01, WORLD_BOUNDS, "fantasy");
     expect(a.id).toBe(b.id);
   });
+
+  it("restricts to activeCultureIds when given (campaign naming-culture picker)", () => {
+    for (const [x, y] of [[-7, -5], [0, 0], [7, 5], [-3, 4]] as [number, number][]) {
+      const c = cultureAt(SEED, x, y, WORLD_BOUNDS, "fantasy", ["fantasy-brackish"]);
+      expect(c.id).toBe("fantasy-brackish");
+    }
+  });
+
+  it("falls back to the full genre set if activeCultureIds doesn't match the genre (stale id, never zero out naming)", () => {
+    const c = cultureAt(SEED, 0, 0, WORLD_BOUNDS, "fantasy", ["neon-corpo"]);
+    expect(c.genre).toBe("fantasy");
+  });
 });

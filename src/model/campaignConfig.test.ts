@@ -29,6 +29,16 @@ describe("parseCampaignConfig", () => {
     if (result.ok) expect(result.campaign.config).toMatchObject(fm);
   });
 
+  it("accepts an optional namingCultures restriction", () => {
+    const result = parseCampaignConfig("Ashfall.map.md", "Ashfall", {
+      "map-campaign": true,
+      crs: "fictional",
+      namingCultures: ["fantasy-brackish"],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.campaign.config.namingCultures).toEqual(["fantasy-brackish"]);
+  });
+
   it("rejects missing crs", () => {
     const result = parseCampaignConfig("Bad.map.md", "Bad", { "map-campaign": true });
     expect(result.ok).toBe(false);

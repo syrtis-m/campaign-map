@@ -15,8 +15,17 @@ export const NAMING_CULTURES: Record<string, NamingCulture> = {
   "neon-street": neonStreet,
 };
 
-export function culturesForGenre(genre: NamingGenre): NamingCulture[] {
-  return Object.values(NAMING_CULTURES).filter((c) => c.genre === genre);
+/**
+ * `restrictTo` narrows to a campaign's chosen culture ids (map-naming-cultures
+ * frontmatter, see campaignConfig.ts). Falls back to the full genre set if
+ * unset/empty, or if it doesn't intersect the genre at all (e.g. a stale id
+ * left over from a theme change) — a restriction can never zero out naming.
+ */
+export function culturesForGenre(genre: NamingGenre, restrictTo?: string[]): NamingCulture[] {
+  const all = Object.values(NAMING_CULTURES).filter((c) => c.genre === genre);
+  if (!restrictTo || restrictTo.length === 0) return all;
+  const restricted = all.filter((c) => restrictTo.includes(c.id));
+  return restricted.length > 0 ? restricted : all;
 }
 
 export function genreForCampaign(crs: "fictional" | "real", theme: string): NamingGenre {

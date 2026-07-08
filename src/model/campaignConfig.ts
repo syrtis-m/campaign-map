@@ -18,6 +18,11 @@ export const CampaignConfigSchema = z.object({
   bounds: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
   // real CRS: vault-relative path to a .pmtiles basemap file
   basemap: z.string().optional(),
+  // Restricts which naming cultures (src/gen/naming/cultures/) generators draw
+  // from for this campaign; unset/empty = every culture matching the derived
+  // genre (existing default behavior). Ids not matching the derived genre are
+  // ignored rather than rejected — see culturesForGenre's restrictTo fallback.
+  namingCultures: z.array(z.string()).optional(),
 });
 
 export type CampaignConfig = z.infer<typeof CampaignConfigSchema>;

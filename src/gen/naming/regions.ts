@@ -21,10 +21,17 @@ export interface CultureCenter {
 
 const CENTERS_PER_CULTURE = 2;
 
-/** Pure fn of (campaignSeed, worldBounds, genre) — worldBounds must be the
- * campaign's fixed bounds, never a tile bbox (tensorField.ts precedent). */
-export function buildCultureCenters(campaignSeed: number, worldBounds: BBox, genre: NamingGenre): CultureCenter[] {
-  const cultures = culturesForGenre(genre);
+/** Pure fn of (campaignSeed, worldBounds, genre, activeCultureIds) —
+ * worldBounds must be the campaign's fixed bounds, never a tile bbox
+ * (tensorField.ts precedent). `activeCultureIds` narrows to a campaign's
+ * chosen subset (see culturesForGenre); omit for the full genre set. */
+export function buildCultureCenters(
+  campaignSeed: number,
+  worldBounds: BBox,
+  genre: NamingGenre,
+  activeCultureIds?: string[]
+): CultureCenter[] {
+  const cultures = culturesForGenre(genre, activeCultureIds);
   if (cultures.length === 0) return [];
 
   const rng = mulberry32(hashSeed(campaignSeed, "culture-centers", genre));
@@ -50,10 +57,11 @@ export function cultureAt(
   x: number,
   y: number,
   worldBounds: BBox,
-  genre: NamingGenre
+  genre: NamingGenre,
+  activeCultureIds?: string[]
 ): NamingCulture {
-  const centers = buildCultureCenters(campaignSeed, worldBounds, genre);
-  const fallback = culturesForGenre(genre)[0] ?? NAMING_CULTURES["fantasy-brackish"];
+  const centers = buildCultureCenters(campaignSeed, worldBounds, genre, activeCultureIds);
+  const fallback = culturesForGenre(genre, activeCultureIds)[0] ?? NAMING_CULTURES["fantasy-brackish"];
   if (centers.length === 0) return fallback;
 
   let best = centers[0];

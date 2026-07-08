@@ -102,6 +102,35 @@ describe("generateTile", () => {
   });
 });
 
+describe("generateTile naming constraints", () => {
+  it("threads the campaign's derived genre through to the generator (regression: generationService never set namingGenre, so every campaign — including real-city ones — silently fell back to settlements.ts's fantasy default)", async () => {
+    const { app } = fakeApp();
+    const realCampaign: ParsedCampaign = {
+      id: "london",
+      name: "London",
+      path: "Campaigns/London/London.map.md",
+      config: { "map-campaign": true, crs: "real", theme: "modern-clean", seed: 5127, scaleMetersPerUnit: 1 },
+    };
+    const ctx: GenerationContext = { app, campaign: realCampaign, worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const generator = vi.fn(generateSettlements);
+    await generateTile(ctx, 0, 0, "world-settlement", generator);
+    expect(generator).toHaveBeenCalledTimes(1);
+    expect(generator.mock.calls[0][2].namingGenre).toBe("modern");
+  });
+
+  it("threads the campaign's configured namingCultures through to the generator", async () => {
+    const { app } = fakeApp();
+    const restricted: ParsedCampaign = {
+      ...campaign(),
+      config: { ...campaign().config, namingCultures: ["fantasy-brackish"] },
+    };
+    const ctx: GenerationContext = { app, campaign: restricted, worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const generator = vi.fn(generateSettlements);
+    await generateTile(ctx, 0, 0, "world-settlement", generator);
+    expect(generator.mock.calls[0][2].namingCultureIds).toEqual(["fantasy-brackish"]);
+  });
+});
+
 describe("canonizeFeature", () => {
   it("creates the note and removes the feature from its cached tile", async () => {
     const { app } = fakeApp();

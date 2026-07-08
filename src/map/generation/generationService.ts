@@ -11,6 +11,7 @@ import { appendCachedTile, getCachedTile } from "../../model/tileCache";
 import { GENERATION_ZOOM, tileBBox, tileKey, tileXYForPoint } from "../../gen/cache/tileGrid";
 import type { BBox } from "../../gen/spatialHash";
 import type { GenerationConstraints } from "../../gen/types";
+import { genreForCampaign } from "../../gen/naming/cultures";
 
 /** Sync (direct pure-generator) or async (worker-dispatched) — `generateTile`
  * awaits either uniformly, so the Phase 4 viewport dispatcher can pass a
@@ -70,7 +71,16 @@ export async function generateTile(
   }
 
   const bbox = tileBBox(tileX, tileY);
-  const constraints: GenerationConstraints = { worldBounds: ctx.worldBounds, canonFeatures: ctx.canonFeatures };
+  // namingGenre was never threaded here before — settlements.ts's `?? "fantasy"`
+  // fallback meant every campaign, including real-city ones, silently got
+  // fantasy-genre names for generated settlements. Fixed as part of wiring
+  // namingCultureIds through (same call site, same underlying gap).
+  const constraints: GenerationConstraints = {
+    worldBounds: ctx.worldBounds,
+    canonFeatures: ctx.canonFeatures,
+    namingGenre: genreForCampaign(ctx.campaign.config.crs, ctx.campaign.config.theme),
+    namingCultureIds: ctx.campaign.config.namingCultures,
+  };
   const features = await generator(ctx.campaign.config.seed, bbox, constraints);
 
   await appendCachedTile(ctx.app, campaignFolder, {

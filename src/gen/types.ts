@@ -18,4 +18,8 @@ export interface GenerationConstraints {
   /** Naming culture genre for any generator that pre-names its output (e.g.
    * settlements) — defaults per-generator if omitted. */
   namingGenre?: NamingGenre;
+  /** Restricts naming to a campaign's chosen culture ids (map-naming-cultures
+   * frontmatter) — see culturesForGenre's restrictTo. Omit for the full
+   * genre set. */
+  namingCultureIds?: string[];
 }

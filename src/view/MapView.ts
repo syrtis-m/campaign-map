@@ -350,7 +350,7 @@ export class MapView extends ItemView {
     // Region-based naming (docs/04 F5): suggestions reflect whichever
     // culture territory the clicked point falls in, not one culture for the
     // whole campaign.
-    const culture = cultureAt(config.seed, point[0], point[1], worldBounds, genre);
+    const culture = cultureAt(config.seed, point[0], point[1], worldBounds, genre, config.namingCultures);
     new QuickAddModal(this.app, culture, this.campaign.config.seed, ({ name, type }) => {
       void this.plugin.createLocation(this.campaign!.id, point, name, type);
     }).open();

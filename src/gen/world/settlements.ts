@@ -65,7 +65,7 @@ export function generateSettlements(
   // so generated pins never read as blank/generic — canonizing just accepts
   // or edits this name, it isn't invented from scratch at that point.
   const features: GeoJSON.Feature[] = candidates.map((s) => {
-    const culture = cultureAt(campaignSeed, s.x, s.y, constraints.worldBounds, genre);
+    const culture = cultureAt(campaignSeed, s.x, s.y, constraints.worldBounds, genre, constraints.namingCultureIds);
     const name = generateName(hashSeed(campaignSeed, s.cellX, s.cellY, "settlement-name"), culture);
     const defaults = typeDefaults(s.tier);
     return {
