@@ -33,13 +33,3 @@ export function genreForCampaign(crs: "fictional" | "real", theme: string): Nami
   if (theme === "neon-sprawl") return "neon";
   return "fantasy";
 }
-
-/**
- * Phase 1 stub mapping: one culture per campaign, inferred from crs/theme.
- * Phase 3a gives each campaign region-level naming cultures instead — see
- * src/gen/naming/regions.ts and docs/03 roadmap 3a.
- */
-export function cultureForCampaign(crs: "fictional" | "real", theme: string): NamingCulture {
-  const genre = genreForCampaign(crs, theme);
-  return culturesForGenre(genre)[0] ?? fantasyBrackish;
-}

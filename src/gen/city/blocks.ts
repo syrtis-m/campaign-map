@@ -71,7 +71,7 @@ function subdivide(ring: Pt[], campaignSeed: number, path: string, depth: number
   return result.length > 0 ? result : [ring];
 }
 
-function footprintFor(ring: Pt[], campaignSeed: number, path: string): Pt[] | null {
+function footprintFor(ring: Pt[]): Pt[] | null {
   const box = ringBBox(ring);
   const w = box.maxX - box.minX;
   const h = box.maxY - box.minY;
@@ -81,7 +81,6 @@ function footprintFor(ring: Pt[], campaignSeed: number, path: string): Pt[] | nu
   const fy0 = box.minY + inset;
   const fy1 = box.maxY - inset;
   if (fx1 <= fx0 || fy1 <= fy0) return null;
-  void mulberry32(hashSeed(campaignSeed, path, "footprint")); // reserved for future footprint variation
   return ensureClosed([
     [fx0, fy0],
     [fx1, fy0],
@@ -114,7 +113,7 @@ export function generateCityBlocks(
         properties: { generated: true, generatorId: "city-block", type: "block", districtId: district.id },
       });
 
-      const footprint = footprintFor(block, campaignSeed, blockPath);
+      const footprint = footprintFor(block);
       if (footprint) {
         features.push({
           type: "Feature",

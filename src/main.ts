@@ -59,11 +59,6 @@ export default class CampaignMapPlugin extends Plugin {
     const campaignId = this.activeMapView()?.campaign?.id;
     return campaignId ? this.getCampaignState(campaignId).index : null;
   }
-  get themes() {
-    // Handcrafted genre themes (parchment/ink-soot/modern-clean/neon-sprawl) land Phase 2;
-    // obsidian-native is generated at runtime — see src/map/theme.ts.
-    return null;
-  }
   get log() {
     return { read: (campaignId: string) => this.readCampaignLog(campaignId) };
   }

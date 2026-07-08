@@ -10,8 +10,6 @@ import type { GenerationConstraints } from "../types";
 import { clipPolylineToBBox } from "../clip";
 import { traceStreamline } from "./streamlines";
 import { buildTensorField } from "./tensorField";
-import { generateDistricts } from "./districts";
-import { generateCityBlocks } from "./blocks";
 
 export { generateDistricts } from "./districts";
 export { generateCityBlocks } from "./blocks";
@@ -84,17 +82,4 @@ export function generateCityStreets(
     return ca[0] - cb[0] || ca[1] - cb[1];
   });
   return features;
-}
-
-/** Combines streets + districts + blocks/footprints into one tile's worth of city fabric. */
-export function generateCity(
-  campaignSeed: number,
-  bbox: BBox,
-  constraints: GenerationConstraints
-): GeoJSON.Feature[] {
-  return [
-    ...generateCityStreets(campaignSeed, bbox, constraints),
-    ...generateDistricts(campaignSeed, bbox, constraints),
-    ...generateCityBlocks(campaignSeed, bbox, constraints),
-  ];
 }
