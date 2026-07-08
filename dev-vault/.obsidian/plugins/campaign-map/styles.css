@@ -76,6 +76,27 @@
   cursor: default;
 }
 
+.campaign-map-loading-indicator {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  background: var(--background-secondary, #222);
+  color: var(--text-muted, #aaa);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font-text, sans-serif);
+  cursor: default;
+  opacity: 0.85;
+  animation: campaign-map-loading-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes campaign-map-loading-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.95; }
+}
+
 .campaign-map-place-card,
 .campaign-map-dropped-pin-tooltip {
   font-family: var(--font-text, sans-serif);

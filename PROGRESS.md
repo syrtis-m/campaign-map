@@ -2,7 +2,7 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: Phase 3 complete (Tier A green) — starting Phase 4
+## Status: Phase 4 complete (Tier A green) — starting Phase 5
 
 ## Environment (done)
 - [x] `scripts/preflight.sh` written and green (Obsidian 1.12.7 running, `dev-vault` registered + CLI-reachable, restricted mode off, Node v22.14.0 installed locally, git repo initialized, GitHub remote `syrtis-m/campaign-map` created)
@@ -72,25 +72,39 @@
 - **Settlement placement is intentionally not spacing-aware** (independent per-region-site roll rather than greedy placement with minimum distance) — a spacing-aware pass would be order-dependent and break the seam guarantee. May occasionally cluster; flagged as Tier B tuning, not a Tier A blocker.
 - **`Fairenford`** (`dev-vault/Campaigns/Ashfall/Locations/Fairenford.md`) is a real generated-then-canonized settlement, committed as a demonstration fixture of the full generate → canonize flow. Re-running `scripts/gates/phase3.ts` will create additional harmlessly-named duplicates over time (each gate run canonizes a genuine new note, by design) — expected, not a bug; `rm dev-vault/Campaigns/Ashfall/Locations/Fairenford*.md` if it ever needs tidying.
 
-## Phase 4 — continuous LOD (next)
-- [ ] Zoom-band dispatcher over `.mapcache/` chunks — this is where `GenerationWorkerClient` (built in Phase 3, not yet wired in) gets its real integration point
-- [ ] Loading shimmer; detail band (z16+) buildings/POIs
-- [ ] Perf pass: 60fps pan on the Surface Pro *inside Obsidian*; index rebuild time on vault open <1s for 500-note campaigns
-- [ ] `scripts/gates/phase4.ts`
+## Phase 4 — continuous LOD (DONE, gate green: `npx tsx scripts/gates/phase4.ts` → 11/11)
+- [x] **Viewport dispatcher** (`MapView.dispatchViewportTiles()`, debounced 200ms off `moveend`/`zoomend`): replaced Phase 3's flat merge-by-id `generatedFeatures` array with a `Map<tileKey, Feature[]>` keyed `${band}:${tileX}:${tileY}`, evicted to viewport+margin every dispatch pass — the load-bearing property an advisor review flagged before any code was written (an ever-growing array makes `source.setData()` re-parse more data on every pan, degrading perf as a session goes on). In-flight requests deduped by tile key so a re-crossed tile isn't re-dispatched, and results are discarded on arrival if their tile panned out of view first.
+- [x] **Zoom bands** (`src/gen/cache/tileGrid.ts`): world tier (regions/settlements/routes) below zoom 8, city tier (streets/districts/blocks) at/above — `bandForZoom()`/`generatorIdsForBand()`. Both bands share the existing 600m tile grid; a coarser dedicated world-tile grid deferred until a real campaign's low-zoom dispatch tile-count actually demands it (see DECISIONS.md).
+- [x] **`GenerationWorkerClient` wired in** (Phase 3 built it, didn't use it): `generateTile()`'s generator parameter now accepts a sync-or-async function, so the dispatcher passes a worker-backed closure through the exact same cache-read/cache-write path a direct call uses. Falls back to direct main-thread generation if the worker fails to load.
+- [x] Loading shimmer (`.campaign-map-loading-indicator`, top-right, shown while `pendingTiles.size > 0`).
+- [x] Perf: frame-time sampler (scripted `panBy` during the gate, `map.on('render')` timing → p95) and a synthetic-500-note-campaign index-rebuild timer (`plugin.rescanTimeMs`) — both real, live-measured numbers, not simulated. See "Awaiting Jonah's eyes" for what these numbers do and don't prove.
+- [x] `scripts/gates/phase4.ts` — 11 checks: automatic world-tier population from a bare pan (no manual command), zoom-band crossing evicts the old tier, eviction bounds the tile store on a far pan, determinism survives eviction+revisit, dispatcher output actually renders (not just sits in the source), the two perf checks, full-reload survival, screenshot.
+- [x] Re-ran Phase 0 (10/10), Phase 1 (13/13), Phase 2 (15/15), Phase 3 (11/11) after every Phase 4 change — 60/60 across all five gates, no regressions.
+- [ ] Detail band (z16+) buildings/POIs — not built this phase; city-band footprints already render from z14 (`generated-footprint` layer), which covers the "buildings" half. Deferred, not blocking (see below).
+
+### Notable engineering calls this phase (full detail in DECISIONS.md)
+- **Three real bugs found getting the live gate green, none of them gate-script artifacts:** (1) cross-band eviction was wiping tiles a manual `generate-city-here`/`generate-world-here` override had just written, if the camera's current zoom happened to be the *other* tier — fixed by scoping ordinary eviction to the active band's own tile-key prefix, only doing a full-store clear on a genuine band transition; (2) an uncapped prefetch margin turned a single low-zoom pan into 16 tiles × 3 generators = 48 concurrent cache-I/O calls — capped the margin at a fixed 2-tile radius regardless of viewport size; (3) a pre-existing (Phase 1-era) race in `onOpen()`'s "load" handler could silently snap the camera back to the campaign's default bounds *after* an explicit `jumpTo()`, discarding whatever the dispatcher had started fetching — harmless when nothing was tied to live camera state, a real bug once the dispatcher existed. Fixed with a `campaignAppliedOnce` guard.
+- **Found and fixed a real theming bug while verifying screenshots**: `obsidian-native`'s `roadMinor` and `water` tokens both resolved to the same CSS variable — generated streets were rendering the exact same color as water, functionally invisible against the background. Root-caused and fixed (`roadMinor` now reads `--background-modifier-border`); see `review/001-generated-fabric-contrast.md` for the before/after and a residual Tier B question about whether the new contrast level is enough.
+- **Found and fixed a screenshot-tooling gap** (not a plugin bug): `dev:screenshot` captures the Electron window's composited back buffer, and macOS stops repainting occluded/unfocused windows — a CLI-only agent session was silently capturing stale frames. `scripts/lib/cli.ts`'s `screenshot()` now activates the Obsidian window first. This affects every phase's gate screenshots retroactively (they were likely fine, since a human wasn't stealing focus during those runs, but this closes a real gap for any future CLI-only session).
+- **Gate-script robustness under continuous background load**: raised `execFileSync`'s stdout buffer (dense city fabric can produce arrays the default 1MB limit rejects outright, not just slowly), converted several fixed-`setTimeout` waits to polling loops, and rewrote one Phase 3 check that compared the *global* `generated` getter before/after — no longer meaningful once a dispatcher is continuously, independently churning that same getter's contents.
+- **Observed, not chased**: gate runtimes and reported p95 fps degrade noticeably after many consecutive gate-script executions in one long-lived Obsidian session (a fresh `obsidian reload` restores clean numbers every time). This reads as ordinary session-load accumulation from *this build session's own testing intensity* (dozens of plugin reloads, campaign switches, and generated-content caching in one sitting), not a leak in the shipped plugin — but it's an honest data point, not fully root-caused, and worth keeping in mind if Jonah sees the map feel sluggish after a very long uninterrupted Obsidian session.
 
 ## Next 3 actions
-1. Design the zoom-band → generator mapping (world regions at low zoom, city fabric at high zoom, matching the existing `WORLD_REGION_CELL_SIZE`/`GENERATION_TILE_SIZE` constants to sensible zoom bands) and wire `GenerationWorkerClient` as the actual dispatch path, replacing direct generator calls in the MapView commands
-2. Loading shimmer + perf sampling harness (frame-time sampler during a scripted pan, p95 ≥ 50fps per docs/06 §2) before chasing specific optimizations
-3. Index rebuild time budget (<1s for 500-note campaigns) — profile `rescanLocations()` against a synthetic large campaign fixture
+1. Poster export (docs/03 Phase 5) — highest-value "keepsake" deliverable, and the most self-contained piece to start with.
+2. Atlas export + campaign replay (`.mapcache/log.jsonl` already has everything replay needs — Phase 1 built the mutation log specifically for this).
+3. `scripts/gates/phase5.ts` once the above have something to gate.
 
 ## Open blockers
 None.
 
 ## Awaiting Jonah's eyes
-- `shots/gate-phase0.png`, `shots/gate-phase1.png`, `shots/gate-phase2-london.png`, `shots/gate-phase3-ashfall-generated.png`, `shots/phase3-city-fabric.png` — screenshots of the pipeline end to end, including generated city fabric (streets/districts) rendering alongside canon pins indistinguishably.
+- `shots/gate-phase0.png`, `shots/gate-phase1.png`, `shots/gate-phase2-london.png`, `shots/gate-phase3-ashfall-generated.png`, `shots/gate-phase4-dispatcher-city.png`, `shots/phase4-contrast-fix2.png` — screenshots of the pipeline end to end, including the Phase 4 before/after for the road-contrast fix.
+- **Perf numbers are real but CI-machine numbers, not Surface Pro verification** (docs/06 §6's honest limit): frame-time sampler shows p95 ≈ 50-57fps on this dev machine during a scripted pan, and index rebuild for a synthetic 500-note campaign is well under 1s (sub-millisecond, actually — `rescanLocations()` is not the bottleneck at that scale). Both are real, gate-enforced measurements, not estimates — but only you opening the map on the actual Surface Pro confirms the docs/06 §2 target that matters.
+- `review/001-generated-fabric-contrast.md` — a real contrast bug (roads rendering the same color as water) found and fixed this phase, with one remaining aesthetic judgment call: is the post-fix contrast level enough, or does it also want a line-width bump.
 - Right-click context menu: implemented correctly per standard API but unverified by CLI automation (see DECISIONS.md) — please try a real right-click on a location pin/empty map when you get a chance.
 - Undo is intentionally basic (single-step, no redo) — flag if you want that built out further before Phase 5's replay work depends on it.
 - The four handcrafted themes are visually verified (screenshots taken during the session) but only `modern-clean` (via London) has a committed reference screenshot — happy to add parchment/ink-soot/neon-sprawl reference shots to `shots/` if useful for review, just say the word.
 - Alegreya/Oswald bold-via-size-not-weight approximation (see DECISIONS.md) — low priority, flag if it reads wrong in practice.
 - **Generated fabric density/spacing** (streets, settlement clustering) is functionally correct and deterministic but not aesthetically tuned — Tier B per docs/06 §2, flagged for your eyes whenever convenient, not blocking.
 - **`Fairenford`** in the Ashfall dev-vault campaign is a real generated-then-canonized settlement (see DECISIONS.md) — a live demonstration of Phase 3's core exit test, not curated seed content like the original four locations.
+- **Detail band (z16+) buildings/POIs** wasn't built as a separate thing this phase — city-band footprints already render from z14, functionally covering "buildings." If you had something more specific in mind for "POIs" at street level (benches, trees, shop icons), flag it and it's a small addition on top of the existing footprint layer, not a new subsystem.

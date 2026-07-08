@@ -12,7 +12,15 @@ import { GENERATION_ZOOM, tileBBox, tileKey, tileXYForPoint } from "../../gen/ca
 import type { BBox } from "../../gen/spatialHash";
 import type { GenerationConstraints } from "../../gen/types";
 
-export type TileGenerator = (seed: number, bbox: BBox, constraints: GenerationConstraints) => GeoJSON.Feature[];
+/** Sync (direct pure-generator) or async (worker-dispatched) — `generateTile`
+ * awaits either uniformly, so the Phase 4 viewport dispatcher can pass a
+ * `(seed, bbox, constraints) => workerClient.generate(...)` closure through
+ * the exact same cache path a direct generator call uses. */
+export type TileGenerator = (
+  seed: number,
+  bbox: BBox,
+  constraints: GenerationConstraints
+) => GeoJSON.Feature[] | Promise<GeoJSON.Feature[]>;
 
 export interface GenerationContext {
   app: App;
@@ -63,7 +71,7 @@ export async function generateTile(
 
   const bbox = tileBBox(tileX, tileY);
   const constraints: GenerationConstraints = { worldBounds: ctx.worldBounds, canonFeatures: ctx.canonFeatures };
-  const features = generator(ctx.campaign.config.seed, bbox, constraints);
+  const features = await generator(ctx.campaign.config.seed, bbox, constraints);
 
   await appendCachedTile(ctx.app, campaignFolder, {
     key,

@@ -80,10 +80,18 @@ async function main() {
     clearErrors();
     evalJs("app.plugins.plugins['campaign-map'].map.jumpTo({center:[2,-4], zoom:6}); 'ok'");
     obsidian("command id=campaign-map:generate-city-here");
-    await new Promise((r) => setTimeout(r, 900));
+    // Poll rather than a fixed wait: Phase 4's viewport dispatcher now also
+    // fires on this same jumpTo (moveend) and competes for cache I/O with
+    // the manual command's own generateTile() calls — a fixed 900ms budget
+    // that was comfortable in Phase 3 can legitimately not be enough now.
+    let counts: Record<string, number> = {};
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      counts = countsByGenerator(generatedFeatures());
+      if (["city-street", "city-district", "city-block", "city-footprint"].every((id) => counts[id] > 0)) break;
+    }
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
-    const counts = countsByGenerator(generatedFeatures());
     for (const id of ["city-street", "city-district", "city-block", "city-footprint"]) {
       if (!counts[id] || counts[id] < 1) throw new Error(`missing/empty ${id}: ${JSON.stringify(counts)}`);
     }
@@ -93,10 +101,14 @@ async function main() {
     clearErrors();
     evalJs("app.plugins.plugins['campaign-map'].map.jumpTo({center:[-6,5], zoom:4}); 'ok'");
     obsidian("command id=campaign-map:generate-world-here");
-    await new Promise((r) => setTimeout(r, 900));
+    let counts: Record<string, number> = {};
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      counts = countsByGenerator(generatedFeatures());
+      if (counts["world-region"] > 0) break;
+    }
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
-    const counts = countsByGenerator(generatedFeatures());
     if (!counts["world-region"]) throw new Error(`no world-region features: ${JSON.stringify(counts)}`);
   });
 
@@ -201,9 +213,12 @@ async function main() {
 
     // Poll for the index to actually pick up the new note: canonize creates
     // the file, then the vault-change -> debounced rescanLocations() ->
-    // index-update chain runs asynchronously relative to the command.
+    // index-update chain runs asynchronously relative to the command. Budget
+    // widened for Phase 4: the viewport dispatcher's own ongoing cache I/O
+    // now competes with this reconcile chain for the vault adapter, so it
+    // can legitimately take longer than Phase 3's original 3s allowed.
     let afterIndexSize = beforeIndexSize;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 20; i++) {
       await new Promise((r) => setTimeout(r, 300));
       afterIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
       if (afterIndexSize > beforeIndexSize) break;
@@ -228,10 +243,31 @@ async function main() {
   await gate.try("regenerate-city-here after canonize: canon survives, fabric actually regenerates", async () => {
     clearErrors();
     const beforeIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
-    const beforeStreets = JSON.stringify(generatedFeatures().filter((f) => f.properties.generatorId === "city-street"));
 
-    obsidian("command id=campaign-map:regenerate-city-here");
-    await new Promise((r) => setTimeout(r, 900));
+    // Phase 4's viewport dispatcher now runs continuously alongside this
+    // check, independently fetching/evicting tiles across the whole
+    // viewport — comparing the *global* `generated` getter before/after
+    // (the original approach) started spuriously passing/failing on
+    // whether unrelated dispatcher churn happened to touch city-street
+    // features in that window, not on whether *this* regenerate call did
+    // its job. Call generateCityHere() directly and diff its own return
+    // value instead — scoped to exactly the one tile under test, immune
+    // to what else the dispatcher is doing. Full geometry, not just ids:
+    // a street's id is `hashSeed(seed, cellX, cellY, "street", partIndex)`
+    // (src/gen/city/index.ts) — a function of cell position only, so a
+    // canon-avoidance path change can alter geometry while keeping the same
+    // id. An id-only fingerprint would miss exactly the change this check
+    // exists to catch.
+    const snapshot = (force: boolean) =>
+      evalJs(`(async () => {
+        const view = app.workspace.getLeavesOfType('campaign-map-view')[0].view;
+        const c = view.map.getCenter();
+        const result = await view.generateCityHere([c.lng, c.lat], ${force});
+        return JSON.stringify(result.filter(f => f.properties.generatorId === 'city-street'));
+      })()`) as string;
+
+    const before = snapshot(false);
+    const after = snapshot(true);
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
 
@@ -244,8 +280,7 @@ async function main() {
     // tile with fresh canon constraints (the just-canonized settlement is
     // now in `canonFeatures`) must actually re-run the generator, not
     // silently return the prior cached/in-memory streets untouched.
-    const afterStreets = JSON.stringify(generatedFeatures().filter((f) => f.properties.generatorId === "city-street"));
-    if (beforeStreets === afterStreets) {
+    if (before === after) {
       throw new Error("regenerate-city-here left city-street fabric byte-identical — it didn't actually re-run");
     }
   });

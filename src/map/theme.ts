@@ -18,6 +18,7 @@ import type { ThemeTokens } from "./themes/tokens";
 export interface ObsidianCssTokens {
   backgroundPrimary: string;
   backgroundSecondary: string;
+  backgroundModifierBorder: string;
   textMuted: string;
   textNormal: string;
   interactiveAccent: string;
@@ -30,6 +31,7 @@ export function readObsidianCssTokens(root: HTMLElement = document.body): Obsidi
   return {
     backgroundPrimary: read("--background-primary", "#ffffff"),
     backgroundSecondary: read("--background-secondary", "#f2f3f5"),
+    backgroundModifierBorder: read("--background-modifier-border", "#bbbbbb"),
     textMuted: read("--text-muted", "#888888"),
     textNormal: read("--text-normal", "#222222"),
     interactiveAccent: read("--interactive-accent", "#7c3aed"),
@@ -42,8 +44,14 @@ function obsidianTokensAsThemeTokens(tokens: ObsidianCssTokens): ThemeTokens {
     id: "obsidian-native",
     land: tokens.backgroundPrimary,
     water: tokens.backgroundSecondary,
+    // Not `backgroundSecondary` (review/001): that's the same token `water`
+    // uses, so roads and water bodies rendered as literally the same color
+    // — near-invisible against `backgroundPrimary` on the stock dark theme.
+    // `--background-modifier-border` is Obsidian's own "visible divider
+    // against either background" variable, which is exactly the contrast
+    // roads need.
     roadMajor: tokens.textMuted,
-    roadMinor: tokens.backgroundSecondary,
+    roadMinor: tokens.backgroundModifierBorder,
     labelMajor: tokens.textNormal,
     labelMinor: tokens.textMuted,
     accent: tokens.interactiveAccent,

@@ -11,9 +11,17 @@ import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
 import { generateCityStreets, generateDistricts, generateCityBlocks } from "../gen/city";
 import { generateWorldRegions, generateSettlements, generateRoutes } from "../gen/world";
-import { tileXYForPoint } from "../gen/cache/tileGrid";
+import { tileXYForPoint, bandForZoom, generatorIdsForBand, GENERATION_TILE_SIZE, type ZoomBand } from "../gen/cache/tileGrid";
 import type { BBox } from "../gen/spatialHash";
-import { generateTile, regenerateTile, canonizeFeature, type GenerationContext } from "../map/generation/generationService";
+import {
+  generateTile,
+  regenerateTile,
+  canonizeFeature,
+  type GenerationContext,
+  type TileGenerator,
+} from "../map/generation/generationService";
+import type { GeneratorId } from "../gen/worker/generationWorker";
+import type { GenerationWorkerClient } from "../map/generation/workerClient";
 import { QuickAddModal } from "./QuickAddModal";
 import { LocationSearchModal } from "./LocationSearchModal";
 import { ThemeSwitcherModal } from "./ThemeSwitcherModal";
@@ -100,7 +108,45 @@ export class MapView extends ItemView {
   private placeCardPopup: maplibregl.Popup | null = null;
   private hoverPopup: maplibregl.Popup | null = null;
   private scaleControl: maplibregl.ScaleControl | null = null;
-  private generatedFeatures: GeoJSON.Feature[] = [];
+  /** Guards the "load" handler's fallback `applyCampaign()` call (below) —
+   * see onOpen() for why it's a fallback, not the primary path. */
+  private campaignAppliedOnce = false;
+  private loadingIndicatorEl!: HTMLDivElement;
+
+  /**
+   * Viewport-windowed tile store (Phase 4: "zoom-band dispatcher over
+   * `.mapcache/` chunks"), keyed `${band}:${tileX}:${tileY}` — generation-
+   * space (meters), same as `.mapcache/` itself. This replaced a flat
+   * merge-by-id array that only ever grew: `source.setData()` re-parses the
+   * *entire* FeatureCollection on every merge, so an unbounded array makes
+   * every subsequent tile slower to render as a pan accumulates history,
+   * directly undermining the perf gate. Eviction (tiles outside viewport+
+   * margin get dropped on every dispatch) keeps render cost bounded by
+   * what's on screen, not by how far the GM has panned this session —
+   * cheap to re-fetch on revisit since `.mapcache/` still has it cached.
+   */
+  private loadedTiles = new Map<string, GeoJSON.Feature[]>();
+  /** Tile keys with a generation request in flight — dedup key, not
+   * `requestId`, so re-crossing a tile mid-pan doesn't re-dispatch it. */
+  private pendingTiles = new Set<string>();
+  /** Recomputed on every dispatch; a `loadTile()` in flight checks this on
+   * resolution and discards its result if the tile panned out of view
+   * while it was generating, instead of resurrecting a stale eviction. */
+  private wantedTiles = new Set<string>();
+  private dispatchTimer: number | null = null;
+  /** Which band the dispatcher last computed, so a genuine zoom-band
+   * transition (not just "band unchanged") is what triggers wiping the
+   * other tier's tiles — see dispatchViewportTiles() for why this matters. */
+  private lastDispatchedBand: ZoomBand | null = null;
+
+  private readonly directGenerators: Record<string, TileGenerator> = {
+    "city-street": generateCityStreets,
+    "city-district": generateDistricts,
+    "city-block": generateCityBlocks,
+    "world-region": generateWorldRegions,
+    "world-settlement": generateSettlements,
+    "world-route": generateRoutes,
+  };
 
   constructor(leaf: WorkspaceLeaf, plugin: CampaignMapPlugin) {
     super(leaf);
@@ -137,7 +183,11 @@ export class MapView extends ItemView {
     const themeChanged =
       this.campaign?.config.theme !== campaign.config.theme ||
       this.campaign?.config.basemap !== campaign.config.basemap;
-    if (this.campaign && this.campaign.id !== campaign.id) this.generatedFeatures = [];
+    if (this.campaign && this.campaign.id !== campaign.id) {
+      this.loadedTiles.clear();
+      this.pendingTiles.clear();
+      this.wantedTiles.clear();
+    }
     this.campaign = campaign;
     this.refreshHeaderTitle();
     if (this.map && (isFirstApply || themeChanged)) {
@@ -148,6 +198,7 @@ export class MapView extends ItemView {
       });
     }
     if (this.map) this.applyCampaign();
+    this.scheduleDispatch();
   }
 
   switchTheme(): void {
@@ -198,6 +249,9 @@ export class MapView extends ItemView {
     this.scaleBarEl = container.createDiv({ cls: "campaign-map-scale-bar" });
     this.warningBadgeEl = container.createDiv({ cls: "campaign-map-warning-badge" });
     this.warningBadgeEl.style.display = "none";
+    this.loadingIndicatorEl = container.createDiv({ cls: "campaign-map-loading-indicator" });
+    this.loadingIndicatorEl.setText("Generating…");
+    this.loadingIndicatorEl.style.display = "none";
 
     this.map = new maplibregl.Map({
       container: this.mapContainer,
@@ -212,12 +266,26 @@ export class MapView extends ItemView {
     });
 
     this.map.on("load", () => {
-      if (this.campaign) this.applyCampaign();
+      // Fallback only, for the one case setCampaign()'s own synchronous
+      // applyCampaign() call can't cover: a campaign already set on this
+      // view *before* the map existed (this.map was null, so that call
+      // no-opped). In the ordinary case setCampaign() has already fit the
+      // bounds by the time "load" fires — MapLibre's camera methods take
+      // effect immediately, pre-load, they just don't paint until the style
+      // is ready — so re-applying here would silently stomp any camera
+      // move made in between (e.g. a caller jumping to a specific tile
+      // right after opening), which is exactly what broke Phase 4's
+      // viewport dispatcher: a live "load" firing after an explicit jumpTo
+      // reset the camera mid-flight, discarding whatever the dispatcher had
+      // already started fetching for the jumped-to viewport.
+      if (this.campaign && !this.campaignAppliedOnce) this.applyCampaign();
       this.refreshSource();
       this.updateScaleBar();
     });
     this.map.on("move", () => this.updateScaleBar());
     this.map.on("zoom", () => this.updateScaleBar());
+    this.map.on("moveend", () => this.scheduleDispatch());
+    this.map.on("zoomend", () => this.scheduleDispatch());
     this.map.on("click", (e) => this.handleClick(e));
     this.map.on("contextmenu", (e) => this.handleContextMenu(e));
     this.map.on("mouseenter", "canon-point", (e) => this.handleHoverEnter(e));
@@ -231,6 +299,7 @@ export class MapView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    if (this.dispatchTimer !== null) window.clearTimeout(this.dispatchTimer);
     this.map?.remove();
     this.map = null;
   }
@@ -301,14 +370,13 @@ export class MapView extends ItemView {
     return { app: this.app, campaign: this.campaign!, worldBounds, canonFeatures };
   }
 
-  /** `this.generatedFeatures` stays in generation-space (meters) — the same
-   * space the cache keys tiles in — and is only converted to the campaign's
-   * display units when handed to MapLibre. */
-  private mergeGeneratedFeatures(newFeatures: GeoJSON.Feature[]): void {
-    const byId = new Map(this.generatedFeatures.map((f) => [f.id, f]));
-    for (const f of newFeatures) byId.set(f.id, f);
-    this.generatedFeatures = [...byId.values()];
-    this.refreshGeneratedSource();
+  private tileKeyFor(band: ZoomBand, tileX: number, tileY: number): string {
+    return `${band}:${tileX}:${tileY}`;
+  }
+
+  /** All currently-loaded tiles' features, flattened — generation-space (meters). */
+  private allLoadedFeatures(): GeoJSON.Feature[] {
+    return [...this.loadedTiles.values()].flat();
   }
 
   private refreshGeneratedSource(): void {
@@ -316,15 +384,26 @@ export class MapView extends ItemView {
     const source = this.map.getSource("generated") as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
     const scale = this.campaign.config.scaleMetersPerUnit;
-    const display = this.generatedFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+    const display = this.allLoadedFeatures().map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
     source.setData({ type: "FeatureCollection", features: display });
+  }
+
+  private updateLoadingIndicator(): void {
+    this.loadingIndicatorEl.style.display = this.pendingTiles.size > 0 ? "" : "none";
+  }
+
+  /** Test/perf-gate surface: how many viewport-window tile entries are
+   * currently held (bounded by eviction, not by how far the GM has panned). */
+  get loadedTileCount(): number {
+    return this.loadedTiles.size;
   }
 
   /** Display-space (fictional units) — matches what's actually rendered/queryable on the map. */
   get generated(): GeoJSON.Feature[] {
-    if (!this.campaign) return this.generatedFeatures;
+    const all = this.allLoadedFeatures();
+    if (!this.campaign) return all;
     const scale = this.campaign.config.scaleMetersPerUnit;
-    return this.generatedFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+    return all.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
 
   private mapCenterUnits(): [number, number] {
@@ -332,8 +411,138 @@ export class MapView extends ItemView {
     return [lng, lat];
   }
 
+  /** Debounced entry point for the viewport dispatcher — coalesces the
+   * flurry of moveend/zoomend/setCampaign calls a single pan or campaign
+   * switch can produce into one dispatch pass. */
+  private scheduleDispatch(): void {
+    if (this.dispatchTimer !== null) window.clearTimeout(this.dispatchTimer);
+    this.dispatchTimer = window.setTimeout(() => {
+      this.dispatchTimer = null;
+      void this.dispatchViewportTiles();
+    }, 200);
+  }
+
+  /**
+   * Phase 4 core: for the current viewport + zoom, generate whichever tier
+   * (world or city, per `bandForZoom`) is active, fetch any tile touching
+   * viewport+margin that isn't already loaded or in flight, and evict
+   * tiles that fell outside that window.
+   *
+   * Eviction is scoped to the *current* band's own tile-key prefix, not
+   * the whole store: a manual `generate-city-here`/`generate-world-here`
+   * call (docs/03 3b/3c) can legitimately add a tile from the *other* tier
+   * at a zoom the automatic dispatcher would never have picked — e.g. the
+   * GM forces city fabric while still zoomed out at world scale. If a
+   * same-band-only sweep also nuked cross-band keys, the very next
+   * automatic dispatch pass (200ms later, on the same unchanged zoom)
+   * would erase what the GM just asked for. A genuine zoom-band
+   * *transition* still needs to clear the outgoing tier wholesale (that's
+   * the "world tiles disappear when you zoom into city fabric" contract),
+   * so that's handled separately, keyed on the band actually changing —
+   * not on "some key isn't in this pass's wanted set."
+   */
+  private async dispatchViewportTiles(): Promise<void> {
+    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return;
+    const band = bandForZoom(this.map.getZoom());
+    const generatorIds = generatorIdsForBand(band);
+    const scale = this.campaign.config.scaleMetersPerUnit;
+
+    let evicted = false;
+    if (this.lastDispatchedBand !== null && this.lastDispatchedBand !== band) {
+      evicted = this.loadedTiles.size > 0;
+      this.loadedTiles.clear();
+    }
+    this.lastDispatchedBand = band;
+
+    const bounds = this.map.getBounds();
+    const viewportUnits: BBox = {
+      minX: bounds.getWest(),
+      minY: bounds.getSouth(),
+      maxX: bounds.getEast(),
+      maxY: bounds.getNorth(),
+    };
+    const viewportMeters = bboxUnitsToMeters(viewportUnits, scale);
+    // Capped, not proportional to viewport size: at low (world-tier) zoom the
+    // viewport can span dozens of 600m tiles, and an uncapped margin turned a
+    // single moveend into 16+ concurrent tile fetches (48+ simultaneous
+    // generator calls) — a real perf/concurrency problem, not just a test
+    // flakiness one, since it's the same "bound the work per dispatch" issue
+    // advisor flagged for the tile *store*, just showing up in the fetch
+    // burst instead of the eviction side.
+    const margin = Math.min(
+      Math.max(viewportMeters.maxX - viewportMeters.minX, viewportMeters.maxY - viewportMeters.minY) * 0.5,
+      GENERATION_TILE_SIZE * 2
+    );
+    const padded: BBox = {
+      minX: viewportMeters.minX - margin,
+      minY: viewportMeters.minY - margin,
+      maxX: viewportMeters.maxX + margin,
+      maxY: viewportMeters.maxY + margin,
+    };
+    const { tileX: minTX, tileY: minTY } = tileXYForPoint(padded.minX, padded.minY);
+    const { tileX: maxTX, tileY: maxTY } = tileXYForPoint(padded.maxX, padded.maxY);
+
+    const wanted = new Set<string>();
+    for (let tx = minTX; tx <= maxTX; tx++) {
+      for (let ty = minTY; ty <= maxTY; ty++) {
+        wanted.add(this.tileKeyFor(band, tx, ty));
+      }
+    }
+    this.wantedTiles = wanted;
+
+    const bandPrefix = `${band}:`;
+    for (const key of this.loadedTiles.keys()) {
+      if (key.startsWith(bandPrefix) && !wanted.has(key)) {
+        this.loadedTiles.delete(key);
+        evicted = true;
+      }
+    }
+    if (evicted) this.refreshGeneratedSource();
+
+    const ctx = this.generationContext();
+    const worker = await this.plugin.getGenerationWorker();
+    for (const key of wanted) {
+      if (this.loadedTiles.has(key) || this.pendingTiles.has(key)) continue;
+      const [, txStr, tyStr] = key.split(":");
+      this.pendingTiles.add(key);
+      this.updateLoadingIndicator();
+      void this.loadTile(ctx, worker, key, Number(txStr), Number(tyStr), generatorIds).finally(() => {
+        this.pendingTiles.delete(key);
+        this.updateLoadingIndicator();
+      });
+    }
+  }
+
+  private async loadTile(
+    ctx: GenerationContext,
+    worker: GenerationWorkerClient | null,
+    key: string,
+    tileX: number,
+    tileY: number,
+    generatorIds: readonly string[]
+  ): Promise<void> {
+    const results = await Promise.all(
+      generatorIds.map((id) => {
+        const compute: TileGenerator = worker
+          ? (seed, bbox, constraints) => worker.generate(id as GeneratorId, seed, bbox, constraints)
+          : this.directGenerators[id];
+        return generateTile(ctx, tileX, tileY, id, compute);
+      })
+    );
+    // Panned away while this was in flight — the tile's no longer wanted;
+    // storing it now would resurrect something dispatchViewportTiles already evicted.
+    if (!this.wantedTiles.has(key)) return;
+    const features = results.flat().filter((f) => featureTouchesBBox(f, ctx.worldBounds));
+    this.loadedTiles.set(key, features);
+    this.refreshGeneratedSource();
+  }
+
   /** "Generate city fabric here" (docs/03 3b/3d) — streets/districts/blocks
    * for the tile at `point` (display-space; defaults to the map center).
+   * Manual trigger sharing the same tile store as the viewport dispatcher —
+   * a manually-forced tile is subject to the same eviction on the next
+   * dispatch pass, which is correct: revisiting re-fetches from `.mapcache/`
+   * identically (determinism), it's just not pinned in memory forever.
    * Procedural generation targets fictional worlds — real-city campaigns
    * already have their fabric from the Protomaps basemap (Phase 2). */
   async generateCityHere(point?: [number, number], force = false): Promise<GeoJSON.Feature[]> {
@@ -350,7 +559,8 @@ export class MapView extends ItemView {
       run(ctx, tileX, tileY, "city-block", generateCityBlocks),
     ]);
     const newFeatures = [...streets, ...districts, ...blocks].filter((f) => featureTouchesBBox(f, ctx.worldBounds));
-    this.mergeGeneratedFeatures(newFeatures);
+    this.loadedTiles.set(this.tileKeyFor("city", tileX, tileY), newFeatures);
+    this.refreshGeneratedSource();
     return newFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
 
@@ -369,7 +579,8 @@ export class MapView extends ItemView {
       run(ctx, tileX, tileY, "world-route", generateRoutes),
     ]);
     const newFeatures = [...regions, ...settlements, ...routes].filter((f) => featureTouchesBBox(f, ctx.worldBounds));
-    this.mergeGeneratedFeatures(newFeatures);
+    this.loadedTiles.set(this.tileKeyFor("world", tileX, tileY), newFeatures);
+    this.refreshGeneratedSource();
     return newFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
 
@@ -385,29 +596,42 @@ export class MapView extends ItemView {
 
     let best: GeoJSON.Feature | null = null;
     let bestDist = Infinity;
-    for (const f of this.generatedFeatures) {
-      if (f.geometry.type !== "Point") continue;
-      const [fx, fy] = f.geometry.coordinates as [number, number];
-      const d = Math.hypot(fx - atMeters[0], fy - atMeters[1]);
-      if (d < bestDist) {
-        bestDist = d;
-        best = f;
+    let bestTileKey: string | null = null;
+    for (const [key, features] of this.loadedTiles) {
+      for (const f of features) {
+        if (f.geometry.type !== "Point") continue;
+        const [fx, fy] = f.geometry.coordinates as [number, number];
+        const d = Math.hypot(fx - atMeters[0], fy - atMeters[1]);
+        if (d < bestDist) {
+          bestDist = d;
+          best = f;
+          bestTileKey = key;
+        }
       }
     }
-    if (!best || bestDist > maxDistanceMeters) return false;
+    if (!best || !bestTileKey || bestDist > maxDistanceMeters) return false;
 
     const props = (best.properties ?? {}) as Record<string, unknown>;
     const name = String(props.name ?? "Unnamed");
     const type = String(props.type ?? "custom");
     const noteFeature = transformFeatureUnits(best, (n) => metersToUnits(n, scale));
     await canonizeFeature(this.generationContext(), this.plugin, best, name, type, noteFeature);
-    this.generatedFeatures = this.generatedFeatures.filter((f) => f.id !== best!.id);
-    this.refreshGeneratedSource();
+    // The dispatcher's debounced eviction can fire during the vault I/O
+    // canonizeFeature() just awaited — the tile may already be gone (panned
+    // out of view mid-canonize). That's fine: canonizeFeature() already
+    // stripped the feature from the on-disk cache either way, so there's
+    // nothing left to reconcile in memory.
+    const stillLoaded = this.loadedTiles.get(bestTileKey);
+    if (stillLoaded) {
+      this.loadedTiles.set(bestTileKey, stillLoaded.filter((f) => f.id !== best!.id));
+      this.refreshGeneratedSource();
+    }
     return true;
   }
 
   private applyCampaign(): void {
     if (!this.map || !this.campaign) return;
+    this.campaignAppliedOnce = true;
     const { config } = this.campaign;
 
     if (config.crs === "fictional") {

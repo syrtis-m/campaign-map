@@ -47,6 +47,7 @@ export default class CampaignMapPlugin extends Plugin {
   private rescanQueued = false;
   private workerClient: GenerationWorkerClient | null = null;
   private workerLastResultValue: GeoJSON.Feature[] | null = null;
+  private lastRescanMs = 0;
 
   // Test API surface (docs/05): app.plugins.plugins['campaign-map']
   get map(): MapView["map"] {
@@ -70,6 +71,32 @@ export default class CampaignMapPlugin extends Plugin {
   // Web Worker smoke-test surface (docs/02 §5) — see DECISIONS.md for scope.
   get workerLastResult(): GeoJSON.Feature[] | null {
     return this.workerLastResultValue;
+  }
+  // Perf gate surface (docs/06 §2: "index rebuild time <1s for 500-note
+  // campaigns") — wall-clock ms of the most recent rescanAll() pass.
+  get rescanTimeMs(): number {
+    return this.lastRescanMs;
+  }
+  // Phase 4 dispatcher surface: how many tile-store entries the active
+  // view currently holds (viewport-windowed, not ever-growing — see MapView).
+  get loadedTileCount(): number {
+    return this.activeMapView()?.loadedTileCount ?? 0;
+  }
+
+  /** Lazily created, shared across the session; the Phase 4 viewport
+   * dispatcher (MapView) and the smoke-test command both go through this
+   * so there's exactly one worker instance. Returns null (rather than
+   * throwing) on creation failure so callers can fall back to direct
+   * main-thread generation instead of breaking the map. */
+  async getGenerationWorker(): Promise<GenerationWorkerClient | null> {
+    if (this.workerClient) return this.workerClient;
+    try {
+      this.workerClient = await GenerationWorkerClient.create(this.app);
+      return this.workerClient;
+    } catch (err) {
+      console.error("Campaign Map: generation worker unavailable, falling back to main-thread generation", err);
+      return null;
+    }
   }
 
   private activeMapView(): MapView | null {
@@ -179,8 +206,9 @@ export default class CampaignMapPlugin extends Plugin {
       name: "Test generation worker (smoke test)",
       callback: async () => {
         try {
-          if (!this.workerClient) this.workerClient = await GenerationWorkerClient.create(this.app);
-          const features = await this.workerClient.generate(
+          const worker = await this.getGenerationWorker();
+          if (!worker) throw new Error("worker unavailable");
+          const features = await worker.generate(
             "city-street",
             4181,
             { minX: 0, minY: 0, maxX: 600, maxY: 600 },
@@ -273,8 +301,10 @@ export default class CampaignMapPlugin extends Plugin {
   }
 
   private rescanAll(): void {
+    const start = performance.now();
     this.rescanCampaigns();
     this.rescanLocations();
+    this.lastRescanMs = performance.now() - start;
   }
 
   private rescanCampaigns(): void {
