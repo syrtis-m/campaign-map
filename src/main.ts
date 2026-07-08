@@ -8,6 +8,7 @@ import {
 } from "./model/locationNote";
 import { LocationIndex } from "./map/locationIndex";
 import { createLocationNote, createLocationNoteFromFeature, moveLocationNote } from "./vault/locationOps";
+import { GenerationWorkerClient } from "./map/generation/workerClient";
 import { readLog, campaignFolderFromConfigPath, type LogEntry } from "./model/mutationLog";
 
 const MAP_CONFIG_SUFFIX = ".map.md";
@@ -44,6 +45,8 @@ export default class CampaignMapPlugin extends Plugin {
   private registeredCommandIds = new Set<string>();
   private campaignStates = new Map<string, CampaignState>();
   private rescanQueued = false;
+  private workerClient: GenerationWorkerClient | null = null;
+  private workerLastResultValue: GeoJSON.Feature[] | null = null;
 
   // Test API surface (docs/05): app.plugins.plugins['campaign-map']
   get map(): MapView["map"] {
@@ -63,6 +66,10 @@ export default class CampaignMapPlugin extends Plugin {
   }
   get generated(): GeoJSON.Feature[] {
     return this.activeMapView()?.generated ?? [];
+  }
+  // Web Worker smoke-test surface (docs/02 §5) — see DECISIONS.md for scope.
+  get workerLastResult(): GeoJSON.Feature[] | null {
+    return this.workerLastResultValue;
   }
 
   private activeMapView(): MapView | null {
@@ -167,6 +174,27 @@ export default class CampaignMapPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "test-generation-worker",
+      name: "Test generation worker (smoke test)",
+      callback: async () => {
+        try {
+          if (!this.workerClient) this.workerClient = await GenerationWorkerClient.create(this.app);
+          const features = await this.workerClient.generate(
+            "city-street",
+            4181,
+            { minX: 0, minY: 0, maxX: 600, maxY: 600 },
+            { worldBounds: { minX: -2000, minY: -2000, maxX: 2000, maxY: 2000 } }
+          );
+          this.workerLastResultValue = features;
+          new Notice(`Campaign Map: worker generated ${features.length} features`);
+        } catch (err) {
+          this.workerLastResultValue = null;
+          new Notice(`Campaign Map: worker failed — ${err instanceof Error ? err.message : String(err)}`, 8000);
+        }
+      },
+    });
+
     this.app.workspace.onLayoutReady(() => this.rescanAll());
 
     this.registerEvent(this.app.vault.on("create", (f) => this.onVaultChange(f)));
@@ -177,7 +205,7 @@ export default class CampaignMapPlugin extends Plugin {
   }
 
   onunload(): void {
-    // Views are torn down by Obsidian; nothing else to release.
+    this.workerClient?.terminate();
   }
 
   getCampaign(id: string): ParsedCampaign | undefined {

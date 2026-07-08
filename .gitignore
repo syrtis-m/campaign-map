@@ -8,6 +8,8 @@ dev-vault/.obsidian/workspace.json
 dev-vault/.obsidian/workspace-mobile.json
 dev-vault/.obsidian/plugins/campaign-map/main.js
 dev-vault/.obsidian/plugins/campaign-map/main.js.map
+dev-vault/.obsidian/plugins/campaign-map/generation-worker.js
+dev-vault/.obsidian/plugins/campaign-map/generation-worker.js.map
 dev-vault/**/.mapcache/
 dev-vault/**/*.pmtiles
 *.log

@@ -70,9 +70,26 @@ const ctx = await esbuild.context({
   minify: prod,
 });
 
+// Generation Web Worker (docs/02 §5): a fully separate bundle, since it runs
+// in a real Worker context with no Node/Electron integration — no `external`
+// list needed, src/gen/ has zero Obsidian/DOM imports by design.
+const workerCtx = await esbuild.context({
+  entryPoints: ["src/gen/worker/generationWorker.ts"],
+  bundle: true,
+  format: "iife",
+  target: "es2020",
+  logLevel: "info",
+  sourcemap: prod ? false : "inline",
+  treeShaking: true,
+  outfile: path.join(outDir, "generation-worker.js"),
+  minify: prod,
+});
+
 if (prod) {
   await ctx.rebuild();
+  await workerCtx.rebuild();
   process.exit(0);
 } else {
   await ctx.watch();
+  await workerCtx.watch();
 }
