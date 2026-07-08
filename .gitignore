@@ -10,8 +10,6 @@ dev-vault/.obsidian/plugins/campaign-map/main.js
 dev-vault/.obsidian/plugins/campaign-map/main.js.map
 dev-vault/**/.mapcache/
 dev-vault/**/*.pmtiles
-shots/*.png
-!shots/.gitkeep
 *.log
 .env
 assets/fonts/*.ttf

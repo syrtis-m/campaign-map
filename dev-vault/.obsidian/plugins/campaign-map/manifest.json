@@ -1,0 +1,10 @@
+{
+	"id": "campaign-map",
+	"name": "Campaign Map",
+	"version": "0.0.1",
+	"minAppVersion": "1.12.7",
+	"description": "Google-Maps-style map tab for tabletop campaigns — fantasy, real-city, and stylized worlds, generated and canonized as vault notes.",
+	"author": "Jonah",
+	"authorUrl": "",
+	"isDesktopOnly": true
+}

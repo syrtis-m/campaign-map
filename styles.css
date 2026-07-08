@@ -1,0 +1,29 @@
+.campaign-map-view {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+
+.campaign-map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.campaign-map-scale-bar {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  height: 4px;
+  border: 1px solid var(--text-normal, #333);
+  border-top: none;
+  padding-top: 2px;
+  font-size: 11px;
+  color: var(--text-normal, #333);
+  background: transparent;
+  text-align: center;
+  z-index: 5;
+  font-family: var(--font-text, sans-serif);
+  line-height: 1.6;
+}

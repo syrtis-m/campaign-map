@@ -1,0 +1,32 @@
+{
+  "name": "campaign-map",
+  "version": "0.0.1",
+  "description": "Google-Maps-style map tab for tabletop campaigns — Obsidian plugin",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node esbuild.config.mjs watch",
+    "build": "tsc --noEmit && node esbuild.config.mjs production",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:app": "tsx scripts/test-app.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "builtin-modules": "^4.0.0",
+    "esbuild": "^0.24.0",
+    "obsidian": "^1.7.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "dependencies": {
+    "d3-delaunay": "^6.0.4",
+    "flatbush": "^4.4.0",
+    "maplibre-gl": "^4.7.1",
+    "minisearch": "^7.1.0",
+    "pmtiles": "^3.2.0",
+    "zod": "^3.24.0"
+  }
+}
