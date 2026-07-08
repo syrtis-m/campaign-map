@@ -60,6 +60,31 @@ function transformFeatureUnits(feature: GeoJSON.Feature, fn: (n: number) => numb
   };
 }
 
+/**
+ * `GENERATION_TILE_SIZE` is anchored at the generation-space world origin
+ * with a fixed size, not to the campaign's own bounds — so a tile can
+ * legitimately extend past a small campaign's edges (docs/06 §3 tuning
+ * ranges are sized in meters, campaigns can be much smaller than one tile).
+ * Filter emitted features to those actually touching `worldBounds` so
+ * generated fabric doesn't visibly spill beyond the campaign's own box.
+ */
+function featureTouchesBBox(feature: GeoJSON.Feature, bbox: BBox): boolean {
+  let touches = false;
+  const check = (coords: unknown): void => {
+    if (touches) return;
+    if (typeof coords === "number") return;
+    if (!Array.isArray(coords)) return;
+    if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+      const [x, y] = coords as [number, number];
+      if (x >= bbox.minX && x <= bbox.maxX && y >= bbox.minY && y <= bbox.maxY) touches = true;
+      return;
+    }
+    for (const c of coords) check(c);
+  };
+  check((feature.geometry as unknown as { coordinates: unknown }).coordinates);
+  return touches;
+}
+
 interface MapViewState extends Record<string, unknown> {
   campaignId?: string;
 }
@@ -324,7 +349,7 @@ export class MapView extends ItemView {
       run(ctx, tileX, tileY, "city-district", generateDistricts),
       run(ctx, tileX, tileY, "city-block", generateCityBlocks),
     ]);
-    const newFeatures = [...streets, ...districts, ...blocks];
+    const newFeatures = [...streets, ...districts, ...blocks].filter((f) => featureTouchesBBox(f, ctx.worldBounds));
     this.mergeGeneratedFeatures(newFeatures);
     return newFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
@@ -343,7 +368,7 @@ export class MapView extends ItemView {
       run(ctx, tileX, tileY, "world-settlement", generateSettlements),
       run(ctx, tileX, tileY, "world-route", generateRoutes),
     ]);
-    const newFeatures = [...regions, ...settlements, ...routes];
+    const newFeatures = [...regions, ...settlements, ...routes].filter((f) => featureTouchesBBox(f, ctx.worldBounds));
     this.mergeGeneratedFeatures(newFeatures);
     return newFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }

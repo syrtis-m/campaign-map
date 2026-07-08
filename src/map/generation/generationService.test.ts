@@ -3,6 +3,7 @@ import type { App } from "obsidian";
 import { canonizeFeature, generateTile, regenerateTile, type GenerationContext, type LocationCreator } from "./generationService";
 import { generateCityStreets } from "../../gen/city";
 import { generateSettlements } from "../../gen/world";
+import { createLocationNoteFromFeature } from "../../vault/locationOps";
 import type { ParsedCampaign } from "../../model/campaignConfig";
 import type { BBox } from "../../gen/spatialHash";
 
@@ -26,7 +27,17 @@ function fakeApp(): { app: App; files: Map<string, string> } {
       files.delete(path);
     }),
   };
-  const app = { vault: { adapter } } as unknown as App;
+  const vault = {
+    adapter,
+    createFolder: vi.fn(async (path: string) => {
+      dirs.add(path);
+    }),
+    create: vi.fn(async (path: string, data: string) => {
+      files.set(path, data);
+      return { path } as unknown;
+    }),
+  };
+  const app = { vault } as unknown as App;
   return { app, files };
 }
 
@@ -116,5 +127,33 @@ describe("canonizeFeature", () => {
     const after = await generateTile(ctx, 0, 0, "world-settlement", generateSettlements);
     expect(after.find((f) => f.id === target.id)).toBeUndefined();
     expect(after.length).toBe(settlements.length - 1);
+  });
+
+  it("canonizes a LineString (street) via a sidecar .geojson — not yet reachable from the UI (canonizeGeneratedNear only offers Points, since there's no canon-line render layer yet; see DECISIONS.md), but the mechanism the roadmap's 'canonize a street' exit test names is real and tested here", async () => {
+    const { app, files } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const streets = await generateTile(ctx, 0, 0, "city-street", generateCityStreets);
+    expect(streets.length).toBeGreaterThan(0);
+    const street = streets[0];
+    expect(street.geometry.type).toBe("LineString");
+
+    const locations: LocationCreator = {
+      createLocationFromFeature: (campaignId, feature, name, type) =>
+        createLocationNoteFromFeature(app, ctx.campaign, feature, name, type).then(() => undefined),
+    };
+
+    await canonizeFeature(ctx, locations, street, "Test Street", "street(named)");
+
+    const notePath = "Campaigns/Ashfall/Locations/Test Street.md";
+    const sidecarPath = "Campaigns/Ashfall/Locations/Test Street.geojson";
+    expect(files.has(notePath)).toBe(true);
+    expect(files.get(notePath)).toContain(`geometry: "${sidecarPath}"`);
+    expect(files.has(sidecarPath)).toBe(true);
+    const sidecar = JSON.parse(files.get(sidecarPath)!) as GeoJSON.Feature;
+    expect(sidecar.geometry).toEqual(street.geometry);
+
+    // Stripped from its cached tile like any other canonized feature.
+    const after = await generateTile(ctx, 0, 0, "city-street", generateCityStreets);
+    expect(after.find((f) => f.id === street.id)).toBeUndefined();
   });
 });

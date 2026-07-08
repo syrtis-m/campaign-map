@@ -35,6 +35,20 @@ function countsByGenerator(features: GeneratedFeature[]): Record<string, number>
   return c;
 }
 
+/**
+ * `obsidian-native` rebuilds its MapLibre style on Obsidian's `css-change`
+ * event (Phase 1), which can fire from CLI automation independently of our
+ * own commands — `map.getStyle()`/`queryRenderedFeatures()` can transiently
+ * see a torn-down style (`isStyleLoaded() === false`) mid-rebuild. Poll
+ * instead of a fixed wait before anything that reads style/render state.
+ */
+async function waitForStyleLoaded(maxAttempts = 15): Promise<void> {
+  for (let i = 0; i < maxAttempts; i++) {
+    if (evalJs("app.plugins.plugins['campaign-map'].map.isStyleLoaded()") === true) return;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
 async function main() {
   const gate = new Gate();
   console.log("== Phase 3 gate ==\n");
@@ -90,12 +104,23 @@ async function main() {
     // zoom 6, not fitBounds' auto-computed ~4.7: Ashfall City's zoomMin is 5
     // (docs/06 §3 type taxonomy) — below that, by design, nothing qualifies
     // to render yet (cartographic zoom-range discipline, not a bug).
+    await waitForStyleLoaded();
     evalJs("app.plugins.plugins['campaign-map'].map.jumpTo({center:[0,0], zoom:6}); 'ok'");
-    await new Promise((r) => setTimeout(r, 600));
-    const canonCount = evalJs(
-      "app.plugins.plugins['campaign-map'].map.queryRenderedFeatures(undefined, {layers:['canon-point']}).length"
-    );
+    // Poll rather than a single fixed wait: queryRenderedFeatures reflects
+    // the last painted frame, and a camera jump needs at least one
+    // requestAnimationFrame tick before it does — a fixed wait occasionally
+    // races that under CLI load.
+    let canonCount = 0;
+    for (let i = 0; i < 10; i++) {
+      await waitForStyleLoaded();
+      await new Promise((r) => setTimeout(r, 300));
+      canonCount = evalJs(
+        "app.plugins.plugins['campaign-map'].map.queryRenderedFeatures(undefined, {layers:['canon-point']}).length"
+      ) as number;
+      if (canonCount > 0) break;
+    }
     if (typeof canonCount !== "number" || canonCount < 1) throw new Error(`canon-point features: ${canonCount}`);
+    await waitForStyleLoaded();
     const genCount = evalJs(
       "app.plugins.plugins['campaign-map'].map.queryRenderedFeatures(undefined, {layers:['generated-street','generated-district']}).length"
     );
@@ -156,7 +181,12 @@ async function main() {
       if (settlement) break;
       evalJs(`app.plugins.plugins['campaign-map'].map.jumpTo({center:[${cx},${cy}], zoom:4}); 'ok'`);
       obsidian("command id=campaign-map:regenerate-world-here"); // force: a prior run may have left a stale/stripped cache entry
-      await new Promise((r) => setTimeout(r, 900));
+      // Poll rather than a fixed wait: the command's async generateWorldHere
+      // isn't awaited by the checkCallback, so a fixed delay can race it.
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 300));
+        if (generatedFeatures().find((f) => f.properties.generatorId === "world-settlement")) break;
+      }
     }
     settlement = settlement ?? generatedFeatures().find((f) => f.properties.generatorId === "world-settlement");
     if (!settlement) throw new Error(`no generated settlement found after sweeping ${candidateCenters.length} tiles`);
@@ -168,7 +198,16 @@ async function main() {
 
     evalJs(`app.plugins.plugins['campaign-map'].map.jumpTo({center:[${x},${y}], zoom:8}); 'ok'`);
     obsidian("command id=campaign-map:canonize-nearest-generated");
-    await new Promise((r) => setTimeout(r, 800));
+
+    // Poll for the index to actually pick up the new note: canonize creates
+    // the file, then the vault-change -> debounced rescanLocations() ->
+    // index-update chain runs asynchronously relative to the command.
+    let afterIndexSize = beforeIndexSize;
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      afterIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
+      if (afterIndexSize > beforeIndexSize) break;
+    }
 
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
@@ -178,7 +217,6 @@ async function main() {
     ).length;
     if (stillGenerated !== 0) throw new Error(`${name} still present in generated fabric after canonizing`);
 
-    const afterIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
     if (afterIndexSize !== beforeIndexSize + 1) {
       throw new Error(`index size ${beforeIndexSize} -> ${afterIndexSize}, expected +1`);
     }
@@ -187,16 +225,28 @@ async function main() {
     if (noteExists !== true) throw new Error(`note not found for ${name}`);
   });
 
-  await gate.try("regenerate-city-here after canonize: canon survives, surroundings regenerate", async () => {
+  await gate.try("regenerate-city-here after canonize: canon survives, fabric actually regenerates", async () => {
     clearErrors();
     const beforeIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
+    const beforeStreets = JSON.stringify(generatedFeatures().filter((f) => f.properties.generatorId === "city-street"));
+
     obsidian("command id=campaign-map:regenerate-city-here");
     await new Promise((r) => setTimeout(r, 900));
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
+
     const afterIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
     if (afterIndexSize !== beforeIndexSize) {
       throw new Error(`regenerate touched canon: index ${beforeIndexSize} -> ${afterIndexSize}`);
+    }
+
+    // "Surroundings adapt" isn't just a claim: force-regenerating the same
+    // tile with fresh canon constraints (the just-canonized settlement is
+    // now in `canonFeatures`) must actually re-run the generator, not
+    // silently return the prior cached/in-memory streets untouched.
+    const afterStreets = JSON.stringify(generatedFeatures().filter((f) => f.properties.generatorId === "city-street"));
+    if (beforeStreets === afterStreets) {
+      throw new Error("regenerate-city-here left city-street fabric byte-identical — it didn't actually re-run");
     }
   });
 
