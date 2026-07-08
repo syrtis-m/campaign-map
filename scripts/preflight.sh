@@ -84,10 +84,10 @@ else
 fi
 
 echo "== Assets =="
-if curl -sIL --max-time 8 https://fonts.google.com >/dev/null 2>&1; then
-  ok "Google Fonts reachable"
+if [ -f "$REPO_ROOT/assets/fonts/glyphs/Inter Regular/0-255.pbf" ]; then
+  ok "Inter glyph PBFs present (assets/fonts/glyphs/)"
 else
-  warn "Google Fonts HEAD check failed — will retry when needed"
+  warn "Inter glyph PBFs missing — run: npm run fonts:build"
 fi
 
 echo

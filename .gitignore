@@ -12,5 +12,6 @@ dev-vault/**/.mapcache/
 dev-vault/**/*.pmtiles
 *.log
 .env
-assets/fonts/*.ttf
-assets/fonts/*.otf
+assets/fonts/src/
+assets/fonts/glyphs/
+dev-vault/.obsidian/plugins/campaign-map/assets/

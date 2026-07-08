@@ -8,6 +8,8 @@
     "dev": "node esbuild.config.mjs watch",
     "build": "tsc --noEmit && node esbuild.config.mjs production",
     "typecheck": "tsc --noEmit",
+    "fonts:fetch": "scripts/fetch-fonts.sh",
+    "fonts:build": "npm run fonts:fetch && node scripts/build-glyphs.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:app": "tsx scripts/test-app.ts"
@@ -16,6 +18,7 @@
     "@types/node": "^22.10.0",
     "builtin-modules": "^4.0.0",
     "esbuild": "^0.24.0",
+    "fontnik": "^0.7.7",
     "obsidian": "^1.7.2",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

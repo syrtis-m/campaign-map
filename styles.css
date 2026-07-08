@@ -27,3 +27,150 @@
   font-family: var(--font-text, sans-serif);
   line-height: 1.6;
 }
+
+/* Obsidian-native popup chrome: MapLibre's Popup ships a white card by default,
+   which clashes with dark Obsidian themes — repaint it from theme variables so
+   place cards/tooltips read as part of the app, not an embedded web widget. */
+.maplibregl-popup-content {
+  background: var(--background-primary);
+  color: var(--text-normal);
+  box-shadow: var(--shadow-l, 0 2px 8px rgba(0, 0, 0, 0.3));
+  border-radius: var(--radius-m, 6px);
+  padding: 12px 14px;
+}
+
+.maplibregl-popup-close-button {
+  color: var(--text-muted);
+}
+
+.maplibregl-popup-close-button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: var(--background-primary);
+}
+.maplibregl-popup-anchor-top .maplibregl-popup-tip {
+  border-bottom-color: var(--background-primary);
+}
+.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--background-primary);
+}
+.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--background-primary);
+}
+
+.campaign-map-warning-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  background: var(--background-modifier-error, #a02020);
+  color: var(--text-on-accent, #fff);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font-text, sans-serif);
+  cursor: default;
+}
+
+.campaign-map-place-card,
+.campaign-map-dropped-pin-tooltip {
+  font-family: var(--font-text, sans-serif);
+  color: var(--text-normal);
+  min-width: 180px;
+}
+
+.campaign-map-place-card h4 {
+  margin: 0 0 6px 0;
+}
+
+.campaign-map-place-card-preview {
+  font-size: 12px;
+  color: var(--text-muted);
+  max-height: 120px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.campaign-map-place-card-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.campaign-map-place-card-actions button,
+.campaign-map-add-here-btn {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--interactive-normal);
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.campaign-map-place-card-actions button:hover,
+.campaign-map-add-here-btn:hover {
+  background: var(--interactive-hover);
+}
+
+.campaign-map-dropped-pin-context {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.campaign-map-add-here-btn {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent, #fff);
+  border: none;
+  width: 100%;
+}
+
+.campaign-map-quickadd-suggestions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 4px 0 12px 0;
+}
+
+.campaign-map-suggestion-chip {
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.campaign-map-suggestion-chip:hover {
+  background: var(--interactive-hover);
+}
+
+.campaign-map-hover-tooltip .maplibregl-popup-content {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-family: var(--font-text, sans-serif);
+}
+
+.campaign-map-pulse {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 3px solid var(--interactive-accent);
+  animation: campaign-map-pulse-anim 0.9s ease-out;
+  pointer-events: none;
+}
+
+@keyframes campaign-map-pulse-anim {
+  0% {
+    transform: scale(0.3);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
