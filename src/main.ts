@@ -465,7 +465,7 @@ export default class CampaignMapPlugin extends Plugin {
     }
   }
 
-  private openControlPanel(): void {
+  openControlPanel(): void {
     const view = this.activeMapView();
     if (!view?.campaign) {
       new Notice("Campaign Map: open a campaign map first");
