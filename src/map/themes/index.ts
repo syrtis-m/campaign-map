@@ -4,6 +4,7 @@ import { canonLayers } from "./canonLayers";
 import { basemapLayers } from "./basemapLayers";
 import { generatedLayers } from "./generatedLayers";
 import { connectionLayers } from "./connectionLayers";
+import { sessionPathLayers } from "./sessionPathLayers";
 
 export { HANDCRAFTED_THEMES, type ThemeTokens };
 
@@ -30,6 +31,7 @@ export function buildThemeStyle(
       canon: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       generated: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       connections: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      "session-path": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       ...(basemap
         ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } }
         : {}),
@@ -39,6 +41,7 @@ export function buildThemeStyle(
       ...(basemap ? basemapLayers(basemap.sourceId, tokens) : []),
       ...generatedLayers(tokens),
       ...connectionLayers({ lineColor: tokens.accent }),
+      ...sessionPathLayers({ lineColor: tokens.poi }),
       ...canonLayers({
         pointColor: tokens.accent,
         pointHaloColor: tokens.land,
