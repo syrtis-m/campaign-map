@@ -141,6 +141,17 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "export-map-poster",
+      name: "Export map poster",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.exportPoster();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "undo-last-map-edit",
       name: "Undo last map edit",
       checkCallback: (checking) => {

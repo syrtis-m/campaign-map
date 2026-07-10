@@ -25,6 +25,7 @@ import type { GenerationWorkerClient } from "../map/generation/workerClient";
 import { QuickAddModal } from "./QuickAddModal";
 import { LocationSearchModal } from "./LocationSearchModal";
 import { ThemeSwitcherModal } from "./ThemeSwitcherModal";
+import { renderPoster, posterDimensions } from "../map/posterExport";
 import type CampaignMapPlugin from "../main";
 
 export const VIEW_TYPE_MAP = "campaign-map-view";
@@ -341,6 +342,7 @@ export class MapView extends ItemView {
 
     btn("search", "Search locations", () => this.openSearch());
     btn("palette", "Switch map theme", () => this.switchTheme());
+    btn("image", "Export map poster", () => void this.exportPoster());
     btn("settings", "Campaign settings", () => this.plugin.openControlPanel());
   }
 
@@ -363,6 +365,44 @@ export class MapView extends ItemView {
       this.map.flyTo({ center: loc.point, zoom: Math.max(this.map.getZoom(), loc.zoomMin + 1) });
       this.pulseFeature(loc);
     }).open();
+  }
+
+  /**
+   * v1 poster export (docs/03 Phase 5: "poster export first"): a high-res PNG
+   * of the *current* view with a title cartouche, saved into the vault next
+   * to the campaign note. Renders via a separate offscreen map (see
+   * posterExport.ts) rather than capturing the live map's own canvas, since
+   * the live map is created without `preserveDrawingBuffer` (see onOpen).
+   */
+  async exportPoster(): Promise<void> {
+    if (!this.map || !this.campaign) {
+      new Notice("Campaign Map: open a campaign first");
+      return;
+    }
+    const campaign = this.campaign;
+    const c = this.map.getCenter();
+    const canvas = this.map.getCanvas();
+    const { width: widthPx, height: heightPx } = posterDimensions(canvas.width, canvas.height, 2000);
+    try {
+      const buf = await renderPoster({
+        style: this.buildStyle(campaign),
+        center: [c.lng, c.lat],
+        zoom: this.map.getZoom(),
+        bearing: this.map.getBearing(),
+        pitch: this.map.getPitch(),
+        widthPx,
+        heightPx,
+        title: campaign.name,
+        transformRequest: createTransformRequest(this.app),
+      });
+      const dir = `${campaign.path.slice(0, campaign.path.lastIndexOf("/"))}/Exports`;
+      await this.app.vault.adapter.mkdir(dir).catch(() => {});
+      const path = `${dir}/${campaign.name}-${Date.now()}.png`;
+      await this.app.vault.adapter.writeBinary(path, buf);
+      new Notice(`Campaign Map: poster exported → ${path}`);
+    } catch (err) {
+      new Notice(`Campaign Map: poster export failed — ${err instanceof Error ? err.message : String(err)}`, 8000);
+    }
   }
 
   async undoLastEdit(): Promise<void> {
