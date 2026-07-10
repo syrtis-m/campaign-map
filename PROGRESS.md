@@ -161,3 +161,33 @@ Phase 0 **10/10** · Phase 1 **16/16** · Phase 2 **15/15** · Phase 3 12/14* ·
 
 ### Phase 5 — in progress (autonomous build per GOAL.md)
 Plans `008` atlas PDF export · `009` campaign replay + session travel paths · `010` populate-area + external-agent note contract (`docs/07-llm-note-contract.md`) · `011` import external maps (GeoJSON/Azgaar/Watabou) — dispatched to subagents. `012` = the Phase 5 Tier-A gate (`scripts/gates/phase5.ts`), authored by the orchestrator after the features land. Obsidian **Bases integration deferred** (API-gated) with a `review/` note. Poster export (Phase 5's "first" item) shipped as 007.
+
+## Phase 5 COMPLETE (2026-07-10, autonomous build per GOAL.md)
+
+All Phase 5 roadmap features built, merged to `main`, and verified. Managed as plans 007–012 (`plans/README.md`), executed by Sonnet subagents, merged + gate-verified by the orchestrator.
+
+### Shipped (merged to `main`)
+- **007 Poster export** — high-res PNG (offscreen `preserveDrawingBuffer` render + title cartouche) → `<campaign>/Exports/*.png`.
+- **008 Atlas export** — multi-page PDF (cover map + per-location gazetteer from note bodies) via `pdf-lib` → `<campaign>/Exports/*.pdf`. Headless-verified valid `%PDF-1.7`.
+- **009 Campaign replay + session travel paths** — `replay-campaign` steps the camera through mutation-log `create` entries; `show-session-path` draws an ordered line through a session note's `[[wikilinks]]` on a themed `session-path-line` layer (modeled on the point-crawl connection layer).
+- **010 Populate-area** — `populate-area` scatters N deterministically-seeded, culture-named location notes across the viewport (offline, no LLM/API). `docs/07-llm-note-contract.md` documents the note-emission contract so an external agent-in-vault (the "LLM hook") can emit valid notes the plugin reconciles live — the vault IS the API.
+- **011 Import** — `import-geojson` maps a vault GeoJSON file (Azgaar/Watabou export) → location notes (Points) + sidecar-geojson notes (Lines/Polygons), reusing the existing note-creation paths.
+- **012 Phase 5 gate** — `scripts/gates/phase5.ts`: exercises the live export pipelines (poster PNG + atlas PDF actually written), the point-crawl/session render layers, the command+method surface, and replay.
+
+### Real bug caught by visual verification (fixed)
+Poster/atlas exports initially rendered the title over a BLANK map — the offscreen `renderPoster` map's geojson sources start empty and were never populated. Fixed with `MapView.buildExportStyle()` (bakes current canon/generated/connection data into the export style). Re-exported + eyeballed: poster now shows all pins, labels, and the connection line. The phase5 gate's file-write check passed even while blank — flagged in `review/005` as a gate-hardening follow-up (assert export *content*, not just that a file exists).
+
+### Live gate status (obsidian 1.12.7, dev-vault) — the "Done means" checklist
+- **Fresh-reload pass rates**: Phase 0 **10/10** · Phase 1 **16/16** · Phase 2 **15/15** · Phase 3 12/14* · Phase 4 **11/11** (fresh) · Phase 5 **8/8** (fresh).
+- *Phase 3's two failures are the canonize checks only — pre-existing racy TEST checks (they race the Phase-4 dispatcher + the async canonize→index chain, and the gate leaves uncleaned canon notes that accumulate across reruns). The canonize LOGIC works (the note is created — the index grows); background task filed + `review/004`.
+- **Session-degradation caveat (known, documented earlier in this file):** running many gates back-to-back in one long-lived Obsidian process degrades the renderer — Phase 4's "city tier after crossing" and Phase 5's offscreen renders slow down / need a fresh `obsidian reload` (window reload) to return to clean numbers. Each gate passes on a fresh reload; the degradation is in the Obsidian window/workspace layer, not the plugin's `onload` lifecycle (a `plugin:reload` doesn't clear it). This is the single unresolved perf item — first thing to profile if the map feels sluggish after a long session.
+
+### review/ queue (Tier B, awaiting Jonah's eyes)
+`review/001` generated-fabric contrast · `002` height-relief deferred (needs per-theme relief token) · `003` Bases integration deferred (API-gated) · `004` canonize gate flakiness (task filed) · `005` poster/atlas content bug fixed + remaining visual checks (handcrafted-theme/London exports, PDF gazetteer layout, gate content-assertion).
+
+### Deferred (with rationale, not blocking "done")
+- **Obsidian Bases integration** — API-gated; locations are already notes queryable via Bases/Dataview today (`review/003`).
+- **Per-type location icons** — spike (006) reverted: runtime `addImage` stalls style load; redo with a sprite sheet (`plans/006-NOTES.md`).
+- **Height relief, detail band z16+, multi-step undo/redo, worker-into-live-commands, bold-weight fonts** — logged in the `plans/README.md` roadmap gap register.
+
+**Net:** the plugin now covers the full Phase 0–5 roadmap. Three test campaigns (Ashfall fantasy / London real-city / Nightreach neon-sprawl) present and working; Ashfall exercised end-to-end this session (pins, connections, terrain, generation, exports all screenshot-verified live).

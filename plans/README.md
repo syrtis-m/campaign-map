@@ -23,11 +23,11 @@ written-but-unrun.
 | 005 | Point-crawl connections — create/edit/delete UI | P1 | M | 004 ✓ | DONE — merged to `main`, live-gate verified (connect write-path renders a line) |
 | 006 | Per-type location icons (spike + prototype) | P2 | M | (001,003 merged ✓) | REVERTED — spike surfaced a live blocker (see below); branch + `006-NOTES.md` kept |
 | 007 | Poster export — v1 high-res PNG | P2 | M | (001,003 merged ✓) | DONE — merged to `main` (PNG render not yet eyeballed; command wired) |
-| 008 | Atlas export — PDF (maps + gazetteer) | P1 | L | 007 ✓ | IN PROGRESS (agent) |
-| 009 | Campaign replay + session travel paths | P1 | M | 004 ✓ | IN PROGRESS (agent) |
-| 010 | Populate-area + external-agent note contract | P1 | M | — | IN PROGRESS (agent) |
-| 011 | Import external maps (GeoJSON/Azgaar/Watabou) | P2 | M | — | IN PROGRESS (agent) |
-| 012 | Phase 5 Tier-A gate (`scripts/gates/phase5.ts`) | P1 | M | 008,009,010,011 | TODO (orchestrator authors after features land) |
+| 008 | Atlas export — PDF (maps + gazetteer) | P1 | L | 007 ✓ | DONE — merged to `main`, phase5-gate verified (writes a valid PDF); +export-content fix |
+| 009 | Campaign replay + session travel paths | P1 | M | 004 ✓ | DONE — merged to `main`, phase5-gate verified (layers + replay run) |
+| 010 | Populate-area + external-agent note contract | P1 | M | — | DONE — merged to `main` (command+method live; generator unit-tested) |
+| 011 | Import external maps (GeoJSON/Azgaar/Watabou) | P2 | M | — | DONE — merged to `main` (command+method live; parser unit-tested) |
+| 012 | Phase 5 Tier-A gate (`scripts/gates/phase5.ts`) | P1 | M | 008,009,010,011 | DONE — `scripts/gates/phase5.ts` authored + run 8/8 |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason).
 
