@@ -36,6 +36,11 @@ export const FabricFeatureSchema = z.object({
     kind: z.enum(FABRIC_KINDS),
     name: z.string().optional(),
     minZoom: z.number().optional(), // per-feature override; else per-kind default
+    /** Plan 014: "literal" (default) renders the sketch as-is; "generate"
+     * additionally feeds it to the procedural generators as a constraint
+     * (e.g. a road corridor elaborated into a street network). The sketch
+     * stays canon either way — generated output is regenerable cache. */
+    mode: z.enum(["literal", "generate"]).optional(),
   }),
 });
 export type FabricFeature = z.infer<typeof FabricFeatureSchema>;

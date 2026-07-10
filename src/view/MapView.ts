@@ -27,7 +27,14 @@ import { registerVaultBasemap, vaultBasemapBounds } from "../map/pmtilesVaultPro
 import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
 import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
-import { generateCityStreets, generateDistricts, generateCityBlocks } from "../gen/city";
+import {
+  generateCityStreets,
+  generateDistricts,
+  generateCityBlocks,
+  generateCorridorStreets,
+  CORRIDOR_HALO,
+  CORRIDOR_INFLUENCE,
+} from "../gen/city";
 import { generateWorldRegions, generateSettlements, generateRoutes } from "../gen/world";
 import { tileXYForPoint, bandForZoom, generatorIdsForBand, GENERATION_TILE_SIZE, type ZoomBand } from "../gen/cache/tileGrid";
 import type { BBox } from "../gen/spatialHash";
@@ -210,6 +217,9 @@ export class MapView extends ItemView {
   private fabricLoadedFor: string | null = null;
   private sketchMode = false;
   private sketchKind: FabricKind = "road";
+  /** Plan 014: whether newly drawn features are literal sketches or
+   * generator feed ("a la Sims landscaping"). */
+  private sketchDraftMode: "literal" | "generate" = "literal";
   private sketchController: SketchController | null = null;
   private sketchBarEl: HTMLDivElement | null = null;
   private selectedFabricId: string | null = null;
@@ -1283,6 +1293,28 @@ export class MapView extends ItemView {
       b.onclick = () => setActiveKind(kind);
       kindButtons.set(kind, b);
     }
+    // Plan 014: literal vs generator-feed toggle for new drawings + the
+    // explicit "build from sketch" action (explicit, not live-as-you-draw,
+    // per the plan's preview/commit recommendation).
+    const modeBtn = this.sketchBarEl.createEl("button", {
+      cls: "campaign-map-sketch-kind-btn campaign-map-sketch-mode-btn",
+      attr: { title: 'New drawings feed the procedural generator ("generate" mode) instead of rendering literally' },
+    });
+    const renderModeBtn = (): void => {
+      modeBtn.setText(this.sketchDraftMode === "generate" ? "feed: on" : "feed: off");
+      modeBtn.toggleClass("is-active", this.sketchDraftMode === "generate");
+    };
+    modeBtn.onclick = () => {
+      this.sketchDraftMode = this.sketchDraftMode === "generate" ? "literal" : "generate";
+      renderModeBtn();
+    };
+    renderModeBtn();
+    const generateBtn = this.sketchBarEl.createEl("button", {
+      text: "build",
+      cls: "campaign-map-sketch-kind-btn",
+      attr: { title: "Generate street networks from generate-mode road corridors" },
+    });
+    generateBtn.onclick = () => void this.generateFromSketch();
     this.sketchBarEl.createDiv({
       cls: "campaign-map-sketch-hint",
       text: "click: vertex · dbl-click/Enter: finish · Esc: cancel · Del: delete selected",
@@ -1370,7 +1402,11 @@ export class MapView extends ItemView {
       type: "Feature",
       id: makeFabricId(),
       geometry,
-      properties: { kind },
+      properties: {
+        kind,
+        // "literal" is the schema default — only "generate" is worth storing.
+        ...(this.sketchDraftMode === "generate" ? { mode: "generate" as const } : {}),
+      },
     };
     this.fabricCollection = withFeature(this.fabricCollection, feature);
     this.refreshFabric();
@@ -1439,6 +1475,76 @@ export class MapView extends ItemView {
       return;
     }
     new FabricFeaturePickerModal(this.app, features, promote).open();
+  }
+
+  /** Plan 014 ("Generate from sketch"): elaborates every generate-mode road
+   * corridor into a street network via the pure corridor generator. The
+   * result is regenerable cache (same tile store/cache path as "generate
+   * city here" — deleting `.mapcache/` regenerates it identically); the
+   * sketch itself stays canon in Fabric.geojson and keeps rendering as the
+   * literal drawn line underneath its elaboration. */
+  async generateFromSketch(): Promise<GeoJSON.Feature[]> {
+    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
+    await this.loadFabricForCampaign();
+    const corridors = this.fabricCollection.features.filter(
+      (f) => f.properties.kind === "road" && f.properties.mode === "generate" && f.geometry.type === "LineString"
+    );
+    if (corridors.length === 0) {
+      new Notice('Campaign Map: no generate-mode road corridors — draw a road with "feed: on" first');
+      return [];
+    }
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const ctx = this.generationContext();
+    const generated: GeoJSON.Feature[] = [];
+    for (const corridor of corridors) {
+      // The corridor crosses into generation-space (meters) whole — every
+      // tile must see the identical corridor or seams break (corridor.ts).
+      const line: GeoJSON.LineString = {
+        type: "LineString",
+        coordinates: (corridor.geometry.coordinates as [number, number][]).map(([x, y]) => [
+          unitsToMeters(x, scale),
+          unitsToMeters(y, scale),
+        ]),
+      };
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const [x, y] of line.coordinates) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+      // Every tile the elaboration can reach: corridor extent + seed
+      // influence radius + max streamline travel.
+      const reach = CORRIDOR_INFLUENCE + CORRIDOR_HALO;
+      const lo = tileXYForPoint(minX - reach, minY - reach);
+      const hi = tileXYForPoint(maxX + reach, maxY + reach);
+      for (let tileY = lo.tileY; tileY <= hi.tileY; tileY++) {
+        for (let tileX = lo.tileX; tileX <= hi.tileX; tileX++) {
+          const features = await generateTile(
+            ctx,
+            tileX,
+            tileY,
+            `sketch-corridor:${corridor.id}`,
+            (seed, bbox, constraints) => generateCorridorStreets(seed, bbox, line, constraints)
+          );
+          const kept = features.filter((f) => featureTouchesBBox(f, ctx.worldBounds));
+          if (kept.length === 0) continue;
+          // Own key namespace: the viewport dispatcher's band eviction
+          // ("city:"/"world:" prefixes) never evicts sketch elaborations;
+          // campaign switch clears them with the rest of loadedTiles.
+          this.loadedTiles.set(`sketch:${corridor.id}:${tileX}:${tileY}`, kept);
+          generated.push(...kept);
+        }
+      }
+    }
+    this.refreshGeneratedSource();
+    new Notice(
+      `Campaign Map: generated ${generated.length} street feature${generated.length === 1 ? "" : "s"} from ${corridors.length} sketched corridor${corridors.length === 1 ? "" : "s"}`
+    );
+    return generated.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
 
   private updateWarningBadge(): void {

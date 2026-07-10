@@ -13,6 +13,12 @@ import { buildTensorField } from "./tensorField";
 
 export { generateDistricts } from "./districts";
 export { generateCityBlocks } from "./blocks";
+export {
+  generateCorridorStreets,
+  chaikinSmooth,
+  CORRIDOR_HALO,
+  CORRIDOR_INFLUENCE,
+} from "./corridor";
 
 // Tuning within docs/06 §3 ranges (streamline dsep 20-60m-equiv).
 export const STREET_SEED_CELL_SIZE = 60;

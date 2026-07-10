@@ -295,6 +295,17 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "generate-from-sketch",
+      name: "Generate street network from sketched corridors",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.generateFromSketch();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "promote-fabric-feature",
       name: "Promote sketched fabric to location note",
       checkCallback: (checking) => {

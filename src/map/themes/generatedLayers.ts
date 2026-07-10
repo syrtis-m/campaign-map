@@ -68,7 +68,9 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
       id: "generated-street",
       type: "line",
       source: "generated",
-      filter: ["==", ["get", "generatorId"], "city-street"],
+      // sketch-corridor (plan 014) streets are city streets by another
+      // generator — same paint, so elaborated sketches read as native fabric.
+      filter: ["match", ["get", "generatorId"], ["city-street", "sketch-corridor"], true, false],
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": t.roadMinor,
@@ -77,7 +79,13 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
         // base as you zoomed out. Never let a street render narrower than it
         // takes to be seen — it thickens with zoom for detail, but the low end
         // holds a visible minimum so the road network doesn't blink out.
-        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 12, 1.6, 18, 3.5],
+        // Corridor avenues (roadClass "major") render a step wider so the
+        // GM's drawn arterial stays legible over its branches.
+        "line-width": [
+          "*",
+          ["case", ["==", ["get", "roadClass"], "major"], 1.8, 1],
+          ["interpolate", ["linear"], ["zoom"], 8, 1, 12, 1.6, 18, 3.5],
+        ],
       },
     } as unknown as LayerSpecification,
     {
