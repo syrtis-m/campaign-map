@@ -16,15 +16,21 @@ written-but-unrun.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 001 | Make map pins reliably clickable | P1 | S | — | IN PROGRESS (agent) |
-| 002 | Paint world background from biome/height data | P1 | M | — | DONE (branch `advisor/002-terrain-background`; gates unrun) |
-| 003 | On-map control surface (toolbar) | P2 | M | — | IN PROGRESS (agent) |
-| 004 | Point-crawl connections — data + rendering | P1 | M | (merge after 001,003) | TODO |
-| 005 | Point-crawl connections — create/edit/delete UI | P1 | M | 004 | TODO |
-| 006 | Per-type location icons (spike + prototype) | P2 | M | (merge after 001,003,004,005) | TODO |
-| 007 | Poster export — v1 high-res PNG | P2 | M | (merge after 001,003) | TODO |
+| 001 | Make map pins reliably clickable | P1 | S | — | DONE — merged to `main` (typecheck+74 tests+build green; live gates unrun) |
+| 002 | Paint world background from biome/height data | P1 | M | — | DONE — merged to `main` (typecheck+74 tests+build green; live gates unrun) |
+| 003 | On-map control surface (toolbar) | P2 | M | — | DONE — merged to `main` (typecheck+74 tests+build green; live gates unrun) |
+| 004 | Point-crawl connections — data + rendering | P1 | M | (001,003 merged ✓) | IN PROGRESS (agent) |
+| 005 | Point-crawl connections — create/edit/delete UI | P1 | M | 004 | QUEUED (dispatch once 004 merges) |
+| 006 | Per-type location icons (spike + prototype) | P2 | M | (001,003 merged ✓) | IN PROGRESS (agent) |
+| 007 | Poster export — v1 high-res PNG | P2 | M | (001,003 merged ✓) | IN PROGRESS (agent) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason).
+
+**Verification note:** "DONE" means merged to `main` with `npm run typecheck`,
+`npm test` (74/74), and `npm run build` all green. The live Obsidian phase-gates
+(`scripts/gates/*.ts`, which drive a real Obsidian GUI) were **not** run (no
+GUI/CLI in the build environment); their check additions are committed but
+unexecuted. A human/CLI-enabled run should exercise them before release.
 
 ## Merge / conflict ordering (important for parallel execution)
 
