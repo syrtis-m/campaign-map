@@ -34,12 +34,22 @@ describe("fabricLayers (LOD discipline — plan 013 non-negotiable)", () => {
     expect(lastFill).toBeLessThan(firstLine);
   });
 
-  it("filters honor a per-feature minZoom override via coalesce", () => {
+  it("filters are kind-only and never put zoom in a filter (invalidates the whole style)", () => {
+    // MapLibre disallows a `["zoom"]` expression inside a layer `filter`; it
+    // silently invalidates the entire style (map loads blank, no console
+    // error). The per-kind LOD floor lives on the layer's `minzoom` property
+    // instead (asserted below), never in the filter.
     for (const layer of layers) {
       const filter = JSON.stringify((layer as { filter?: unknown }).filter);
-      expect(filter).toContain('"zoom"');
-      expect(filter).toContain('"coalesce"');
-      expect(filter).toContain('"minZoom"');
+      expect(filter).not.toContain('"zoom"');
+      expect(filter).toContain('"kind"');
+    }
+  });
+
+  it("each layer carries a per-kind minzoom (the LOD floor)", () => {
+    for (const kind of FABRIC_KINDS) {
+      const layer = layers.find((l) => l.id === `fabric-${kind}`)! as { minzoom?: number };
+      expect(typeof layer.minzoom).toBe("number");
     }
   });
 

@@ -27,11 +27,13 @@ export const FABRIC_SOURCE_SPEC = {
 };
 
 function kindFilter(kind: FabricKind): unknown {
-  return [
-    "all",
-    ["==", ["get", "kind"], kind],
-    [">=", ["zoom"], ["coalesce", ["get", "minZoom"], defaultMinZoomFor(kind)]],
-  ];
+  // Filter by kind ONLY. The per-kind LOD floor is each layer's `minzoom`
+  // property (set below) — a `["zoom"]` expression is NOT allowed inside a
+  // layer `filter` and silently invalidates the ENTIRE style: the map loads
+  // with no style at all and no console error (the 006-class failure). A
+  // per-feature `minZoom` override can't live in a filter; do it via a
+  // separate layer if ever needed.
+  return ["==", ["get", "kind"], kind];
 }
 
 export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {

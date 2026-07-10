@@ -80,11 +80,19 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
         // takes to be seen — it thickens with zoom for detail, but the low end
         // holds a visible minimum so the road network doesn't blink out.
         // Corridor avenues (roadClass "major") render a step wider so the
-        // GM's drawn arterial stays legible over its branches.
+        // GM's drawn arterial stays legible over its branches. NOTE: the
+        // zoom `interpolate` MUST be the top-level expression — MapLibre
+        // rejects `zoom` nested inside another expression (e.g. `["*", …,
+        // interpolate(zoom)]`) and that silently invalidates the whole style
+        // (map loads blank, no error — 006-class). So the per-feature avenue
+        // multiplier is folded into each interpolate output instead.
         "line-width": [
-          "*",
-          ["case", ["==", ["get", "roadClass"], "major"], 1.8, 1],
-          ["interpolate", ["linear"], ["zoom"], 8, 1, 12, 1.6, 18, 3.5],
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          8, ["*", 1, ["case", ["==", ["get", "roadClass"], "major"], 1.8, 1]],
+          12, ["*", 1.6, ["case", ["==", ["get", "roadClass"], "major"], 1.8, 1]],
+          18, ["*", 3.5, ["case", ["==", ["get", "roadClass"], "major"], 1.8, 1]],
         ],
       },
     } as unknown as LayerSpecification,
