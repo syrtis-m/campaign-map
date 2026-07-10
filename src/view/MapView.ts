@@ -5,7 +5,6 @@ import type { ParsedLocation } from "../model/locationNote";
 import { buildConnectionFeatures } from "../model/connections";
 import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
 import { obsidianNativeStyle, readObsidianCssTokens } from "../map/theme";
-import { registerTypeIcons } from "../map/icons";
 import { glyphsUrlTemplate, createTransformRequest } from "../map/glyphs";
 import { registerVaultBasemap, vaultBasemapBounds } from "../map/pmtilesVaultProtocol";
 import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
@@ -199,7 +198,6 @@ export class MapView extends ItemView {
       this.map.once("styledata", () => {
         this.refreshSource();
         this.refreshGeneratedSource();
-        this.registerIconsIfNeeded();
       });
     }
     if (this.map) this.applyCampaign();
@@ -288,7 +286,6 @@ export class MapView extends ItemView {
       if (this.campaign && !this.campaignAppliedOnce) this.applyCampaign();
       this.refreshSource();
       this.updateScaleBar();
-      this.registerIconsIfNeeded();
     });
     this.map.on("move", () => this.updateScaleBar());
     this.map.on("zoom", () => this.updateScaleBar());
@@ -800,26 +797,7 @@ export class MapView extends ItemView {
     // themes rebuild to an identical style, which is a harmless no-op.
     if (!this.map || !this.campaign || isHandcraftedTheme(this.campaign.config.theme)) return;
     this.map.setStyle(this.buildStyle(this.campaign));
-    this.map.once("styledata", () => {
-      this.refreshSource();
-      this.registerIconsIfNeeded();
-    });
-  }
-
-  /**
-   * Plan 006 spike: (re-)registers the runtime `type-${category}` icon images
-   * `canon-point-icon` (canonLayers.ts) references. `map.setStyle(...)` wipes
-   * every `map.addImage`-registered image, so this must run after every
-   * `styledata` that follows a `setStyle` call (setCampaign, rebuildTheme) —
-   * not just once at startup — or icons silently vanish on the next theme
-   * switch / css-change. Obsidian-native only (icons are opt-in per
-   * `canonLayers({icons})`, only ever passed by theme.ts's obsidian-native
-   * builder); a no-op for handcrafted themes, which don't have the layer.
-   */
-  private registerIconsIfNeeded(): void {
-    if (!this.map || !this.campaign || isHandcraftedTheme(this.campaign.config.theme)) return;
-    const tokens = readObsidianCssTokens(this.containerEl);
-    registerTypeIcons(this.map, { fill: tokens.interactiveAccent, stroke: tokens.backgroundPrimary });
+    this.map.once("styledata", () => this.refreshSource());
   }
 
   private updateScaleBar(): void {
