@@ -112,6 +112,22 @@ async function main() {
     if (!counts["world-region"]) throw new Error(`no world-region features: ${JSON.stringify(counts)}`);
   });
 
+  await gate.try("world background is biome-driven, not a flat fill (plans/002)", () => {
+    const result = evalJs(`(() => {
+      var map = app.plugins.plugins['campaign-map'].map;
+      return {
+        hasRegion: !!map.getLayer('generated-region'),
+        fillIsExpression: Array.isArray(map.getPaintProperty('generated-region', 'fill-color')),
+      };
+    })()`) as { hasRegion: boolean; fillIsExpression: boolean };
+    if (!result.hasRegion) throw new Error("generated-region layer missing");
+    if (!result.fillIsExpression) {
+      throw new Error(
+        `generated-region fill-color is not a data-driven expression: ${JSON.stringify(result)}`
+      );
+    }
+  });
+
   await gate.try("generated fabric renders alongside canon (provenance-invisible layers, F2)", async () => {
     // zoom 6, not fitBounds' auto-computed ~4.7: Ashfall City's zoomMin is 5
     // (docs/06 §3 type taxonomy) — below that, by design, nothing qualifies

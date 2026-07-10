@@ -20,7 +20,19 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
       type: "fill",
       source: "generated",
       filter: ["==", ["get", "generatorId"], "world-region"],
-      paint: { "fill-color": t.water, "fill-opacity": 0.06 },
+      paint: {
+        "fill-color": [
+          "match",
+          ["get", "biome"],
+          "ocean", t.water,
+          "coast", t.water,
+          // all land biomes fall through to land — ocean vs. land is the
+          // whole win here (it produces the coastline); per-biome hues are
+          // a follow-up (see maintenance notes in plans/002).
+          t.land,
+        ],
+        "fill-opacity": 0.9,
+      },
     } as unknown as LayerSpecification,
     {
       id: "generated-district",
