@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   CORRIDOR_INFLUENCE,
@@ -13,6 +14,22 @@ const SEED = 4181;
 
 function constraints(): GenerationConstraints {
   return { worldBounds: WORLD_BOUNDS };
+}
+
+/** Compact seeded snapshot fixture: pins the exact bytes of the output (any
+ * numeric drift flips the sha256) without committing half a megabyte of
+ * coordinates — the repo convention is small .snap files (see sigil). */
+function digest(features: unknown): { sha256: string; summary: Record<string, number> } {
+  const list = features as GeoJSON.Feature[];
+  const summary: Record<string, number> = { total: list.length };
+  for (const f of list) {
+    const cls = String((f.properties as Record<string, unknown>)?.roadClass);
+    summary[cls] = (summary[cls] ?? 0) + 1;
+  }
+  return {
+    sha256: createHash("sha256").update(JSON.stringify(features)).digest("hex"),
+    summary,
+  };
 }
 
 /** A GM-drawn road corridor crossing the 2x2 tile cross at x=0 and y=0. */
@@ -68,7 +85,7 @@ describe("generateCorridorStreets determinism", () => {
 
   it("matches the seeded snapshot fixture", () => {
     const features = generateCorridorStreets(SEED, bbox, drawnCorridor(), constraints());
-    expect(features).toMatchSnapshot();
+    expect(digest(features)).toMatchSnapshot();
   });
 
   it("different seeds produce different networks", () => {
@@ -218,7 +235,7 @@ describe("generateCorridorStreets 2x2 seam test", () => {
   it("the 2x2 seam layout matches its snapshot fixture", () => {
     const corridor = drawnCorridor();
     const results = tiles.map((bbox) => generateCorridorStreets(SEED, bbox, corridor, constraints()));
-    expect(results).toMatchSnapshot();
+    expect(results.map(digest)).toMatchSnapshot();
   });
 
   it("splitting into tiles never drops interior streets vs one large tile", () => {
