@@ -280,6 +280,30 @@ export class MapView extends ItemView {
     return obsidianNativeStyle(readObsidianCssTokens(this.containerEl), glyphsUrlTemplate(), basemap);
   }
 
+  /**
+   * Same style as buildStyle(), but with the geojson sources pre-populated with
+   * the campaign's CURRENT content (canon pins, generated fabric, connection
+   * lines). The offscreen export map (renderPoster) is a fresh MapLibre instance
+   * whose sources would otherwise be empty — so without this, poster/atlas
+   * renders show the title + terrain background but no locations. Baking the
+   * data straight into the style avoids any post-load setData timing.
+   */
+  private buildExportStyle(campaign: ParsedCampaign): StyleSpecification {
+    const style = this.buildStyle(campaign);
+    const state = this.plugin.getCampaignState(campaign.id);
+    const setSourceData = (id: string, data: GeoJSON.FeatureCollection): void => {
+      const src = style.sources?.[id] as { type?: string; data?: unknown } | undefined;
+      if (src && src.type === "geojson") src.data = data;
+    };
+    setSourceData("canon", state.index.toFeatureCollection());
+    setSourceData("generated", { type: "FeatureCollection", features: this.generated });
+    setSourceData("connections", {
+      type: "FeatureCollection",
+      features: buildConnectionFeatures(state.index.all()),
+    });
+    return style;
+  }
+
   private refreshHeaderTitle(): void {
     // Obsidian snapshots getDisplayText() when the tab/header DOM is first built and
     // doesn't re-query it on setState/updateHeader(); patch both title nodes directly.
@@ -514,7 +538,7 @@ export class MapView extends ItemView {
     const { width: widthPx, height: heightPx } = posterDimensions(canvas.width, canvas.height, 2000);
     try {
       const buf = await renderPoster({
-        style: this.buildStyle(campaign),
+        style: this.buildExportStyle(campaign),
         center: [c.lng, c.lat],
         zoom: this.map.getZoom(),
         bearing: this.map.getBearing(),
@@ -591,7 +615,7 @@ export class MapView extends ItemView {
     const { width: coverW, height: coverH } = posterDimensions(canvas.width, canvas.height, 1600);
     try {
       const coverPng = await renderPoster({
-        style: this.buildStyle(campaign),
+        style: this.buildExportStyle(campaign),
         center: [c.lng, c.lat],
         zoom: this.map.getZoom(),
         bearing: this.map.getBearing(),
