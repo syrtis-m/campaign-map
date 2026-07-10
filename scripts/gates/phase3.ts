@@ -76,7 +76,7 @@ async function main() {
     if (!errs.includes("No errors")) throw new Error(errs);
   });
 
-  await gate.try("on-map toolbar renders with all 6 buttons (plan 003)", () => {
+  await gate.try("on-map toolbar renders its core action buttons (plan 003+)", () => {
     const result = evalJs(`(() => {
       var view = app.workspace.getLeavesOfType('campaign-map-view')[0].view;
       var bar = view.contentEl.querySelector('.campaign-map-toolbar');
@@ -84,7 +84,9 @@ async function main() {
       return { hasToolbar: !!bar, buttonCount: buttons };
     })()`) as { hasToolbar: boolean; buttonCount: number };
     if (!result.hasToolbar) throw new Error("no .campaign-map-toolbar found in view.contentEl");
-    if (result.buttonCount !== 6) throw new Error(`expected 6 toolbar buttons, found ${result.buttonCount}`);
+    // >= 6: plan 003 shipped 6 core buttons; later plans append more (e.g. 007's
+    // poster-export button). Assert the core set is present, not an exact count.
+    if (result.buttonCount < 6) throw new Error(`expected >= 6 toolbar buttons, found ${result.buttonCount}`);
   });
 
   await gate.try("on-map toolbar's generate button is wired to real generation (plan 003)", async () => {
