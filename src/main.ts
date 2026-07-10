@@ -141,6 +141,17 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "populate-area",
+      name: "Populate area",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.populateArea();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "export-map-poster",
       name: "Export map poster",
       checkCallback: (checking) => {
