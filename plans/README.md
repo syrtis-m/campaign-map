@@ -28,6 +28,8 @@ written-but-unrun.
 | 010 | Populate-area + external-agent note contract | P1 | M | — | DONE — merged to `main` (command+method live; generator unit-tested) |
 | 011 | Import external maps (GeoJSON/Azgaar/Watabou) | P2 | M | — | DONE — merged to `main` (command+method live; parser unit-tested) |
 | 012 | Phase 5 Tier-A gate (`scripts/gates/phase5.ts`) | P1 | M | 008,009,010,011 | DONE — `scripts/gates/phase5.ts` authored + run 8/8 |
+| 013 | Sketch mode — fabric store + LOD-aware render + draw tools | P1 | L | — | IN PROGRESS (agent) |
+| 014 | Sketch → procedural inference ("Sims landscaping") | P1 | L | 013 | DESIGN (outline; needs design pass + advisor before executing) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason).
 
