@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Notic
 import maplibregl, { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature, StyleSpecification } from "maplibre-gl";
 import type { ParsedCampaign } from "../model/campaignConfig";
 import type { ParsedLocation } from "../model/locationNote";
+import { buildConnectionFeatures } from "../model/connections";
 import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
 import { obsidianNativeStyle, readObsidianCssTokens } from "../map/theme";
 import { glyphsUrlTemplate, createTransformRequest } from "../map/glyphs";
@@ -766,6 +767,18 @@ export class MapView extends ItemView {
     const fc = this.plugin.getCampaignState(this.campaign.id).index.toFeatureCollection();
     source.setData(fc);
     this.updateWarningBadge();
+    this.refreshConnections();
+  }
+
+  /** Point-crawl travel connections declared in `connections:` frontmatter
+   * (plan 004) — resolved from the same index as canon pins, so a rename,
+   * delete, or theme switch that refreshes `canon` also refreshes these lines. */
+  private refreshConnections(): void {
+    if (!this.map || !this.campaign) return;
+    const source = this.map.getSource("connections") as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    const locations = this.plugin.getCampaignState(this.campaign.id).index.all();
+    source.setData({ type: "FeatureCollection", features: buildConnectionFeatures(locations) });
   }
 
   private updateWarningBadge(): void {
