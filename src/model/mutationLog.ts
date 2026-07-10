@@ -9,10 +9,12 @@ import type { App } from "obsidian";
  */
 export const LogEntrySchema = z.object({
   ts: z.number(),
-  type: z.enum(["create", "move"]),
+  type: z.enum(["create", "move", "sketch-add", "sketch-remove"]),
   campaignId: z.string(),
   path: z.string(),
   // create: the full frontmatter written. move: {from:[x,y], to:[x,y]}.
+  // sketch-add/sketch-remove (plan 013): the full FabricFeature, so undo can
+  // remove a just-drawn feature or restore a just-deleted one.
   data: z.record(z.string(), z.unknown()),
 });
 export type LogEntry = z.infer<typeof LogEntrySchema>;
