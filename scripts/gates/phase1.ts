@@ -145,6 +145,37 @@ async function main() {
     if (bad.length > 0) throw new Error(`overlaps: ${JSON.stringify(parsed)}`);
   });
 
+  await gate.try("hit tolerance: a near-miss click still resolves to the dot", () => {
+    // Pick a canon location whose dot actually renders at some zoom in
+    // [4,8,12,16], then assert a click offset diagonally 6px from its
+    // projected center (~8.5px true distance, beyond the 3-7px dot radius)
+    // is still picked up by the tolerant hit-test, whereas the old exact
+    // queryRenderedFeatures at that same offset would have missed.
+    const result = evalJs(`(function(){
+      var view = app.workspace.getLeavesOfType('campaign-map-view')[0].view;
+      var map = app.plugins.plugins['campaign-map'].map;
+      var locs = app.plugins.plugins['campaign-map'].getCampaignState('${CAMPAIGN}').index.all().filter(function(l){return l.point;});
+      var zooms = [4,8,12,16];
+      for (var zi=0; zi<zooms.length; zi++) {
+        map.setZoom(zooms[zi]);
+        for (var li=0; li<locs.length; li++) {
+          var loc = locs[li];
+          var sp = map.project(loc.point);
+          var onScreen = view.hitTestCanonAt(sp.x, sp.y);
+          if (!onScreen) continue; // dot not rendered at this zoom — try another
+          var hit = view.hitTestCanonAt(sp.x + 6, sp.y + 6);
+          var exact = map.queryRenderedFeatures([sp.x + 6, sp.y + 6], {layers:['canon-point']}).length;
+          return JSON.stringify({ found: true, zoom: zooms[zi], loc: loc.id, hit: hit, exactMissed: exact === 0 });
+        }
+      }
+      return JSON.stringify({ found: false });
+    })()`);
+    const parsed = typeof result === "string" ? JSON.parse(result) : result;
+    if (!parsed.found) throw new Error("no canon dot rendered at any test zoom — cannot exercise tolerance");
+    if (!parsed.hit) throw new Error(`tolerant pick missed a ${parsed.hit === null ? "6px near-miss" : "?"}: ${JSON.stringify(parsed)}`);
+    if (!parsed.exactMissed) throw new Error(`offset didn't actually exceed the dot radius, test is not exercising tolerance: ${JSON.stringify(parsed)}`);
+  });
+
   await gate.try("theme-follow: obsidian-native style tracks the active theme", () => {
     obsidianRaw(["theme:set", "name=Minimal"]);
     const bgAfterMinimal = evalJs(
