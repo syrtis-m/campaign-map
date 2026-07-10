@@ -89,6 +89,11 @@ export function obsidianNativeStyle(
         textColor: t.labelMajor,
         textHaloColor: t.land,
         fontStack: t.fontRegular,
+        // Plan 006 spike: obsidian-native is the one theme prototyping
+        // per-type icons (see plans/006-NOTES.md). registerTypeIcons() must
+        // be called with matching fill/stroke tokens whenever this style is
+        // (re)applied — see MapView.ts's registerIconsIfNeeded().
+        icons: true,
       }),
     ],
   };
