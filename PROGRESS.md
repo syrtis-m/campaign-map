@@ -139,3 +139,25 @@ None.
 - **Generated fabric density/spacing** (streets, settlement clustering) is functionally correct and deterministic but not aesthetically tuned — Tier B per docs/06 §2, flagged for your eyes whenever convenient, not blocking.
 - **`Fairenford`** in the Ashfall dev-vault campaign is a real generated-then-canonized settlement (see DECISIONS.md) — a live demonstration of Phase 3's core exit test, not curated seed content like the original four locations.
 - **Detail band (z16+) buildings/POIs** wasn't built as a separate thing this phase — city-band footprints already render from z14, functionally covering "buildings." If you had something more specific in mind for "POIs" at street level (benches, trees, shop icons), flag it and it's a small addition on top of the existing footprint layer, not a new subsystem.
+
+## Post-Phase-4 UX pass + point-crawl + Phase 5 (2026-07-09, session)
+
+*This session resumed after Phase 4. Work integrated to `main` and verified against the live Obsidian gates (obsidian CLI on `dev-vault`). Managed as `improve`-skill plans in `plans/` (see `plans/README.md`) executed by Sonnet subagents, merged sequentially by the orchestrator.*
+
+### Shipped + live-gate verified (merged to `main`)
+- **001 clickable pins** — tolerant hit-test (`pickFeatureNear`, 8px box) so 3–7px dots are clickable near-miss; generated-settlement clicks route to a "Add to canon" card. Phase 1 gate got a recentre+await-idle hit-tolerance check (the first version never recentred, so in the fictional CRS the dot sat off-screen — fixed).
+- **002 terrain background from world data** — `generated-region` now paints ocean/coast→water, land→land (biome-driven `match`), replacing the flat 6%-opacity wash. Data was already on the features (`gen/world/regions.ts`), so this is render-only, no generator edits, no seam tests. Height relief deferred (a single overlay token's luminance flips between light/dark themes — needs a per-theme relief token; see `plans/002`).
+- **003 on-map toolbar** — DOM control surface (add/generate/canonize/search/theme/settings), replacing command-palette-only discovery. `openControlPanel()` made public.
+- **004 + 005 point-crawl connections** — `connections:` frontmatter list on location notes → resolved to `connection-line` features (dashed, themed, works across all styles); create via place-card "Connect to…" + a picker, remove by clicking the line. Canon-native (survives rename, vanishes with a deleted endpoint). Verified: line renders live between two Ashfall locations.
+- **007 poster export v1** — high-res PNG of the current view via an offscreen `preserveDrawingBuffer` map + title cartouche, saved to `<campaign>/Exports/` (Vault adapter). PNG output not yet visually inspected.
+- **Consistent dots (UX request)** — all location dots are now ONE constant size (`CANON_DOT_RADIUS=5`) at every zoom, never importance-scaled, never zoom-gated (merged the old canon-point/canon-point-far split into a single unfiltered layer; same for generated settlements, F2 parity). Labels stay zoom+importance managed. Screenshot-verified: all 8 Ashfall dots visible + identical at 50m/zoomed-out.
+
+### Reverted
+- **006 per-type icons (spike)** — the prototype's runtime `map.addImage` icon layer left the MapLibre style stuck loading forever (`isStyleLoaded()` never true → pins + connection line stopped rendering), with NO console error and green typecheck + unit tests. Only the live app caught it — exactly the spike's documented STOP-1 risk. Reverted from `main`; branch `advisor/006-per-type-icons-spike` + `plans/006-NOTES.md` kept. Redo with a sprite sheet, or pre-register images before adding the `icon-image` layer.
+
+### Live gate status on `main` (obsidian 1.12.7, dev-vault)
+Phase 0 **10/10** · Phase 1 **16/16** · Phase 2 **15/15** · Phase 3 12/14* · Phase 4 **11/11**.
+*Phase 3's two failures are the **canonize** checks only — confirmed pre-existing, render-independent flakiness: they race the Phase-4 viewport dispatcher (which re-fetches tiles) and the async canonize→index reconcile, and the gate creates uncleaned canon notes that accumulate across runs. They pass on a fresh run. A background task is filed to harden them (quiesce the dispatcher, settle the index baseline, clean up created notes). Not a product regression.
+
+### Phase 5 — in progress (autonomous build per GOAL.md)
+Plans `008` atlas PDF export · `009` campaign replay + session travel paths · `010` populate-area + external-agent note contract (`docs/07-llm-note-contract.md`) · `011` import external maps (GeoJSON/Azgaar/Watabou) — dispatched to subagents. `012` = the Phase 5 Tier-A gate (`scripts/gates/phase5.ts`), authored by the orchestrator after the features land. Obsidian **Bases integration deferred** (API-gated) with a `review/` note. Poster export (Phase 5's "first" item) shipped as 007.
