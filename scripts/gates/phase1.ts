@@ -58,6 +58,57 @@ async function main() {
     if (!(parsed.lineCount >= 1)) throw new Error(`expected >=1 seeded connection, got: ${JSON.stringify(parsed)}`);
   });
 
+  await gate.try("connect: write path (plan 005) creates a rendered connection line", async () => {
+    clearErrors();
+    const FROM = `Campaigns/Ashfall/Locations/Ashfall City.md`;
+    const TO_BASENAME = "Fairenford";
+    const countLines = () =>
+      evalJs(`(function(){
+        var map = app.plugins.plugins['campaign-map'].map;
+        var src = map.getSource('connections');
+        return src && src._data ? src._data.features.length : 0;
+      })()`) as number;
+
+    const before = countLines();
+    evalJs(`(function(){
+      var view = app.workspace.getLeavesOfType('campaign-map-view')[0].view;
+      view.connectForTest('${FROM}', '${TO_BASENAME}').then(function(){ window.__gateConnectDone = true; });
+      return 'started';
+    })()`);
+    let done = false;
+    for (let i = 0; i < 20 && !done; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      done = evalJs("!!window.__gateConnectDone") === true;
+    }
+    if (!done) throw new Error("connectForTest did not resolve in time");
+    // The frontmatter write resolving is one hop before the `connections` source
+    // actually refreshes (vault "modify" event → rescan → onIndexUpdated →
+    // refreshSource → refreshConnections), so poll the count too, not just the flag.
+    let after = countLines();
+    for (let i = 0; i < 20 && !(after > before); i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      after = countLines();
+    }
+    if (!(after > before)) throw new Error(`expected connections source to grow, before=${before} after=${after}`);
+
+    // Cleanup: strip the test connection back off so the gate is idempotent on reruns.
+    evalJs(`(function(){
+      var f = app.vault.getFileByPath('${FROM}');
+      app.fileManager.processFrontMatter(f, function(fm){ delete fm.connections; }).then(function(){ window.__gateConnectCleaned = true; });
+      return 'cleaning';
+    })()`);
+    let cleaned = false;
+    for (let i = 0; i < 20 && !cleaned; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      cleaned = evalJs("!!window.__gateConnectCleaned") === true;
+    }
+    evalJs("delete window.__gateConnectDone; delete window.__gateConnectCleaned; true");
+    if (!cleaned) throw new Error("cleanup did not resolve in time");
+
+    const errs = devErrors();
+    if (!errs.includes("No errors")) throw new Error(errs);
+  });
+
   await gate.try("reconcile: create note → index within 500ms", async () => {
     clearErrors();
     obsidianRaw([

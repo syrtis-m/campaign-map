@@ -23,6 +23,7 @@ import {
 } from "../map/generation/generationService";
 import type { GeneratorId } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
+import { addConnection, removeConnection } from "../vault/locationOps";
 import { QuickAddModal } from "./QuickAddModal";
 import { LocationSearchModal } from "./LocationSearchModal";
 import { ThemeSwitcherModal } from "./ThemeSwitcherModal";
@@ -500,6 +501,13 @@ export class MapView extends ItemView {
     return (f?.properties?.id as string | undefined) ?? null;
   }
 
+  /** Test surface (docs/05): drives the "Connect to..." write path without
+   * needing to click through the place-card popup + search modal, so gates
+   * can assert the `connections` source gains a rendered feature. */
+  async connectForTest(fromPath: string, toBasename: string): Promise<void> {
+    await addConnection(this.app, fromPath, toBasename);
+  }
+
   private mapCenterUnits(): [number, number] {
     const { lng, lat } = this.map!.getCenter();
     return [lng, lat];
@@ -849,6 +857,13 @@ export class MapView extends ItemView {
       this.showGeneratedCard(generated, e.lngLat);
       return;
     }
+    const line = this.map.queryRenderedFeatures(e.point, {
+      layers: this.map.getLayer("connection-line") ? ["connection-line"] : [],
+    })[0];
+    if (line) {
+      this.showConnectionCard(line, e.lngLat);
+      return;
+    }
     this.showDroppedPin(e.lngLat);
   }
 
@@ -982,6 +997,17 @@ export class MapView extends ItemView {
     actions.createEl("button", { text: "Center" }).onclick = () => {
       if (location.point) this.map?.flyTo({ center: location.point });
     };
+    actions.createEl("button", { text: "Connect to…" }).onclick = () => {
+      const others = this.plugin
+        .getCampaignState(this.campaign!.id)
+        .index.all()
+        .filter((l) => l.path !== location.path && l.point);
+      new LocationSearchModal(this.app, others, (target) => {
+        void addConnection(this.app, location.path, target.name).then(() => {
+          new Notice(`Campaign Map: connected ${location.name} → ${target.name}`);
+        });
+      }).open();
+    };
 
     this.placeCardPopup = new maplibregl.Popup({ closeButton: true, maxWidth: "280px", className: "campaign-map-place-card-popup" })
       .setLngLat(feature.geometry.coordinates as [number, number])
@@ -1039,6 +1065,40 @@ export class MapView extends ItemView {
     };
 
     this.droppedPinPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: true, className: "campaign-map-dropped-pin-popup" })
+      .setLngLat(lngLat)
+      .setDOMContent(el)
+      .addTo(this.map);
+  }
+
+  /** Click-a-line-to-remove (plan 005): the reciprocal gesture to "Connect
+   * to..." — `from`/`to` on a `connection-line` feature are vault paths (plan
+   * 004), so resolve them to basenames the same way the frontmatter stores
+   * them. Only the declaring end actually has the entry, so removal is
+   * attempted on both ends; the non-declaring side is a harmless no-op. */
+  private showConnectionCard(feature: MapGeoJSONFeature, lngLat: maplibregl.LngLat): void {
+    if (!this.map || !this.campaign) return;
+    this.droppedPinPopup?.remove();
+    this.placeCardPopup?.remove();
+
+    const from = String(feature.properties?.from ?? "");
+    const to = String(feature.properties?.to ?? "");
+    const fromName = this.app.vault.getFileByPath(from)?.basename ?? from;
+    const toName = this.app.vault.getFileByPath(to)?.basename ?? to;
+
+    const el = document.createElement("div");
+    el.addClass("campaign-map-place-card");
+    el.createEl("h4", { text: `${fromName} ↔ ${toName}` });
+    el.createDiv({ cls: "campaign-map-place-card-preview", text: "Point-crawl connection" });
+
+    const actions = el.createDiv({ cls: "campaign-map-place-card-actions" });
+    actions.createEl("button", { text: "Remove connection" }).onclick = () => {
+      void Promise.all([removeConnection(this.app, from, toName), removeConnection(this.app, to, fromName)]).then(() => {
+        this.placeCardPopup?.remove();
+        new Notice(`Campaign Map: removed connection ${fromName} ↔ ${toName}`);
+      });
+    };
+
+    this.placeCardPopup = new maplibregl.Popup({ closeButton: true, maxWidth: "280px", className: "campaign-map-place-card-popup" })
       .setLngLat(lngLat)
       .setDOMContent(el)
       .addTo(this.map);
