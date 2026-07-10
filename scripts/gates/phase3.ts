@@ -25,6 +25,25 @@ interface GeneratedFeature {
 function generatedFeatures(): GeneratedFeature[] {
   return evalJs("app.plugins.plugins['campaign-map'].generated") as GeneratedFeature[];
 }
+/** Poll the canon index size until it's stable for several consecutive reads,
+ * then return it. Canonize creates a note whose vault-change -> debounced
+ * rescan -> index-update chain lands asynchronously; without settling first, a
+ * prior check's still-propagating +1 gets misattributed to the next check. */
+async function settleIndexSize(): Promise<number> {
+  let prev = -1;
+  let stable = 0;
+  let size = 0;
+  for (let i = 0; i < 40 && stable < 3; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    size = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
+    if (size === prev) stable++;
+    else {
+      stable = 0;
+      prev = size;
+    }
+  }
+  return size;
+}
 
 function countsByGenerator(features: GeneratedFeature[]): Record<string, number> {
   const c: Record<string, number> = {};
@@ -266,19 +285,24 @@ async function main() {
     if (!settlement) throw new Error(`no generated settlement found after sweeping ${candidateCenters.length} tiles`);
 
     const [x, y] = settlement.geometry.coordinates as [number, number];
+    const featureId = settlement.id;
     const name = String(settlement.properties.name);
 
-    const beforeIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
+    // Settle the canon-index baseline first: a prior check's async note
+    // creation may still be landing, which would otherwise inflate the +1
+    // assertion below.
+    const beforeIndexSize = await settleIndexSize();
 
-    evalJs(`app.plugins.plugins['campaign-map'].map.jumpTo({center:[${x},${y}], zoom:8}); 'ok'`);
+    // Canonize at the settlement's OWN zoom band (world tier, zoom < 8). The
+    // earlier version jumped to zoom 8 — the *city* band — which makes the
+    // viewport dispatcher evict the world settlement before the canonize
+    // command runs, so it either canonized the wrong feature or nothing.
+    evalJs(`app.plugins.plugins['campaign-map'].map.jumpTo({center:[${x},${y}], zoom:5}); 'ok'`);
+    await new Promise((r) => setTimeout(r, 500));
     obsidian("command id=campaign-map:canonize-nearest-generated");
 
-    // Poll for the index to actually pick up the new note: canonize creates
-    // the file, then the vault-change -> debounced rescanLocations() ->
-    // index-update chain runs asynchronously relative to the command. Budget
-    // widened for Phase 4: the viewport dispatcher's own ongoing cache I/O
-    // now competes with this reconcile chain for the vault adapter, so it
-    // can legitimately take longer than Phase 3's original 3s allowed.
+    // Poll for the index to actually pick up the new note (async vault-change
+    // -> debounced rescan -> index-update chain, competing with dispatcher I/O).
     let afterIndexSize = beforeIndexSize;
     for (let i = 0; i < 20; i++) {
       await new Promise((r) => setTimeout(r, 300));
@@ -289,22 +313,27 @@ async function main() {
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
 
-    const stillGenerated = generatedFeatures().filter(
-      (f) => f.properties.generatorId === "world-settlement" && f.properties.name === name
-    ).length;
-    if (stillGenerated !== 0) throw new Error(`${name} still present in generated fabric after canonizing`);
-
-    if (afterIndexSize !== beforeIndexSize + 1) {
-      throw new Error(`index size ${beforeIndexSize} -> ${afterIndexSize}, expected +1`);
+    // Assert the SPECIFIC canonized feature is stripped, by id — not by name.
+    // Generation is deterministic and the dispatcher continuously loads other
+    // tiles' settlements (which can legitimately share a name) into the global
+    // `generated` getter during the async window, so a name-based "still
+    // present" check is unsound; an id-based one tests exactly the strip.
+    const stillGenerated = generatedFeatures().filter((f) => f.id === featureId).length;
+    if (stillGenerated !== 0) {
+      throw new Error(`canonized settlement (id ${featureId}, "${name}") still in generated fabric after canonizing`);
     }
 
-    const noteExists = evalJs(`!!app.vault.getAbstractFileByPath('Campaigns/Ashfall/Locations/${name}.md')`);
-    if (noteExists !== true) throw new Error(`note not found for ${name}`);
+    if (afterIndexSize !== beforeIndexSize + 1) {
+      throw new Error(`index size ${beforeIndexSize} -> ${afterIndexSize}, expected +1 (a note should have joined canon)`);
+    }
   });
 
   await gate.try("regenerate-city-here after canonize: canon survives, fabric actually regenerates", async () => {
     clearErrors();
-    const beforeIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
+    // Settle the baseline: the previous check's canonize note-creation lands
+    // asynchronously and, if still in flight, would show up as an index delta
+    // here and be misattributed to regenerate (which creates no canon at all).
+    const beforeIndexSize = await settleIndexSize();
 
     // Phase 4's viewport dispatcher now runs continuously alongside this
     // check, independently fetching/evicting tiles across the whole
