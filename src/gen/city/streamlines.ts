@@ -22,8 +22,20 @@ export interface StreamlineOptions {
   bounds: BBox; // halo-padded generation bounds; tracing stops if it exits
 }
 
-function directionAt(field: TensorFieldParams, x: number, y: number, prevDir: Vec2 | null): Vec2 {
-  const angle = sampleFieldAngle(field, x, y);
+/** A direction field as a bare angle sampler — lets callers (plan 014's
+ * corridor generator) blend extra bases into the tensor field without this
+ * module knowing about them. MUST remain a pure function of world coordinates
+ * only (never of other streamlines / generation order) or seams break. */
+export type AngleSampler = (x: number, y: number) => number;
+
+type Field = TensorFieldParams | AngleSampler;
+
+function angleAt(field: Field, x: number, y: number): number {
+  return typeof field === "function" ? field(x, y) : sampleFieldAngle(field, x, y);
+}
+
+function directionAt(field: Field, x: number, y: number, prevDir: Vec2 | null): Vec2 {
+  const angle = angleAt(field, x, y);
   let dx = Math.cos(angle);
   let dy = Math.sin(angle);
   // Line fields have no inherent sign (angle is mod pi); pick whichever
@@ -38,7 +50,7 @@ function directionAt(field: TensorFieldParams, x: number, y: number, prevDir: Ve
 }
 
 function rk4Step(
-  field: TensorFieldParams,
+  field: Field,
   p: Vec2,
   prevDir: Vec2,
   stepSize: number
@@ -69,8 +81,8 @@ function inBounds(p: Vec2, b: BBox): boolean {
  * until it exits `bounds`. Returns an ordered polyline (may be a single
  * point if the seed itself sits outside a usable field region).
  */
-export function traceStreamline(field: TensorFieldParams, seed: Vec2, opts: StreamlineOptions): Vec2[] {
-  const initialAngle = sampleFieldAngle(field, seed.x, seed.y);
+export function traceStreamline(field: Field, seed: Vec2, opts: StreamlineOptions): Vec2[] {
+  const initialAngle = angleAt(field, seed.x, seed.y);
   const forwardDir: Vec2 = { x: Math.cos(initialAngle), y: Math.sin(initialAngle) };
   const backwardDir: Vec2 = { x: -forwardDir.x, y: -forwardDir.y };
 

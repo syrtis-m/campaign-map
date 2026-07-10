@@ -196,3 +196,94 @@
     opacity: 0;
   }
 }
+
+.campaign-map-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 6;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--background-secondary, #222);
+  border: 1px solid var(--background-modifier-border, #3a3a3a);
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.campaign-map-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #aaa);
+  cursor: pointer;
+}
+
+.campaign-map-toolbar-btn:hover {
+  background: var(--background-modifier-hover, #333);
+  color: var(--text-normal, #ddd);
+}
+
+/* Sketch mode (plan 013): kind palette sub-bar shown below the toolbar */
+.campaign-map-sketch-bar {
+  position: absolute;
+  top: 52px;
+  left: 12px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--background-secondary, #222);
+  border: 1px solid var(--background-modifier-border, #3a3a3a);
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.campaign-map-sketch-kind-btn {
+  padding: 3px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #aaa);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.campaign-map-sketch-kind-btn:hover {
+  background: var(--background-modifier-hover, #333);
+  color: var(--text-normal, #ddd);
+}
+
+.campaign-map-sketch-kind-btn.is-active {
+  background: var(--interactive-accent, #7c3aed);
+  color: var(--text-on-accent, #fff);
+}
+
+.campaign-map-sketch-hint {
+  margin: 0 6px;
+  color: var(--text-faint, #888);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.campaign-map-sketch-exit-btn {
+  padding: 3px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #aaa);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.campaign-map-sketch-exit-btn:hover {
+  background: var(--background-modifier-hover, #333);
+  color: var(--text-normal, #ddd);
+}

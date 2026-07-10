@@ -4,7 +4,22 @@ import type { ParsedCampaign } from "../model/campaignConfig";
 import { LOCATION_TYPES, type ParsedLocation } from "../model/locationNote";
 import { buildConnectionFeatures } from "../model/connections";
 import { parseSessionPath, sessionPathFeature } from "../model/sessionPath";
-import { campaignFolderFromConfigPath } from "../model/mutationLog";
+import { appendLogEntry, campaignFolderFromConfigPath } from "../model/mutationLog";
+import {
+  FABRIC_KINDS,
+  FabricFeatureSchema,
+  emptyFabric,
+  isPolygonKind,
+  makeFabricId,
+  withFeature,
+  withoutFeature,
+  type FabricCollection,
+  type FabricFeature,
+  type FabricKind,
+} from "../model/fabric";
+import { fabricPath, loadFabric, saveFabric, promoteFabricToNote } from "../vault/fabricStore";
+import { FABRIC_LAYER_IDS } from "../map/themes/fabricLayers";
+import { SketchController } from "./SketchController";
 import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
 import { obsidianNativeStyle, readObsidianCssTokens } from "../map/theme";
 import { glyphsUrlTemplate, createTransformRequest } from "../map/glyphs";
@@ -12,7 +27,14 @@ import { registerVaultBasemap, vaultBasemapBounds } from "../map/pmtilesVaultPro
 import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
 import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
-import { generateCityStreets, generateDistricts, generateCityBlocks } from "../gen/city";
+import {
+  generateCityStreets,
+  generateDistricts,
+  generateCityBlocks,
+  generateCorridorStreets,
+  CORRIDOR_HALO,
+  CORRIDOR_INFLUENCE,
+} from "../gen/city";
 import { generateWorldRegions, generateSettlements, generateRoutes } from "../gen/world";
 import { tileXYForPoint, bandForZoom, generatorIdsForBand, GENERATION_TILE_SIZE, type ZoomBand } from "../gen/cache/tileGrid";
 import type { BBox } from "../gen/spatialHash";
@@ -65,6 +87,32 @@ class SessionSearchModal extends FuzzySuggestModal<TFile> {
 
   onChooseItem(file: TFile): void {
     this.onChoose(file);
+  }
+}
+
+/** Picks a sketched fabric feature (plan 013's promote-to-note flow) — same
+ * FuzzySuggestModal pattern as SessionSearchModal. */
+class FabricFeaturePickerModal extends FuzzySuggestModal<FabricFeature> {
+  constructor(
+    app: App,
+    private features: FabricFeature[],
+    private onChoose: (feature: FabricFeature) => void
+  ) {
+    super(app);
+    this.setPlaceholder("Promote sketched fabric to a location note...");
+  }
+
+  getItems(): FabricFeature[] {
+    return this.features;
+  }
+
+  getItemText(feature: FabricFeature): string {
+    const label = feature.properties.name?.trim() || feature.properties.kind;
+    return `${label} (${feature.geometry.type}, ${feature.id})`;
+  }
+
+  onChooseItem(feature: FabricFeature): void {
+    this.onChoose(feature);
   }
 }
 
@@ -162,6 +210,20 @@ export class MapView extends ItemView {
    * campaign switch, or the view closing stops it cleanly instead of two
    * loops racing to fly the camera around. */
   private replayToken = 0;
+  /** Sketch mode (plan 013): in-memory mirror of `<campaign>/Fabric.geojson`
+   * — MapView is the only writer, so edits mutate this and save through
+   * fabricStore; `refreshFabric()` re-applies it after any style rebuild. */
+  private fabricCollection: FabricCollection = emptyFabric();
+  private fabricLoadedFor: string | null = null;
+  private sketchMode = false;
+  private sketchKind: FabricKind = "road";
+  /** Plan 014: whether newly drawn features are literal sketches or
+   * generator feed ("a la Sims landscaping"). */
+  private sketchDraftMode: "literal" | "generate" = "literal";
+  private sketchController: SketchController | null = null;
+  private sketchBarEl: HTMLDivElement | null = null;
+  private selectedFabricId: string | null = null;
+  private sketchKeyHandler: ((ev: KeyboardEvent) => void) | null = null;
 
   /**
    * Viewport-windowed tile store (Phase 4: "zoom-band dispatcher over
@@ -239,8 +301,13 @@ export class MapView extends ItemView {
       this.wantedTiles.clear();
       this.currentSessionPathFeature = null;
       this.replayToken++; // stop any in-flight replay from the previous campaign
+      this.fabricCollection = emptyFabric();
+      this.fabricLoadedFor = null;
+      this.selectedFabricId = null;
+      if (this.sketchMode) this.toggleSketchMode(); // exit sketch mode on campaign switch
     }
     this.campaign = campaign;
+    void this.loadFabricForCampaign();
     this.refreshHeaderTitle();
     if (this.map && (isFirstApply || themeChanged)) {
       this.map.setStyle(this.buildStyle(campaign));
@@ -365,6 +432,7 @@ export class MapView extends ItemView {
     this.map.on("moveend", () => this.scheduleDispatch());
     this.map.on("zoomend", () => this.scheduleDispatch());
     this.map.on("click", (e) => this.handleClick(e));
+    this.map.on("dblclick", (e) => this.handleSketchDblClick(e));
     this.map.on("contextmenu", (e) => this.handleContextMenu(e));
     this.map.on("mouseenter", "canon-point", (e) => this.handleHoverEnter(e));
     this.map.on("mouseleave", "canon-point", () => this.handleHoverLeave());
@@ -414,6 +482,7 @@ export class MapView extends ItemView {
       );
     });
 
+    btn("pencil", "Sketch fabric (roads, walls, rivers, districts…)", () => this.toggleSketchMode());
     btn("search", "Search locations", () => this.openSearch());
     btn("palette", "Switch map theme", () => this.switchTheme());
     btn("image", "Export map poster", () => void this.exportPoster());
@@ -423,6 +492,10 @@ export class MapView extends ItemView {
 
   async onClose(): Promise<void> {
     if (this.dispatchTimer !== null) window.clearTimeout(this.dispatchTimer);
+    if (this.sketchKeyHandler) {
+      window.removeEventListener("keydown", this.sketchKeyHandler);
+      this.sketchKeyHandler = null;
+    }
     this.map?.remove();
     this.map = null;
   }
@@ -676,6 +749,30 @@ export class MapView extends ItemView {
         });
         new Notice("Campaign Map: undid move");
       }
+    } else if (last.type === "sketch-add" || last.type === "sketch-remove") {
+      // Plan 013: the log entry's data is the full FabricFeature, so undo can
+      // remove a just-drawn feature or restore a just-deleted one.
+      const parsed = FabricFeatureSchema.safeParse(last.data);
+      if (!parsed.success) {
+        new Notice("Campaign Map: can't undo sketch — malformed log entry");
+        return;
+      }
+      await this.loadFabricForCampaign();
+      this.fabricCollection =
+        last.type === "sketch-add"
+          ? withoutFeature(this.fabricCollection, parsed.data.id)
+          : withFeature(this.fabricCollection, parsed.data);
+      if (this.selectedFabricId === parsed.data.id) {
+        this.selectedFabricId = null;
+        this.sketchController?.clearSelection();
+      }
+      await saveFabric(this.app, this.campaign, this.fabricCollection);
+      this.refreshFabric();
+      new Notice(
+        last.type === "sketch-add"
+          ? `Campaign Map: undid sketched ${parsed.data.properties.kind}`
+          : `Campaign Map: restored deleted ${parsed.data.properties.kind}`
+      );
     }
   }
 
@@ -1060,6 +1157,7 @@ export class MapView extends ItemView {
     this.updateWarningBadge();
     this.refreshConnections();
     this.refreshSessionPath();
+    this.refreshFabric();
   }
 
   /** Point-crawl travel connections declared in `connections:` frontmatter
@@ -1093,6 +1191,360 @@ export class MapView extends ItemView {
   clearSessionPath(): void {
     this.currentSessionPathFeature = null;
     this.refreshSessionPath();
+  }
+
+  /** Loads `<campaign>/Fabric.geojson` into memory once per campaign; bad
+   * features get a warning notice (never a silent drop — CLAUDE.md). */
+  private async loadFabricForCampaign(): Promise<void> {
+    if (!this.campaign) return;
+    const target = this.campaign.id;
+    if (this.fabricLoadedFor === target) return;
+    const { fabric, invalidCount } = await loadFabric(this.app, this.campaign);
+    if (this.campaign?.id !== target) return; // switched campaigns mid-load
+    this.fabricCollection = fabric;
+    this.fabricLoadedFor = target;
+    if (invalidCount > 0) {
+      new Notice(
+        `Campaign Map: skipped ${invalidCount} invalid fabric feature${invalidCount === 1 ? "" : "s"} in Fabric.geojson`
+      );
+    }
+    this.refreshFabric();
+  }
+
+  /** Sketched fabric (plan 013) — modeled on `refreshConnections`: re-applies
+   * the in-memory collection to the `fabric` source; called from
+   * `refreshSource()` so a theme switch's setStyle (which wipes every source)
+   * doesn't drop the GM's sketches. The feature-level `id` is mirrored into
+   * `properties.id` because queryRenderedFeatures doesn't reliably surface
+   * string feature ids from a geojson source. */
+  private refreshFabric(): void {
+    if (!this.map) return;
+    const source = this.map.getSource("fabric") as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    const features = this.fabricCollection.features.map((f) => ({
+      ...f,
+      properties: { ...f.properties, id: f.id },
+    }));
+    source.setData({ type: "FeatureCollection", features } as GeoJSON.FeatureCollection);
+  }
+
+  /** Draft-preview accent for the sketch controller — the same accent token
+   * the active theme's connection lines use. */
+  private sketchAccent(): string {
+    const theme = this.campaign?.config.theme ?? "";
+    if (isHandcraftedTheme(theme)) return HANDCRAFTED_THEMES[theme].accent;
+    return readObsidianCssTokens(this.containerEl).interactiveAccent;
+  }
+
+  /** Enters/exits sketch mode (plan 013): shows the kind palette sub-bar,
+   * activates the draw controller, suspends the normal click grammar (see
+   * handleClick), and disables double-click zoom so dblclick can mean
+   * "finish the draft". */
+  toggleSketchMode(): void {
+    if (!this.map || !this.campaign) return;
+    if (this.sketchMode) {
+      this.sketchMode = false;
+      this.sketchController?.deactivate();
+      this.sketchController = null;
+      this.sketchBarEl?.remove();
+      this.sketchBarEl = null;
+      this.selectedFabricId = null;
+      if (this.sketchKeyHandler) {
+        window.removeEventListener("keydown", this.sketchKeyHandler);
+        this.sketchKeyHandler = null;
+      }
+      this.map.doubleClickZoom.enable();
+      return;
+    }
+    this.sketchMode = true;
+    void this.loadFabricForCampaign();
+    this.droppedPinPopup?.remove();
+    this.placeCardPopup?.remove();
+    this.map.doubleClickZoom.disable();
+    this.sketchController = new SketchController(this.map, this.sketchAccent());
+    this.sketchController.activate(this.sketchKind);
+    this.buildSketchBar();
+    this.sketchKeyHandler = (ev: KeyboardEvent) => this.sketchKeydown(ev);
+    window.addEventListener("keydown", this.sketchKeyHandler);
+  }
+
+  get sketchModeActive(): boolean {
+    return this.sketchMode;
+  }
+
+  /** Kind-palette sub-bar (plan 013 chose the inline sub-bar over a modal:
+   * the GM switches kinds constantly while landscaping — a modal per switch
+   * would break the flow). */
+  private buildSketchBar(): void {
+    this.sketchBarEl?.remove();
+    this.sketchBarEl = this.contentEl.createDiv({ cls: "campaign-map-sketch-bar" });
+    const kindButtons = new Map<FabricKind, HTMLButtonElement>();
+    const setActiveKind = (kind: FabricKind): void => {
+      this.sketchKind = kind;
+      this.sketchController?.setKind(kind);
+      for (const [k, b] of kindButtons) b.toggleClass("is-active", k === kind);
+    };
+    for (const kind of FABRIC_KINDS) {
+      const b = this.sketchBarEl.createEl("button", {
+        text: kind,
+        cls: "campaign-map-sketch-kind-btn",
+        attr: { title: `Sketch a ${kind} (${isPolygonKind(kind) ? "polygon" : "line"})` },
+      });
+      b.onclick = () => setActiveKind(kind);
+      kindButtons.set(kind, b);
+    }
+    // Plan 014: literal vs generator-feed toggle for new drawings + the
+    // explicit "build from sketch" action (explicit, not live-as-you-draw,
+    // per the plan's preview/commit recommendation).
+    const modeBtn = this.sketchBarEl.createEl("button", {
+      cls: "campaign-map-sketch-kind-btn campaign-map-sketch-mode-btn",
+      attr: { title: 'New drawings feed the procedural generator ("generate" mode) instead of rendering literally' },
+    });
+    const renderModeBtn = (): void => {
+      modeBtn.setText(this.sketchDraftMode === "generate" ? "feed: on" : "feed: off");
+      modeBtn.toggleClass("is-active", this.sketchDraftMode === "generate");
+    };
+    modeBtn.onclick = () => {
+      this.sketchDraftMode = this.sketchDraftMode === "generate" ? "literal" : "generate";
+      renderModeBtn();
+    };
+    renderModeBtn();
+    const generateBtn = this.sketchBarEl.createEl("button", {
+      text: "build",
+      cls: "campaign-map-sketch-kind-btn",
+      attr: { title: "Generate street networks from generate-mode road corridors" },
+    });
+    generateBtn.onclick = () => void this.generateFromSketch();
+    this.sketchBarEl.createDiv({
+      cls: "campaign-map-sketch-hint",
+      text: "click: vertex · dbl-click/Enter: finish · Esc: cancel · Del: delete selected",
+    });
+    const exit = this.sketchBarEl.createEl("button", {
+      text: "✕ done",
+      cls: "campaign-map-sketch-exit-btn",
+      attr: { title: "Exit sketch mode" },
+    });
+    exit.onclick = () => this.toggleSketchMode();
+    setActiveKind(this.sketchKind);
+  }
+
+  private sketchKeydown(ev: KeyboardEvent): void {
+    if (!this.sketchMode) return;
+    if (ev.key === "Enter") {
+      if (this.sketchController?.isDrawing) {
+        ev.preventDefault();
+        this.finalizeSketchDraft();
+      }
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      if (this.sketchController?.isDrawing) this.sketchController.cancel();
+      else this.toggleSketchMode();
+    } else if (ev.key === "Delete" || ev.key === "Backspace") {
+      if (this.selectedFabricId) {
+        ev.preventDefault();
+        this.deleteSelectedFabric();
+      }
+    }
+  }
+
+  /** Sketch-mode click grammar: mid-draw every click is a vertex; otherwise a
+   * click on an existing fabric feature selects it (delete/promote target),
+   * and a click on empty ground starts a new draft. */
+  private handleSketchClick(e: MapMouseEvent): void {
+    const c = this.sketchController;
+    if (!c || !this.map) return;
+    if (!c.isDrawing) {
+      const layers = FABRIC_LAYER_IDS.filter((l) => this.map!.getLayer(l));
+      const hits = layers.length
+        ? this.map.queryRenderedFeatures(
+            [
+              [e.point.x - 6, e.point.y - 6],
+              [e.point.x + 6, e.point.y + 6],
+            ],
+            { layers }
+          )
+        : [];
+      const hitId = hits[0]?.properties?.id as string | undefined;
+      if (hitId) {
+        const feature = this.fabricCollection.features.find((f) => f.id === hitId);
+        if (feature) {
+          this.selectedFabricId = hitId;
+          c.showSelection(feature.geometry as GeoJSON.Geometry);
+          return;
+        }
+      }
+      this.selectedFabricId = null;
+      c.clearSelection();
+    }
+    c.addVertex([e.lngLat.lng, e.lngLat.lat]);
+  }
+
+  private handleSketchDblClick(e: MapMouseEvent): void {
+    if (!this.sketchMode || !this.sketchController?.isDrawing) return;
+    e.preventDefault();
+    this.finalizeSketchDraft();
+  }
+
+  /** Draft → FabricFeature → in-memory collection → Fabric.geojson +
+   * mutation log (`sketch-add`), rendering optimistically before the IO. */
+  private finalizeSketchDraft(): void {
+    const c = this.sketchController;
+    if (!c || !this.campaign) return;
+    const kind = this.sketchKind;
+    const geometry = c.finish();
+    if (!geometry) {
+      new Notice(
+        `Campaign Map: a ${kind} needs at least ${isPolygonKind(kind) ? 3 : 2} points — draft discarded`
+      );
+      return;
+    }
+    const feature: FabricFeature = {
+      type: "Feature",
+      id: makeFabricId(),
+      geometry,
+      properties: {
+        kind,
+        // "literal" is the schema default — only "generate" is worth storing.
+        ...(this.sketchDraftMode === "generate" ? { mode: "generate" as const } : {}),
+      },
+    };
+    this.fabricCollection = withFeature(this.fabricCollection, feature);
+    this.refreshFabric();
+    void this.persistFabric("sketch-add", feature);
+  }
+
+  /** Saves the in-memory collection and appends the sketch log entry —
+   * MapView is Fabric.geojson's only writer, so in-memory is authoritative. */
+  private async persistFabric(logType: "sketch-add" | "sketch-remove", feature: FabricFeature): Promise<void> {
+    if (!this.campaign) return;
+    try {
+      await saveFabric(this.app, this.campaign, this.fabricCollection);
+      await appendLogEntry(this.app, campaignFolderFromConfigPath(this.campaign.path), {
+        ts: Date.now(),
+        type: logType,
+        campaignId: this.campaign.id,
+        path: fabricPath(this.campaign),
+        data: feature as unknown as Record<string, unknown>,
+      });
+    } catch (err) {
+      new Notice(`Campaign Map: saving sketch failed — ${err instanceof Error ? err.message : String(err)}`, 8000);
+    }
+  }
+
+  private deleteSelectedFabric(): void {
+    if (!this.selectedFabricId || !this.campaign) return;
+    const feature = this.fabricCollection.features.find((f) => f.id === this.selectedFabricId);
+    if (!feature) {
+      this.selectedFabricId = null;
+      return;
+    }
+    this.fabricCollection = withoutFeature(this.fabricCollection, feature.id);
+    this.selectedFabricId = null;
+    this.sketchController?.clearSelection();
+    this.refreshFabric();
+    void this.persistFabric("sketch-remove", feature);
+    new Notice(`Campaign Map: deleted sketched ${feature.properties.kind}`);
+  }
+
+  /** "Promote to location note" (plan 013): the selected fabric feature — or
+   * one picked from a list — becomes a real note + sidecar .geojson (lore
+   * home); the drawing itself stays in Fabric.geojson (see fabricStore). */
+  async promoteFabricFeature(): Promise<void> {
+    if (!this.campaign) return;
+    const campaign = this.campaign;
+    await this.loadFabricForCampaign();
+    const features = this.fabricCollection.features;
+    if (features.length === 0) {
+      new Notice("Campaign Map: no sketched fabric to promote (draw some in sketch mode first)");
+      return;
+    }
+    const promote = (feature: FabricFeature): void => {
+      void promoteFabricToNote(this.app, campaign, feature.id).then((file) => {
+        new Notice(
+          file
+            ? `Campaign Map: promoted sketch → "${file.basename}"`
+            : "Campaign Map: couldn't promote — feature not found in Fabric.geojson"
+        );
+      });
+    };
+    const selected = this.selectedFabricId
+      ? features.find((f) => f.id === this.selectedFabricId)
+      : undefined;
+    if (selected) {
+      promote(selected);
+      return;
+    }
+    new FabricFeaturePickerModal(this.app, features, promote).open();
+  }
+
+  /** Plan 014 ("Generate from sketch"): elaborates every generate-mode road
+   * corridor into a street network via the pure corridor generator. The
+   * result is regenerable cache (same tile store/cache path as "generate
+   * city here" — deleting `.mapcache/` regenerates it identically); the
+   * sketch itself stays canon in Fabric.geojson and keeps rendering as the
+   * literal drawn line underneath its elaboration. */
+  async generateFromSketch(): Promise<GeoJSON.Feature[]> {
+    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
+    await this.loadFabricForCampaign();
+    const corridors = this.fabricCollection.features.filter(
+      (f) => f.properties.kind === "road" && f.properties.mode === "generate" && f.geometry.type === "LineString"
+    );
+    if (corridors.length === 0) {
+      new Notice('Campaign Map: no generate-mode road corridors — draw a road with "feed: on" first');
+      return [];
+    }
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const ctx = this.generationContext();
+    const generated: GeoJSON.Feature[] = [];
+    for (const corridor of corridors) {
+      // The corridor crosses into generation-space (meters) whole — every
+      // tile must see the identical corridor or seams break (corridor.ts).
+      const line: GeoJSON.LineString = {
+        type: "LineString",
+        coordinates: (corridor.geometry.coordinates as [number, number][]).map(([x, y]) => [
+          unitsToMeters(x, scale),
+          unitsToMeters(y, scale),
+        ]),
+      };
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const [x, y] of line.coordinates) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+      // Every tile the elaboration can reach: corridor extent + seed
+      // influence radius + max streamline travel.
+      const reach = CORRIDOR_INFLUENCE + CORRIDOR_HALO;
+      const lo = tileXYForPoint(minX - reach, minY - reach);
+      const hi = tileXYForPoint(maxX + reach, maxY + reach);
+      for (let tileY = lo.tileY; tileY <= hi.tileY; tileY++) {
+        for (let tileX = lo.tileX; tileX <= hi.tileX; tileX++) {
+          const features = await generateTile(
+            ctx,
+            tileX,
+            tileY,
+            `sketch-corridor:${corridor.id}`,
+            (seed, bbox, constraints) => generateCorridorStreets(seed, bbox, line, constraints)
+          );
+          const kept = features.filter((f) => featureTouchesBBox(f, ctx.worldBounds));
+          if (kept.length === 0) continue;
+          // Own key namespace: the viewport dispatcher's band eviction
+          // ("city:"/"world:" prefixes) never evicts sketch elaborations;
+          // campaign switch clears them with the rest of loadedTiles.
+          this.loadedTiles.set(`sketch:${corridor.id}:${tileX}:${tileY}`, kept);
+          generated.push(...kept);
+        }
+      }
+    }
+    this.refreshGeneratedSource();
+    new Notice(
+      `Campaign Map: generated ${generated.length} street feature${generated.length === 1 ? "" : "s"} from ${corridors.length} sketched corridor${corridors.length === 1 ? "" : "s"}`
+    );
+    return generated.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
 
   private updateWarningBadge(): void {
@@ -1153,6 +1605,12 @@ export class MapView extends ItemView {
 
   private handleClick(e: MapMouseEvent): void {
     if (!this.map || !this.campaign) return;
+    // Sketch mode owns the click pipeline (plan 013): every click is a
+    // vertex/select action; the normal pin/popup grammar is suspended.
+    if (this.sketchMode) {
+      this.handleSketchClick(e);
+      return;
+    }
     const canon = this.pickFeatureNear(e.point, ["canon-point", "canon-label"]);
     if (canon) {
       this.showPlaceCard(canon);

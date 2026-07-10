@@ -4,6 +4,7 @@ import { basemapLayers } from "./themes/basemapLayers";
 import { generatedLayers } from "./themes/generatedLayers";
 import { connectionLayers } from "./themes/connectionLayers";
 import { sessionPathLayers } from "./themes/sessionPathLayers";
+import { fabricLayers, FABRIC_SOURCE_SPEC } from "./themes/fabricLayers";
 import type { ThemeTokens } from "./themes/tokens";
 
 /**
@@ -78,6 +79,7 @@ export function obsidianNativeStyle(
       generated: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       connections: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       "session-path": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      fabric: { ...FABRIC_SOURCE_SPEC },
       ...(basemap ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } } : {}),
     },
     layers: [
@@ -86,6 +88,7 @@ export function obsidianNativeStyle(
       ...generatedLayers(t),
       ...connectionLayers({ lineColor: t.accent }),
       ...sessionPathLayers({ lineColor: t.poi }),
+      ...fabricLayers(t),
       ...canonLayers({
         pointColor: t.accent,
         pointHaloColor: t.land,

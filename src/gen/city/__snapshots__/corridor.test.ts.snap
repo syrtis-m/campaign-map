@@ -1,0 +1,49 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`generateCorridorStreets 2x2 seam test > the 2x2 seam layout matches its snapshot fixture 1`] = `
+[
+  {
+    "sha256": "cebe0cb81c10404f677b18d98ffaf00511f6294bacc389ec046cd61e32470b21",
+    "summary": {
+      "major": 1,
+      "minor": 64,
+      "total": 65,
+    },
+  },
+  {
+    "sha256": "35d8199b099a2dfdf133ea54b0aebbda78f88392607aed8ada2cfd528ef06aec",
+    "summary": {
+      "major": 1,
+      "minor": 39,
+      "total": 40,
+    },
+  },
+  {
+    "sha256": "07a697c2c956b0001348f830e89eff660b448a0c2f0146d2bed8c1a16fb1e64f",
+    "summary": {
+      "major": 1,
+      "minor": 33,
+      "total": 34,
+    },
+  },
+  {
+    "sha256": "b70dd33e4a12fea2e49bcf0f4733a30f5ac8acbfa695d61a048069efd1c10d21",
+    "summary": {
+      "major": 1,
+      "minor": 62,
+      "total": 63,
+    },
+  },
+]
+`;
+
+exports[`generateCorridorStreets determinism > matches the seeded snapshot fixture 1`] = `
+{
+  "sha256": "3c8b1b41d3a50c027beeb5a76f06332116d20b426dee428a1cdb750965fc6b60",
+  "summary": {
+    "major": 1,
+    "minor": 135,
+    "total": 136,
+  },
+}
+`;
