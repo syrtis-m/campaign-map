@@ -58,22 +58,18 @@ function waitForIdle(map: maplibregl.Map, timeoutMs: number): Promise<void> {
       settled = true;
       reject(new Error(`Campaign Map: poster render timed out waiting for map to idle (${timeoutMs}ms)`));
     }, timeoutMs);
-    const onIdle = (): void => {
+    // Deliberately no "error" listener here: MapLibre fires "error" for
+    // benign, non-fatal conditions too (e.g. a missing glyph range) that the
+    // live map already tolerates and keeps rendering through. Aborting the
+    // offscreen render on the first such event would make poster export fail
+    // in cases where the on-screen map works fine — strictly worse than just
+    // letting a truly-stuck map hit the timeout above.
+    map.once("idle", () => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
-      map.off("error", onError);
       resolve();
-    };
-    const onError = (e: { error?: Error }): void => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      map.off("idle", onIdle);
-      reject(e.error ?? new Error("Campaign Map: poster render map errored before idle"));
-    };
-    map.once("idle", onIdle);
-    map.once("error", onError);
+    });
   });
 }
 
