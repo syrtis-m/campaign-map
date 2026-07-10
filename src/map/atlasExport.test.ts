@@ -54,4 +54,12 @@ describe("sanitizeForPdf", () => {
     expect(result).not.toMatch(/[北京]/);
     expect(result.startsWith("Beijing ?? rolled well ")).toBe(true);
   });
+
+  it("strips C1 control characters (e.g. U+009F) that WinAnsi can't encode", () => {
+    // Regression: pdf-lib's StandardFonts throw "WinAnsi cannot encode ..."
+    // on this exact code point even though it falls inside \x00-\xFF, so it
+    // slips past a naive "strip non-Latin1" filter.
+    const withControlChar = `Gate${String.fromCharCode(0x9f)}way`;
+    expect(sanitizeForPdf(withControlChar)).toBe("Gateway");
+  });
 });

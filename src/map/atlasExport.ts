@@ -81,8 +81,13 @@ const ELLIPSIS = /…/g; // …
 const UNICODE_SPACES = /[  -  　]/g; // nbsp, en/em spaces, etc.
 // eslint-disable-next-line no-control-regex
 const NON_WINANSI = /[^\x00-\xFF]/g;
+// C0 controls (\x00-\x1F minus tab/lf/cr, stripped separately below), DEL,
+// and the C1 control block (\x80-\x9F) — the latter sits inside \x00-\xFF so
+// NON_WINANSI won't catch it, but several of those code points (this
+// module hit \x9F in testing) have no WinAnsi/cp1252 glyph and make
+// pdf-lib's StandardFonts throw.
 // eslint-disable-next-line no-control-regex
-const NON_PRINTABLE_CONTROL = /[\x00-\x08\x0B\x0C\x0E-\x1F]/g;
+const NON_PRINTABLE_CONTROL = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
 
 /**
  * Maps common "smart" punctuation to ASCII and drops anything else outside
@@ -128,9 +133,14 @@ export async function buildAtlasPdf(opts: AtlasOptions): Promise<ArrayBuffer> {
   const imageAreaTop = coverPageH - MARGIN - TITLE_SIZE - 20;
   const imageAreaHeight = imageAreaTop - MARGIN;
   const imageAreaWidth = coverPageW - MARGIN * 2;
-  const scale = Math.min(imageAreaWidth / opts.coverWidth, imageAreaHeight / opts.coverHeight);
-  const drawW = opts.coverWidth * scale;
-  const drawH = opts.coverHeight * scale;
+  // Scale from the embedded PNG's own intrinsic dimensions, not the caller's
+  // coverWidth/coverHeight — renderPoster's output PNG is taller than
+  // coverWidth x coverHeight by its title-bar strip (see posterExport.ts's
+  // TITLE_BAR_PX), so using the nominal dimensions here would stretch the
+  // image and squash the map render.
+  const scale = Math.min(imageAreaWidth / coverImage.width, imageAreaHeight / coverImage.height);
+  const drawW = coverImage.width * scale;
+  const drawH = coverImage.height * scale;
   coverPage.drawImage(coverImage, {
     x: MARGIN + (imageAreaWidth - drawW) / 2,
     y: MARGIN + (imageAreaHeight - drawH) / 2,
