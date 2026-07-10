@@ -152,6 +152,17 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "import-geojson",
+      name: "Import GeoJSON (Azgaar/Watabou export)",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.importGeojson();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "undo-last-map-edit",
       name: "Undo last map edit",
       checkCallback: (checking) => {

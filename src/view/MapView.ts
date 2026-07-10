@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Notice, TFile, setIcon } from "obsidian";
 import maplibregl, { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature, StyleSpecification } from "maplibre-gl";
 import type { ParsedCampaign } from "../model/campaignConfig";
-import type { ParsedLocation } from "../model/locationNote";
+import { LOCATION_TYPES, type ParsedLocation } from "../model/locationNote";
 import { buildConnectionFeatures } from "../model/connections";
 import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
 import { obsidianNativeStyle, readObsidianCssTokens } from "../map/theme";
@@ -24,9 +24,12 @@ import {
 import type { GeneratorId } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
 import { addConnection, removeConnection } from "../vault/locationOps";
+import { importNotes } from "../vault/importOps";
+import { importGeojson } from "../model/importGeojson";
 import { QuickAddModal } from "./QuickAddModal";
 import { LocationSearchModal } from "./LocationSearchModal";
 import { ThemeSwitcherModal } from "./ThemeSwitcherModal";
+import { ImportFileModal } from "./ImportFileModal";
 import { renderPoster, posterDimensions } from "../map/posterExport";
 import type CampaignMapPlugin from "../main";
 
@@ -405,6 +408,44 @@ export class MapView extends ItemView {
     } catch (err) {
       new Notice(`Campaign Map: poster export failed — ${err instanceof Error ? err.message : String(err)}`, 8000);
     }
+  }
+
+  /** Plan 011: generic GeoJSON importer (covers Azgaar/Watabou exports and
+   * anything else that speaks GeoJSON). No network, no Node fs — the GM
+   * drops the export into the vault first; this just picks it, converts
+   * Point/Line/Polygon features to note specs, and writes them via
+   * `importOps.importNotes` (same write paths as quick-add/canonize). */
+  async importGeojson(): Promise<void> {
+    if (!this.campaign) {
+      new Notice("Campaign Map: open a campaign first");
+      return;
+    }
+    const campaign = this.campaign;
+    const files = this.app.vault.getFiles().filter((f) => f.extension === "geojson" || f.extension === "json");
+    if (files.length === 0) {
+      new Notice("Campaign Map: no .geojson/.json files found in the vault to import");
+      return;
+    }
+
+    new ImportFileModal(this.app, files, async (file) => {
+      try {
+        const raw = await this.app.vault.read(file);
+        const parsed = JSON.parse(raw);
+        const notes = importGeojson(parsed, LOCATION_TYPES);
+        if (notes.length === 0) {
+          new Notice(`Campaign Map: no importable features found in "${file.path}"`);
+          return;
+        }
+        const created = await importNotes(this.app, campaign, notes);
+        new Notice(
+          created === 0
+            ? `Campaign Map: import found ${notes.length} feature${notes.length === 1 ? "" : "s"}, but all already exist`
+            : `Campaign Map: imported ${created} location${created === 1 ? "" : "s"} from "${file.path}"`
+        );
+      } catch (err) {
+        new Notice(`Campaign Map: import failed — ${err instanceof Error ? err.message : String(err)}`, 8000);
+      }
+    }).open();
   }
 
   async undoLastEdit(): Promise<void> {
