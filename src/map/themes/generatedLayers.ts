@@ -36,11 +36,17 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
       },
     } as unknown as LayerSpecification,
     {
+      // Districts are the *persistent* city fabric — large area fills stay
+      // legible when thin street lines thin to sub-pixel on zoom-out. Bumped
+      // from a near-invisible 0.05 to a subtle-but-present 0.09 so "there's a
+      // city here" still reads once streets get small, without washing out
+      // close-up detail (kept flat/low — a heavier or outlined fill turned the
+      // near-black neon base into a solid purple slab when zoomed into a block).
       id: "generated-district",
       type: "fill",
       source: "generated",
       filter: ["==", ["get", "generatorId"], "city-district"],
-      paint: { "fill-color": t.poi, "fill-opacity": 0.05 },
+      paint: { "fill-color": t.poi, "fill-opacity": 0.09 },
     } as unknown as LayerSpecification,
     {
       id: "generated-footprint",
@@ -66,7 +72,12 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": t.roadMinor,
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 18, 3],
+        // Width FLOOR of ~1px: streets used to interpolate down to 0.5px at
+        // z10 (thinner still below), going sub-pixel and vanishing on a dark
+        // base as you zoomed out. Never let a street render narrower than it
+        // takes to be seen — it thickens with zoom for detail, but the low end
+        // holds a visible minimum so the road network doesn't blink out.
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 12, 1.6, 18, 3.5],
       },
     } as unknown as LayerSpecification,
     {
