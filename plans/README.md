@@ -16,21 +16,24 @@ written-but-unrun.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 001 | Make map pins reliably clickable | P1 | S | — | DONE — merged to `main` (typecheck+74 tests+build green; live gates unrun) |
-| 002 | Paint world background from biome/height data | P1 | M | — | DONE — merged to `main` (typecheck+74 tests+build green; live gates unrun) |
-| 003 | On-map control surface (toolbar) | P2 | M | — | DONE — merged to `main` (typecheck+74 tests+build green; live gates unrun) |
-| 004 | Point-crawl connections — data + rendering | P1 | M | (001,003 merged ✓) | IN PROGRESS (agent) |
-| 005 | Point-crawl connections — create/edit/delete UI | P1 | M | 004 | QUEUED (dispatch once 004 merges) |
+| 001 | Make map pins reliably clickable | P1 | S | — | DONE — merged to `main`, live-gate verified |
+| 002 | Paint world background from biome/height data | P1 | M | — | DONE — merged to `main`, live-gate verified |
+| 003 | On-map control surface (toolbar) | P2 | M | — | DONE — merged to `main`, live-gate verified |
+| 004 | Point-crawl connections — data + rendering | P1 | M | (001,003 merged ✓) | DONE — merged to `main`, live-gate verified (connection line renders) |
+| 005 | Point-crawl connections — create/edit/delete UI | P1 | M | 004 ✓ | IN PROGRESS (agent) |
 | 006 | Per-type location icons (spike + prototype) | P2 | M | (001,003 merged ✓) | IN PROGRESS (agent) |
-| 007 | Poster export — v1 high-res PNG | P2 | M | (001,003 merged ✓) | IN PROGRESS (agent) |
+| 007 | Poster export — v1 high-res PNG | P2 | M | (001,003 merged ✓) | DONE — merged to `main` (PNG render not yet eyeballed; command wired) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason).
 
-**Verification note:** "DONE" means merged to `main` with `npm run typecheck`,
-`npm test` (74/74), and `npm run build` all green. The live Obsidian phase-gates
-(`scripts/gates/*.ts`, which drive a real Obsidian GUI) were **not** run (no
-GUI/CLI in the build environment); their check additions are committed but
-unexecuted. A human/CLI-enabled run should exercise them before release.
+**Verification (updated):** the live Obsidian phase-gates now RUN and PASS on
+`main` after the 001/002/003/004/007 merges:
+Phase 0 **10/10** · Phase 1 **15/15** (incl. hit-tolerance + connection render)
+· Phase 2 **15/15** · Phase 3 **14/14** (incl. biome background + toolbar) ·
+Phase 4 **11/11**. Point-crawl connection line, canon pins+labels, terrain
+background, and the 7-button toolbar are all screenshot-verified in the live
+app. One caveat: 007's actual PNG output has not been visually inspected yet
+(the command + offscreen-render path are wired and unit-tested).
 
 ## Merge / conflict ordering (important for parallel execution)
 
