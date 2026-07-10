@@ -152,6 +152,17 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "export-map-atlas",
+      name: "Export campaign atlas (PDF)",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.exportAtlas();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "undo-last-map-edit",
       name: "Undo last map edit",
       checkCallback: (checking) => {
