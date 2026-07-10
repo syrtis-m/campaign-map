@@ -131,3 +131,44 @@ export async function moveLocationNote(
     data: { from, to: newPoint },
   });
 }
+
+/**
+ * Point-crawl connections (plan 004's `connections:` frontmatter schema — a
+ * bare string or `{to,type?,label?}`) — the "Connect to..." place-card gesture
+ * writes here. Idempotent: connecting to the same target twice is a no-op.
+ * Target is stored by basename (matches how `buildConnectionFeatures`'s
+ * resolver looks up `byName`), not by full vault path.
+ */
+export async function addConnection(
+  app: App,
+  sourcePath: string,
+  targetBasename: string,
+  label?: string
+): Promise<void> {
+  const file = app.vault.getFileByPath(sourcePath);
+  if (!file) return;
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    const list: unknown[] = Array.isArray(fm.connections) ? fm.connections : [];
+    const already = list.some((c) =>
+      typeof c === "string" ? c === targetBasename : (c as { to?: string })?.to === targetBasename
+    );
+    if (already) return;
+    list.push(label ? { to: targetBasename, label } : targetBasename);
+    fm.connections = list;
+  });
+}
+
+/** Removes a connection to `targetBasename` from `sourcePath`'s frontmatter, if
+ * present. A no-op if the source never declared it (e.g. the edge was declared
+ * from the other end) — deletes the whole `connections` key once it's empty. */
+export async function removeConnection(app: App, sourcePath: string, targetBasename: string): Promise<void> {
+  const file = app.vault.getFileByPath(sourcePath);
+  if (!file) return;
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    if (!Array.isArray(fm.connections)) return;
+    fm.connections = fm.connections.filter((c: unknown) =>
+      typeof c === "string" ? c !== targetBasename : (c as { to?: string })?.to !== targetBasename
+    );
+    if (fm.connections.length === 0) delete fm.connections;
+  });
+}
