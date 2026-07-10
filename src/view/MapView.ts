@@ -406,6 +406,13 @@ export class MapView extends ItemView {
     return all.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
 
+  /** Test surface (docs/05): does a tolerant hit-test at a screen point find a
+   * canon feature? Returns the location id or null. */
+  hitTestCanonAt(x: number, y: number): string | null {
+    const f = this.pickFeatureNear(new maplibregl.Point(x, y), ["canon-point", "canon-point-far", "canon-label"]);
+    return (f?.properties?.id as string | undefined) ?? null;
+  }
+
   private mapCenterUnits(): [number, number] {
     const { lng, lat } = this.map!.getCenter();
     return [lng, lat];
@@ -701,14 +708,49 @@ export class MapView extends ItemView {
     this.scaleBarEl.style.width = `${Math.max(20, widthPx)}px`;
   }
 
+  /** Hit-test with a pixel tolerance (default 8px) instead of an exact point,
+   * so 3–7px dots are clickable when the cursor is merely near them. Returns the
+   * candidate whose projected position is closest to `screenPoint`, or null. */
+  private pickFeatureNear(
+    screenPoint: maplibregl.Point,
+    layers: string[],
+    radius = 8
+  ): MapGeoJSONFeature | null {
+    if (!this.map) return null;
+    const existing = layers.filter((l) => this.map!.getLayer(l));
+    if (existing.length === 0) return null;
+    const box: [maplibregl.PointLike, maplibregl.PointLike] = [
+      [screenPoint.x - radius, screenPoint.y - radius],
+      [screenPoint.x + radius, screenPoint.y + radius],
+    ];
+    const candidates = this.map.queryRenderedFeatures(box, { layers: existing });
+    let best: MapGeoJSONFeature | null = null;
+    let bestDist = Infinity;
+    for (const f of candidates) {
+      if (f.geometry.type !== "Point") continue;
+      const p = this.map.project(f.geometry.coordinates as [number, number]);
+      const d = Math.hypot(p.x - screenPoint.x, p.y - screenPoint.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = f;
+      }
+    }
+    return best;
+  }
+
   private handleClick(e: MapMouseEvent): void {
     if (!this.map || !this.campaign) return;
-    const features = this.map.queryRenderedFeatures(e.point, { layers: ["canon-point"] });
-    if (features.length > 0) {
-      this.showPlaceCard(features[0]);
-    } else {
-      this.showDroppedPin(e.lngLat);
+    const canon = this.pickFeatureNear(e.point, ["canon-point", "canon-point-far", "canon-label"]);
+    if (canon) {
+      this.showPlaceCard(canon);
+      return;
     }
+    const generated = this.pickFeatureNear(e.point, ["generated-point", "generated-point-far", "generated-label"]);
+    if (generated) {
+      this.showGeneratedCard(generated, e.lngLat);
+      return;
+    }
+    this.showDroppedPin(e.lngLat);
   }
 
   private handleContextMenu(e: MapMouseEvent): void {
@@ -761,7 +803,7 @@ export class MapView extends ItemView {
 
   private handleDragStart(e: MapMouseEvent & { features?: MapGeoJSONFeature[] }): void {
     if (!this.map || !this.campaign) return;
-    const feature = this.map.queryRenderedFeatures(e.point, { layers: ["canon-point"] })[0];
+    const feature = this.pickFeatureNear(e.point, ["canon-point", "canon-point-far", "canon-label"]);
     if (!feature) return;
     const locId = feature.properties?.id as string | undefined;
     const state = this.plugin.getCampaignState(this.campaign.id);
@@ -840,6 +882,34 @@ export class MapView extends ItemView {
     };
     actions.createEl("button", { text: "Center" }).onclick = () => {
       if (location.point) this.map?.flyTo({ center: location.point });
+    };
+
+    this.placeCardPopup = new maplibregl.Popup({ closeButton: true, maxWidth: "280px", className: "campaign-map-place-card-popup" })
+      .setLngLat(feature.geometry.coordinates as [number, number])
+      .setDOMContent(el)
+      .addTo(this.map);
+  }
+
+  private showGeneratedCard(feature: MapGeoJSONFeature, lngLat: maplibregl.LngLat): void {
+    if (!this.map || !this.campaign || feature.geometry.type !== "Point") return;
+    this.droppedPinPopup?.remove();
+    this.placeCardPopup?.remove();
+
+    const name = String(feature.properties?.name ?? "Unnamed");
+    const type = String(feature.properties?.type ?? "settlement");
+
+    const el = document.createElement("div");
+    el.addClass("campaign-map-place-card");
+    el.createEl("h4", { text: name });
+    el.createDiv({ cls: "campaign-map-place-card-preview", text: `Generated ${type} — not yet canon.` });
+
+    const actions = el.createDiv({ cls: "campaign-map-place-card-actions" });
+    const at = feature.geometry.coordinates as [number, number];
+    actions.createEl("button", { text: "Add to canon" }).onclick = () => {
+      void this.canonizeGeneratedNear(at).then((ok) => {
+        this.placeCardPopup?.remove();
+        new Notice(ok ? `Campaign Map: "${name}" is now canon` : "Campaign Map: could not canonize");
+      });
     };
 
     this.placeCardPopup = new maplibregl.Popup({ closeButton: true, maxWidth: "280px", className: "campaign-map-place-card-popup" })
