@@ -23,8 +23,19 @@ written-but-unrun.
 | 005 | Point-crawl connections — create/edit/delete UI | P1 | M | 004 ✓ | DONE — merged to `main`, live-gate verified (connect write-path renders a line) |
 | 006 | Per-type location icons (spike + prototype) | P2 | M | (001,003 merged ✓) | REVERTED — spike surfaced a live blocker (see below); branch + `006-NOTES.md` kept |
 | 007 | Poster export — v1 high-res PNG | P2 | M | (001,003 merged ✓) | DONE — merged to `main` (PNG render not yet eyeballed; command wired) |
+| 008 | Atlas export — PDF (maps + gazetteer) | P1 | L | 007 ✓ | IN PROGRESS (agent) |
+| 009 | Campaign replay + session travel paths | P1 | M | 004 ✓ | IN PROGRESS (agent) |
+| 010 | Populate-area + external-agent note contract | P1 | M | — | IN PROGRESS (agent) |
+| 011 | Import external maps (GeoJSON/Azgaar/Watabou) | P2 | M | — | IN PROGRESS (agent) |
+| 012 | Phase 5 Tier-A gate (`scripts/gates/phase5.ts`) | P1 | M | 008,009,010,011 | TODO (orchestrator authors after features land) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason).
+
+**Phase 5 (autonomous build, GOAL.md):** 008–011 are the remaining Phase-5
+roadmap features; 012 is the phase-5 gate that verifies them. After they merge,
+the orchestrator populates `review/` with Tier-B items, verifies all gates
+0–5 green on the live app, and writes the final PROGRESS.md section. Bases
+integration is deferred (API-gated — a `review/` note explains why).
 
 **Verification (updated):** the live Obsidian phase-gates RUN and PASS on
 `main` after the 001/002/003/004/005/007 merges (006 reverted):
