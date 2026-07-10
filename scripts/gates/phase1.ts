@@ -46,6 +46,18 @@ async function main() {
     if (!errs.includes("No errors")) throw new Error(errs);
   });
 
+  await gate.try("connections: layer registered, seeded demo line renders", () => {
+    const result = evalJs(`(function(){
+      var map = app.plugins.plugins['campaign-map'].map;
+      var src = map.getSource('connections');
+      var data = src ? src._data : null;
+      return JSON.stringify({ hasLayer: !!map.getLayer('connection-line'), lineCount: data ? data.features.length : 0 });
+    })()`);
+    const parsed = typeof result === "string" ? JSON.parse(result) : result;
+    if (!parsed.hasLayer) throw new Error(`connection-line layer missing: ${JSON.stringify(parsed)}`);
+    if (!(parsed.lineCount >= 1)) throw new Error(`expected >=1 seeded connection, got: ${JSON.stringify(parsed)}`);
+  });
+
   await gate.try("reconcile: create note → index within 500ms", async () => {
     clearErrors();
     obsidianRaw([

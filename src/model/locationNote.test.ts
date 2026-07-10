@@ -54,6 +54,16 @@ describe("parseLocationNote", () => {
     const defaults = typeDefaults("not-a-real-type");
     expect(defaults).toEqual(typeDefaults("custom"));
   });
+
+  it("defaults connections to an empty array when the field is absent", () => {
+    const result = parseLocationNote("Locations/Tavern.md", "Tavern", {
+      map: "ashfall",
+      geometry: [0, 0],
+      type: "custom",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.location.connections).toEqual([]);
+  });
 });
 
 describe("locationToFeature", () => {

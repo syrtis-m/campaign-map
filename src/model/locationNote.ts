@@ -34,6 +34,11 @@ export function typeDefaults(type: string): TypeDefaults {
 
 const PointGeometry = z.tuple([z.number(), z.number()]);
 
+const ConnectionSchema = z.union([
+  z.string().min(1),
+  z.object({ to: z.string().min(1), type: z.string().optional(), label: z.string().optional() }),
+]);
+
 export const LocationFrontmatterSchema = z.object({
   map: z.string().min(1),
   geometry: z.union([PointGeometry, z.string().min(1)]), // point, or path to sidecar .geojson
@@ -42,6 +47,7 @@ export const LocationFrontmatterSchema = z.object({
   importance: z.number().int().min(1).max(9).optional(),
   "zoom-range": z.tuple([z.number(), z.number()]).optional(),
   icon: z.string().optional(),
+  connections: z.array(ConnectionSchema).optional(),
 });
 
 export type LocationFrontmatter = z.infer<typeof LocationFrontmatterSchema>;
@@ -59,6 +65,7 @@ export interface ParsedLocation {
   zoomMax: number;
   aliases: string[];
   icon: string | null;
+  connections: { to: string; type: string | null; label: string | null }[];
 }
 
 export interface LocationParseError {
@@ -106,6 +113,11 @@ export function parseLocationNote(
       zoomMax: fm["zoom-range"]?.[1] ?? defaults.zoomMax,
       aliases: fm.aliases ?? [],
       icon: fm.icon ?? null,
+      connections: (fm.connections ?? []).map((c) =>
+        typeof c === "string"
+          ? { to: c, type: null, label: null }
+          : { to: c.to, type: c.type ?? null, label: c.label ?? null }
+      ),
     },
   };
 }

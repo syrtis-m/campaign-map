@@ -2,6 +2,7 @@ import type { StyleSpecification } from "maplibre-gl";
 import { canonLayers } from "./themes/canonLayers";
 import { basemapLayers } from "./themes/basemapLayers";
 import { generatedLayers } from "./themes/generatedLayers";
+import { connectionLayers } from "./themes/connectionLayers";
 import type { ThemeTokens } from "./themes/tokens";
 
 /**
@@ -74,12 +75,14 @@ export function obsidianNativeStyle(
     sources: {
       canon: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       generated: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      connections: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       ...(basemap ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } } : {}),
     },
     layers: [
       { id: "background", type: "background", paint: { "background-color": t.land } },
       ...(basemap ? basemapLayers(basemap.sourceId, t) : []),
       ...generatedLayers(t),
+      ...connectionLayers({ lineColor: t.accent }),
       ...canonLayers({
         pointColor: t.accent,
         pointHaloColor: t.land,
