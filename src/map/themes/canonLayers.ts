@@ -1,5 +1,10 @@
 import type { LayerSpecification } from "maplibre-gl";
 
+/** Constant on-map dot radius (px) for every location, canon or generated —
+ * consistent size at every zoom, never importance-scaled. Shared so generated
+ * settlements match canon exactly (provenance invisibility, quality-bar F2). */
+export const CANON_DOT_RADIUS = 5;
+
 /**
  * Canon-location circle + label layers, shared by every theme (obsidian-native and the
  * four handcrafted genre themes). CLAUDE.md: "themes own ALL paint" — every theme calls
@@ -16,27 +21,17 @@ export function canonLayers(opts: {
   const zoomFilter = ["all", ["<=", ["get", "minZoom"], ["zoom"]], ["<=", ["zoom"], ["get", "maxZoom"]]];
   return [
     {
-      // Google Maps keeps a small dot for saved places at any zoom, even when
-      // there's no room to show the full pin/label — a location shouldn't
-      // just vanish below its type's zoomMin. Filtered to *only* the zoomed-
-      // out-past-minZoom case so it never double-renders under canon-point.
-      id: "canon-point-far",
-      type: "circle",
-      source: "canon",
-      filter: ["<", ["zoom"], ["get", "minZoom"]],
-      paint: {
-        "circle-radius": ["interpolate", ["linear"], ["get", "importance"], 1, 4, 7, 2],
-        "circle-color": opts.pointColor,
-        "circle-opacity": 0.75,
-      },
-    } as unknown as LayerSpecification,
-    {
+      // One dot, every zoom, one size. Locations are markers you drop and keep
+      // (Google-Maps saved-place model) — they must never shrink by "importance"
+      // or vanish when you zoom out past a type's zoomMin. So the point layer has
+      // NO zoom filter and a CONSTANT radius; importance still drives label size
+      // + collision priority below, just not the dot. (Replaces the former
+      // canon-point / canon-point-far split.)
       id: "canon-point",
       type: "circle",
       source: "canon",
-      filter: zoomFilter,
       paint: {
-        "circle-radius": ["interpolate", ["linear"], ["get", "importance"], 1, 7, 7, 3],
+        "circle-radius": CANON_DOT_RADIUS,
         "circle-color": opts.pointColor,
         "circle-stroke-width": 1.5,
         "circle-stroke-color": opts.pointHaloColor,

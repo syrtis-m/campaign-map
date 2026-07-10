@@ -497,7 +497,7 @@ export class MapView extends ItemView {
   /** Test surface (docs/05): does a tolerant hit-test at a screen point find a
    * canon feature? Returns the location id or null. */
   hitTestCanonAt(x: number, y: number): string | null {
-    const f = this.pickFeatureNear(new maplibregl.Point(x, y), ["canon-point", "canon-point-far", "canon-label"]);
+    const f = this.pickFeatureNear(new maplibregl.Point(x, y), ["canon-point", "canon-label"]);
     return (f?.properties?.id as string | undefined) ?? null;
   }
 
@@ -847,12 +847,12 @@ export class MapView extends ItemView {
 
   private handleClick(e: MapMouseEvent): void {
     if (!this.map || !this.campaign) return;
-    const canon = this.pickFeatureNear(e.point, ["canon-point", "canon-point-far", "canon-label"]);
+    const canon = this.pickFeatureNear(e.point, ["canon-point", "canon-label"]);
     if (canon) {
       this.showPlaceCard(canon);
       return;
     }
-    const generated = this.pickFeatureNear(e.point, ["generated-point", "generated-point-far", "generated-label"]);
+    const generated = this.pickFeatureNear(e.point, ["generated-point", "generated-label"]);
     if (generated) {
       this.showGeneratedCard(generated, e.lngLat);
       return;
@@ -917,7 +917,7 @@ export class MapView extends ItemView {
 
   private handleDragStart(e: MapMouseEvent & { features?: MapGeoJSONFeature[] }): void {
     if (!this.map || !this.campaign) return;
-    const feature = this.pickFeatureNear(e.point, ["canon-point", "canon-point-far", "canon-label"]);
+    const feature = this.pickFeatureNear(e.point, ["canon-point", "canon-label"]);
     if (!feature) return;
     const locId = feature.properties?.id as string | undefined;
     const state = this.plugin.getCampaignState(this.campaign.id);

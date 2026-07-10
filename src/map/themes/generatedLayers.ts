@@ -1,5 +1,6 @@
 import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "./tokens";
+import { CANON_DOT_RADIUS } from "./canonLayers";
 
 /**
  * Generated city/world fabric (Phase 3), styled from the same theme tokens
@@ -69,27 +70,16 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
       },
     } as unknown as LayerSpecification,
     {
-      // Same "always a dot, even zoomed out past the type's normal range"
-      // treatment as canon-point-far (src/map/themes/canonLayers.ts) —
-      // provenance must stay invisible (F2), so generated settlements get
-      // the identical far-zoom affordance canon locations do.
-      id: "generated-point-far",
-      type: "circle",
-      source: "generated",
-      filter: ["all", ["==", ["get", "generatorId"], "world-settlement"], ["<", ["zoom"], ["get", "minZoom"]]],
-      paint: {
-        "circle-radius": ["interpolate", ["linear"], ["get", "importance"], 1, 4, 7, 2],
-        "circle-color": t.accent,
-        "circle-opacity": 0.75,
-      },
-    } as unknown as LayerSpecification,
-    {
+      // One dot, every zoom, one constant size — identical to canon-point
+      // (provenance invisibility, F2). No zoom filter (settlements never vanish
+      // on zoom-out), no importance-scaled radius. Replaces the former
+      // generated-point / generated-point-far split.
       id: "generated-point",
       type: "circle",
       source: "generated",
-      filter: ["all", ["==", ["get", "generatorId"], "world-settlement"], zoomFilter],
+      filter: ["==", ["get", "generatorId"], "world-settlement"],
       paint: {
-        "circle-radius": ["interpolate", ["linear"], ["get", "importance"], 1, 7, 7, 3],
+        "circle-radius": CANON_DOT_RADIUS,
         "circle-color": t.accent,
         "circle-stroke-width": 1.5,
         "circle-stroke-color": t.land,
