@@ -27,6 +27,10 @@ import { addConnection, removeConnection } from "../vault/locationOps";
 import { QuickAddModal } from "./QuickAddModal";
 import { LocationSearchModal } from "./LocationSearchModal";
 import { ThemeSwitcherModal } from "./ThemeSwitcherModal";
+import { PopulateAreaModal } from "./PopulateAreaModal";
+import { generateName } from "../gen/naming/culture";
+import { populateArea } from "../gen/populate";
+import { hashSeed } from "../gen/rng";
 import { renderPoster, posterDimensions } from "../map/posterExport";
 import type CampaignMapPlugin from "../main";
 
@@ -441,6 +445,40 @@ export class MapView extends ItemView {
     const culture = cultureAt(config.seed, point[0], point[1], worldBounds, genre, config.namingCultures);
     new QuickAddModal(this.app, culture, this.campaign.config.seed, ({ name, type }) => {
       void this.plugin.createLocation(this.campaign!.id, point, name, type);
+    }).open();
+  }
+
+  /** Plan 010 / docs/03 Phase 5 "populate this district with N shops" —
+   * offline, deterministic (no LLM/API): scatter `count` seeded points across
+   * the current viewport and create a real location note for each, named via
+   * the same region-culture sequence as openQuickAdd so populated notes read
+   * as belonging to whatever culture territory they land in. */
+  populateArea(): void {
+    if (!this.campaign || !this.map) return;
+    const campaign = this.campaign;
+    const { config } = campaign;
+    const genre = genreForCampaign(config.crs, config.theme);
+    const worldBounds = boundsToBBox(config.bounds ?? defaultFictionalBounds());
+    const bounds = this.map.getBounds();
+    const viewport: BBox = {
+      minX: bounds.getWest(),
+      minY: bounds.getSouth(),
+      maxX: bounds.getEast(),
+      maxY: bounds.getNorth(),
+    };
+
+    new PopulateAreaModal(this.app, ({ type, count }) => {
+      const nameFor = (x: number, y: number): string => {
+        const culture = cultureAt(config.seed, x, y, worldBounds, genre, config.namingCultures);
+        return generateName(hashSeed(config.seed, x, y, "populate-name"), culture);
+      };
+      const placed = populateArea({ seed: config.seed, bbox: viewport, type, count, nameFor });
+      void (async () => {
+        for (const { point, name, type: placedType } of placed) {
+          await this.plugin.createLocation(campaign.id, point, name, placedType);
+        }
+        new Notice(`Campaign Map: populated ${placed.length} location${placed.length === 1 ? "" : "s"}`);
+      })();
     }).open();
   }
 
