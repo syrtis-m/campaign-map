@@ -192,3 +192,35 @@ Poster/atlas exports initially rendered the title over a BLANK map — the offsc
 - **Height relief, detail band z16+, multi-step undo/redo, worker-into-live-commands, bold-weight fonts** — logged in the `plans/README.md` roadmap gap register.
 
 **Net:** the plugin now covers the full Phase 0–5 roadmap. Three test campaigns (Ashfall fantasy / London real-city / Nightreach neon-sprawl) present and working; Ashfall exercised end-to-end this session (pins, connections, terrain, generation, exports all screenshot-verified live).
+
+## Phase 6 — sketch/landscaping tools (2026-07-10)
+
+User direction: GUI tools to sketch the non-location city fabric (roads/districts/
+water/walls), stored durably and LOD-consistent, that FEED procedural generation
+("a la Sims landscaping"). Built by a Fable agent (plans 013 + 014).
+
+- **013 — sketch foundation (DONE):** one promotable `<campaign>/Fabric.geojson`
+  canon store; sketch-mode toolbar (pencil) with line/polygon draw, delete,
+  promote-to-note; `fabric` source + per-kind layers in both style builders;
+  per-kind `minzoom` + source `tolerance` (LOD discipline — a road drawn zoomed-in
+  doesn't tangle zoomed-out); `sketch-add`/`sketch-remove` undo. v1 scope: no
+  vertex re-edit, no snapping (follow-ups).
+- **014 — sketch→procedural, road→streets slice (DONE):** pure
+  `generateCorridorStreets` (Chaikin smoothing → corridor tensor basis → branching
+  minor streets); **2×2 adjacent-tile seam determinism test green**; features carry
+  `mode: literal|generate`; a "Generate from sketch" action elaborates
+  generate-mode corridors into cache streets (sketch stays canon). District/river/
+  wall/park elaboration are follow-ups.
+
+**Regression caught + fixed (live-only, 006-class):** the merge shipped two MapLibre
+rule violations that made the whole style silently fail to load (map blank, no
+console error, unit tests green): a `["zoom"]` expression inside a layer `filter`
+(fabricLayers), and a zoom `interpolate` nested inside `["*", …]` in the
+generated-street `line-width` (014). MapLibre requires `zoom` to be the top-level
+expression of a paint property and forbids it in filters. Root-caused by A/B'ing
+pre- vs post-013 builds across full Obsidian restarts (window reloads don't clear
+the separate renderer-degradation issue). Fixed both; live-verified the style loads,
+fabric renders, LOD floors hold, and generate-from-sketch produces 76 corridor
+streets. **Lesson: a green `npm test` does NOT catch an invalid MapLibre style — it
+needs the live `dev:screenshot`/`isStyleLoaded()` loop. Add a gate check that
+asserts `map.isStyleLoaded()` after opening each campaign.**

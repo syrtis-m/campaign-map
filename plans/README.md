@@ -28,8 +28,8 @@ written-but-unrun.
 | 010 | Populate-area + external-agent note contract | P1 | M | — | DONE — merged to `main` (command+method live; generator unit-tested) |
 | 011 | Import external maps (GeoJSON/Azgaar/Watabou) | P2 | M | — | DONE — merged to `main` (command+method live; parser unit-tested) |
 | 012 | Phase 5 Tier-A gate (`scripts/gates/phase5.ts`) | P1 | M | 008,009,010,011 | DONE — `scripts/gates/phase5.ts` authored + run 8/8 |
-| 013 | Sketch mode — fabric store + LOD-aware render + draw tools | P1 | L | — | IN PROGRESS (Fable agent, branch `advisor/013-014-sketch-fable`) |
-| 014 | Sketch → procedural inference ("Sims landscaping") | P1 | L | 013 | IN PROGRESS (Fable agent, after 013; scope = headless road→streets slice first, seam-tested) |
+| 013 | Sketch mode — fabric store + LOD-aware render + draw tools | P1 | L | — | DONE — merged to `main` (Fable), live-verified: fabric road/water render, road LOD-hides <z8, water shows; +style-load fix |
+| 014 | Sketch → procedural inference ("Sims landscaping") | P1 | L | 013 | DONE (road→streets slice) — merged to `main` (Fable), 2×2 seam test green; live: generate-from-sketch → 76 corridor streets. District/river/wall/park elaboration = follow-ups |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason).
 
