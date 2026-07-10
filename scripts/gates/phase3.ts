@@ -76,6 +76,50 @@ async function main() {
     if (!errs.includes("No errors")) throw new Error(errs);
   });
 
+  await gate.try("on-map toolbar renders with all 6 buttons (plan 003)", () => {
+    const result = evalJs(`(() => {
+      var view = app.workspace.getLeavesOfType('campaign-map-view')[0].view;
+      var bar = view.contentEl.querySelector('.campaign-map-toolbar');
+      var buttons = bar ? bar.querySelectorAll('.campaign-map-toolbar-btn').length : 0;
+      return { hasToolbar: !!bar, buttonCount: buttons };
+    })()`) as { hasToolbar: boolean; buttonCount: number };
+    if (!result.hasToolbar) throw new Error("no .campaign-map-toolbar found in view.contentEl");
+    if (result.buttonCount !== 6) throw new Error(`expected 6 toolbar buttons, found ${result.buttonCount}`);
+  });
+
+  await gate.try("on-map toolbar's generate button is wired to real generation (plan 003)", async () => {
+    clearErrors();
+    // Zoom to world band so "Generate fabric here" produces world fabric.
+    evalJs("app.plugins.plugins['campaign-map'].map.setZoom(5); 'ok'");
+
+    // setZoom fires zoomend, which also triggers the view's own debounced
+    // viewport dispatcher — so `generated.length` can grow from that
+    // automatic dispatch, not from the button click. Poll until the count
+    // stops changing (the dispatch has settled) before capturing `before`,
+    // so a subsequent increase can only be attributed to the click.
+    let before = generatedFeatures().length;
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      const now = generatedFeatures().length;
+      if (now === before) break;
+      before = now;
+    }
+
+    evalJs(
+      "app.workspace.getLeavesOfType('campaign-map-view')[0].view.contentEl.querySelectorAll('.campaign-map-toolbar-btn')[1].click(); 'clicked'"
+    );
+
+    let after = before;
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      after = generatedFeatures().length;
+      if (after > before) break;
+    }
+    const errs = devErrors();
+    if (!errs.includes("No errors")) throw new Error(errs);
+    if (after <= before) throw new Error(`toolbar generate click didn't increase generated features (before ${before}, after ${after})`);
+  });
+
   await gate.try("generate-city-here produces streets/districts/blocks/footprints", async () => {
     clearErrors();
     evalJs("app.plugins.plugins['campaign-map'].map.jumpTo({center:[2,-4], zoom:6}); 'ok'");

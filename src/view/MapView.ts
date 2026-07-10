@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Notice, TFile } from "obsidian";
+import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Notice, TFile, setIcon } from "obsidian";
 import maplibregl, { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature, StyleSpecification } from "maplibre-gl";
 import type { ParsedCampaign } from "../model/campaignConfig";
 import type { ParsedLocation } from "../model/locationNote";
@@ -112,6 +112,7 @@ export class MapView extends ItemView {
    * see onOpen() for why it's a fallback, not the primary path. */
   private campaignAppliedOnce = false;
   private loadingIndicatorEl!: HTMLDivElement;
+  private toolbarEl!: HTMLDivElement;
 
   /**
    * Viewport-windowed tile store (Phase 4: "zoom-band dispatcher over
@@ -252,6 +253,8 @@ export class MapView extends ItemView {
     this.loadingIndicatorEl = container.createDiv({ cls: "campaign-map-loading-indicator" });
     this.loadingIndicatorEl.setText("Generating…");
     this.loadingIndicatorEl.style.display = "none";
+    this.toolbarEl = container.createDiv({ cls: "campaign-map-toolbar" });
+    this.buildToolbar();
 
     this.map = new maplibregl.Map({
       container: this.mapContainer,
@@ -296,6 +299,49 @@ export class MapView extends ItemView {
     // No manual ResizeObserver: MapLibre's Map already observes its container
     // (trackResize, default on) with its own debounce — a second observer on the
     // same element caused the browser's ResizeObserver loop-detection warning.
+  }
+
+  /**
+   * Builds the on-map toolbar overlay (top-left) surfacing the highest-value
+   * builder actions that were previously only reachable via the command
+   * palette. Static — same buttons for any campaign — so it's built once
+   * here and never rebuilt on campaign switch (see setCampaign()).
+   */
+  private buildToolbar(): void {
+    this.toolbarEl.empty();
+    const btn = (icon: string, label: string, onClick: () => void): void => {
+      const b = this.toolbarEl.createEl("button", {
+        cls: "campaign-map-toolbar-btn",
+        attr: { "aria-label": label, title: label },
+      });
+      setIcon(b, icon);
+      b.onclick = onClick;
+    };
+
+    btn("plus", "Add location at center", () => {
+      if (!this.map) return;
+      const c = this.map.getCenter();
+      this.openQuickAdd([c.lng, c.lat]);
+    });
+
+    // One "Generate here" that picks the tier from the current zoom, so the GM
+    // doesn't have to know the world/city band distinction.
+    btn("wand-2", "Generate fabric here", () => {
+      if (!this.map) return;
+      const band = bandForZoom(this.map.getZoom());
+      const run = band === "world" ? this.generateWorldHere() : this.generateCityHere();
+      void run.then((f) => new Notice(`Campaign Map: generated ${f.length} ${band} feature${f.length === 1 ? "" : "s"}`));
+    });
+
+    btn("stamp", "Canonize nearest generated feature", () => {
+      void this.canonizeGeneratedNear().then((ok) =>
+        new Notice(ok ? "Campaign Map: canonized nearest feature" : "Campaign Map: nothing generated nearby to canonize")
+      );
+    });
+
+    btn("search", "Search locations", () => this.openSearch());
+    btn("palette", "Switch map theme", () => this.switchTheme());
+    btn("settings", "Campaign settings", () => this.plugin.openControlPanel());
   }
 
   async onClose(): Promise<void> {
