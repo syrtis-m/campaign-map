@@ -152,6 +152,28 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "show-session-path",
+      name: "Show session travel path",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) view.showSessionPath();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "replay-campaign",
+      name: "Replay campaign (mutation log)",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.replayCampaign();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "undo-last-map-edit",
       name: "Undo last map edit",
       checkCallback: (checking) => {

@@ -1,8 +1,10 @@
-import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Notice, TFile, setIcon } from "obsidian";
+import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Notice, TFile, setIcon, FuzzySuggestModal, App } from "obsidian";
 import maplibregl, { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature, StyleSpecification } from "maplibre-gl";
 import type { ParsedCampaign } from "../model/campaignConfig";
 import type { ParsedLocation } from "../model/locationNote";
 import { buildConnectionFeatures } from "../model/connections";
+import { parseSessionPath, sessionPathFeature } from "../model/sessionPath";
+import { campaignFolderFromConfigPath } from "../model/mutationLog";
 import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
 import { obsidianNativeStyle, readObsidianCssTokens } from "../map/theme";
 import { glyphsUrlTemplate, createTransformRequest } from "../map/glyphs";
@@ -31,6 +33,32 @@ import { renderPoster, posterDimensions } from "../map/posterExport";
 import type CampaignMapPlugin from "../main";
 
 export const VIEW_TYPE_MAP = "campaign-map-view";
+
+/** Picks a session note (`<campaign>/Sessions/*.md`) whose body's `[[wikilinks]]`
+ * become a travel path (plan 009) — same FuzzySuggestModal pattern as
+ * `ThemeSwitcherModal`/`CampaignPickerModal`. */
+class SessionSearchModal extends FuzzySuggestModal<TFile> {
+  constructor(
+    app: App,
+    private sessions: TFile[],
+    private onChoose: (file: TFile) => void
+  ) {
+    super(app);
+    this.setPlaceholder("Show session travel path...");
+  }
+
+  getItems(): TFile[] {
+    return this.sessions;
+  }
+
+  getItemText(file: TFile): string {
+    return file.basename;
+  }
+
+  onChooseItem(file: TFile): void {
+    this.onChoose(file);
+  }
+}
 
 function boundsToBBox(bounds: [number, number, number, number]): { minX: number; minY: number; maxX: number; maxY: number } {
   return { minX: bounds[0], minY: bounds[1], maxX: bounds[2], maxY: bounds[3] };
@@ -116,6 +144,16 @@ export class MapView extends ItemView {
   private campaignAppliedOnce = false;
   private loadingIndicatorEl!: HTMLDivElement;
   private toolbarEl!: HTMLDivElement;
+  /** Last-shown per-session travel path (plan 009, Phase 5), if any — kept
+   * in memory (not derived from the index like `connections`) so it can be
+   * re-applied to the `session-path` source after a theme switch wipes and
+   * rebuilds every source (mirrors how `refreshConnections` re-derives
+   * `connections` on the same rebuild). */
+  private currentSessionPathFeature: GeoJSON.Feature | null = null;
+  /** Guards a running replayCampaign() loop so a second invocation, a
+   * campaign switch, or the view closing stops it cleanly instead of two
+   * loops racing to fly the camera around. */
+  private replayToken = 0;
 
   /**
    * Viewport-windowed tile store (Phase 4: "zoom-band dispatcher over
@@ -191,6 +229,8 @@ export class MapView extends ItemView {
       this.loadedTiles.clear();
       this.pendingTiles.clear();
       this.wantedTiles.clear();
+      this.currentSessionPathFeature = null;
+      this.replayToken++; // stop any in-flight replay from the previous campaign
     }
     this.campaign = campaign;
     this.refreshHeaderTitle();
@@ -367,6 +407,84 @@ export class MapView extends ItemView {
       this.map.flyTo({ center: loc.point, zoom: Math.max(this.map.getZoom(), loc.zoomMin + 1) });
       this.pulseFeature(loc);
     }).open();
+  }
+
+  /**
+   * Per-session travel path (plan 009, Phase 5: "session notes already
+   * date-stamp the log" — but here it's the note's own `[[wikilinks]]` that
+   * carry the route). Lists `<campaign>/Sessions/*.md`, and on pick, draws
+   * a line through the locations that session note links, in the order they
+   * appear in the body.
+   */
+  showSessionPath(): void {
+    if (!this.campaign || !this.map) return;
+    const folder = campaignFolderFromConfigPath(this.campaign.path);
+    const sessionFiles = this.app.vault
+      .getMarkdownFiles()
+      .filter((f) => f.path.startsWith(`${folder}/Sessions/`));
+    if (sessionFiles.length === 0) {
+      new Notice("Campaign Map: no session notes found (expected <campaign>/Sessions/*.md)");
+      return;
+    }
+    new SessionSearchModal(this.app, sessionFiles, (file) => void this.applySessionPath(file)).open();
+  }
+
+  private async applySessionPath(file: TFile): Promise<void> {
+    if (!this.campaign || !this.map) return;
+    const body = await this.app.vault.cachedRead(file);
+    const locations = this.plugin.getCampaignState(this.campaign.id).index.all();
+    const points = parseSessionPath(body, locations);
+    const feature = sessionPathFeature(points);
+    if (!feature) {
+      // Clear (not leave-as-is): the GM asked to see *this* session's path,
+      // and a previous session's line lingering on screen would misreport
+      // where this one went — same "no stale line" bar the connections
+      // wiring holds itself to.
+      this.clearSessionPath();
+      new Notice(`Campaign Map: "${file.basename}" doesn't link 2+ known locations — nothing to draw`);
+      return;
+    }
+    this.currentSessionPathFeature = feature;
+    this.refreshSessionPath();
+    if (!this.map) return;
+    const coords = points.map((p) => p.point);
+    const bounds = coords.reduce(
+      (b, c) => b.extend(c),
+      new maplibregl.LngLatBounds(coords[0], coords[0])
+    );
+    this.map.fitBounds(bounds, { padding: 60, maxZoom: 16 });
+    new Notice(`Campaign Map: session path — ${file.basename} (${points.length} stops)`);
+  }
+
+  /**
+   * Campaign replay (plan 009, Phase 5: "campaign replay from the mutation
+   * log"): flies the camera to every `create` entry in `.mapcache/log.jsonl`,
+   * oldest first, pulsing each location as it's visited — a stepped tour of
+   * how the map came to be, not a tweened camera path (scoped out, see
+   * plan's maintenance notes). Interruptible: stops if the view closes
+   * (`this.map` goes null) or the campaign changes mid-replay.
+   */
+  async replayCampaign(): Promise<void> {
+    if (!this.campaign || !this.map) return;
+    const token = ++this.replayToken;
+    const entries = (await this.plugin.log.read(this.campaign.id))
+      .filter((e) => e.type === "create")
+      .sort((a, b) => a.ts - b.ts);
+    if (entries.length === 0) {
+      new Notice("Campaign Map: no created locations in the mutation log yet");
+      return;
+    }
+    new Notice(`Campaign Map: replaying ${entries.length} location${entries.length === 1 ? "" : "s"}...`);
+    const index = this.plugin.getCampaignState(this.campaign.id).index;
+    for (const entry of entries) {
+      if (token !== this.replayToken || !this.map || !this.campaign) return; // interrupted
+      const loc = index.get(entry.path);
+      if (!loc?.point) continue;
+      this.map.flyTo({ center: loc.point, zoom: Math.max(this.map.getZoom(), loc.zoomMin + 1) });
+      this.pulseFeature(loc);
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    }
+    if (token === this.replayToken && this.map) new Notice("Campaign Map: replay complete");
   }
 
   /**
@@ -776,6 +894,7 @@ export class MapView extends ItemView {
     source.setData(fc);
     this.updateWarningBadge();
     this.refreshConnections();
+    this.refreshSessionPath();
   }
 
   /** Point-crawl travel connections declared in `connections:` frontmatter
@@ -787,6 +906,28 @@ export class MapView extends ItemView {
     if (!source) return;
     const locations = this.plugin.getCampaignState(this.campaign.id).index.all();
     source.setData({ type: "FeatureCollection", features: buildConnectionFeatures(locations) });
+  }
+
+  /** Per-session travel path (plan 009) — modeled on `refreshConnections`,
+   * but the feature is user-picked state (`currentSessionPathFeature`), not
+   * derived fresh from the index, so this just re-applies it (or clears the
+   * source when there's nothing shown). Called from `refreshSource()` so a
+   * theme switch's `setStyle` (which wipes every source) doesn't silently
+   * drop a path the GM had open. */
+  private refreshSessionPath(): void {
+    if (!this.map) return;
+    const source = this.map.getSource("session-path") as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    source.setData({
+      type: "FeatureCollection",
+      features: this.currentSessionPathFeature ? [this.currentSessionPathFeature] : [],
+    });
+  }
+
+  /** Empties the `session-path` source and forgets the last-shown path. */
+  clearSessionPath(): void {
+    this.currentSessionPathFeature = null;
+    this.refreshSessionPath();
   }
 
   private updateWarningBadge(): void {
