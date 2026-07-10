@@ -163,25 +163,34 @@ async function main() {
     // projected center (~8.5px true distance, beyond the 3-7px dot radius)
     // is still picked up by the tolerant hit-test, whereas the old exact
     // queryRenderedFeatures at that same offset would have missed.
-    const result = evalJs(`(function(){
+    // Center ON each location at an in-range zoom and wait for the map to
+    // settle before probing — a fictional-CRS viewport is tiny, so a location
+    // that isn't recentered sits off-screen and queryRenderedFeatures returns
+    // nothing (the earlier version only setZoom'd, never recentered, and so
+    // could never find a rendered dot). A 7px diagonal offset (~9.9px true
+    // distance) exceeds the largest dot radius (~8.5px) so the exact query
+    // misses, but stays inside pickFeatureNear's 8px tolerance box so the
+    // tolerant pick still resolves it.
+    const result = evalJs(`new Promise(function(resolve){
       var view = app.workspace.getLeavesOfType('campaign-map-view')[0].view;
       var map = app.plugins.plugins['campaign-map'].map;
       var locs = app.plugins.plugins['campaign-map'].getCampaignState('${CAMPAIGN}').index.all().filter(function(l){return l.point;});
-      var zooms = [4,8,12,16];
-      for (var zi=0; zi<zooms.length; zi++) {
-        map.setZoom(zooms[zi]);
-        for (var li=0; li<locs.length; li++) {
-          var loc = locs[li];
+      var i = 0;
+      function tryNext(){
+        if (i >= locs.length) { resolve(JSON.stringify({ found: false })); return; }
+        var loc = locs[i++];
+        var z = Math.min(loc.zoomMax, Math.max(loc.zoomMin, 11));
+        map.jumpTo({ center: loc.point, zoom: z });
+        map.once('idle', function(){
           var sp = map.project(loc.point);
-          var onScreen = view.hitTestCanonAt(sp.x, sp.y);
-          if (!onScreen) continue; // dot not rendered at this zoom — try another
-          var hit = view.hitTestCanonAt(sp.x + 6, sp.y + 6);
-          var exact = map.queryRenderedFeatures([sp.x + 6, sp.y + 6], {layers:['canon-point']}).length;
-          return JSON.stringify({ found: true, zoom: zooms[zi], loc: loc.id, hit: hit, exactMissed: exact === 0 });
-        }
+          if (!view.hitTestCanonAt(sp.x, sp.y)) { tryNext(); return; } // not rendered here — try another
+          var hit = view.hitTestCanonAt(sp.x + 7, sp.y + 7);
+          var exact = map.queryRenderedFeatures([sp.x + 7, sp.y + 7], {layers:['canon-point']}).length;
+          resolve(JSON.stringify({ found: true, zoom: z, loc: loc.id, hit: hit, exactMissed: exact === 0 }));
+        });
       }
-      return JSON.stringify({ found: false });
-    })()`);
+      tryNext();
+    })`);
     const parsed = typeof result === "string" ? JSON.parse(result) : result;
     if (!parsed.found) throw new Error("no canon dot rendered at any test zoom — cannot exercise tolerance");
     if (!parsed.hit) throw new Error(`tolerant pick missed a ${parsed.hit === null ? "6px near-miss" : "?"}: ${JSON.stringify(parsed)}`);
