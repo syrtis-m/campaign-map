@@ -37,6 +37,7 @@ import { generateName } from "../gen/naming/culture";
 import { populateArea } from "../gen/populate";
 import { hashSeed } from "../gen/rng";
 import { renderPoster, posterDimensions } from "../map/posterExport";
+import { buildAtlasPdf, type AtlasLocation } from "../map/atlasExport";
 import type CampaignMapPlugin from "../main";
 
 export const VIEW_TYPE_MAP = "campaign-map-view";
@@ -392,6 +393,7 @@ export class MapView extends ItemView {
     btn("search", "Search locations", () => this.openSearch());
     btn("palette", "Switch map theme", () => this.switchTheme());
     btn("image", "Export map poster", () => void this.exportPoster());
+    btn("book-open", "Export campaign atlas (PDF)", () => void this.exportAtlas());
     btn("settings", "Campaign settings", () => this.plugin.openControlPanel());
   }
 
@@ -568,6 +570,66 @@ export class MapView extends ItemView {
         new Notice(`Campaign Map: import failed — ${err instanceof Error ? err.message : String(err)}`, 8000);
       }
     }).open();
+  }
+
+  /**
+   * v1 atlas export (docs/03 Phase 5: "Atlas export: PDF from maps +
+   * location notes ... the notes ARE the gazetteer now"). Reuses the same
+   * offscreen renderPoster pipeline as exportPoster() for the cover image,
+   * then reads every canon location's note body (stripping frontmatter the
+   * same way showPlaceCard does) and hands it all to buildAtlasPdf
+   * (atlasExport.ts) to compose the multi-page PDF.
+   */
+  async exportAtlas(): Promise<void> {
+    if (!this.map || !this.campaign) {
+      new Notice("Campaign Map: open a campaign first");
+      return;
+    }
+    const campaign = this.campaign;
+    const c = this.map.getCenter();
+    const canvas = this.map.getCanvas();
+    const { width: coverW, height: coverH } = posterDimensions(canvas.width, canvas.height, 1600);
+    try {
+      const coverPng = await renderPoster({
+        style: this.buildStyle(campaign),
+        center: [c.lng, c.lat],
+        zoom: this.map.getZoom(),
+        bearing: this.map.getBearing(),
+        pitch: this.map.getPitch(),
+        widthPx: coverW,
+        heightPx: coverH,
+        title: campaign.name,
+        transformRequest: createTransformRequest(this.app),
+      });
+
+      const locs = this.plugin.getCampaignState(campaign.id).index.all();
+      const atlasLocs: AtlasLocation[] = await Promise.all(
+        locs.map(async (l): Promise<AtlasLocation> => {
+          const file = this.app.vault.getAbstractFileByPath(l.path);
+          let body = "";
+          if (file instanceof TFile) {
+            body = (await this.app.vault.cachedRead(file)).replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+          }
+          return { name: l.name, type: l.type, point: l.point, body };
+        })
+      );
+
+      const pdf = await buildAtlasPdf({
+        title: campaign.name,
+        coverPng,
+        coverWidth: coverW,
+        coverHeight: coverH,
+        locations: atlasLocs,
+      });
+
+      const dir = `${campaign.path.slice(0, campaign.path.lastIndexOf("/"))}/Exports`;
+      await this.app.vault.adapter.mkdir(dir).catch(() => {});
+      const path = `${dir}/${campaign.name}-atlas-${Date.now()}.pdf`;
+      await this.app.vault.adapter.writeBinary(path, pdf);
+      new Notice(`Campaign Map: atlas exported → ${path}`);
+    } catch (err) {
+      new Notice(`Campaign Map: atlas export failed — ${err instanceof Error ? err.message : String(err)}`, 8000);
+    }
   }
 
   async undoLastEdit(): Promise<void> {
