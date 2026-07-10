@@ -284,6 +284,28 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "toggle-sketch-mode",
+      name: "Toggle sketch mode (draw city fabric)",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) view.toggleSketchMode();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "promote-fabric-feature",
+      name: "Promote sketched fabric to location note",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.promoteFabricFeature();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "test-generation-worker",
       name: "Test generation worker (smoke test)",
       callback: async () => {

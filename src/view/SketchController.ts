@@ -1,5 +1,5 @@
 import type { Map as MapLibreMap, MapMouseEvent, GeoJSONSource, LayerSpecification } from "maplibre-gl";
-import { isPolygonKind, type FabricKind } from "../model/fabric";
+import { isPolygonKind, type FabricGeometry, type FabricKind } from "../model/fabric";
 
 const DRAFT_SOURCE = "fabric-draft";
 const DRAFT_LAYERS = ["fabric-draft-fill", "fabric-draft-line", "fabric-draft-vertex"] as const;
@@ -88,7 +88,7 @@ export class SketchController {
 
   /** Finalizes the draft into a geometry, or null if it's too short (line
    * needs ≥2 vertices, polygon ≥3 — the too-short draft is discarded). */
-  finish(): GeoJSON.LineString | GeoJSON.Polygon | null {
+  finish(): FabricGeometry | null {
     const polygon = isPolygonKind(this.kind);
     const minVertices = polygon ? 3 : 2;
     if (this.vertices.length < minVertices) {

@@ -39,6 +39,9 @@ export const FabricFeatureSchema = z.object({
   }),
 });
 export type FabricFeature = z.infer<typeof FabricFeatureSchema>;
+/** Tuple-position geometry (narrower than GeoJSON.Geometry's `Position[]`) —
+ * the draw controller and generators produce this shape directly. */
+export type FabricGeometry = FabricFeature["geometry"];
 
 export const FabricCollectionSchema = z.object({
   type: z.literal("FeatureCollection"),

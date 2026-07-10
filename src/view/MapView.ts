@@ -739,6 +739,30 @@ export class MapView extends ItemView {
         });
         new Notice("Campaign Map: undid move");
       }
+    } else if (last.type === "sketch-add" || last.type === "sketch-remove") {
+      // Plan 013: the log entry's data is the full FabricFeature, so undo can
+      // remove a just-drawn feature or restore a just-deleted one.
+      const parsed = FabricFeatureSchema.safeParse(last.data);
+      if (!parsed.success) {
+        new Notice("Campaign Map: can't undo sketch — malformed log entry");
+        return;
+      }
+      await this.loadFabricForCampaign();
+      this.fabricCollection =
+        last.type === "sketch-add"
+          ? withoutFeature(this.fabricCollection, parsed.data.id)
+          : withFeature(this.fabricCollection, parsed.data);
+      if (this.selectedFabricId === parsed.data.id) {
+        this.selectedFabricId = null;
+        this.sketchController?.clearSelection();
+      }
+      await saveFabric(this.app, this.campaign, this.fabricCollection);
+      this.refreshFabric();
+      new Notice(
+        last.type === "sketch-add"
+          ? `Campaign Map: undid sketched ${parsed.data.properties.kind}`
+          : `Campaign Map: restored deleted ${parsed.data.properties.kind}`
+      );
     }
   }
 
@@ -1475,6 +1499,12 @@ export class MapView extends ItemView {
 
   private handleClick(e: MapMouseEvent): void {
     if (!this.map || !this.campaign) return;
+    // Sketch mode owns the click pipeline (plan 013): every click is a
+    // vertex/select action; the normal pin/popup grammar is suspended.
+    if (this.sketchMode) {
+      this.handleSketchClick(e);
+      return;
+    }
     const canon = this.pickFeatureNear(e.point, ["canon-point", "canon-label"]);
     if (canon) {
       this.showPlaceCard(canon);
