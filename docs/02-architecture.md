@@ -12,7 +12,7 @@
 | Locations as rows in a private DB | **Locations are notes.** Wikilinks, backlinks, Dataview/Bases queries, session notes link to places |
 | Distribution/updates | Community plugin or BRAT; esbuild bundle |
 
-The deep win: **canon = has a note.** A generated tavern is cache; the moment it matters at the table, canonizing it *creates a markdown note*. GM prep, session logs, and the map share one knowledge graph.
+The deep win: **a place = a note.** Locations are born as markdown notes (quick-add, import, populate-area) — GM prep, session logs, and the map share one knowledge graph. Background geometry ("things on the map"/fabric — sketched or generated) is a separate layer below them and never becomes a note (plan 019's two-layer model).
 
 ## 2. Stack
 
@@ -59,7 +59,7 @@ Note body = GM notes, artist images, wikilinks — rendered in the map's detail 
 
 **Reconciliation:** plugin watches vault events (create/modify/rename/delete on notes with `map:` frontmatter) → updates in-memory index → refreshes GeoJSON sources. Renaming a note renames the map label. Deleting the note removes the pin. The vault is the single source of truth for canon; the map is a *view* of it.
 
-**Complex geometry** (districts, coastlines, canonized street edits): a location note may point at a sidecar `*.geojson` file; frontmatter stays clean.
+**Complex geometry** (imported rivers, district boundaries): a location note may point at a sidecar `*.geojson` file; frontmatter stays clean.
 
 **Mutation log** (`.mapcache/log.jsonl`): still append-only, still powers undo/redo and the campaign-replay keepsake; but canon truth is the notes, and the log is derived history, not the store.
 
@@ -86,11 +86,16 @@ The map speaks Google Maps' input language — zero learning curve:
 - Canon notes → GeoJSON source "canon"; cache chunks → source "generated"; identical styling per type (provenance must be invisible — quality-bar F2).
 - Location art tiers unchanged: custom PNG (now just **vault images**, referenced from frontmatter — artists drop files in a folder) → procedural sigils → theme template icons (game-icons.net pool).
 
-## 5. Procedural LOD + canon (unchanged, one amendment)
+## 5. Procedural generation: explicit-only, manifest-backed (plan 019)
 
-All of rev-1's design holds: deterministic tile seeds `hash(campaignSeed, tileX, tileY, zoom, generatorId)`; zoom-band generators (world → region → city → street); generate-on-demand, persist to cache; halo overlap + hierarchical seeding against seams; canon as constraints; regeneration never touches canon.
+The deterministic core holds: tile seeds `hash(campaignSeed, tileX, tileY, zoom, generatorId)`; two generation tiers (world regions/routes; city streets/districts/blocks); persist to cache; halo overlap + hierarchical seeding against seams; regeneration never touches locations or sketches.
 
-Amendment — **canonization = note creation**: promoting a generated feature writes `Locations/<Name>.md` with frontmatter and removes it from cache. Its geometry (and any GM tweak) is now canon, wikilinkable, and syncs like any note.
+What changed in plan 019:
+- **No automatic generation.** Nothing generates from pan/zoom — the old viewport dispatcher is gone. Generation runs only on an explicit request (*Generate fabric here*, right-click, command palette), at the tier matching the current zoom.
+- **The request is durable, the output is not.** Each generated area is one entry in `<campaign>/Generated.json` (tiny, synced, merge-friendly). On map open the manifest replays: cache hit or deterministic regenerate. Deleting `.mapcache/` stays harmless.
+- **Sketched fabric is a constraint.** Every generator run receives the whole fabric collection: streets stop at sketched water and walls, align to sketched roads; generated districts stay out of sketched water and GM-drawn district polygons. A sketch edit inside a generated area auto-regenerates the affected tiles (never first-time generates).
+- **No named generated POIs.** Settlements are Locations the GM places; the settlement generator survives only to serve populate-area's naming.
+- **No canonization.** Fabric never becomes a note; there is nothing to promote.
 
 Generation runs in a Web Worker (works inside Electron renderer) so the map tab never stutters.
 

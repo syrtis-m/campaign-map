@@ -65,7 +65,7 @@ Jonah's actual bar is *the output after a campaign*. That's a product feature, n
 
 1. **Poster export.** High-res (300dpi) render of any viewport via offscreen tiled rendering, with map furniture, campaign title cartouche, and optional numbered gazetteer margin. This is the thing that gets framed. (Technique: render map in tiles to canvas at scale, stitch; `preserveDrawingBuffer` for single-screen grabs.)
 2. **Campaign replay.** Scrub the mutation log: watch the map grow session by session. Exportable as a short video/GIF. Emotionally, this is the campaign's highlight reel.
-3. **Atlas export.** PDF booklet: overview map + per-region spreads + gazetteer (every canonized location with notes, artist PNGs, sigils, session-invented-in). With an artist-heavy table, this becomes the group's shared artifact.
+3. **Atlas export.** PDF booklet: overview map + per-region spreads + gazetteer (every location with notes, artist PNGs, sigils, session-invented-in). With an artist-heavy table, this becomes the group's shared artifact.
 4. **Session paths.** Optional travel-line layer per session (party route), styled per theme — dotted red Indiana-Jones line on `parchment`.
 
 ## Acceptance bar (screenshot test)

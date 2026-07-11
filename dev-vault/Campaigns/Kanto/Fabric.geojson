@@ -1,0 +1,495 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "fx-sea",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -8,
+              -9.5
+            ],
+            [
+              -4.8,
+              -9.5
+            ],
+            [
+              -4.2,
+              -7
+            ],
+            [
+              -5.2,
+              -4
+            ],
+            [
+              -4.3,
+              -1
+            ],
+            [
+              -5.3,
+              3
+            ],
+            [
+              -4.5,
+              6
+            ],
+            [
+              -5,
+              9.5
+            ],
+            [
+              -8,
+              9.5
+            ],
+            [
+              -8,
+              -9.5
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "water",
+        "name": "Western Sea",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-pond",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -3.1,
+              -5.4
+            ],
+            [
+              -2.1,
+              -5.4
+            ],
+            [
+              -2,
+              -4.7
+            ],
+            [
+              -3,
+              -4.7
+            ],
+            [
+              -3.1,
+              -5.4
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "water",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-pallet",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -3.2,
+              -8.2
+            ],
+            [
+              -0.6,
+              -8.2
+            ],
+            [
+              -0.6,
+              -5.9
+            ],
+            [
+              -3.2,
+              -5.9
+            ],
+            [
+              -3.2,
+              -8.2
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "district",
+        "name": "Pallet Town",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-viridian",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -3.2,
+              1.6
+            ],
+            [
+              0.4,
+              1.6
+            ],
+            [
+              0.4,
+              4.5
+            ],
+            [
+              -3.2,
+              4.5
+            ],
+            [
+              -3.2,
+              1.6
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "district",
+        "name": "Viridian City",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-forest",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -2.6,
+              5.9
+            ],
+            [
+              2.8,
+              5.9
+            ],
+            [
+              3.1,
+              9
+            ],
+            [
+              -2.2,
+              9.2
+            ],
+            [
+              -2.6,
+              5.9
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "park",
+        "name": "Viridian Forest",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-grass1",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -2.7,
+              -3.6
+            ],
+            [
+              -1.3,
+              -3.6
+            ],
+            [
+              -1.3,
+              -2.7
+            ],
+            [
+              -2.7,
+              -2.7
+            ],
+            [
+              -2.7,
+              -3.6
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "park",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-grass2",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -2.5,
+              -0.6
+            ],
+            [
+              -1.2,
+              -0.6
+            ],
+            [
+              -1.2,
+              0.2
+            ],
+            [
+              -2.5,
+              0.2
+            ],
+            [
+              -2.5,
+              -0.6
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "park",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-route1",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -1.9,
+            -6
+          ],
+          [
+            -2.1,
+            -4.6
+          ],
+          [
+            -1.5,
+            -3.2
+          ],
+          [
+            -1.9,
+            -1.2
+          ],
+          [
+            -1.6,
+            0.4
+          ],
+          [
+            -1.7,
+            1.6
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "road",
+        "name": "Route 1",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-route2",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -1.5,
+            4.4
+          ],
+          [
+            -1,
+            5.4
+          ],
+          [
+            -0.2,
+            6.1
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "road",
+        "name": "Route 2",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-routew",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -3,
+            3
+          ],
+          [
+            -4,
+            2.8
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "road",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-river",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            0.8,
+            7.5
+          ],
+          [
+            0.2,
+            5.5
+          ],
+          [
+            -0.8,
+            2.5
+          ],
+          [
+            -1.8,
+            -0.5
+          ],
+          [
+            -3,
+            -2.8
+          ],
+          [
+            -4.3,
+            -3.2
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "river",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-ledge1",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            3.2,
+            -8.5
+          ],
+          [
+            3.4,
+            -3
+          ],
+          [
+            4.2,
+            2
+          ],
+          [
+            4,
+            7.5
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "wall",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-ledge2",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -2.9,
+            -4.4
+          ],
+          [
+            -1.1,
+            -4.4
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "wall",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fx-fence",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -3.2,
+            -5.9
+          ],
+          [
+            -0.6,
+            -5.9
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "wall",
+        "mode": "literal"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fabric-019-river",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            0,
+            3
+          ],
+          [
+            1.5,
+            2.5
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            4.5,
+            1.5
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "river"
+      }
+    }
+  ]
+}

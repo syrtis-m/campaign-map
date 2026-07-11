@@ -240,3 +240,32 @@ fabric renders, LOD floors hold, and generate-from-sketch produces 76 corridor
 streets. **Lesson: a green `npm test` does NOT catch an invalid MapLibre style — it
 needs the live `dev:screenshot`/`isStyleLoaded()` loop. Add a gate check that
 asserts `map.isStyleLoaded()` after opening each campaign.**
+
+## 2026-07-10 — Plan 019: two-layer model (background things vs. Locations)
+
+- **019 (DONE, phases 1–5):** the procedural→canonization loop is deleted per
+  Jonah's correction. The map now has exactly two content classes: **Locations**
+  (note-backed, linkable, always rendered on top — `layerOrder.ts` asserts it
+  per-build and per-theme-test) and **things on the map** ("fabric": sketched →
+  `Fabric.geojson`, generated → `.mapcache/` + a durable request manifest
+  `<campaign>/Generated.json`). Fabric never promotes to a note.
+- **Explicit-only generation:** the viewport dispatcher is gone — pan/zoom runs
+  zero generators (live-asserted via the new `generatorRunCount` test surface).
+  `generateFabricHere(point?)` picks world/city tier from zoom, paints, appends a
+  manifest entry + `generate-area` log record. Manifest replays on open (cache
+  read once, then hit or deterministic regenerate). `.mapcache/` delete →
+  byte-identical repaint (live-verified). Regenerate/Clear-here/Clear-all wired
+  into right-click menu, control modal, palette; clears survive reopen.
+- **Sketch = constraint:** every sketched feature feeds every generator run
+  (`fabricConstraints.ts`, pure): streets stop at water/walls and align to
+  sketched roads (the plan-014 corridor blend generalized; feed-mode/build
+  removed), districts respect sketched water/districts. Sketch edits inside
+  generated areas auto-regenerate affected tiles (debounced; never first-time
+  generates). 2×2 seam tests with constraints crossing the seam are green;
+  live-verified: water sketched over a generated tile → streets stop at the
+  shoreline on their own.
+- **D2:** `world-settlement` unwired from generation (named places are
+  Locations); generated point/label layers removed; settlement generator kept
+  for populate-area naming.
+- Suite: 240 tests green. Migration: old campaigns keep their notes; generated
+  sprawl reappears only where the GM explicitly generates (README notes this).

@@ -13,7 +13,8 @@ Obsidian plugin: Google-Maps-style map tab for tabletop campaigns (fantasy, real
 
 ## Locked decisions (don't relitigate without Jonah)
 - Obsidian plugin (TS + esbuild), MapLibre GL JS in a custom ItemView; desktop-first
-- **Canon = notes**: locations are markdown notes with `map:` frontmatter; the vault is the source of truth; the map is a view. Canonizing a generated feature = creating its note
+- **Two-layer model (plan 019)**: **Locations** are markdown notes with `map:` frontmatter (vault = source of truth, map = view; linkable). **Things on the map** ("fabric") are background geometry — sketched (`Fabric.geojson`) or generated. Locations always render above fabric (asserted, `layerOrder.ts`); **fabric never promotes to a Location** — no canonize, no promote
+- **Generation is explicit-only**: runs only on a GM request (toolbar/menu/command); never from pan/zoom/viewport. What persists is the request (`<campaign>/Generated.json` manifest, synced); output stays regenerable cache. Sketched fabric feeds every run as constraints
 - Generated content = regenerable JSONL cache in `.mapcache/` (deterministic → deletable, sync-excluded, conflict-immune); in-memory flatbush index; **no SQLite**
 - Vault/DataAdapter APIs only — never Node `fs` (keeps mobile possible)
 - Real cities: Protomaps PMTiles file in vault, custom protocol, byte-range reads
@@ -23,7 +24,7 @@ Obsidian plugin: Google-Maps-style map tab for tabletop campaigns (fantasy, real
 - Interaction grammar is Google Maps' (see docs/02 §3b): click pin = place card; click empty = dropped pin + "Add location here"; right-click = native Menu
 - Generators are pure headless host-agnostic functions `(seed, bbox, constraints) => Feature[]` in `src/gen/` — no DOM/map/Obsidian imports
 - Determinism is sacred: `hash(campaignSeed, tileX, tileY, zoom, generatorId)`; same input = same map forever
-- Canon is never overwritten by generators; canon geometry feeds generators as constraints
+- Location/sketch geometry is never overwritten by generators; locations AND sketched fabric feed generators as constraints
 - All map-originated writes append to `.mapcache/log.jsonl` (undo/redo, campaign replay)
 
 ## Conventions

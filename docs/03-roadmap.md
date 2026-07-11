@@ -34,10 +34,10 @@
 - 3a **Naming + sigils**: seeded per-genre name generators; seeded SVG sigil composition.
 - 3b **City gen**: tensor-field streets → Voronoi districts → block subdivision → footprints ([Wonka 2008](https://peterwonka.net/Publications/pdfs/2007.SG.Esch.InteractiveProceduralStreetModeling.Sketch.pdf), [phiresky survey](https://github.com/phiresky/procedural-cities/blob/master/paper.md)); GM-placed field constraints.
 - 3c **World gen**: Poisson → Voronoi → heightmap → biomes → settlements → routes (Azgaar pipeline, headless).
-- 3d **Canonization + stitching**: canonize = *create the note*, remove from cache; generators take canon as constraints; regenerate-region never touches notes; add-location snaps into fabric (quality-bar F2).
+- 3d **Constraints + stitching** *(superseded by plan 019 — canonization deleted)*: generators take locations AND sketched fabric as constraints; regenerate never touches notes or sketches; generation is explicit-only with a durable request manifest (quality-bar F2).
 - Requirements: halo overlap + hierarchical seeding; 2×2 adjacent-tile seam snapshot tests mandatory (F3). Generation in a Web Worker.
 
-**Exit test:** generate a city; canonize a street (it becomes a note); regenerate the district → street survives, surroundings adapt; cache folder deleted → map regenerates identically.
+**Exit test (rewritten by plan 019):** generate a city; sketch a river across it → streets re-adapt to stop at the shoreline on their own; close and reopen the vault → the generated area repaints; cache folder deleted → map regenerates identically; pan/zoom anywhere → zero generator runs.
 
 ## Phase 4 — Continuous LOD
 - Zoom-band dispatcher over `.mapcache/` chunks; loading shimmer; detail band (z16+) buildings/POIs.

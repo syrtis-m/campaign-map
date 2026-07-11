@@ -6,12 +6,14 @@ Dishonored-esque cities. It's built for the solo GM running "yes-and": you inven
 a location mid-session and it becomes a vault note **and** a searchable map pin in
 under five seconds.
 
-**The one idea that explains everything else:** *canon is your notes.* A location
-is a plain markdown note with a bit of `map:` frontmatter. The vault is the source
-of truth; the map is a live view of it. Rename the note, the pin renames. Delete
-the note, the pin vanishes. Everything the map generates on top (streets, coastlines,
-districts) is disposable scaffolding until you "canonize" it — at which point it,
-too, becomes a note.
+**The one idea that explains everything else:** the map has exactly two layers.
+**Locations** are plain markdown notes with a bit of `map:` frontmatter — the vault
+is the source of truth; the map is a live view of it. Rename the note, the pin
+renames. Delete the note, the pin vanishes. **Things on the map** ("fabric" —
+roads, walls, rivers, water, districts, parks) are background geometry, the way
+shapes in PowerPoint work: sketched by hand or painted by the generator **only
+when you ask**. Locations always render above fabric, and fabric never turns into
+a Location — the two layers never trade members.
 
 ---
 
@@ -21,15 +23,14 @@ too, becomes a note.
 2. Click empty ground → a dropped pin appears → **+ Add location here** → name it,
    pick a type, done. It's now a note in your vault and a pin on the map.
 3. Need the surrounding city to *look* like a city? **Generate fabric here** paints
-   procedural streets/districts/coastline around your canon — deterministically, so
-   it's the same every time and safe to delete.
-4. Want a specific road or river *exactly there*? **Sketch** it by hand.
-5. Anything generated or sketched that becomes real → **Canonize** / **Promote** it
-   into a note.
+   procedural streets/districts/coastline around your locations — **only when
+   asked**, never on its own, and reactive to anything you've already drawn.
+4. Want a specific road or river *exactly there*, or to steer what generation does
+   somewhere? **Sketch** it by hand — the generator treats your strokes as
+   constraints and adapts around them.
 
-That's the whole builder: **canon locations** (hand-placed truth) → **procedural
-fabric** (cheap texture) → **sketched fabric** (hand-drawn texture) → promote the
-keepers up into canon.
+That's the whole builder: **Locations** (note-backed, linkable places) on top of
+**things on the map** (sketched or generated background fabric).
 
 ---
 
@@ -131,19 +132,21 @@ Generate & export**, so they don't clutter the map:
 
 | Action (in ⚙️ settings) | Does |
 |---|---|
-| 🪄 **Generate fabric here** | Paints procedural fabric around the map center. Picks *world* (regions/settlements/routes) or *city* (streets/districts) automatically from your zoom. |
-| 🔖 **Canonize nearest generated** | Turns the generated feature nearest the map center into a real canon note. |
+| 🪄 **Generate fabric here** | Paints procedural fabric around the map center. Picks *world* (regions/routes) or *city* (streets/districts/blocks) automatically from your zoom. Durable: the area repaints on every open until cleared. |
+| 🔁 **Regenerate fabric here** | Re-runs generation at the map center against current constraints (locations + sketched fabric). |
+| 🧹 **Clear generated fabric** | Removes generated fabric at the map center, or all of it. Sketches and locations are never touched. |
 | 🖼️ **Export map poster** | High-res PNG of the current view. |
 | 📖 **Export campaign atlas (PDF)** | Map renders + your location notes as a gazetteer. |
 
-Generate and Canonize still act on the current map center and zoom — position
-the view first, then open settings. Everything here (toolbar and settings) is
-also in the command palette (search "Campaign Map").
+Generate/Regenerate/Clear act on the current map center and zoom — position the
+view first. They're also on the right-click menu and in the command palette
+(search "Campaign Map").
 
 ### Interaction grammar (borrowed wholesale from Google Maps)
 - **Click a pin** → place card with a note preview + Open / Center / Connect to…
 - **Click empty ground** → dropped pin → **+ Add location here**.
-- **Right-click** → native menu (Add location here / Copy coordinates).
+- **Right-click** → native menu (Add location here / Copy coordinates / Generate ·
+  Regenerate · Clear fabric here).
 - **Drag a pin** → moves the location; the note's geometry is rewritten to match.
 - **Hover a pin** → name tooltip.
 
@@ -151,15 +154,20 @@ also in the command palette (search "Campaign Map").
 
 ## Building the world, three ways
 
-### 1. Canon locations — hand-placed truth
-The pins you add. These are the notes. Everything else is scaffolding around them.
+### 1. Locations — note-backed places
+The pins you add. These are the notes: linkable, searchable, always rendered above
+everything else. Everything below is background around them.
 
-### 2. Procedural fabric — cheap deterministic texture
-**Generate fabric here** grows a plausible world/city around your canon using the
-campaign seed. It's a pure function of `(seed, position, zoom)` — the same input
+### 2. Generated fabric — explicit, deterministic, reactive
+**Generate fabric here** grows a plausible world/city around your locations using
+the campaign seed — **only when you ask** (no generation ever runs from panning or
+zooming). It's a pure function of `(seed, position, constraints)`: the same input
 always produces the same output, so it never drifts, and deleting the `.mapcache/`
-folder regenerates it identically. Generated streets avoid your canon locations
-(they're never overwritten). Canonize the pieces you want to keep.
+folder regenerates it identically. What's durable is the *request*: each generated
+area is recorded in `Generated.json`, and on every open those areas repaint from
+cache or regenerate deterministically. Generated streets avoid your locations and
+respect your sketches — sketch a river through a generated district and the
+streets re-adapt to stop at the shoreline, on their own.
 
 ### 3. Sketched fabric — hand-drawn texture
 When you want a specific road, wall, river, coastline, or district *exactly* where
@@ -169,19 +177,19 @@ you draw it. Click the pencil to enter **sketch mode**, then a sub-bar appears:
   polygons chosen automatically per kind.)
 - **Draw:** click to drop vertices, double-click or **Enter** to finish, **Esc** to
   cancel, **Del** to delete a selected feature.
-- **feed: on / off** — with feed **on**, a road you draw becomes *input to the
-  procedural generator* instead of a literal line. This is the "Sims landscaping"
-  idea: sketch a rough arterial, hit **build**, and it grows a whole branching
-  street network aligned to your stroke. With feed **off**, what you draw is what
-  you get.
-- **build** — elaborates your generate-mode road corridors into street networks.
+Every sketched feature is also a **generator constraint** — no toggle, no build
+button: roads steer generated street networks to align with them, water and
+rivers block streets and districts, walls stop streets, sketched districts keep
+generated districts out. If you sketch inside an area you've already generated,
+the affected tiles regenerate on their own a moment later ("sketch a river,
+streets adapt"). Sketching never *starts* generation — that stays explicit.
 
 Sketched fabric lives in **one file** per campaign (`Fabric.geojson`). It's
 **always visible at every zoom** — roads, walls, rivers, water, districts, and
 parks never disappear when you zoom out (zoom-based hiding applies only to
 location *names*, see Focus levels). Geometry is simplified far out for
-performance (fewer vertices), but the feature always draws. Any sketched feature
-can be **promoted** to a full location note (**Promote sketched fabric** command).
+performance (fewer vertices), but the feature always draws. Fabric is background:
+it never becomes a location note — places worth lore are Locations you add.
 
 ---
 
@@ -226,7 +234,8 @@ Campaigns/
   Ashfall/
     Ashfall.map.md          # campaign config
     Locations/*.md          # canon location notes (one per place)
-    Fabric.geojson          # all your sketched fabric, one promotable file
+    Fabric.geojson          # all your sketched fabric ("things on the map"), one file
+    Generated.json          # the areas you asked to generate (tiny, synced)
     .mapcache/              # regenerable — safe to delete, sync-excluded
       log.jsonl             # append-only edit history (undo / replay)
 ```
@@ -247,12 +256,20 @@ Phases 0–5 of the roadmap are shipped and live-verified, plus point-crawl
 connections and the sketch/landscaping tools (Phase 6, plans 013–014). Concretely,
 these work in the live app right now:
 
-- Canon locations: add / rename / move / delete → map updates instantly.
+- Locations: add / rename / move / delete → map updates instantly.
 - Five themes, live theme-following for obsidian-native, real-city PMTiles basemaps.
-- Procedural world + city generation (deterministic, seam-tested), canonize.
-- Sketch mode: draw/delete/promote road·wall·river·water·district·park.
-- Sketch→procedural: draw a road corridor, generate a street network from it.
+- Explicit procedural generation (deterministic, seam-tested) with a durable
+  per-area manifest (`Generated.json`) + regenerate/clear.
+- Sketch mode: draw/delete road·wall·river·water·district·park — every stroke is
+  also a generator constraint; generated areas auto-adapt to sketch edits.
 - Point-crawl connections, poster PNG, atlas PDF, session path, replay, import.
+
+**Breaking change (plan 019):** generation no longer runs automatically as you
+pan/zoom, and there is no canonize/promote — fabric and Locations are permanently
+separate layers. Campaigns from before this change will visually lose their
+auto-generated sprawl until you explicitly **Generate fabric here** where you want
+it (your old `.mapcache/` is still valid and will be reused where the tiles
+match). Existing canonized notes are just notes — they keep working untouched.
 
 ### Known rough edges (honest list — also a work queue)
 
@@ -270,10 +287,11 @@ These are real and shipped-around, not hidden:
 - **Renderer degrades over very long sessions** — p95 pan FPS drops after many
   generate/eval cycles; only a full Obsidian restart clears it (`plugin:reload`
   doesn't). Under investigation.
-- **Sketch v1 is draw/delete/promote only** — no vertex re-editing, snapping, or
+- **Sketch v1 is draw/delete only** — no vertex re-editing, snapping, or
   freehand brush yet.
-- **Sketch→procedural covers roads→streets only** — district/river/wall/park
-  elaboration are unbuilt follow-ups (see `plans/014`).
+- **Fabric constraints are city-tier only** — world-tier regions/routes ignore
+  sketches (a route can still cross a sketched lake); coastline *snapping* (vs
+  avoidance) is likewise a follow-up.
 
 ---
 
@@ -286,7 +304,6 @@ These are real and shipped-around, not hidden:
 - **In-app basemap acquisition** for real cities (today you cut the `.pmtiles`
   yourself).
 - **Generated fabric as a browsable, legended layer** you can toggle.
-- **Batch canonization** (promote many features at once).
 - **LLM populate-notes** — "populate this district with 5 shops" → an in-vault agent
   writes valid location notes (a `populate-area` command + generator exist; the LLM
   hook is the unbuilt part).

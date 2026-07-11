@@ -36,7 +36,7 @@ written-but-unrun.
 | 016 | Sketch mode UX — reliable exit, live feedback, undo, instant result | P1 | M | — | DONE — merged to `main` (Opus). Live-verified: pencil active-state, draw→renders immediately, undo removes stroke, exit via re-toggle. Root cause was discoverability + silent mid-draw Escape |
 | 017 | Distinct per-kind fabric colors + cartographic polish (VISUALS) | P0 | M | — | DONE — merged to `main` (**Fable**). Live-verified 6 distinct kinds across obsidian-native/neon-sprawl/modern-clean; parchment+ink-soot unit-covered |
 | 018 | Declutter toolbar — move generate/export into settings | P2 | S–M | — | DONE — merged to `main` (Opus). Live-verified: toolbar = Add/Sketch/Search/Theme/Settings; generate/canonize/poster/atlas in settings modal |
-| 019 | Two-layer model: background things vs. Locations — delete canonization, explicit-only generation | P0 | L | 013–018 ✓ | Phases 1–4 DONE (canonization/promotion deleted; explicit-only generation + Generated.json manifest; fabric constraints; z-order invariant asserted + tested across all themes); 5 in progress |
+| 019 | Two-layer model: background things vs. Locations — delete canonization, explicit-only generation | P0 | L | 013–018 ✓ | **DONE** — all 5 phases merged + live-verified (explicit-only generation, Generated.json manifest, fabric constraints w/ auto-adapt, z-order invariant, docs/fixtures migrated) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason).
 

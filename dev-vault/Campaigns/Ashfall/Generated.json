@@ -1,0 +1,18 @@
+{
+  "entries": [
+    {
+      "id": "world:0:0",
+      "tier": "world",
+      "tileX": 0,
+      "tileY": 0,
+      "createdAt": 1783738707131
+    },
+    {
+      "id": "city:0:0",
+      "tier": "city",
+      "tileX": 0,
+      "tileY": 0,
+      "createdAt": 1783739395516
+    }
+  ]
+}
