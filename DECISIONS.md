@@ -207,3 +207,13 @@
 - **`routeHints` host threading deferred** (design §5.0 marks it optional): `GenerationConstraints.routeHints` exists and skeleton consumes it, but MapView does not yet mine world-route output for endpoints — absent hints → hashed compass bearings, as specified. Logged as a v3.3+ nicety.
 - **Regenerate-here on a domain tile regenerates the WHOLE domain** (network + every manifest tile of it), not just the clicked tile: growth is globally coupled within the disc, so per-tile regen would leave sibling tiles clipped from a stale network. Same rule for sketch-edit auto-regen (design §7.3's influence-radius = the domain disc).
 - **Clear-here on a domain tile clears that tile's records but keeps the domain + network record** (clear-here clears *tiles*; Clear-domain clears the city). A later generate inside the disc re-clips from the surviving network.
+
+## 2026-07-11 — Procgen v3.1 (growth loop) — deviations & judgment calls
+
+- **Cityness split:** v3.1 ships the minimal field (center falloff × noise) because growth needs it for priority/extent; canon-Location bumps + outskirts move to v3.3 as designed.
+- **CityProfile gained `segmentLen`, `branchProb`, `edge`** — §6's table lists no step length, branch probability, or growth-extent threshold; growth needs all three. Values documented in profiles.ts.
+- **Tensor field + heightAt seeded by citySeed, not campaignSeed** (D6: the pure network contract carries no campaign seed). Deterministic; costs only cross-domain field alignment with the world tier — acceptable until someone notices, then thread campaignSeed as an explicit constraint field.
+- **`maxSegments` never binds at radius 900** (space saturates ~2184 segments via snapping) — kept as the D3 hard bound, not a tuning knob.
+- **Skeleton pre-seed polylines are not mutually planarized on insert** (arterial×arterial crossings away from the center stay unnoded); growth cuts them where it meets them. Full planarization is v3.2's faces prerequisite — MUST land there or face extraction will see phantom crossings.
+- **Perf headline:** lazy/memoized cost field took generateCityNetwork from ~1460 ms (v3.0) to **~87 ms** (v3.1, radius 900 incl. growth). 200-domain fuzz ≈ 94 ms/domain.
+- Gate-harness learnings (procgen30/31): Obsidian's `delete` command can't see dot-folder files → gates `rmSync` the cache (truer simulation anyway); `queryRenderedFeatures` checks need the window fronted first (macOS occluded-window compositing — same class as the Phase-4 dev:screenshot gap).

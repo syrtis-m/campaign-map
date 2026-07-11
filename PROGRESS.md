@@ -57,7 +57,21 @@ design doc's phases; state here + DECISIONS.md 2026-07-11.
       discrete river crossings, quays — town reads as shaped. Tier-B questions queued.
 - [x] committed
 
-### Next: v3.1 growth loop → v3.2 faces/parcels → v3.3 cityness/walls → v3.4 profiles+cleanup
+### v3.1 — growth loop, euro-medieval (DONE, gate green: `npx tsx scripts/gates/procgen31.ts` → 11/11)
+- [x] `graph.ts` (1 cm int-lattice planar graph, exact int predicates, spatial hash),
+      `growth.ts` (P&M total-ordered heap, snap/cut/trim local constraints, tensor prior +
+      fabricAngleSampler blend, sketched-road pre-seed as immutable edges, bounded prune),
+      `cityness.ts` (v3.1-minimal falloff×noise). Opus subagent; contract held.
+- [x] Vitest gates: byte-determinism w/ growth, 2×2 seam, junction histogram (918 T vs 484 X),
+      dangling <0.15, **200-domain fuzz zero-throw (~94 ms/domain)**, budget (≤2 s; measured ~87 ms
+      at radius 900 — lazy cost field made v3.1 16× faster than v3.0''s skeleton alone). 267 tests.
+- [x] Live gate 11/11: dense growth through worker+cache+paint (297 street parts in the clicked
+      tile), live junction histogram from the cached network record, delete-cache replay
+      byte-identical, explicit-only, clear-domain. Screenshots reviewed (review/007): real organic
+      warren; density asymmetry across the river flagged as a Tier-B question for v3.3.
+- [x] committed
+
+### Next: v3.2 faces/parcels (planarize pre-seeds first!) → v3.3 cityness/walls → v3.4 profiles+cleanup
 
 ## Environment (done)
 - [x] `scripts/preflight.sh` written and green (Obsidian 1.12.7 running, `dev-vault` registered + CLI-reachable, restricted mode off, Node v22.14.0 installed locally, git repo initialized, GitHub remote `syrtis-m/campaign-map` created)

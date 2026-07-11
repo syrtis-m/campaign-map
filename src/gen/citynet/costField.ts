@@ -113,39 +113,76 @@ export function makeCostField(
     maxY: Math.ceil(bbox.maxY / COST_CELL_M),
   };
 
-  const riverDist = (cellX: number, cellY: number): number =>
-    distToRiver(idx, cellToWorld(cellX), cellToWorld(cellY));
+  // ── Lazy memoization (v3.1 perf, §8) ─────────────────────────────────────
+  // A* touches a fraction of the field's cells, and the arterial searches
+  // share it; per-cell height sampling (fractal noise ×4 finite-difference
+  // taps) dominated the v3.0 profile. Caching is invisible to determinism:
+  // every cached value is a pure function of the integer cell address +
+  // constraints, so first-touch and hundredth-touch return identical numbers
+  // regardless of query order. Height is memoized at cell *centers* so
+  // adjacent cells share their finite-difference taps (4× fewer samples).
+  const stride = cellBounds.maxY - cellBounds.minY + 3;
+  const memoKey = (cellX: number, cellY: number): number =>
+    (cellX - cellBounds.minX + 1) * stride + (cellY - cellBounds.minY + 1);
 
+  const heightCache = new Map<number, number>();
+  const hAt = (cellX: number, cellY: number): number => {
+    const k = memoKey(cellX, cellY);
+    let v = heightCache.get(k);
+    if (v === undefined) {
+      v = heightAt(citySeed, cellToWorld(cellX), cellToWorld(cellY), worldBounds);
+      heightCache.set(k, v);
+    }
+    return v;
+  };
+
+  const riverCache = new Map<number, number>();
+  const riverDist = (cellX: number, cellY: number): number => {
+    const k = memoKey(cellX, cellY);
+    let v = riverCache.get(k);
+    if (v === undefined) {
+      v = distToRiver(idx, cellToWorld(cellX), cellToWorld(cellY));
+      riverCache.set(k, v);
+    }
+    return v;
+  };
+
+  const costCache = new Map<number, number>();
   const cellCost = (cellX: number, cellY: number): number => {
+    const k = memoKey(cellX, cellY);
+    const cached = costCache.get(k);
+    if (cached !== undefined) return cached;
+
     const x = cellToWorld(cellX);
     const y = cellToWorld(cellY);
+    let cost: number;
 
     // Open water is impassable outright.
-    if (inWater(idx, x, y)) return Infinity;
+    if (inWater(idx, x, y)) {
+      cost = Infinity;
+    } else {
+      cost = BASE_COST;
 
-    let cost = BASE_COST;
+      // Slope: finite-difference gradient of the height field over one cell,
+      // sampled at neighboring cell centers (memoized, shared with neighbors).
+      const hx = hAt(cellX + 1, cellY) - hAt(cellX - 1, cellY);
+      const hy = hAt(cellX, cellY + 1) - hAt(cellX, cellY - 1);
+      const grad = Math.hypot(hx, hy);
+      cost += Math.min(SLOPE_PENALTY_MAX, grad * SLOPE_PENALTY_SCALE);
 
-    // Slope: finite-difference gradient of the height field over one cell.
-    const hx =
-      heightAt(citySeed, x + COST_CELL_M, y, worldBounds) -
-      heightAt(citySeed, x - COST_CELL_M, y, worldBounds);
-    const hy =
-      heightAt(citySeed, x, y + COST_CELL_M, worldBounds) -
-      heightAt(citySeed, x, y - COST_CELL_M, worldBounds);
-    const grad = Math.hypot(hx, hy);
-    cost += Math.min(SLOPE_PENALTY_MAX, grad * SLOPE_PENALTY_SCALE);
+      // River crossing: expensive but passable ⇒ crossings concentrate.
+      if (riverDist(cellX, cellY) < RIVER_HALF_WIDTH) cost += BRIDGE_COST;
 
-    // River crossing: expensive but passable ⇒ crossings concentrate.
-    if (distToRiver(idx, x, y) < RIVER_HALF_WIDTH) cost += BRIDGE_COST;
-
-    // Canon proximity: never pave the GM's pins.
-    for (const [px, py] of canon) {
-      if (Math.hypot(px - x, py - y) < CANON_RADIUS_M) {
-        cost += CANON_PENALTY;
-        break;
+      // Canon proximity: never pave the GM's pins.
+      for (const [px, py] of canon) {
+        if (Math.hypot(px - x, py - y) < CANON_RADIUS_M) {
+          cost += CANON_PENALTY;
+          break;
+        }
       }
     }
 
+    costCache.set(k, cost);
     return cost;
   };
 

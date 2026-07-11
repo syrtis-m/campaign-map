@@ -6,12 +6,11 @@
  * constant (D6 — profiles are inputs, never derived at runtime from anything
  * host-side).
  *
- * SCOPE NOTE (v3.0): only the Stage-A skeleton reads a handful of these fields
- * (`arterialCount`, `waterfrontOffsets`, `landmarks`, plaza sizing). Every
- * later-stage parameter — growth angles, snapping, blocks, parcels, walls — is
- * already typed and populated with its §6 value so that v3.1–v3.3 slot in
- * without a schema change or a re-tune of the values that already exist. Each
- * field documents which stage consumes it.
+ * SCOPE NOTE (v3.1): the Stage-A skeleton and the Stage-B growth loop read
+ * their sections below. Stage-C (blocks/parcels) and wall parameters are
+ * typed and populated with their §6 values so v3.2–v3.3 slot in without a
+ * schema change or a re-tune of the values that already exist. Each field
+ * documents which stage consumes it.
  */
 import type { ProfileId } from "./domain";
 
@@ -42,7 +41,16 @@ export interface CityProfile {
    * (v3.3). Ignored when `hasWall` is false. */
   ringRadiusFrac: number;
 
-  // ── Stage B: growth loop (v3.1 — typed now, unread in v3.0) ────────────
+  // ── Stage B: growth loop (v3.1) ────────────────────────────────────────
+  /** Nominal grown-street segment length, meters (v3.1 addition — §6 lists no
+   * step length; the growth loop needs one). Read by `growth.ts`. */
+  segmentLen: number;
+  /** Base probability that a committed segment spawns each side branch,
+   * scaled up by cityness (v3.1 addition). Read by `growth.ts`. */
+  branchProb: number;
+  /** Cityness threshold below which growth stops (§5.4: "streets stop where
+   * cityness < profile.edge"). Read by `growth.ts`. */
+  edge: number;
   /** Base branch angle off a parent edge, radians (§6 "branchAngle"). */
   branchAngle: number;
   /** Random spread applied to `branchAngle`, radians (the "±" in §6). */
@@ -97,6 +105,9 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     plazaRadius: 20,
     hasWall: true,
     ringRadiusFrac: 0.55,
+    segmentLen: 40,
+    branchProb: 0.45,
+    edge: 0.12,
     branchAngle: Math.PI / 2,
     branchAngleJitter: (25 * Math.PI) / 180,
     curvature: (8 * Math.PI) / 180,
@@ -123,6 +134,9 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     plazaRadius: 22,
     hasWall: false,
     ringRadiusFrac: 0.6,
+    segmentLen: 55,
+    branchProb: 0.35,
+    edge: 0.14,
     branchAngle: Math.PI / 2,
     branchAngleJitter: (10 * Math.PI) / 180,
     curvature: (3 * Math.PI) / 180,
@@ -149,6 +163,9 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     plazaRadius: 24,
     hasWall: false,
     ringRadiusFrac: 0,
+    segmentLen: 80,
+    branchProb: 0.5,
+    edge: 0.15,
     branchAngle: Math.PI / 2,
     branchAngleJitter: (2 * Math.PI) / 180,
     curvature: 0,
@@ -175,6 +192,9 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     plazaRadius: 20,
     hasWall: false,
     ringRadiusFrac: 0,
+    segmentLen: 45,
+    branchProb: 0.4,
+    edge: 0.08,
     branchAngle: (75 * Math.PI) / 180,
     branchAngleJitter: (20 * Math.PI) / 180,
     curvature: (12 * Math.PI) / 180,

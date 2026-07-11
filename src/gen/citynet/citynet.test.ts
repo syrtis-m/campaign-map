@@ -4,13 +4,18 @@ import {
   clipNetworkToTile,
   makeDomain,
   citySeedFor,
+  PROFILES,
   type ProfileId,
 } from "./index";
 import type { BBox } from "../spatialHash";
 import type { GenerationConstraints } from "../types";
+import { hashSeed, mulberry32 } from "../rng";
 import type { FabricFeature } from "../../model/fabric";
 import { RIVER_HALF_WIDTH } from "../fabricConstraints";
-import { COST_CELL_M } from "./costField";
+import { COST_CELL_M, makeCostField } from "./costField";
+import { buildSkeleton } from "./skeleton";
+import { growNetwork } from "./growth";
+import { toMeters, type StreetGraph } from "./graph";
 import { tileBBox, GENERATION_TILE_SIZE } from "../cache/tileGrid";
 
 const WORLD_BOUNDS: BBox = { minX: -4000, minY: -4000, maxX: 4000, maxY: 4000 };
@@ -157,14 +162,30 @@ describe("bridge on river (gate d)", () => {
 });
 
 describe("waterfront offsets (gate e)", () => {
+  // Since v3.1 grown streets share `roadClass: "street"` with quays, so quays
+  // are identified geometrically: long streets running parallel to the river
+  // in one of the profile's offset bands (20 m / 55 m), which the growth loop
+  // cannot produce by accident over a >100 m run.
+  function hasQuay(network: GeoJSON.Feature[], riverY: number): boolean {
+    return network.some((f) => {
+      if (f.properties?.type !== "street" || f.properties?.roadClass !== "street") return false;
+      const coords = lineCoords(f);
+      let len = 0;
+      for (let i = 1; i < coords.length; i++) {
+        len += Math.hypot(coords[i][0] - coords[i - 1][0], coords[i][1] - coords[i - 1][1]);
+      }
+      if (len < 100) return false;
+      const inBand = (off: number) => coords.every(([, y]) => Math.abs(Math.abs(y - riverY) - off) < 2);
+      return inBand(20) || inBand(55);
+    });
+  }
+
   it("euro-medieval quays a sketched river; na-grid does not", () => {
     const cy = 600;
     const euro = net(600, cy, "euro-medieval", { fabricFeatures: [riverThrough(cy)] });
     const na = net(600, cy, "na-grid", { fabricFeatures: [riverThrough(cy)] });
-    const isQuay = (f: GeoJSON.Feature) =>
-      f.properties?.type === "street" && f.properties?.roadClass === "street";
-    expect(euro.some(isQuay)).toBe(true);
-    expect(na.some(isQuay)).toBe(false);
+    expect(hasQuay(euro, cy)).toBe(true);
+    expect(hasQuay(na, cy)).toBe(false);
   });
 });
 
@@ -187,6 +208,151 @@ describe("canon avoidance (gate f)", () => {
   });
 });
 
+// ── v3.1 Stage-B gates ──────────────────────────────────────────────────────
+
+/** Run the growth pipeline directly (skeleton → growth) for graph metrics. */
+function grownGraph(
+  cx: number,
+  cy: number,
+  radius = 900,
+  constraints: Partial<GenerationConstraints> = {}
+): { graph: StreetGraph; seed: number; domain: ReturnType<typeof makeDomain> } {
+  const domain = domainAt(cx, cy, "euro-medieval", radius);
+  const seed = citySeedFor(CAMPAIGN_SEED, domain);
+  const cons: GenerationConstraints = { worldBounds: WORLD_BOUNDS, ...constraints };
+  const profile = PROFILES["euro-medieval"];
+  const cost = makeCostField(seed, domain, cons);
+  const skel = buildSkeleton(seed, domain, profile, cons, cost);
+  const { graph } = growNetwork(seed, domain, profile, cons, skel);
+  return { graph, seed, domain };
+}
+
+describe("v3.1 junction histogram (gate c)", () => {
+  it("euro-medieval: T-junctions (degree 3) outnumber 4-ways (degree 4+)", () => {
+    const { graph } = grownGraph(600, 600);
+    let deg3 = 0;
+    let deg4 = 0;
+    for (const key of graph.sortedNodeKeys()) {
+      const d = graph.degree(key);
+      if (d === 3) deg3++;
+      else if (d >= 4) deg4++;
+    }
+    expect(deg3).toBeGreaterThan(0);
+    expect(deg3).toBeGreaterThan(deg4);
+  });
+});
+
+describe("v3.1 connectivity (gate d)", () => {
+  it("dangling endpoints < 15% of grown endpoints inside the growth extent", () => {
+    const { graph, domain } = grownGraph(600, 600);
+    const extent = domain.radius * 0.6;
+    let total = 0;
+    let dangling = 0;
+    const counted = new Set<string>();
+    for (const e of graph.sortedEdges()) {
+      if (!e.props.grown) continue;
+      for (const key of [e.a, e.b]) {
+        if (counted.has(key)) continue;
+        counted.add(key);
+        const n = graph.getNode(key)!;
+        if (Math.hypot(toMeters(n.x) - domain.cx, toMeters(n.y) - domain.cy) > extent) continue;
+        total++;
+        if (graph.degree(key) === 1) dangling++;
+      }
+    }
+    expect(total).toBeGreaterThan(50);
+    expect(dangling / total).toBeLessThan(0.15);
+  });
+});
+
+describe("v3.1 200-domain fuzz (gate e, anti-Watabou)", () => {
+  it("200 hashed domains generate without throwing, each within budget", () => {
+    const t0 = Date.now();
+    for (let i = 0; i < 200; i++) {
+      const rng = mulberry32(hashSeed(4242, "fuzz", i));
+      const cx = Math.round((rng() - 0.5) * 5000);
+      const cy = Math.round((rng() - 0.5) * 5000);
+      const radius = 400 + Math.round(rng() * 1100);
+      const fabric: FabricFeature[] = [];
+      if (i % 5 === 0) fabric.push(riverThrough(cy + Math.round((rng() - 0.5) * radius)));
+      if (i % 7 === 0) {
+        fabric.push({
+          type: "Feature",
+          id: `road-${i}`,
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [cx - radius, cy - Math.round(radius * 0.4)],
+              [cx + radius, cy + Math.round(radius * 0.4)],
+            ],
+          },
+          properties: { kind: "road" },
+        });
+      }
+      const runStart = Date.now();
+      const network = net(cx, cy, "euro-medieval", { fabricFeatures: fabric }, radius);
+      expect(network.length).toBeGreaterThan(0);
+      expect(Date.now() - runStart).toBeLessThan(5000); // per-run wall clock sane
+    }
+    expect(Date.now() - t0).toBeLessThan(180000);
+  }, 240000);
+});
+
+describe("v3.1 budget (gate f, §8)", () => {
+  it("radius-900 euro-medieval full network in ≤ 2000 ms", () => {
+    net(600, 600); // warm module/JIT paths
+    const t0 = Date.now();
+    const network = net(-1500, 900);
+    const ms = Date.now() - t0;
+    expect(network.length).toBeGreaterThan(100);
+    expect(ms).toBeLessThanOrEqual(2000);
+  });
+});
+
+describe("v3.1 sketched-road pre-seed (gate g)", () => {
+  const cx = 600;
+  const cy = 600;
+  // Straight sketched road through the domain (straight ⇒ Chaikin-invariant,
+  // so "on the sketch" can be asserted against the raw line).
+  const roadY = cy + 150;
+  const road: FabricFeature = {
+    type: "Feature",
+    id: "road-1",
+    geometry: { type: "LineString", coordinates: [[cx - 2000, roadY], [cx + 2000, roadY]] },
+    properties: { kind: "road" },
+  };
+
+  it("generated streets snap onto the sketched road; the sketch is not re-emitted", () => {
+    const network = net(cx, cy, "euro-medieval", { fabricFeatures: [road] });
+    const streets = network.filter(
+      (f) => f.properties?.generatorId === "city-street" && f.geometry.type === "LineString"
+    );
+
+    // (1) Snap happened: some street endpoint lies ON the road polyline.
+    let snapped = 0;
+    for (const s of streets) {
+      const coords = lineCoords(s);
+      for (const end of [coords[0], coords[coords.length - 1]]) {
+        if (Math.abs(end[1] - roadY) < 0.02 && Math.abs(end[0] - cx) < 2000) snapped++;
+      }
+    }
+    expect(snapped).toBeGreaterThan(0);
+
+    // (2) The sketch itself is not re-emitted: no long street lies entirely
+    // on the road line (snapped streets only touch it at an endpoint).
+    for (const s of streets) {
+      const coords = lineCoords(s);
+      const allOnRoad = coords.every(([, y]) => Math.abs(y - roadY) < 0.1);
+      if (!allOnRoad) continue;
+      let len = 0;
+      for (let i = 1; i < coords.length; i++) {
+        len += Math.hypot(coords[i][0] - coords[i - 1][0], coords[i][1] - coords[i - 1][1]);
+      }
+      expect(len).toBeLessThan(100);
+    }
+  });
+});
+
 describe("profile smoke (gate g)", () => {
   const profiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb"];
   for (const profile of profiles) {
@@ -196,7 +362,7 @@ describe("profile smoke (gate g)", () => {
         network = net(1200, -900, profile);
       }).not.toThrow();
       expect(network.length).toBeGreaterThan(0);
-      expect(network.length).toBeLessThan(300);
+      expect(network.length).toBeLessThan(6000); // grown network included since v3.1
       expect(network.some((f) => f.properties?.type === "plaza")).toBe(true);
     });
   }

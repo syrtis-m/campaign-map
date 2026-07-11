@@ -315,8 +315,9 @@ function insideInterval(a: Pt, b: Pt, cx: number, cy: number, r: number): [numbe
 
 /** Clip a polyline to the domain disc, returning the contiguous runs inside.
  * Mirrors `clipPolylineToBBox`'s run-splitting so a quay that leaves and
- * re-enters the disc yields separate parts. */
-function clipToDisc(line: Pt[], cx: number, cy: number, r: number): Pt[][] {
+ * re-enters the disc yields separate parts. Exported for `growth.ts`, which
+ * pre-seeds sketched roads into the street graph clipped the same way. */
+export function clipToDisc(line: Pt[], cx: number, cy: number, r: number): Pt[][] {
   const at = (a: Pt, b: Pt, t: number): Pt => [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
   const runs: Pt[][] = [];
   let run: Pt[] = [];

@@ -1,9 +1,9 @@
 /**
  * City-network entry point (procgen v3 §3.4, §5): `generateCityNetwork`
- * computes the whole Stage-A skeleton for a domain as a pure function of
- * `(citySeed, domain, constraints)`, and `clipNetworkToTile` cuts that one
- * artifact into the per-tile, per-generatorId buckets the cache stores and the
- * map paints.
+ * computes the whole city network for a domain — Stage-A skeleton plus the
+ * Stage-B grown street web — as a pure function of `(citySeed, domain,
+ * constraints)`, and `clipNetworkToTile` cuts that one artifact into the
+ * per-tile, per-generatorId buckets the cache stores and the map paints.
  *
  * Determinism/seam argument: the network is computed once, not per tile, so two
  * tiles never need order-free math to agree — they clip the *same bytes*
@@ -23,6 +23,7 @@ import type { CityDomain } from "./domain";
 import { PROFILES } from "./profiles";
 import { makeCostField } from "./costField";
 import { buildSkeleton } from "./skeleton";
+import { growNetwork, collectGrownChains } from "./growth";
 
 // Package barrel: the host (MapView, generationService, worker, modal) imports
 // domain + profile helpers and types from `../citynet` directly.
@@ -33,10 +34,10 @@ type Pt = [number, number];
 
 /**
  * Per-tile generator ids the domain network clips into. The full v3 list is
- * fixed here so cache/paint code can enumerate it up front; in v3.0 only
- * `city-street` (arterials, bridges, waterfront) and `city-landmark` (plaza,
- * landmark footprints) are actually emitted — blocks, parcels, and footprints
- * arrive in v3.1–v3.3.
+ * fixed here so cache/paint code can enumerate it up front; as of v3.1
+ * `city-street` (arterials, bridges, waterfront, grown streets) and
+ * `city-landmark` (plaza, landmark footprints) are emitted — blocks, parcels,
+ * and footprints arrive in v3.2–v3.3.
  */
 export const DOMAIN_TILE_GENERATOR_IDS: readonly string[] = [
   "city-street",
@@ -75,8 +76,9 @@ function sortCanonical(features: GeoJSON.Feature[]): void {
 }
 
 /**
- * Compute the whole (unclipped) Stage-A network for a domain. Pure — reads only
- * its arguments (D6). Coordinates are quantized and the feature list is
+ * Compute the whole (unclipped) network for a domain: Stage-A skeleton, then
+ * the Stage-B growth loop seeded from it (v3.1). Pure — reads only its
+ * arguments (D6). Coordinates are quantized and the feature list is
  * canonically sorted before return.
  */
 export function generateCityNetwork(
@@ -171,6 +173,25 @@ export function generateCityNetwork(
     });
   });
 
+  // Stage B (v3.1): grow the street web off the skeleton, emit merged chains.
+  // Chain keys are position-derived (endpoint node keys), never order-derived.
+  const { graph } = growNetwork(citySeed, domain, profile, constraints, skel);
+  for (const chain of collectGrownChains(graph)) {
+    if (chain.coords.length < 2) continue;
+    features.push({
+      type: "Feature",
+      id: hashSeed(citySeed, "grown", chain.key),
+      geometry: { type: "LineString", coordinates: qLine(chain.coords) },
+      properties: {
+        generated: true,
+        generatorId: "city-street",
+        type: "street",
+        roadClass: "street",
+        domainId: domain.id,
+      },
+    });
+  }
+
   sortCanonical(features);
   return features;
 }
@@ -203,6 +224,11 @@ export function clipNetworkToTile(
       const parts = clipPolylineToBBox(toVec2(g.coordinates as Pt[]), bbox);
       parts.forEach((part, partIndex) => {
         if (part.length < 2) return;
+        // Zero-length artifact guard (observed live in v3.0): a polyline
+        // grazing a tile corner can clip to a 2-point part of ~0 length.
+        let len = 0;
+        for (let i = 1; i < part.length; i++) len += Math.hypot(part[i].x - part[i - 1].x, part[i].y - part[i - 1].y);
+        if (len < 0.01) return;
         push(gid, {
           type: "Feature",
           id: hashSeed(Number(f.id) >>> 0, partIndex),
