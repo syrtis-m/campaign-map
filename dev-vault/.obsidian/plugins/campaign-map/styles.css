@@ -116,6 +116,28 @@
   margin-bottom: 8px;
 }
 
+.campaign-map-place-card-visibility {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.campaign-map-place-card-visibility-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.campaign-map-place-card-visibility-select {
+  flex: 1;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--interactive-normal);
+  color: var(--text-normal);
+}
+
 .campaign-map-place-card-actions {
   display: flex;
   gap: 6px;
@@ -230,6 +252,18 @@
   color: var(--text-normal, #ddd);
 }
 
+/* Pressed/active toolbar tool (plan 016: the pencil stays lit while sketch
+   mode is on, so re-clicking it to exit is discoverable). */
+.campaign-map-toolbar-btn.is-active {
+  background: var(--interactive-accent, #7c3aed);
+  color: var(--text-on-accent, #fff);
+}
+
+.campaign-map-toolbar-btn.is-active:hover {
+  background: var(--interactive-accent-hover, var(--interactive-accent, #7c3aed));
+  color: var(--text-on-accent, #fff);
+}
+
 /* Focus stepper (bottom-right): + / − snap between the three focus levels */
 .campaign-map-focus-control {
   position: absolute;
@@ -316,17 +350,21 @@
   white-space: nowrap;
 }
 
+/* Unmistakable exit (plan 016): a filled, bordered "done" chip rather than the
+   old low-contrast muted text a user could miss while looking for the way out. */
 .campaign-map-sketch-exit-btn {
-  padding: 3px 8px;
-  border: none;
+  margin-left: 2px;
+  padding: 3px 10px;
+  border: 1px solid var(--interactive-accent, #7c3aed);
   border-radius: 4px;
-  background: transparent;
-  color: var(--text-muted, #aaa);
+  background: var(--interactive-accent, #7c3aed);
+  color: var(--text-on-accent, #fff);
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .campaign-map-sketch-exit-btn:hover {
-  background: var(--background-modifier-hover, #333);
-  color: var(--text-normal, #ddd);
+  background: var(--interactive-accent-hover, var(--interactive-accent, #7c3aed));
+  color: var(--text-on-accent, #fff);
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   FABRIC_KINDS,
+  FABRIC_REVEAL_OFFSET,
   FabricFeatureSchema,
   FabricCollectionSchema,
   DEFAULT_FABRIC_MINZOOM,
@@ -84,6 +85,25 @@ describe("defaultMinZoomFor", () => {
     expect(defaultMinZoomFor("river")).toBeLessThan(defaultMinZoomFor("road"));
     expect(defaultMinZoomFor("water")).toBeLessThan(defaultMinZoomFor("wall"));
     expect(defaultMinZoomFor("district")).toBeLessThan(defaultMinZoomFor("park"));
+  });
+});
+
+describe("FABRIC_REVEAL_OFFSET (relative-to-overview LOD)", () => {
+  it("covers every kind with a small, compressed offset (≤2)", () => {
+    for (const kind of FABRIC_KINDS) {
+      const off = FABRIC_REVEAL_OFFSET[kind];
+      expect(typeof off).toBe("number");
+      expect(off).toBeGreaterThanOrEqual(0);
+      expect(off).toBeLessThanOrEqual(2); // all six visible within a gentle zoom-in of overview
+    }
+  });
+
+  it("keeps the coarse→fine ordering: water/river at overview, walls/parks in", () => {
+    expect(FABRIC_REVEAL_OFFSET.water).toBe(0);
+    expect(FABRIC_REVEAL_OFFSET.river).toBe(0);
+    expect(FABRIC_REVEAL_OFFSET.district).toBeLessThan(FABRIC_REVEAL_OFFSET.road);
+    expect(FABRIC_REVEAL_OFFSET.road).toBeLessThan(FABRIC_REVEAL_OFFSET.park);
+    expect(FABRIC_REVEAL_OFFSET.park).toBeLessThan(FABRIC_REVEAL_OFFSET.wall);
   });
 });
 

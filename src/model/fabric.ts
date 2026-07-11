@@ -73,6 +73,28 @@ export function defaultMinZoomFor(kind: FabricKind): number {
   return DEFAULT_FABRIC_MINZOOM[kind];
 }
 
+/**
+ * Per-kind fabric reveal offset RELATIVE to the campaign's overview zoom — the
+ * fix for "I can't see my parks/walls." The baked `DEFAULT_FABRIC_MINZOOM` above
+ * is absolute and calibrated for a real city (overview ~z11), so on a fictional
+ * world (overview ~z5) the finest kinds (park 10, wall 11) sit far beyond any
+ * zoom the GM actually uses and never render. Instead, MapView applies
+ * `overview + offset` per kind at runtime via `setLayerZoomRange` (same trick as
+ * the depth-of-field label reveal), so every campaign — fictional or real — gets
+ * the same coarse→fine LOD: water/river at the overview, walls/parks a couple
+ * levels in. Compressed spread (≤2) so all six appear within a gentle zoom-in
+ * rather than requiring extreme close-up. Absolute values remain the fallback
+ * for offscreen export (no live overview).
+ */
+export const FABRIC_REVEAL_OFFSET: Record<FabricKind, number> = {
+  water: 0,
+  river: 0,
+  district: 0.5,
+  road: 1,
+  park: 1.5,
+  wall: 2,
+};
+
 export function emptyFabric(): FabricCollection {
   return { type: "FeatureCollection", features: [] };
 }
