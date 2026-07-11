@@ -127,3 +127,38 @@ export function parseFabric(raw: string): { fabric: FabricCollection; invalidCou
   }
   return { fabric: { type: "FeatureCollection", features }, invalidCount };
 }
+
+/** Minimal shape of a mutation-log entry this module needs (kept structural so
+ * fabric.ts stays a pure leaf — no import from mutationLog / Obsidian). */
+export interface SketchLogEntryLike {
+  type: string;
+  data: Record<string, unknown>;
+}
+
+/**
+ * Undo target for sketch mode (plan 016): the most-recently-added sketch
+ * feature that is still "live" — i.e. netting each `sketch-add` against any
+ * later `sketch-remove` of the same id. The mutation log is the source of
+ * truth (CLAUDE.md), so undo is derived from it rather than in-memory state,
+ * and it survives a view reopen. Returns null when nothing is left to undo.
+ */
+export function sketchUndoTarget(entries: SketchLogEntryLike[]): FabricFeature | null {
+  const live = new Map<string, FabricFeature>();
+  const order: string[] = [];
+  for (const e of entries) {
+    const parsed = FabricFeatureSchema.safeParse(e.data);
+    if (!parsed.success) continue;
+    const id = parsed.data.id;
+    if (e.type === "sketch-add") {
+      if (!live.has(id)) order.push(id);
+      live.set(id, parsed.data);
+    } else if (e.type === "sketch-remove") {
+      live.delete(id);
+    }
+  }
+  for (let i = order.length - 1; i >= 0; i--) {
+    const f = live.get(order[i]);
+    if (f) return f;
+  }
+  return null;
+}

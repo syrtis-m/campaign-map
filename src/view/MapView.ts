@@ -11,6 +11,7 @@ import {
   emptyFabric,
   isPolygonKind,
   makeFabricId,
+  sketchUndoTarget,
   withFeature,
   withoutFeature,
   type FabricCollection,
@@ -234,6 +235,14 @@ export class MapView extends ItemView {
   private sketchBarEl: HTMLDivElement | null = null;
   private selectedFabricId: string | null = null;
   private sketchKeyHandler: ((ev: KeyboardEvent) => void) | null = null;
+  /** Toolbar pencil button — kept so sketch mode can show a pressed/active
+   * state on it (plan 016: re-click to exit is only discoverable if the button
+   * looks toggled). */
+  private pencilBtnEl: HTMLButtonElement | null = null;
+  /** Debounce for auto-elaborating generate-mode corridors on commit (plan
+   * 016 "instant generation") — cleared on mode exit / onClose so it can never
+   * fire after teardown. */
+  private sketchAutoBuildTimer: number | null = null;
 
   /**
    * Viewport-windowed tile store (Phase 4: "zoom-band dispatcher over
@@ -469,13 +478,14 @@ export class MapView extends ItemView {
    */
   private buildToolbar(): void {
     this.toolbarEl.empty();
-    const btn = (icon: string, label: string, onClick: () => void): void => {
+    const btn = (icon: string, label: string, onClick: () => void): HTMLButtonElement => {
       const b = this.toolbarEl.createEl("button", {
         cls: "campaign-map-toolbar-btn",
         attr: { "aria-label": label, title: label },
       });
       setIcon(b, icon);
       b.onclick = onClick;
+      return b;
     };
 
     btn("plus", "Add location at center", () => {
@@ -499,7 +509,10 @@ export class MapView extends ItemView {
       );
     });
 
-    btn("pencil", "Sketch fabric (roads, walls, rivers, districts…)", () => this.toggleSketchMode());
+    this.pencilBtnEl = btn("pencil", "Sketch fabric (roads, walls, rivers, districts…)", () =>
+      this.toggleSketchMode()
+    );
+    this.pencilBtnEl.toggleClass("is-active", this.sketchMode);
     btn("search", "Search locations", () => this.openSearch());
     btn("palette", "Switch map theme", () => this.switchTheme());
     btn("image", "Export map poster", () => void this.exportPoster());
@@ -535,8 +548,12 @@ export class MapView extends ItemView {
 
   async onClose(): Promise<void> {
     if (this.dispatchTimer !== null) window.clearTimeout(this.dispatchTimer);
+    if (this.sketchAutoBuildTimer !== null) {
+      window.clearTimeout(this.sketchAutoBuildTimer);
+      this.sketchAutoBuildTimer = null;
+    }
     if (this.sketchKeyHandler) {
-      window.removeEventListener("keydown", this.sketchKeyHandler);
+      window.removeEventListener("keydown", this.sketchKeyHandler, true);
       this.sketchKeyHandler = null;
     }
     this.map?.remove();
@@ -1361,16 +1378,21 @@ export class MapView extends ItemView {
     if (!this.map || !this.campaign) return;
     if (this.sketchMode) {
       this.sketchMode = false;
+      if (this.sketchAutoBuildTimer !== null) {
+        window.clearTimeout(this.sketchAutoBuildTimer);
+        this.sketchAutoBuildTimer = null;
+      }
       this.sketchController?.deactivate();
       this.sketchController = null;
       this.sketchBarEl?.remove();
       this.sketchBarEl = null;
       this.selectedFabricId = null;
       if (this.sketchKeyHandler) {
-        window.removeEventListener("keydown", this.sketchKeyHandler);
+        window.removeEventListener("keydown", this.sketchKeyHandler, true);
         this.sketchKeyHandler = null;
       }
       this.map.doubleClickZoom.enable();
+      this.pencilBtnEl?.toggleClass("is-active", false);
       return;
     }
     this.sketchMode = true;
@@ -1381,8 +1403,12 @@ export class MapView extends ItemView {
     this.sketchController = new SketchController(this.map, this.sketchAccent());
     this.sketchController.activate(this.sketchKind);
     this.buildSketchBar();
+    // Capture phase so Escape / Cmd-Z reach us before MapLibre's canvas
+    // handlers or Obsidian's global shortcuts can swallow them (plan 016:
+    // "Escape should reliably leave sketch mode").
     this.sketchKeyHandler = (ev: KeyboardEvent) => this.sketchKeydown(ev);
-    window.addEventListener("keydown", this.sketchKeyHandler);
+    window.addEventListener("keydown", this.sketchKeyHandler, true);
+    this.pencilBtnEl?.toggleClass("is-active", true);
   }
 
   get sketchModeActive(): boolean {
@@ -1432,14 +1458,20 @@ export class MapView extends ItemView {
       attr: { title: "Generate street networks from generate-mode road corridors" },
     });
     generateBtn.onclick = () => void this.generateFromSketch();
+    const undoBtn = this.sketchBarEl.createEl("button", {
+      text: "↶ undo",
+      cls: "campaign-map-sketch-kind-btn",
+      attr: { title: "Undo the last sketched feature (Cmd/Ctrl-Z)" },
+    });
+    undoBtn.onclick = () => void this.undoLastSketch();
     this.sketchBarEl.createDiv({
       cls: "campaign-map-sketch-hint",
-      text: "click: vertex · dbl-click/Enter: finish · Esc: cancel · Del: delete selected",
+      text: "click: vertex · dbl-click/Enter: finish · Esc: cancel/exit · ⌘Z: undo · Del: delete selected",
     });
     const exit = this.sketchBarEl.createEl("button", {
       text: "✕ done",
       cls: "campaign-map-sketch-exit-btn",
-      attr: { title: "Exit sketch mode" },
+      attr: { title: "Exit sketch mode (or press Escape)" },
     });
     exit.onclick = () => this.toggleSketchMode();
     setActiveKind(this.sketchKind);
@@ -1447,12 +1479,21 @@ export class MapView extends ItemView {
 
   private sketchKeydown(ev: KeyboardEvent): void {
     if (!this.sketchMode) return;
-    if (ev.key === "Enter") {
+    if ((ev.metaKey || ev.ctrlKey) && (ev.key === "z" || ev.key === "Z") && !ev.shiftKey) {
+      // Intercept before Obsidian's global undo so Cmd/Ctrl-Z means "undo the
+      // last sketch" while landscaping (plan 016).
+      ev.preventDefault();
+      ev.stopPropagation();
+      void this.undoLastSketch();
+    } else if (ev.key === "Enter") {
       if (this.sketchController?.isDrawing) {
         ev.preventDefault();
         this.finalizeSketchDraft();
       }
     } else if (ev.key === "Escape") {
+      // Two-stage: a first Escape cancels an in-progress draft; with no draft
+      // (or on the next press) it exits the mode. The prominent ✕ done button
+      // and the toggled pencil are the always-reachable mouse exits.
       ev.preventDefault();
       if (this.sketchController?.isDrawing) this.sketchController.cancel();
       else this.toggleSketchMode();
@@ -1528,6 +1569,29 @@ export class MapView extends ItemView {
     this.fabricCollection = withFeature(this.fabricCollection, feature);
     this.refreshFabric();
     void this.persistFabric("sketch-add", feature);
+    // Immediate confirmation regardless of zoom (a below-minzoom stroke paints
+    // into the `fabric` source but its themed layer may be hidden until you
+    // zoom in — the toast guarantees "something happened" feedback). Plan 016.
+    const feeds = this.sketchDraftMode === "generate";
+    new Notice(`Campaign Map: ${kind} added${feeds ? " — elaborating…" : ""}`);
+    // Generate-mode corridors elaborate into a street network without a manual
+    // trip to "build" (plan 016 "instant generation"): debounced so a flurry of
+    // strokes coalesces into one run.
+    if (feeds && kind === "road" && geometry.type === "LineString") {
+      this.scheduleSketchAutoBuild();
+    }
+  }
+
+  /** Debounced auto-elaboration of generate-mode corridors (plan 016). Runs
+   * the same `generateFromSketch` the explicit "build" button does, silently
+   * (no per-run Notice), so committed corridors sprout streets on their own. */
+  private scheduleSketchAutoBuild(): void {
+    if (this.sketchAutoBuildTimer !== null) window.clearTimeout(this.sketchAutoBuildTimer);
+    this.sketchAutoBuildTimer = window.setTimeout(() => {
+      this.sketchAutoBuildTimer = null;
+      if (!this.sketchMode) return;
+      void this.generateFromSketch({ silent: true });
+    }, 400);
   }
 
   /** Saves the in-memory collection and appends the sketch log entry —
@@ -1561,6 +1625,51 @@ export class MapView extends ItemView {
     this.refreshFabric();
     void this.persistFabric("sketch-remove", feature);
     new Notice(`Campaign Map: deleted sketched ${feature.properties.kind}`);
+  }
+
+  /** Sketch-mode undo (plan 016): removes the most-recently-added, still-live
+   * sketched feature. The mutation log is the source of truth, so undo is
+   * derived from it (survives a view reopen) and, like a manual delete,
+   * appends its own `sketch-remove` — keeping the log a faithful history. */
+  private async undoLastSketch(): Promise<void> {
+    if (!this.campaign) return;
+    const entries = await this.plugin.log.read(this.campaign.id);
+    const target = sketchUndoTarget(entries);
+    if (!target) {
+      new Notice("Campaign Map: nothing to undo");
+      return;
+    }
+    // Reconcile against on-disk fabric first so we remove from the authoritative
+    // collection (mirrors deleteSelectedFabric / undoLastEdit).
+    await this.loadFabricForCampaign();
+    this.fabricCollection = withoutFeature(this.fabricCollection, target.id);
+    if (this.selectedFabricId === target.id) {
+      this.selectedFabricId = null;
+      this.sketchController?.clearSelection();
+    }
+    this.refreshFabric();
+    // A generate-mode corridor's elaborated streets are regenerable cache keyed
+    // `sketch:<id>:*` — evict them so undo doesn't leave orphan streets behind.
+    if (target.properties.kind === "road" && target.properties.mode === "generate") {
+      this.evictSketchTiles(target.id);
+    }
+    await this.persistFabric("sketch-remove", target);
+    new Notice(`Campaign Map: undid sketched ${target.properties.kind}`);
+  }
+
+  /** Drops the elaborated street tiles a generate-mode corridor produced
+   * (their own `sketch:<id>:*` key namespace) and repaints the generated
+   * source. */
+  private evictSketchTiles(id: string): void {
+    const prefix = `sketch:${id}:`;
+    let evicted = false;
+    for (const key of [...this.loadedTiles.keys()]) {
+      if (key.startsWith(prefix)) {
+        this.loadedTiles.delete(key);
+        evicted = true;
+      }
+    }
+    if (evicted) this.refreshGeneratedSource();
   }
 
   /** "Promote to location note" (plan 013): the selected fabric feature — or
@@ -1600,14 +1709,17 @@ export class MapView extends ItemView {
    * city here" — deleting `.mapcache/` regenerates it identically); the
    * sketch itself stays canon in Fabric.geojson and keeps rendering as the
    * literal drawn line underneath its elaboration. */
-  async generateFromSketch(): Promise<GeoJSON.Feature[]> {
+  async generateFromSketch(opts?: { silent?: boolean }): Promise<GeoJSON.Feature[]> {
+    const silent = opts?.silent === true;
     if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
     await this.loadFabricForCampaign();
     const corridors = this.fabricCollection.features.filter(
       (f) => f.properties.kind === "road" && f.properties.mode === "generate" && f.geometry.type === "LineString"
     );
     if (corridors.length === 0) {
-      new Notice('Campaign Map: no generate-mode road corridors — draw a road with "feed: on" first');
+      if (!silent) {
+        new Notice('Campaign Map: no generate-mode road corridors — draw a road with "feed: on" first');
+      }
       return [];
     }
     const scale = this.campaign.config.scaleMetersPerUnit;
@@ -1658,9 +1770,11 @@ export class MapView extends ItemView {
       }
     }
     this.refreshGeneratedSource();
-    new Notice(
-      `Campaign Map: generated ${generated.length} street feature${generated.length === 1 ? "" : "s"} from ${corridors.length} sketched corridor${corridors.length === 1 ? "" : "s"}`
-    );
+    if (!silent) {
+      new Notice(
+        `Campaign Map: generated ${generated.length} street feature${generated.length === 1 ? "" : "s"} from ${corridors.length} sketched corridor${corridors.length === 1 ? "" : "s"}`
+      );
+    }
     return generated.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
 
