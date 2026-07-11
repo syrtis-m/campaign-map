@@ -2,9 +2,10 @@
  * Stage A skeleton (procgen v3 §5.1): the deterministic bones of a city —
  * radial arterials A*-routed from the center to the domain boundary, the
  * bridges where they cross sketched rivers, waterfront quay streets offset
- * from those rivers, and a central plaza with one or two landmark footprints
- * facing it. v3.0 scope: no ring/wall (v3.3), no growth (v3.1), no faces
- * (v3.2) — just the skeleton the later stages will hang off.
+ * from those rivers, a central plaza with landmark footprints facing it, and
+ * (v3.3, profile-gated) the wall: a closed ring road through gate points
+ * placed on each arterial at ring network-distance, with a wall band and gate
+ * markers. Growth (v3.1) treats the wall as a barrier passable only at gates.
  *
  * Determinism/seam argument: every decision lives on the integer cost lattice
  * (D1). Destinations come from `routeHints` or from `hashSeed`-seeded compass
@@ -25,6 +26,7 @@ import { COST_CELL_M } from "./costField";
 import type { GenerationConstraints } from "../types";
 import { chaikinSmooth } from "../city/corridor";
 import {
+  blockedByWater,
   indexFabricConstraints,
   nearestOnLine,
   RIVER_HALF_WIDTH,
@@ -41,13 +43,33 @@ export const ARTERIAL_SMOOTH_ITERATIONS = 2;
 /** Two river crossings closer than this share one bridge (§5.1.3). */
 export const BRIDGE_SHARE_DIST_M = 40;
 
+/** Half-width of the emitted wall band, meters (§5.1.5 "thin band"). */
+export const WALL_HALF_WIDTH_M = 3;
+/** Wall-band gap either side of a gate point, meters (the door opening). */
+export const GATE_GAP_M = 10;
+/** Ring polar sampling resolution (samples per full circle before gates). */
+export const RING_SAMPLES = 64;
+/** Radial wobble amplitude as a fraction of the ring radius. */
+export const RING_WOBBLE_FRAC = 0.03;
+/** Hashed chance a landmark beyond the first two places at all (v3.3 pass). */
+export const EXTRA_LANDMARK_P = 0.7;
+
 export interface ArterialPath {
   coords: Pt[];
   degraded: boolean;
 }
 export interface LandmarkFootprint {
-  kind: "church" | "market";
+  kind: import("./profiles").LandmarkKind;
   ring: Pt[];
+}
+export interface WallOutput {
+  /** Closed ring-road polyline (first === last), passing through every gate. */
+  ring: Pt[];
+  /** Gate points — exactly the ring×arterial crossings (§5.1.5). */
+  gates: Pt[];
+  /** Wall band as per-segment quads (closed rings): clean tile clipping, no
+   * polygon holes, and water/gate gaps fall out as omitted segments. */
+  wallSegments: Pt[][];
 }
 export interface SkeletonOutput {
   arterials: ArterialPath[];
@@ -55,6 +77,8 @@ export interface SkeletonOutput {
   waterfront: { coords: Pt[] }[];
   plaza: Pt[];
   landmarks: LandmarkFootprint[];
+  /** null when the profile (or its hashed wall roll) grows no wall. */
+  wall: WallOutput | null;
 }
 
 // Fixed neighbor order N, E, S, W, NE, SE, SW, NW (y up) — §5.1.3.
@@ -365,17 +389,28 @@ function buildPlaza(citySeed: number, domain: CityDomain, profile: CityProfile):
   return ring;
 }
 
+/** Per-kind landmark footprint half-extents, meters (w across, d deep). */
+const LANDMARK_HALVES: Record<import("./profiles").LandmarkKind, { w: number; d: number }> = {
+  church: { w: 12, d: 20 },
+  market: { w: 16, d: 10 },
+  temple: { w: 14, d: 14 },
+  keep: { w: 16, d: 16 },
+};
+
 /** Landmark footprints adjacent to the plaza, each a rectangle offset outward
- * at a hashed bearing and oriented to face the plaza (§5.1.6). */
+ * at a hashed bearing and oriented to face the plaza (§5.1.6). The first two
+ * of `profile.landmarks` always place; extras (v3.3 landmark pass) place with
+ * a hashed chance, one ring farther out, for per-domain variety. */
 function buildLandmarks(citySeed: number, domain: CityDomain, profile: CityProfile): LandmarkFootprint[] {
   const out: LandmarkFootprint[] = [];
-  const kinds = profile.landmarks.slice(0, 2);
+  const kinds = profile.landmarks;
   for (let i = 0; i < kinds.length; i++) {
     const kind = kinds[i];
     const rng = mulberry32(hashSeed(citySeed, "landmark", i));
+    if (i >= 2 && rng() >= EXTRA_LANDMARK_P) continue; // hashed variety
     const bearing = (i / Math.max(1, kinds.length)) * 2 * Math.PI + (rng() - 0.5) * 0.6;
-    const half = kind === "church" ? { w: 12, d: 20 } : { w: 16, d: 10 };
-    const gap = 6;
+    const half = LANDMARK_HALVES[kind];
+    const gap = 6 + (i >= 2 ? 14 : 0); // extras sit one ring out from the plaza
     const dist = profile.plazaRadius + gap + half.d;
     const bcx = domain.cx + dist * Math.cos(bearing);
     const bcy = domain.cy + dist * Math.sin(bearing);
@@ -393,6 +428,112 @@ function buildLandmarks(citySeed: number, domain: CityDomain, profile: CityProfi
     out.push({ kind, ring });
   }
   return out;
+}
+
+// ── Wall / ring / gates (§5.1.5, v3.3) ─────────────────────────────────────
+
+/** Point at arc-length `dist` along a polyline, or null if the line is shorter. */
+function pointAtArcLength(coords: Pt[], dist: number): Pt | null {
+  let remaining = dist;
+  for (let i = 1; i < coords.length; i++) {
+    const [ax, ay] = coords[i - 1];
+    const [bx, by] = coords[i];
+    const seg = Math.hypot(bx - ax, by - ay);
+    if (remaining <= seg) {
+      const t = seg === 0 ? 0 : remaining / seg;
+      return [ax + t * (bx - ax), ay + t * (by - ay)];
+    }
+    remaining -= seg;
+  }
+  return null;
+}
+
+/**
+ * Build the ring road, gates, and wall band. Gates sit on each arterial at
+ * NETWORK distance `ringRadiusFrac × radius` from the center (arc length along
+ * the arterial IS the §5.1.5 network-distance field restricted to the
+ * skeleton); the closed ring interpolates radially between consecutive gates
+ * (sorted by bearing — D2) with hashed wobble that is zero AT the gates, so
+ * every gate lies exactly on both the ring and its arterial. The wall band is
+ * per-segment quads, omitted inside sketched water and around gates — the
+ * ring POLYLINE stays topologically closed regardless (§ v3.3 brief).
+ */
+function buildWall(
+  citySeed: number,
+  domain: CityDomain,
+  profile: CityProfile,
+  arterials: ArterialPath[],
+  blockedAt: (x: number, y: number) => boolean
+): WallOutput | null {
+  const wantWall =
+    profile.hasWall || (profile.wallChance > 0 && mulberry32(hashSeed(citySeed, "wall"))() < profile.wallChance);
+  if (!wantWall) return null;
+
+  const targetDist = profile.ringRadiusFrac * domain.radius;
+  if (targetDist <= 0) return null;
+
+  // Gates: one per arterial that reaches ring distance, sorted by bearing.
+  const gates: { p: Pt; bearing: number; r: number }[] = [];
+  for (const art of arterials) {
+    const p = pointAtArcLength(art.coords, targetDist);
+    if (!p) continue;
+    gates.push({
+      p,
+      bearing: Math.atan2(p[1] - domain.cy, p[0] - domain.cx),
+      r: Math.hypot(p[0] - domain.cx, p[1] - domain.cy),
+    });
+  }
+  if (gates.length < 3) return null; // no closed ring worth building
+  gates.sort((a, b) => a.bearing - b.bearing || a.p[0] - b.p[0] || a.p[1] - b.p[1]);
+
+  // Ring polyline: polar interpolation gate→gate with smooth radial blend and
+  // hashed wobble vanishing at both gates (sin envelope).
+  const ring: Pt[] = [];
+  const n = gates.length;
+  for (let i = 0; i < n; i++) {
+    const g0 = gates[i];
+    const g1 = gates[(i + 1) % n];
+    let dTheta = g1.bearing - g0.bearing;
+    if (dTheta <= 0) dTheta += 2 * Math.PI;
+    const steps = Math.max(2, Math.round((dTheta / (2 * Math.PI)) * RING_SAMPLES));
+    for (let k = 0; k < steps; k++) {
+      const f = k / steps;
+      const theta = g0.bearing + dTheta * f;
+      const smooth = f * f * (3 - 2 * f);
+      const wobbleRng = mulberry32(hashSeed(citySeed, "ringwob", i, k));
+      const wobble = k === 0 ? 0 : (wobbleRng() - 0.5) * 2 * RING_WOBBLE_FRAC * targetDist * Math.sin(Math.PI * f);
+      const r = g0.r + (g1.r - g0.r) * smooth + wobble;
+      ring.push([domain.cx + r * Math.cos(theta), domain.cy + r * Math.sin(theta)]);
+    }
+  }
+  ring.push(ring[0]); // closed
+
+  // Wall band quads per ring segment; gaps at gates and over sketched water.
+  const gatePts = gates.map((g) => g.p);
+  const wallSegments: Pt[][] = [];
+  for (let i = 0; i < ring.length - 1; i++) {
+    const a = ring[i];
+    const b = ring[i + 1];
+    const mx = (a[0] + b[0]) / 2;
+    const my = (a[1] + b[1]) / 2;
+    if (gatePts.some(([gx, gy]) => Math.hypot(gx - mx, gy - my) < GATE_GAP_M)) continue; // gate opening
+    if (blockedAt(mx, my)) continue; // wall band segmented at water (river gap)
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / len) * WALL_HALF_WIDTH_M;
+    const ny = (dx / len) * WALL_HALF_WIDTH_M;
+    const quad: Pt[] = [
+      [a[0] + nx, a[1] + ny],
+      [b[0] + nx, b[1] + ny],
+      [b[0] - nx, b[1] - ny],
+      [a[0] - nx, a[1] - ny],
+    ];
+    quad.push(quad[0]);
+    wallSegments.push(quad);
+  }
+
+  return { ring, gates: gatePts, wallSegments };
 }
 
 // ── Orchestration ──────────────────────────────────────────────────────────
@@ -463,5 +604,12 @@ export function buildSkeleton(
   const plaza = buildPlaza(citySeed, domain, profile);
   const landmarks = buildLandmarks(citySeed, domain, profile);
 
-  return { arterials, bridges, waterfront, plaza, landmarks };
+  // 4) Wall / ring / gates (v3.3, profile-gated). Water test reuses the
+  // fabric index so the wall band is segmented at rivers/lakes.
+  const wallIdx = indexFabricConstraints(constraints.fabricFeatures);
+  const wall = buildWall(citySeed, domain, profile, arterials, (x, y) =>
+    blockedByWater(wallIdx, x, y)
+  );
+
+  return { arterials, bridges, waterfront, plaza, landmarks, wall };
 }

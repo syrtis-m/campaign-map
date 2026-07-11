@@ -28,9 +28,10 @@ export const WARD_SITE_FRACTIONS = [0.45, 0.8] as const;
 export const WARD_SITE_MIN_SPACING_M = 60;
 /** Sides of the polygon approximating the domain disc for ward clipping. */
 export const DISC_CLIP_SIDES = 48;
-/** Hashable ward tags (gate wards need v3.3's gates; excluded until then). */
+/** Hashed-pick ward tags; "gate" and "market" also arrive via adjacency
+ * overrides (gate wards contain a wall gate; the market ward holds the plaza). */
 export const WARD_TAGS = ["craft", "temple", "slum", "market"] as const;
-export type WardTag = (typeof WARD_TAGS)[number];
+export type WardTag = (typeof WARD_TAGS)[number] | "gate";
 
 export interface Ward {
   /** Closed ring, world meters, clipped to the domain disc. */
@@ -141,11 +142,14 @@ export function buildWards(citySeed: number, domain: CityDomain, skeleton: Skele
     if (clipped.length < 3) return;
     const siteKey = `${Math.round(site[0] * 100)},${Math.round(site[1] * 100)}`;
 
-    // Tag: plaza cell is the market; waterfront-adjacent cells lean craft
-    // (quays mean trade); the rest hash on the site position.
+    // Tag priority: plaza cell = market; a cell containing a wall gate =
+    // gate ward (v3.3); waterfront-adjacent cells lean craft (quays mean
+    // trade); the rest hash on the site position.
     let tag: WardTag;
     if (pointInRing(clipped, domain.cx, domain.cy)) {
       tag = "market";
+    } else if (skeleton.wall && skeleton.wall.gates.some(([x, y]) => pointInRing(clipped, x, y))) {
+      tag = "gate";
     } else if (
       skeleton.waterfront.some((w) => w.coords.some(([x, y]) => pointInRing(clipped, x, y)))
     ) {

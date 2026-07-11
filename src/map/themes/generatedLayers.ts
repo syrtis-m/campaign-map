@@ -70,15 +70,42 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
     {
       // Procgen v3 city landmarks: the plaza reads as paved open ground
       // (road hue, light wash); church/market footprints read like heavier
-      // buildings (denser than the ambient footprint fill).
+      // buildings (denser than the ambient footprint fill); walls share the
+      // sketched-wall stone hue (F2: one legend per kind); farm fields get a
+      // faint cultivated-green wash (park hue, well below park opacity).
       id: "generated-landmark",
       type: "fill",
       source: "generated",
-      filter: ["==", ["get", "generatorId"], "city-landmark"],
+      filter: [
+        "all",
+        ["==", ["get", "generatorId"], "city-landmark"],
+        ["==", ["geometry-type"], "Polygon"],
+      ],
       paint: {
-        "fill-color": ["match", ["get", "type"], "plaza", t.fabricRoad, t.roadMinor],
-        "fill-opacity": ["match", ["get", "type"], "plaza", 0.25, 0.5],
+        "fill-color": [
+          "match",
+          ["get", "type"],
+          "plaza", t.fabricRoad,
+          "wall", t.fabricWall,
+          "field", t.fabricPark,
+          t.roadMinor,
+        ],
+        "fill-opacity": ["match", ["get", "type"], "plaza", 0.25, "wall", 0.85, "field", 0.12, 0.5],
       },
+    } as unknown as LayerSpecification,
+    {
+      // City gates (v3.3): unnamed fabric points where arterials pierce the
+      // wall — small stone-hued dots, never Location pins (I4).
+      id: "generated-gate",
+      type: "circle",
+      source: "generated",
+      filter: [
+        "all",
+        ["==", ["get", "generatorId"], "city-landmark"],
+        ["==", ["get", "type"], "gate"],
+        ["==", ["geometry-type"], "Point"],
+      ],
+      paint: { "circle-radius": 3, "circle-color": t.fabricWall, "circle-opacity": 0.9 },
     } as unknown as LayerSpecification,
     {
       // World routes are roads by another tier — fabric road hue, dashed to

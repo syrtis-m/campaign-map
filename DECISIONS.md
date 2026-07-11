@@ -226,3 +226,13 @@
 - Subagent deviations (full list in its report, all sane): ward sites are plaza+arterial arc-length points (not literal junctions); "gate" ward tag deferred to v3.3; ~13 self-touching faces per city counted-and-skipped (pockets around cul-de-sac tips — revisit at v3.3 screenshots); skeleton polylines resampled to 8 m for the graph only; water-centroid blocks dropped (docs/04 guard); footprint depth capped 0.85×width so frontage alignment holds by construction; `parcelMinFrontage` applied as footprint-eligibility filter, not a split stop.
 - **Quad share 63% vs the <70% gate** — passes but thin; watch when v3.4 tunes profiles.
 - Feature volume: ~15 k features/domain (3.96 MB artifact, §3.3 fine). Per-tile counts (~1700) exceed the §8 "~2×" note; mitigated by the relative minzoom gates. Live pan after a full-domain paint stayed responsive in gate runs; phase4's fps gate re-verifies at v3.4.
+
+## 2026-07-11 — Procgen v3.3 (cityness/outskirts/walls/gates) — deviations & judgment calls
+
+- **Ring/wall via polar interpolation through gate points** (network distance = arc length along each arterial), not a BFS lattice contour — same §5.1.5 observables (closed ring, gates exactly on ring∩arterial, ~ringRadius), fraction of the cost. Revisit only for terrain-hugging walls.
+- **Outskirt field band is lateral** (beyond the ribbon cottages, off the road) rather than a farther longitudinal arc — arterials end at the rim, a longitudinal band mostly fell outside the domain.
+- **`edge` growth-extent thresholds raised** (e.g. euro-medieval 0.12→0.22) so a real countryside annulus exists; city core ends ~0.8–0.85 R. Screenshot-reviewed; flagged for Jonah in review/009.
+- **Only GROWN streets are gate-restricted at the wall** — arterials cross at gates by construction; waterfront quays may cross (water gates). Sensible; documented.
+- Cityness canon bumps: settlement-type Locations (city/town/village) 0.15–0.3, other canon Points 0.05–0.1; also modulates snap distance (1.25−0.5c) and parcel minArea — curves are ours, §5.4 names the knobs without formulas.
+- `wallChance` profile param added for euro-continental's hashed "optional" wall; ward "gate" tag by cell-contains-gate.
+- Paint: generated walls share the sketched-wall stone token (F2), gates are 3 px stone dots (never Locations, I4), farm fields are park-hue at 0.12 opacity.

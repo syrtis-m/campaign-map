@@ -88,7 +88,22 @@ design doc's phases; state here + DECISIONS.md 2026-07-11.
       Screenshots reviewed (review/008): full-disc city, genre readable in 3 s.
 - [x] committed
 
-### Next: v3.3 cityness/outskirts/walls/gates/landmarks → v3.4 profiles+cleanup
+### v3.3 — cityness, outskirts, walls/gates, landmarks (DONE, gate green: `npx tsx scripts/gates/procgen33.ts` → 11/11)
+- [x] cityness completed (§5.4: canon-Location bumps — "the city grows around the GM's pins" —
+      + snap-distance and parcel-minArea modulation); walls/gates (closed ring through 5
+      arterial-snapped gates, wall band omitted at gates/water, grown streets breach only at
+      gates); outskirts (`outskirts.ts`: ribbon cottages along arterials past the growth extent,
+      lateral farm-field quads); ward "gate" tag; landmark variety (temple/keep). 279 tests.
+- [x] Density bands monotonic (0.0548→0.0027 across 6 rings); pipeline ~198 ms; fuzz 34 s
+      zero-throw with walls+outskirts on.
+- [x] Paint: wall shares the sketched-wall stone token, gate dots, farm-field wash
+      (`generated-gate` layer + landmark fill extended). styleValidation/layerOrder green.
+- [x] Live gate 11/11 (wall+gates render, replay byte-identical, explicit-only, clear-domain).
+      Screenshots reviewed (review/009): generated wall hugs the dense core inside the sketched
+      city wall; questions queued for Jonah (double-wall rule, gate presence, field wash).
+- [x] committed
+
+### Next: v3.4 remaining profiles (na-grid/na-suburb/euro-continental) + v2 deletion + docs
 
 ## Environment (done)
 - [x] `scripts/preflight.sh` written and green (Obsidian 1.12.7 running, `dev-vault` registered + CLI-reachable, restricted mode off, Node v22.14.0 installed locally, git repo initialized, GitHub remote `syrtis-m/campaign-map` created)

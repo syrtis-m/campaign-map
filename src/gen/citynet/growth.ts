@@ -63,6 +63,9 @@ export const MAX_PRUNE_PASSES = 8;
 /** Vertex spacing (meters) of skeleton polylines as inserted into the GRAPH
  * (emitted features keep full smooth geometry) — keeps face rings lean. */
 export const GRAPH_RESAMPLE_M = 8;
+/** Grown streets may cross the generated wall only within this distance of a
+ * gate point (v3.3 §5.1.5 growth interaction — gates are pass-throughs). */
+export const GATE_PASS_M = 25;
 /** Minimum clearance between a grown segment (its whole span, not just the
  * endpoint) and a canon Point — never pave the GM's pins (I4). Endpoints get
  * the stricter `CANON_RADIUS_M`; interiors this. */
@@ -290,7 +293,9 @@ export function growNetwork(
 ): { graph: StreetGraph; stats: GrowthStats } {
   const graph = new StreetGraph();
   const idx = indexFabricConstraints(constraints.fabricFeatures);
-  const cityness = makeCityness(citySeed, domain);
+  // Canon-bumped cityness (§5.4 complete, v3.3): the GM's settlement pins
+  // pull density toward themselves.
+  const cityness = makeCityness(citySeed, domain, constraints.canonFeatures ?? []);
   const heap = new CandidateHeap();
   const spacing = profile.segmentLen * SEED_SPACING_FACTOR;
 
@@ -321,6 +326,17 @@ export function growNetwork(
     });
     seedAlongPolyline(citySeed, graph, keys, `seed:wf:${i}`, spacing, cityness, heap);
   });
+  // Ring road (v3.3): a pre-seed spine like the arterials — streets snap to
+  // it, faces form along it, and wall-hugging lanes seed off it. Planar
+  // insertion nodes its crossings with the arterials at the gates.
+  if (skeleton.wall) {
+    const keys = insertPolyline(graph, resamplePolyline(skeleton.wall.ring, GRAPH_RESAMPLE_M), {
+      roadClass: "ring",
+      grown: false,
+      sketch: false,
+    });
+    seedAlongPolyline(citySeed, graph, keys, "seed:ring", spacing, cityness, heap);
+  }
   // Sketched roads (I4): immutable edges, clipped to the disc and smoothed the
   // same way corridors are. Generated streets snap TO them; they are never
   // pruned and never re-emitted (the sketch already renders as fabric).
@@ -344,6 +360,29 @@ export function growNetwork(
   const minEdgeCm = toLattice(profile.minEdge);
   const segLenCm = toLattice(profile.segmentLen);
   const maxPops = profile.maxSegments * MAX_POPS_PER_SEGMENT;
+
+  /** Generated-wall barrier (§5.1.5 growth interaction): does the candidate
+   * segment cross the ring contour farther than GATE_PASS_M from every gate?
+   * Checked on the RAW proposed segment (before snap/trim), so legitimate
+   * T-junctions INTO the ring road are not misread as crossings. */
+  const wall = skeleton.wall;
+  const crossesGeneratedWall = (ax: number, ay: number, bx: number, by: number): boolean => {
+    if (!wall) return false;
+    const ring = wall.ring;
+    for (let i = 0; i < ring.length - 1; i++) {
+      const [rx1, ry1] = ring[i];
+      const [rx2, ry2] = ring[i + 1];
+      const d = (bx - ax) * (ry2 - ry1) - (by - ay) * (rx2 - rx1);
+      if (d === 0) continue;
+      const t = ((rx1 - ax) * (ry2 - ry1) - (ry1 - ay) * (rx2 - rx1)) / d;
+      const u = ((rx1 - ax) * (by - ay) - (ry1 - ay) * (bx - ax)) / d;
+      if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+      const cx = ax + t * (bx - ax);
+      const cy = ay + t * (by - ay);
+      if (!wall.gates.some(([gx, gy]) => Math.hypot(gx - cx, gy - cy) <= GATE_PASS_M)) return true;
+    }
+    return false;
+  };
 
   /** Away-direction angle check at a junction node (§5.2 minAngle): the new
    * edge must not form a sliver with any incident edge. Directions point AWAY
@@ -384,16 +423,21 @@ export function growNetwork(
 
     // Local constraints — rejections first (cheapest to most structural).
     if (Math.hypot(exM - domain.cx, eyM - domain.cy) > domain.radius) continue; // domain disc
-    if (cityness(exM, eyM) < profile.edge) continue; // growth extent (§5.4)
+    const cEnd = cityness(exM, eyM);
+    if (cEnd < profile.edge) continue; // growth extent (§5.4)
     if (canon.some(([px, py]) => Math.hypot(px - exM, py - eyM) < CANON_RADIUS_M)) continue; // canon clearance (end)
     if (canon.some(([px, py]) => pointSegDist(px, py, fxM, fyM, exM, eyM) < CANON_SEGMENT_CLEARANCE_M)) continue; // canon clearance (span)
     if (blockedByWater(idx, exM, eyM) || blockedByWater(idx, (fxM + exM) / 2, (fyM + eyM) / 2)) continue; // water (bridges are Stage-A only)
-    if (crossesWall(idx, [fxM, fyM], [exM, eyM])) continue; // sketched walls: never cross (no gates yet)
+    if (crossesWall(idx, [fxM, fyM], [exM, eyM])) continue; // sketched walls: never cross (no sketch gates)
+    if (crossesGeneratedWall(fxM, fyM, exM, eyM)) continue; // generated wall: pass only at gates (v3.3)
 
-    // Snap to an existing node within snapDist of the proposed end.
+    // Snap to an existing node within snapDist of the proposed end. Snap
+    // radius shrinks with cityness (§5.4): tighter warrens in the core,
+    // looser joins toward the rim.
+    const snapEff = Math.max(1, Math.round(snapCm * (1.25 - 0.5 * Math.min(1, cEnd))));
     let terminal = false;
     let splitEdgeId: string | null = null;
-    const snapNode = graph.nearestNodeWithin(ex, ey, snapCm, from.key);
+    const snapNode = graph.nearestNodeWithin(ex, ey, snapEff, from.key);
     if (snapNode) {
       ex = snapNode.x;
       ey = snapNode.y;
@@ -416,7 +460,7 @@ export function growNetwork(
       terminal = true;
     } else if (!snapNode) {
       // Extend/trim to a nearby edge interior (T-junction).
-      const near = graph.nearestEdgeWithin(ex, ey, snapCm, from.key);
+      const near = graph.nearestEdgeWithin(ex, ey, snapEff, from.key);
       if (near) {
         const a = graph.getNode(near.edge.a)!;
         const b = graph.getNode(near.edge.b)!;

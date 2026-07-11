@@ -14,6 +14,9 @@
  */
 import type { ProfileId } from "./domain";
 
+/** Plaza-adjacent landmark footprint kinds (themes filter on `landmark`). */
+export type LandmarkKind = "church" | "market" | "temple" | "keep";
+
 export interface CityProfile {
   id: ProfileId;
 
@@ -27,18 +30,21 @@ export interface CityProfile {
    * and 55 m. Read by `skeleton.ts` (§5.1.4). */
   waterfrontOffsets: number[];
   /** Landmark footprints placed adjacent to the central plaza, facing it
-   * (§5.1.6). Read by `skeleton.ts`. */
-  landmarks: ("church" | "market")[];
+   * (§5.1.6). The first two always place; extras (index ≥ 2, v3.3 landmark
+   * pass) place with a hashed chance for variety. Read by `skeleton.ts`. */
+  landmarks: LandmarkKind[];
   /** Half-extent (meters) of the central plaza polygon before per-vertex
    * hash jitter — final plaza spans roughly `2×plazaRadius` (§5.1.6, "~30–50 m
    * polygon"). Read by `skeleton.ts`. */
   plazaRadius: number;
 
-  // ── Stage A: ring / wall (v3.3 — typed now, unread in v3.0) ────────────
-  /** Whether this profile grows a defensive ring road + wall (§5.1.5). */
+  // ── Stage A: ring / wall (v3.3) ─────────────────────────────────────────
+  /** Whether this profile always grows a defensive ring road + wall (§5.1.5). */
   hasWall: boolean;
-  /** Ring-road network-distance contour radius as a fraction of `radius`
-   * (v3.3). Ignored when `hasWall` is false. */
+  /** When `hasWall` is false: hashed chance the domain grows one anyway (§6
+   * euro-continental "optional"; 0 for NA profiles). Read by `skeleton.ts`. */
+  wallChance: number;
+  /** Ring-road contour radius as a fraction of the domain radius (§5.1.5). */
   ringRadiusFrac: number;
 
   // ── Stage B: growth loop (v3.1) ────────────────────────────────────────
@@ -107,13 +113,14 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     id: "euro-medieval",
     arterialCount: 5,
     waterfrontOffsets: [20, 55],
-    landmarks: ["church", "market"],
+    landmarks: ["church", "market", "keep"],
     plazaRadius: 20,
     hasWall: true,
+    wallChance: 1,
     ringRadiusFrac: 0.55,
     segmentLen: 40,
     branchProb: 0.45,
-    edge: 0.12,
+    edge: 0.22,
     branchAngle: Math.PI / 2,
     branchAngleJitter: (25 * Math.PI) / 180,
     curvature: (8 * Math.PI) / 180,
@@ -138,13 +145,14 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     id: "euro-continental",
     arterialCount: 4,
     waterfrontOffsets: [20, 55],
-    landmarks: ["church", "market"],
+    landmarks: ["church", "market", "temple"],
     plazaRadius: 22,
     hasWall: false,
+    wallChance: 0.4,
     ringRadiusFrac: 0.6,
     segmentLen: 55,
     branchProb: 0.35,
-    edge: 0.14,
+    edge: 0.2,
     branchAngle: Math.PI / 2,
     branchAngleJitter: (10 * Math.PI) / 180,
     curvature: (3 * Math.PI) / 180,
@@ -169,13 +177,14 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     id: "na-grid",
     arterialCount: 4,
     waterfrontOffsets: [],
-    landmarks: ["market"],
+    landmarks: ["market", "temple"],
     plazaRadius: 24,
     hasWall: false,
+    wallChance: 0,
     ringRadiusFrac: 0,
     segmentLen: 80,
     branchProb: 0.5,
-    edge: 0.15,
+    edge: 0.2,
     branchAngle: Math.PI / 2,
     branchAngleJitter: (2 * Math.PI) / 180,
     curvature: 0,
@@ -203,10 +212,11 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     landmarks: ["market"],
     plazaRadius: 20,
     hasWall: false,
+    wallChance: 0,
     ringRadiusFrac: 0,
     segmentLen: 45,
     branchProb: 0.4,
-    edge: 0.08,
+    edge: 0.12,
     branchAngle: (75 * Math.PI) / 180,
     branchAngleJitter: (20 * Math.PI) / 180,
     curvature: (12 * Math.PI) / 180,

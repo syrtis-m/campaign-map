@@ -28,6 +28,7 @@ import { growNetwork, collectGrownChains } from "./growth";
 import { extractBlocks } from "./faces";
 import { subdivideBlocks } from "./parcels";
 import { buildWards } from "./wards";
+import { buildOutskirts } from "./outskirts";
 import { makeCityness } from "./cityness";
 
 // Package barrel: the host (MapView, generationService, worker, modal) imports
@@ -179,6 +180,48 @@ export function generateCityNetwork(
     });
   });
 
+  // Wall / ring / gates (v3.3, §5.1.5 — profile-gated, may be null).
+  if (skel.wall) {
+    features.push({
+      type: "Feature",
+      id: hashSeed(citySeed, "ring"),
+      geometry: { type: "LineString", coordinates: qLine(skel.wall.ring) },
+      properties: {
+        generated: true,
+        generatorId: "city-street",
+        type: "street",
+        roadClass: "ring",
+        domainId: domain.id,
+      },
+    });
+    skel.wall.wallSegments.forEach((quad, i) => {
+      features.push({
+        type: "Feature",
+        id: hashSeed(citySeed, "wallseg", i),
+        geometry: { type: "Polygon", coordinates: [qLine(quad)] },
+        properties: {
+          generated: true,
+          generatorId: "city-landmark",
+          type: "wall",
+          domainId: domain.id,
+        },
+      });
+    });
+    skel.wall.gates.forEach(([gx, gy], i) => {
+      features.push({
+        type: "Feature",
+        id: hashSeed(citySeed, "gate", i),
+        geometry: { type: "Point", coordinates: [q(gx), q(gy)] },
+        properties: {
+          generated: true,
+          generatorId: "city-landmark",
+          type: "gate",
+          domainId: domain.id,
+        },
+      });
+    });
+  }
+
   // Stage B (v3.1): grow the street web off the skeleton, emit merged chains.
   // Chain keys are position-derived (endpoint node keys), never order-derived.
   const { graph } = growNetwork(citySeed, domain, profile, constraints, skel);
@@ -228,7 +271,7 @@ export function generateCityNetwork(
     });
   }
 
-  const cityness = makeCityness(citySeed, domain);
+  const cityness = makeCityness(citySeed, domain, constraints.canonFeatures ?? []);
   const { parcels, footprints } = subdivideBlocks(citySeed, dryBlocks, profile, cityness);
   for (const p of parcels) {
     const ring = [...p.ring, p.ring[0]];
@@ -269,6 +312,36 @@ export function generateCityNetwork(
         generatorId: "city-district",
         type: "district",
         ward: ward.tag,
+        domainId: domain.id,
+      },
+    });
+  }
+
+  // Outskirts (v3.3, §5.3.3): ribbon houses along arterials beyond the growth
+  // extent, then fields, then nothing toward the rim.
+  const outskirts = buildOutskirts(citySeed, domain, profile, skel, cityness, fabricIdx);
+  for (const rf of outskirts.ribbonFootprints) {
+    features.push({
+      type: "Feature",
+      id: hashSeed(citySeed, "ribbon", rf.key),
+      geometry: { type: "Polygon", coordinates: [qLine(rf.ring)] },
+      properties: {
+        generated: true,
+        generatorId: "city-footprint",
+        type: "footprint",
+        domainId: domain.id,
+      },
+    });
+  }
+  for (const field of outskirts.fields) {
+    features.push({
+      type: "Feature",
+      id: hashSeed(citySeed, "field", field.key),
+      geometry: { type: "Polygon", coordinates: [qLine(field.ring)] },
+      properties: {
+        generated: true,
+        generatorId: "city-landmark",
+        type: "field",
         domainId: domain.id,
       },
     });

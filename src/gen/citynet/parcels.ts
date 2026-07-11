@@ -165,8 +165,6 @@ export function subdivideBlocks(
   const parcels: ParcelPiece[] = [];
   const footprints: ParcelPiece[] = [];
   const stats: ParcelStats = { degenerate: 0, alignmentDeviations: [] };
-  const minArea = profile.parcelMinArea;
-  const targetMax = minArea * 3;
 
   for (const block of blocks) {
     const blockKey = block.nodeKeys.join("|");
@@ -175,6 +173,13 @@ export function subdivideBlocks(
       stats.degenerate++;
       continue;
     }
+    // §5.4 (v3.3): cityness modulates parcel minArea — small dense lots in
+    // the core, broader lots toward the rim. Sampled once at the block
+    // centroid so the whole recursion shares one scale (per-block purity).
+    const [bcx, bcy] = centroid(blockRing);
+    const cBlock = Math.min(1, cityness(bcx, bcy));
+    const minArea = profile.parcelMinArea * (1.5 - 0.9 * cBlock);
+    const targetMax = minArea * 3;
 
     const leaves: ParcelPiece[] = [];
     const subdivide = (ring: Pt[], path: string): void => {
