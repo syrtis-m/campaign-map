@@ -1,5 +1,37 @@
 import { describe, it, expect } from "vitest";
-import { parseLocationNote, typeDefaults, locationToFeature } from "./locationNote";
+import { parseLocationNote, typeDefaults, locationToFeature, focusForType } from "./locationNote";
+
+describe("depth-of-field focus buckets", () => {
+  it("maps the big anchors to deep, mid-tier to medium, fine grain to shallow", () => {
+    expect(focusForType("nation/region")).toBe("deep");
+    expect(focusForType("city")).toBe("deep");
+    expect(focusForType("water-feature")).toBe("deep");
+    expect(focusForType("town")).toBe("medium");
+    expect(focusForType("landmark")).toBe("medium");
+    expect(focusForType("street(named)")).toBe("shallow");
+    expect(focusForType("shop/tavern/venue")).toBe("shallow");
+  });
+
+  it("defaults unknown types to medium", () => {
+    expect(focusForType("nonsense")).toBe("medium");
+  });
+
+  it("puts the resolved focus bucket on the location and its feature", () => {
+    const r = parseLocationNote("Locations/Pub.md", "Pub", { map: "a", geometry: [0, 0], type: "shop/tavern/venue" });
+    expect(r.ok && r.location.focus).toBe("shallow");
+    if (r.ok) expect(locationToFeature(r.location)?.properties?.focus).toBe("shallow");
+  });
+
+  it("lets a note override its bucket via frontmatter `focus`", () => {
+    const r = parseLocationNote("Locations/BigPub.md", "BigPub", {
+      map: "a",
+      geometry: [0, 0],
+      type: "shop/tavern/venue",
+      focus: "deep",
+    });
+    expect(r.ok && r.location.focus).toBe("deep");
+  });
+});
 
 describe("parseLocationNote", () => {
   it("parses a minimal point location and fills type-taxonomy defaults", () => {

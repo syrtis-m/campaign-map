@@ -10,6 +10,7 @@ function loc(overrides: Partial<ParsedLocation> & { path: string; name: string }
     geometryRef: null,
     type: "custom",
     importance: 5,
+    focus: "medium",
     zoomMin: 12,
     zoomMax: 24,
     aliases: [],

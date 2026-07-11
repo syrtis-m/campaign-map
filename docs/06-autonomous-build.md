@@ -50,16 +50,28 @@ The agent's first act is `scripts/preflight.sh` (build it in Phase 0 before anyt
 | accent/selection | #1a73e8 | #7d1f1f | #b8860b | #fcee0a |
 | poi | #5f6368 | #5c4a2e | #948b7f | #00e5ff |
 
-**Type taxonomy defaults** (importance 1=highest; zoom = visible range):
+**Type taxonomy defaults** (importance 1=highest; focus = depth-of-field bucket):
 
-| type | importance | zoom | | type | importance | zoom |
+| type | importance | focus | | type | importance | focus |
 |---|---|---|---|---|---|---|
-| nation/region | 1 | 2–8 | | district | 4 | 11–16 |
-| city | 2 | 5–12 | | street(named) | 5 | 13+ |
-| town | 3 | 7–13 | | landmark | 4 | 10+ |
-| village | 4 | 9–14 | | shop/tavern/venue | 6 | 14+ |
-| route | 3 | 5–13 | | residence/minor | 7 | 16+ |
-| water-feature | 2 | 3–12 | | custom (GM) | 5 | 12+ |
+| nation/region | 1 | deep | | district | 4 | medium |
+| city | 2 | deep | | street(named) | 5 | shallow |
+| town | 3 | medium | | landmark | 4 | medium |
+| village | 4 | medium | | shop/tavern/venue | 6 | shallow |
+| route | 3 | medium | | residence/minor | 7 | shallow |
+| water-feature | 2 | deep | | custom (GM) | 5 | medium |
+
+*Depth-of-field label model (superseded the per-type continuous zoom range,
+2026-07-10 — Jonah-authorized; see DECISIONS.md).* The map has **three focus
+levels** (Wide/Mid/Close), computed per campaign from its overview zoom, not
+absolute. A location's **dot always renders at every zoom**; its `focus` bucket
+sets at how many focus levels its **name** is legible — `deep` all three,
+`medium` from Mid inward, `shallow` at Close only. `importance` still drives label
+size + collision priority; the old `zoomMin`/`zoomMax` are retained only for
+incidental camera math (fly-to, generation-band split), never for label gating.
+Reveal is per-layer `minzoom` (three bucketed label layers) — zoom is NEVER put
+in a filter (invalidates the whole style; see the styleValidation test + styleLoad
+gate).
 
 **Naming cultures** (seed profiles, one per test campaign): `fantasy-brackish` (harsh coastal: consonant clusters, -haven/-wick/-mire), `modern-anglo` (real-city overlay: person-name + generic), `neon-corpo` (portmanteau + kana-esque syllables + Inc/Corp). Profiles are phoneme tables in `src/gen/naming/cultures/` — agent authors 2 more per genre later, same format.
 

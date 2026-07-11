@@ -200,6 +200,16 @@ export class MapView extends ItemView {
   private campaignAppliedOnce = false;
   private loadingIndicatorEl!: HTMLDivElement;
   private toolbarEl!: HTMLDivElement;
+  /** The campaign's overview (fit-bounds) zoom — the anchor for the three
+   * focus levels. Captured once per campaign right after fitBounds so the
+   * levels stay put when the user pans/zooms or switches theme (a restyle
+   * wipes the layers' zoom ranges, so they're re-applied from this). */
+  private overviewZoom: number | null = null;
+  /** The three "focus level" snap zooms [Wide, Mid, Close] = overview + [0,3,6],
+   * relative to the campaign so a fictional world (overview ~z5) and a real
+   * city (overview ~z11) both get the same three-step feel. */
+  private focusZooms: [number, number, number] | null = null;
+  private focusReadoutEl: HTMLElement | null = null;
   /** Last-shown per-session travel path (plan 009, Phase 5), if any — kept
    * in memory (not derived from the index like `connections`) so it can be
    * re-applied to the `session-path` source after a theme switch wipes and
@@ -314,6 +324,7 @@ export class MapView extends ItemView {
       this.map.once("styledata", () => {
         this.refreshSource();
         this.refreshGeneratedSource();
+        this.applyFocusReveal();
       });
     }
     if (this.map) this.applyCampaign();
@@ -397,6 +408,7 @@ export class MapView extends ItemView {
     this.loadingIndicatorEl.style.display = "none";
     this.toolbarEl = container.createDiv({ cls: "campaign-map-toolbar" });
     this.buildToolbar();
+    this.buildFocusControl(container);
 
     this.map = new maplibregl.Map({
       container: this.mapContainer,
@@ -425,10 +437,15 @@ export class MapView extends ItemView {
       // already started fetching for the jumped-to viewport.
       if (this.campaign && !this.campaignAppliedOnce) this.applyCampaign();
       this.refreshSource();
+      this.applyFocusReveal();
       this.updateScaleBar();
+      this.updateFocusReadout();
     });
     this.map.on("move", () => this.updateScaleBar());
-    this.map.on("zoom", () => this.updateScaleBar());
+    this.map.on("zoom", () => {
+      this.updateScaleBar();
+      this.updateFocusReadout();
+    });
     this.map.on("moveend", () => this.scheduleDispatch());
     this.map.on("zoomend", () => this.scheduleDispatch());
     this.map.on("click", (e) => this.handleClick(e));
@@ -488,6 +505,32 @@ export class MapView extends ItemView {
     btn("image", "Export map poster", () => void this.exportPoster());
     btn("book-open", "Export campaign atlas (PDF)", () => void this.exportAtlas());
     btn("settings", "Campaign settings", () => this.plugin.openControlPanel());
+  }
+
+  /**
+   * The focus stepper (bottom-right): + / − buttons that SNAP the camera
+   * between the three per-campaign focus levels (Wide / Mid / Close), with a
+   * three-dot readout of the current level. Free scroll/trackpad zoom stays
+   * continuous and untouched — this is the discrete "depth of field" gear on
+   * top of it, replacing the old free-for-all where the GM had to know exact
+   * zoom numbers to see the right detail.
+   */
+  private buildFocusControl(container: HTMLElement): void {
+    const el = container.createDiv({ cls: "campaign-map-focus-control" });
+    const plus = el.createEl("button", {
+      cls: "campaign-map-focus-btn",
+      text: "+",
+      attr: { "aria-label": "Zoom in one focus level", title: "Focus in (Wide → Mid → Close)" },
+    });
+    plus.onclick = () => this.stepFocus(1);
+    this.focusReadoutEl = el.createDiv({ cls: "campaign-map-focus-readout" });
+    this.focusReadoutEl.setText("●○○");
+    const minus = el.createEl("button", {
+      cls: "campaign-map-focus-btn",
+      text: "−",
+      attr: { "aria-label": "Zoom out one focus level", title: "Focus out (Close → Mid → Wide)" },
+    });
+    minus.onclick = () => this.stepFocus(-1);
   }
 
   async onClose(): Promise<void> {
@@ -1125,6 +1168,7 @@ export class MapView extends ItemView {
         ],
         { padding: 40, animate: false }
       );
+      this.captureOverviewZoom();
     } else if (config.basemap) {
       vaultBasemapBounds(this.app, config.basemap).then((bounds) => {
         if (!this.map || !bounds || this.campaign?.config.basemap !== config.basemap) return;
@@ -1135,6 +1179,7 @@ export class MapView extends ItemView {
           ],
           { padding: 40, animate: false }
         );
+        this.captureOverviewZoom();
       });
     }
 
@@ -1146,6 +1191,78 @@ export class MapView extends ItemView {
       this.map.removeControl(this.scaleControl);
       this.scaleControl = null;
     }
+  }
+
+  /** Capture the campaign overview zoom (call right after fitBounds) and derive
+   * the three focus levels + the depth-of-field label reveal floors from it. */
+  private captureOverviewZoom(): void {
+    if (!this.map) return;
+    const base = Math.round(this.map.getZoom() * 10) / 10;
+    this.overviewZoom = base;
+    this.focusZooms = [base, base + 3, base + 6];
+    this.applyFocusReveal();
+    this.updateFocusReadout();
+  }
+
+  /**
+   * Push the per-campaign depth-of-field reveal floors onto the label layers.
+   * `deep` labels are always on (floor 0); `medium` reveals at the midpoint of
+   * Wide→Mid, `shallow` at the midpoint of Mid→Close. Done with
+   * `setLayerZoomRange` (a live per-layer update, NOT a filter — zoom must never
+   * go in a filter) so it's re-applicable after a restyle wipes the defaults.
+   * No-ops until both the overview zoom and the layers exist, so it's safe to
+   * call from load/styledata handlers and from captureOverviewZoom alike.
+   */
+  private applyFocusReveal(): void {
+    if (!this.map || this.overviewZoom == null) return;
+    const base = this.overviewZoom;
+    const reveal: Record<string, number> = { deep: 0, medium: base + 1.5, shallow: base + 4.5 };
+    for (const prefix of ["canon", "generated"]) {
+      for (const depth of ["deep", "medium", "shallow"] as const) {
+        const id = `${prefix}-label-${depth}`;
+        if (this.map.getLayer(id)) this.map.setLayerZoomRange(id, reveal[depth], 24);
+      }
+    }
+  }
+
+  /** Snap the camera to the previous/next focus level (the +/- buttons). Free
+   * scroll/trackpad zoom stays continuous; this just jumps between the three
+   * fixed stops. Picks the next stop strictly beyond the current zoom in the
+   * given direction, so pressing + from anywhere lands on the next level in. */
+  private stepFocus(dir: 1 | -1): void {
+    if (!this.map || !this.focusZooms) return;
+    const z = this.map.getZoom();
+    const eps = 0.05;
+    const target =
+      dir === 1
+        ? this.focusZooms.find((f) => f > z + eps) ?? this.focusZooms[this.focusZooms.length - 1]
+        : [...this.focusZooms].reverse().find((f) => f < z - eps) ?? this.focusZooms[0];
+    this.map.easeTo({ zoom: target, duration: 300 });
+  }
+
+  /** Which focus level (1–3) the current zoom is nearest, for the readout. */
+  private currentFocusLevel(): number {
+    if (!this.map || !this.focusZooms) return 1;
+    const z = this.map.getZoom();
+    let best = 0;
+    let bestD = Infinity;
+    this.focusZooms.forEach((f, i) => {
+      const d = Math.abs(f - z);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    return best + 1;
+  }
+
+  private updateFocusReadout(): void {
+    if (!this.focusReadoutEl) return;
+    const level = this.currentFocusLevel();
+    // Three dots, the current one filled — a compact "which focus level" gauge.
+    this.focusReadoutEl.setText([1, 2, 3].map((n) => (n === level ? "●" : "○")).join(""));
+    const names = ["Wide", "Mid", "Close"];
+    this.focusReadoutEl.setAttr("title", `Focus: ${names[level - 1]} (level ${level} of 3)`);
   }
 
   private refreshSource(): void {
@@ -1563,7 +1680,10 @@ export class MapView extends ItemView {
     // themes rebuild to an identical style, which is a harmless no-op.
     if (!this.map || !this.campaign || isHandcraftedTheme(this.campaign.config.theme)) return;
     this.map.setStyle(this.buildStyle(this.campaign));
-    this.map.once("styledata", () => this.refreshSource());
+    this.map.once("styledata", () => {
+      this.refreshSource();
+      this.applyFocusReveal();
+    });
   }
 
   private updateScaleBar(): void {

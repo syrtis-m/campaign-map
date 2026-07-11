@@ -1,6 +1,6 @@
 import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "./tokens";
-import { CANON_DOT_RADIUS } from "./canonLayers";
+import { CANON_DOT_RADIUS, focusLabelLayers } from "./canonLayers";
 
 /**
  * Generated city/world fabric (Phase 3), styled from the same theme tokens
@@ -13,8 +13,6 @@ import { CANON_DOT_RADIUS } from "./canonLayers";
  * source instead of "canon".
  */
 export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
-  const zoomFilter = ["all", ["<=", ["get", "minZoom"], ["zoom"]], ["<=", ["zoom"], ["get", "maxZoom"]]];
-
   return [
     {
       id: "generated-region",
@@ -112,25 +110,17 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
         "circle-stroke-color": t.land,
       },
     } as unknown as LayerSpecification,
-    {
-      id: "generated-label",
-      type: "symbol",
+    // Settlement labels use the SAME depth-of-field bucket layers as canon
+    // (by the feature's `focus` prop, gated by per-bucket `minzoom`) so a
+    // generated settlement's name reveals exactly like a canon one — provenance
+    // stays invisible (F2). Non-settlement generated features carry no `focus`,
+    // so these layers ignore them.
+    ...focusLabelLayers({
       source: "generated",
-      filter: ["all", ["==", ["get", "generatorId"], "world-settlement"], zoomFilter],
-      layout: {
-        "text-field": ["get", "name"],
-        "text-font": [t.fontRegular],
-        "text-size": ["interpolate", ["linear"], ["get", "importance"], 1, 18, 7, 11],
-        "text-offset": [0, 1.1],
-        "text-anchor": "top",
-        "symbol-sort-key": ["get", "importance"],
-        "text-optional": true,
-      },
-      paint: {
-        "text-color": t.labelMajor,
-        "text-halo-color": t.land,
-        "text-halo-width": 1.5,
-      },
-    } as unknown as LayerSpecification,
+      prefix: "generated",
+      textColor: t.labelMajor,
+      textHaloColor: t.land,
+      fontStack: t.fontRegular,
+    }),
   ];
 }

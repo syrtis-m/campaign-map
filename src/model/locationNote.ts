@@ -32,6 +32,41 @@ export function typeDefaults(type: string): TypeDefaults {
   return TYPE_TAXONOMY[type] ?? TYPE_TAXONOMY.custom;
 }
 
+/**
+ * Depth-of-field label buckets (the whole zoom-legibility model — replaces the
+ * former per-type continuous zoomMin/zoomMax label gating, which was too fiddly
+ * to reason about; see docs/06 §3 + DECISIONS). The map has three fixed "focus
+ * levels" (Wide / Mid / Close, computed per-campaign from its overview zoom);
+ * a location's DOT is always drawn at every zoom (the always-present "bokeh"),
+ * and this bucket decides at how many focus levels its NAME is legible:
+ *   deep    — named at all three focus levels (the big anchors; deep field)
+ *   medium  — named from the Mid level inward
+ *   shallow — named only at the Close level (fine grain; shallow field)
+ * Reveal is nested (zoom in → more names light up). Genre-neutral by design:
+ * the same three words describe a fantasy world, a real city, and a neon sprawl.
+ */
+export const FOCUS_DEPTHS = ["deep", "medium", "shallow"] as const;
+export type FocusDepth = (typeof FOCUS_DEPTHS)[number];
+
+const TYPE_FOCUS: Record<string, FocusDepth> = {
+  "nation/region": "deep",
+  city: "deep",
+  "water-feature": "deep", // rivers/seas are region-scale anchors — named from the Wide view
+  town: "medium",
+  village: "medium",
+  route: "medium",
+  district: "medium",
+  landmark: "medium",
+  custom: "medium",
+  "street(named)": "shallow",
+  "shop/tavern/venue": "shallow",
+  "residence/minor": "shallow",
+};
+
+export function focusForType(type: string): FocusDepth {
+  return TYPE_FOCUS[type] ?? "medium";
+}
+
 const PointGeometry = z.tuple([z.number(), z.number()]);
 
 const ConnectionSchema = z.union([
@@ -45,7 +80,8 @@ export const LocationFrontmatterSchema = z.object({
   type: z.string().min(1).default("custom"),
   aliases: z.array(z.string()).optional(),
   importance: z.number().int().min(1).max(9).optional(),
-  "zoom-range": z.tuple([z.number(), z.number()]).optional(),
+  "zoom-range": z.tuple([z.number(), z.number()]).optional(), // legacy; no longer gates labels
+  focus: z.enum(FOCUS_DEPTHS).optional(), // per-note override of the type's depth-of-field bucket
   icon: z.string().optional(),
   connections: z.array(ConnectionSchema).optional(),
 });
@@ -61,6 +97,7 @@ export interface ParsedLocation {
   geometryRef: string | null; // sidecar path, if geometry is a string
   type: string;
   importance: number;
+  focus: FocusDepth;
   zoomMin: number;
   zoomMax: number;
   aliases: string[];
@@ -109,6 +146,7 @@ export function parseLocationNote(
       geometryRef,
       type: fm.type,
       importance: fm.importance ?? defaults.importance,
+      focus: fm.focus ?? focusForType(fm.type),
       zoomMin: fm["zoom-range"]?.[0] ?? defaults.zoomMin,
       zoomMax: fm["zoom-range"]?.[1] ?? defaults.zoomMax,
       aliases: fm.aliases ?? [],
@@ -133,6 +171,7 @@ export function locationToFeature(loc: ParsedLocation): GeoJSON.Feature | null {
       name: loc.name,
       type: loc.type,
       importance: loc.importance,
+      focus: loc.focus,
       minZoom: loc.zoomMin,
       maxZoom: loc.zoomMax,
       icon: loc.icon,

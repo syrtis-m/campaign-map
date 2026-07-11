@@ -4,7 +4,7 @@ import type { GenerationConstraints } from "../types";
 import { generateVoronoiCells } from "../voronoiCells";
 import { generateName } from "../naming/culture";
 import { cultureAt } from "../naming/regions";
-import { typeDefaults } from "../../model/locationNote";
+import { typeDefaults, focusForType } from "../../model/locationNote";
 import { classifyBiome, isLand } from "./biomes";
 import { heightAt, moistureAt } from "./heightmap";
 import { SETTLEMENT_SUITABILITY_THRESHOLD, WORLD_REGION_CELL_SIZE } from "./params";
@@ -78,6 +78,7 @@ export function generateSettlements(
         type: s.tier,
         name,
         importance: defaults.importance,
+        focus: focusForType(s.tier),
         minZoom: defaults.zoomMin,
         maxZoom: defaults.zoomMax,
       },
