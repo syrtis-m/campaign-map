@@ -39,6 +39,11 @@ function kindFilter(kind: FabricKind): unknown {
 export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
   const layers: Record<FabricKind, unknown> = {
     // Polygons (drawn first, under the line kinds)
+    // Per-kind colors are the dedicated fabric tokens (plan 017): each of the
+    // six kinds must read visibly distinct in every theme — river ≠ water,
+    // park reads green, wall reads stony, district is a subtle wash. Never
+    // reuse a label/poi/road token here; that's exactly what made the map
+    // muddy before.
     water: {
       id: "fabric-water",
       type: "fill",
@@ -46,9 +51,11 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       minzoom: defaultMinZoomFor("water"),
       filter: kindFilter("water"),
       paint: {
-        "fill-color": tokens.water,
+        "fill-color": tokens.fabricWater,
         "fill-opacity": 0.85,
-        "fill-outline-color": tokens.water,
+        // Shoreline in the river hue: defines the water edge against land and
+        // keeps river lines coherent where they meet a lake.
+        "fill-outline-color": tokens.fabricRiver,
       },
     },
     district: {
@@ -57,10 +64,12 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       source: "fabric",
       minzoom: defaultMinZoomFor("district"),
       filter: kindFilter("district"),
+      // Low opacity is load-bearing: a heavier district fill turned the
+      // near-black neon base into a purple slab (see generatedLayers.ts).
       paint: {
-        "fill-color": tokens.poi,
-        "fill-opacity": 0.15,
-        "fill-outline-color": tokens.poi,
+        "fill-color": tokens.fabricDistrict,
+        "fill-opacity": 0.18,
+        "fill-outline-color": tokens.fabricDistrict,
       },
     },
     park: {
@@ -69,13 +78,10 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       source: "fabric",
       minzoom: defaultMinZoomFor("park"),
       filter: kindFilter("park"),
-      // No dedicated green token (≤8 semantic colors per theme, quality-bar
-      // F6) — roadMinor at low opacity reads as a soft open-space wash in
-      // every theme without inventing a new hue.
       paint: {
-        "fill-color": tokens.roadMinor,
-        "fill-opacity": 0.35,
-        "fill-outline-color": tokens.labelMinor,
+        "fill-color": tokens.fabricPark,
+        "fill-opacity": 0.45,
+        "fill-outline-color": tokens.fabricPark,
       },
     },
     // Lines
@@ -87,7 +93,7 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       filter: kindFilter("river"),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": tokens.water,
+        "line-color": tokens.fabricRiver,
         "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 14, 5],
         "line-opacity": 0.95,
       },
@@ -100,7 +106,7 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       filter: kindFilter("road"),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": tokens.roadMajor,
+        "line-color": tokens.fabricRoad,
         "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 16, 4],
       },
     },
@@ -112,7 +118,7 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       filter: kindFilter("wall"),
       layout: { "line-cap": "butt", "line-join": "miter" },
       paint: {
-        "line-color": tokens.labelMinor,
+        "line-color": tokens.fabricWall,
         "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.5, 16, 3],
         "line-dasharray": [4, 1.5],
       },

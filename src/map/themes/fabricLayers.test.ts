@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
+import type { LayerSpecification } from "maplibre-gl";
 import { fabricLayers, FABRIC_LAYER_IDS, FABRIC_SOURCE_SPEC } from "./fabricLayers";
-import { PARCHMENT } from "./tokens";
+import { HANDCRAFTED_THEMES, PARCHMENT } from "./tokens";
+import { obsidianNativeStyle, type ObsidianCssTokens } from "../theme";
 import { FABRIC_KINDS, defaultMinZoomFor, isPolygonKind, type FabricKind } from "../../model/fabric";
 
 describe("fabricLayers (LOD discipline — plan 013 non-negotiable)", () => {
@@ -57,4 +59,65 @@ describe("fabricLayers (LOD discipline — plan 013 non-negotiable)", () => {
     expect(FABRIC_SOURCE_SPEC.type).toBe("geojson");
     expect(FABRIC_SOURCE_SPEC.tolerance).toBeGreaterThan(0);
   });
+});
+
+describe("fabric kinds are visibly distinct per theme (plan 017)", () => {
+  // The user's #1 complaint: road/wall/river/water/district/park shared
+  // colors (river == water; park borrowed a road color), so nothing read as
+  // itself. Guard: in every theme, each of the six kinds paints in its OWN
+  // color — six kinds, six distinct values.
+  function primaryColor(layer: LayerSpecification): string {
+    const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
+    const color = layer.type === "fill" ? paint["fill-color"] : paint["line-color"];
+    expect(typeof color, `${layer.id} must paint a plain token color`).toBe("string");
+    return (color as string).toLowerCase();
+  }
+
+  function expectSixDistinctColors(themeId: string, layers: LayerSpecification[]) {
+    const colors = FABRIC_KINDS.map((kind) => {
+      const layer = layers.find((l) => l.id === `fabric-${kind}`)!;
+      return primaryColor(layer);
+    });
+    expect(new Set(colors).size, `${themeId} fabric colors collide: ${colors.join(", ")}`).toBe(
+      FABRIC_KINDS.length
+    );
+  }
+
+  for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
+    it(`${id}: six kinds, six distinct colors`, () => {
+      expectSixDistinctColors(id, fabricLayers(tokens));
+    });
+  }
+
+  // obsidian-native derives at runtime from CSS variables — assert both the
+  // stock dark and stock light themes still differentiate all six kinds.
+  const OBSIDIAN_DARK: ObsidianCssTokens = {
+    backgroundPrimary: "#1e1e1e",
+    backgroundSecondary: "#262626",
+    backgroundModifierBorder: "#4d4d4d",
+    textMuted: "#999999",
+    textNormal: "#dcddde",
+    interactiveAccent: "#7c3aed",
+    fontText: "sans-serif",
+  };
+  const OBSIDIAN_LIGHT: ObsidianCssTokens = {
+    ...OBSIDIAN_DARK,
+    backgroundPrimary: "#ffffff",
+    backgroundSecondary: "#f2f3f5",
+    backgroundModifierBorder: "#bbbbbb",
+    textMuted: "#888888",
+    textNormal: "#222222",
+  };
+  const GLYPHS = "http://localhost/glyphs/{fontstack}/{range}.pbf";
+
+  for (const [label, cssTokens] of [
+    ["obsidian-native (dark)", OBSIDIAN_DARK],
+    ["obsidian-native (light)", OBSIDIAN_LIGHT],
+  ] as const) {
+    it(`${label}: six kinds, six distinct colors`, () => {
+      const style = obsidianNativeStyle(cssTokens, GLYPHS);
+      const fabric = style.layers.filter((l) => l.id.startsWith("fabric-"));
+      expectSixDistinctColors(label, fabric as LayerSpecification[]);
+    });
+  }
 });

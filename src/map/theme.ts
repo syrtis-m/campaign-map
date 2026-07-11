@@ -42,7 +42,53 @@ export function readObsidianCssTokens(root: HTMLElement = document.body): Obsidi
   };
 }
 
+/**
+ * Best-effort CSS color → [r,g,b]. Obsidian CSS variables resolve to hex or
+ * rgb()/rgba() in practice; anything else returns null and the caller falls
+ * back to the dark palette (Obsidian's default look).
+ */
+function parseCssColor(color: string): [number, number, number] | null {
+  const c = color.trim();
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c);
+  if (hex) {
+    const h = hex[1].length === 3 ? hex[1].split("").map((x) => x + x).join("") : hex[1];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  const rgb = /^rgba?\(\s*([\d.]+)\s*[, ]\s*([\d.]+)\s*[, ]\s*([\d.]+)/i.exec(c);
+  if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+  return null;
+}
+
+function isDarkBackground(color: string): boolean {
+  const rgb = parseCssColor(color);
+  if (!rgb) return true; // unparseable → assume Obsidian's default dark theme
+  const [r, g, b] = rgb;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128;
+}
+
+/**
+ * Fabric colors for obsidian-native (plan 017). Obsidian CSS variables carry
+ * no green or blue we can rely on, so the nature hues (water/river/park) and
+ * wall stone are fixed neutral values chosen per background luminance — the
+ * *derivation* from the live theme is the light/dark split plus reusing
+ * textMuted for roads (matches roadMajor) and interactiveAccent for the
+ * district wash (Obsidian's own highlight language, at low fill-opacity).
+ */
+const FABRIC_ON_LIGHT = {
+  fabricWater: "#a9c9e2",
+  fabricRiver: "#5187b8",
+  fabricWall: "#8a8175",
+  fabricPark: "#93bd80",
+} as const;
+const FABRIC_ON_DARK = {
+  fabricWater: "#26384c",
+  fabricRiver: "#6d9bc9",
+  fabricWall: "#8d8478",
+  fabricPark: "#5d7a4e",
+} as const;
+
 function obsidianTokensAsThemeTokens(tokens: ObsidianCssTokens): ThemeTokens {
+  const fabric = isDarkBackground(tokens.backgroundPrimary) ? FABRIC_ON_DARK : FABRIC_ON_LIGHT;
   return {
     id: "obsidian-native",
     land: tokens.backgroundPrimary,
@@ -59,6 +105,9 @@ function obsidianTokensAsThemeTokens(tokens: ObsidianCssTokens): ThemeTokens {
     labelMinor: tokens.textMuted,
     accent: tokens.interactiveAccent,
     poi: tokens.textMuted,
+    ...fabric,
+    fabricRoad: tokens.textMuted,
+    fabricDistrict: tokens.interactiveAccent,
     fontRegular: "Inter Regular",
     fontRegion: "Inter Bold",
   };

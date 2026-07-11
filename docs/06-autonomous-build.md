@@ -50,6 +50,19 @@ The agent's first act is `scripts/preflight.sh` (build it in Phase 0 before anyt
 | accent/selection | #1a73e8 | #7d1f1f | #b8860b | #fcee0a |
 | poi | #5f6368 | #5c4a2e | #948b7f | #00e5ff |
 
+**Sketched-fabric tokens** (plan 017 — one color per fabric kind so road/wall/river/water/district/park read distinct in every theme; shades of existing hues where that reads fine, new hues only where the palette lacked one — park green, wall stone):
+
+| Token | modern-clean | parchment | ink-soot | neon-sprawl |
+|---|---|---|---|---|
+| fabric-water | #a8d0e8 (=water) | #c9d6c5 (=water) | #1a2530 | #10344a |
+| fabric-river | #5a9bd4 | #6f8fa0 | #4a6478 | #3a7bd5 |
+| fabric-road | #f0c948 (=casing gold) | #8a6f4d (=road-major) | #4a4642 (=road-major) | #00e5ff (=road-major) |
+| fabric-wall | #857a68 | #5e564a | #8a7a5f | #ff6a3d |
+| fabric-park | #a8d5a2 | #9db87a | #5f7a4d | #30c85e |
+| fabric-district | #e07f4f | #8f4a3d | #584a6b | #8034a8 |
+
+`obsidian-native` derives fabric colors at runtime: road = `--text-muted`, district wash = `--interactive-accent`; water/river/park/wall are fixed neutral hues picked per background luminance (light vs dark palette in `src/map/theme.ts`). District/park fills render at low opacity (0.18 / 0.45) — the wash must never slab the base.
+
 **Type taxonomy defaults** (importance 1=highest; focus = depth-of-field bucket):
 
 | type | importance | focus | | type | importance | focus |

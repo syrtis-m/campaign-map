@@ -13,6 +13,21 @@ export interface ThemeTokens {
   labelMinor: string;
   accent: string;
   poi: string;
+  /**
+   * Sketched-fabric per-kind colors (plan 017). Every fabric kind must render
+   * visibly distinct from the other five in every theme — river ≠ water, park
+   * reads green, wall reads stony, road reads as road, district is a subtle
+   * wash. Shades of existing theme hues where that reads fine (fabricWater is
+   * usually the water hue; fabricRoad usually roadMajor); new hues only where
+   * the palette genuinely lacked one (park green, wall stone) — palette
+   * discipline per quality-bar F6.
+   */
+  fabricWater: string; // water-body fill
+  fabricRiver: string; // river line — same family as water but clearly distinct in shade
+  fabricRoad: string; // sketched road line
+  fabricWall: string; // masonry/boundary line (dashed) — stony, never a label gray
+  fabricPark: string; // greenspace fill — the per-theme green
+  fabricDistrict: string; // neighborhood wash — rendered at low opacity, must not slab the base
   fontRegular: string; // glyph stack name (fontstack)
   fontRegion: string; // glyph stack name for region/accent labels
 }
@@ -35,6 +50,16 @@ export const MODERN_CLEAN: ThemeTokens = {
   labelMinor: "#7a786f",
   accent: "#1a73e8",
   poi: "#5f6368",
+  // Fabric (plan 017), Google-genre: water blue reused; river a deeper road-map
+  // blue; sketched roads get the arterial gold (distinct from white generated
+  // streets); wall a warm concrete gray; park the classic pale-park green;
+  // district the "area of interest" peach wash.
+  fabricWater: "#a8d0e8",
+  fabricRiver: "#5a9bd4",
+  fabricRoad: "#f0c948",
+  fabricWall: "#857a68",
+  fabricPark: "#a8d5a2",
+  fabricDistrict: "#e07f4f",
   fontRegular: "Inter Regular",
   fontRegion: "Inter Bold",
 };
@@ -49,6 +74,17 @@ export const PARCHMENT: ThemeTokens = {
   labelMinor: "#7d6a4f",
   accent: "#7d1f1f",
   poi: "#5c4a2e",
+  // Fabric (plan 017), atlas-genre: water keeps the sage wash; rivers are the
+  // blue-gray ink line of hand-drawn atlases (clearly not the sage); roads stay
+  // the theme's brown ink; walls a darker, grayer stone ink (plus the existing
+  // dash) so masonry ≠ road; parks an olive-leaf green distinct from the sage
+  // water; districts a dusty-rose hand-tint wash (accent family).
+  fabricWater: "#c9d6c5",
+  fabricRiver: "#6f8fa0",
+  fabricRoad: "#8a6f4d",
+  fabricWall: "#5e564a",
+  fabricPark: "#9db87a",
+  fabricDistrict: "#8f4a3d",
   fontRegular: "Alegreya Regular",
   fontRegion: "Cormorant SC SemiBold",
 };
@@ -63,6 +99,17 @@ export const INK_SOOT: ThemeTokens = {
   labelMinor: "#7d7871",
   accent: "#b8860b",
   poi: "#948b7f",
+  // Fabric (plan 017), ink-noir: water lifted a touch bluer than the pinned
+  // basemap water so a sketched harbor doesn't vanish into the soot land;
+  // rivers a steel-blue line readable on near-black; roads keep the theme's
+  // ink gray; walls a dark-khaki sandstone (visibly lighter + warmer than
+  // roads); parks a moss green; districts a smoky-violet gaslight wash.
+  fabricWater: "#1a2530",
+  fabricRiver: "#4a6478",
+  fabricRoad: "#4a4642",
+  fabricWall: "#8a7a5f",
+  fabricPark: "#5f7a4d",
+  fabricDistrict: "#584a6b",
   fontRegular: "IBM Plex Serif Regular",
   fontRegion: "Oswald Regular",
 };
@@ -78,6 +125,18 @@ export const NEON_SPRAWL: ThemeTokens = {
   labelMinor: "#8a93a6",
   accent: "#fcee0a",
   poi: "#00e5ff",
+  // Fabric (plan 017), neon-noir: water a deep teal clearly bluer than the
+  // near-black land (the pinned #101820 was indistinguishable from #0d0d11);
+  // rivers an electric blue distinct from the cyan roads; roads keep the cyan
+  // glow; walls a warning-stripe orange (security perimeter, plus dash);
+  // parks a synthetic green; districts the classic low-opacity neon-purple
+  // wash (kept subtle — see the purple-slab note in generatedLayers.ts).
+  fabricWater: "#10344a",
+  fabricRiver: "#3a7bd5",
+  fabricRoad: "#00e5ff",
+  fabricWall: "#ff6a3d",
+  fabricPark: "#30c85e",
+  fabricDistrict: "#8034a8",
   fontRegular: "Saira Condensed Regular",
   fontRegion: "Rajdhani Bold",
 };
