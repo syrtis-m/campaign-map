@@ -1,15 +1,16 @@
 import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "./tokens";
-import { CANON_DOT_RADIUS, focusLabelLayers } from "./canonLayers";
 
 /**
- * Generated fabric, styled from the same theme tokens as the real-city
- * basemap and fabric layers so it reads as "part of the map," not a debug
- * overlay — quality-bar F2 (provenance invisibility): sketched and
- * generated fabric of the same kind should look like the same class of
- * thing. Settlement points reuse canon-point's exact circle+label recipe
- * (same property schema — see gen/world/settlements.ts) against the
- * "generated" source instead of "canon".
+ * Generated fabric, painted with the SAME per-kind fabric tokens (plan 017)
+ * as sketched fabric — quality-bar F2 (plan 019 rewrite): a generated road
+ * and a sketched road differ in provenance, not legend. The two sources/
+ * modules stay separate (generated output is regenerable cache; sketches are
+ * durable), but the eye reads one class of thing per kind.
+ *
+ * No settlement point/label layers anymore: named places are Locations
+ * (plan 019, D2) — the world-settlement generator is unwired from
+ * generate-here, so nothing emits point features into this source.
  */
 export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
   return [
@@ -22,8 +23,10 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
         "fill-color": [
           "match",
           ["get", "biome"],
-          "ocean", t.water,
-          "coast", t.water,
+          // Water biomes use the fabric water token so a generated ocean and
+          // a sketched lake read as the same water (F2).
+          "ocean", t.fabricWater,
+          "coast", t.fabricWater,
           // all land biomes fall through to land — ocean vs. land is the
           // whole win here (it produces the coastline); per-biome hues are
           // a follow-up (see maintenance notes in plans/002).
@@ -34,16 +37,16 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
     } as unknown as LayerSpecification,
     {
       // Districts are the *persistent* city fabric — large area fills stay
-      // legible when thin street lines thin to sub-pixel on zoom-out. Bumped
-      // from a near-invisible 0.05 to a subtle-but-present 0.09 so "there's a
-      // city here" still reads once streets get small, without washing out
-      // close-up detail (kept flat/low — a heavier or outlined fill turned the
-      // near-black neon base into a solid purple slab when zoomed into a block).
+      // legible when thin street lines thin to sub-pixel on zoom-out. Same
+      // hue as sketched districts (fabricDistrict); opacity sits below the
+      // sketched 0.18 because generated districts tile EVERY cell — a
+      // full-coverage wash at sketch opacity slabbed the near-black neon
+      // base (see plan 017 notes), while a sketched district is one shape.
       id: "generated-district",
       type: "fill",
       source: "generated",
       filter: ["==", ["get", "generatorId"], "city-district"],
-      paint: { "fill-color": t.poi, "fill-opacity": 0.09 },
+      paint: { "fill-color": t.fabricDistrict, "fill-opacity": 0.09 },
     } as unknown as LayerSpecification,
     {
       id: "generated-footprint",
@@ -54,23 +57,26 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.roadMinor, "fill-opacity": 0.3 },
     } as unknown as LayerSpecification,
     {
+      // World routes are roads by another tier — fabric road hue, dashed to
+      // read as an overland route rather than a street.
       id: "generated-route",
       type: "line",
       source: "generated",
       filter: ["==", ["get", "generatorId"], "world-route"],
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": t.roadMajor, "line-width": 1.5, "line-dasharray": [2, 2] },
+      paint: { "line-color": t.fabricRoad, "line-width": 1.5, "line-dasharray": [2, 2] },
     } as unknown as LayerSpecification,
     {
       id: "generated-street",
       type: "line",
       source: "generated",
       // sketch-corridor (plan 014) streets are city streets by another
-      // generator — same paint, so elaborated sketches read as native fabric.
+      // generator — same paint, so old cached elaborations read as native.
       filter: ["match", ["get", "generatorId"], ["city-street", "sketch-corridor"], true, false],
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": t.roadMinor,
+        // Same hue as sketched roads (F2: provenance invisible per kind).
+        "line-color": t.fabricRoad,
         // Width FLOOR of ~1px: streets used to interpolate down to 0.5px at
         // z10 (thinner still below), going sub-pixel and vanishing on a dark
         // base as you zoomed out. Never let a street render narrower than it
@@ -93,33 +99,5 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
         ],
       },
     } as unknown as LayerSpecification,
-    {
-      // One dot, every zoom, one constant size — identical to canon-point
-      // (provenance invisibility, F2). No zoom filter (settlements never vanish
-      // on zoom-out), no importance-scaled radius. Replaces the former
-      // generated-point / generated-point-far split.
-      id: "generated-point",
-      type: "circle",
-      source: "generated",
-      filter: ["==", ["get", "generatorId"], "world-settlement"],
-      paint: {
-        "circle-radius": CANON_DOT_RADIUS,
-        "circle-color": t.accent,
-        "circle-stroke-width": 1.5,
-        "circle-stroke-color": t.land,
-      },
-    } as unknown as LayerSpecification,
-    // Settlement labels use the SAME depth-of-field bucket layers as canon
-    // (by the feature's `focus` prop, gated by per-bucket `minzoom`) so a
-    // generated settlement's name reveals exactly like a canon one — provenance
-    // stays invisible (F2). Non-settlement generated features carry no `focus`,
-    // so these layers ignore them.
-    ...focusLabelLayers({
-      source: "generated",
-      prefix: "generated",
-      textColor: t.labelMajor,
-      textHaloColor: t.land,
-      fontStack: t.fontRegular,
-    }),
   ];
 }

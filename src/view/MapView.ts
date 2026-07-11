@@ -1289,11 +1289,11 @@ export class MapView extends ItemView {
     if (!this.map || this.overviewZoom == null) return;
     const base = this.overviewZoom;
     const reveal: Record<string, number> = { deep: 0, medium: base + 1.5, shallow: base + 4.5 };
-    for (const prefix of ["canon", "generated"]) {
-      for (const depth of ["deep", "medium", "shallow"] as const) {
-        const id = `${prefix}-label-${depth}`;
-        if (this.map.getLayer(id)) this.map.setLayerZoomRange(id, reveal[depth], 24);
-      }
+    // Canon only: generated content has no label layers anymore — named
+    // places are Locations (plan 019, D2).
+    for (const depth of ["deep", "medium", "shallow"] as const) {
+      const id = `canon-label-${depth}`;
+      if (this.map.getLayer(id)) this.map.setLayerZoomRange(id, reveal[depth], 24);
     }
   }
 

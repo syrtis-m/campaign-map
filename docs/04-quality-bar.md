@@ -13,11 +13,13 @@ Thirty sessions of quick-adds = 200 pins of equal size, colliding labels, a tave
 - Density governor: past N visible POIs in a viewport, lower-importance labels decay to dots. Google Maps feels calm because it *hides* things; so must we.
 
 ### F2. Provenance seams
-Hand-dropped locations float in voids; generated streets are uniform; canonized edits sit at odd angles to their surroundings. The eye instantly reads "three different tools."
+Sketched fabric and generated fabric of the same kind read as two different tools: a hand-drawn road in one hue and weight, a generated street in another; a sketched lake and a generated ocean in clashing blues. The eye instantly reads "layers of software," not "a map." (The old clause about canon-vs-generated *pins* is obsolete — plan 019's two-layer model means locations are always notes; there is no generated pin to disguise.)
 
-**Countermeasure — stitching, not placing:**
-- Adding a location **snaps into the fabric**: onto the nearest street/block face in cities, gains an access path in wilderness, carves a plot in a district. A dropped pin triggers a micro-generation pass around itself.
+**Countermeasure — one legend per kind, provenance invisible:**
+- Sketched and generated fabric of the same kind share the same per-kind theme tokens (`fabricRoad`, `fabricWater`, `fabricDistrict`, …) — a generated road and a sketched road differ in provenance, not legend. Enforced in `generatedLayers.ts`/`fabricLayers.ts` sharing `tokens.ts`.
+- Generation is *reactive to* the GM's hand: sketched water/roads/walls/districts feed every generator run as constraints, so generated streets stop at sketched shorelines and align to sketched avenues instead of crossing them at odd angles.
 - Generators consume theme palettes and the same feature schema, so generated and manual content are *indistinguishable in render*. Generators must never emit colors or styles — only typed features (already locked in CLAUDE.md; this is why).
+- Locations always render above all fabric (the z-order invariant, `layerOrder.ts`) — a pin can never sink under a fill.
 
 ### F3. Tile seams and LOD pops
 Per-tile deterministic generation is famously prone to streets that dead-end at tile boundaries and biomes that snap at edges; zoom transitions that pop content in look broken.

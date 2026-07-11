@@ -6,6 +6,7 @@ import { generatedLayers } from "./generatedLayers";
 import { connectionLayers } from "./connectionLayers";
 import { sessionPathLayers } from "./sessionPathLayers";
 import { fabricLayers, FABRIC_SOURCE_SPEC } from "./fabricLayers";
+import { assertLayerOrder } from "./layerOrder";
 
 export { HANDCRAFTED_THEMES, type ThemeTokens };
 
@@ -38,13 +39,15 @@ export function buildThemeStyle(
         ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } }
         : {}),
     },
-    layers: [
+    // Z-order invariant (plan 019 / layerOrder.ts): Locations always above
+    // fabric; sketched fabric above generated (the GM's hand wins).
+    layers: assertOrdered([
       { id: "background", type: "background", paint: { "background-color": tokens.land } },
       ...(basemap ? basemapLayers(basemap.sourceId, tokens) : []),
       ...generatedLayers(tokens),
+      ...fabricLayers(tokens),
       ...connectionLayers({ lineColor: tokens.accent }),
       ...sessionPathLayers({ lineColor: tokens.poi }),
-      ...fabricLayers(tokens),
       ...canonLayers({
         pointColor: tokens.accent,
         pointHaloColor: tokens.land,
@@ -52,6 +55,12 @@ export function buildThemeStyle(
         textHaloColor: tokens.land,
         fontStack: tokens.fontRegular,
       }),
-    ],
+    ]),
   };
+}
+
+/** Pass-through that enforces the plan-019 z-order contract on every build. */
+export function assertOrdered(layers: StyleSpecification["layers"]): StyleSpecification["layers"] {
+  assertLayerOrder(layers);
+  return layers;
 }

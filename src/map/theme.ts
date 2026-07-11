@@ -5,6 +5,7 @@ import { generatedLayers } from "./themes/generatedLayers";
 import { connectionLayers } from "./themes/connectionLayers";
 import { sessionPathLayers } from "./themes/sessionPathLayers";
 import { fabricLayers, FABRIC_SOURCE_SPEC } from "./themes/fabricLayers";
+import { assertOrdered } from "./themes";
 import type { ThemeTokens } from "./themes/tokens";
 
 /**
@@ -131,13 +132,14 @@ export function obsidianNativeStyle(
       fabric: { ...FABRIC_SOURCE_SPEC },
       ...(basemap ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } } : {}),
     },
-    layers: [
+    // Same z-order contract as buildThemeStyle (plan 019 / layerOrder.ts).
+    layers: assertOrdered([
       { id: "background", type: "background", paint: { "background-color": t.land } },
       ...(basemap ? basemapLayers(basemap.sourceId, t) : []),
       ...generatedLayers(t),
+      ...fabricLayers(t),
       ...connectionLayers({ lineColor: t.accent }),
       ...sessionPathLayers({ lineColor: t.poi }),
-      ...fabricLayers(t),
       ...canonLayers({
         pointColor: t.accent,
         pointHaloColor: t.land,
@@ -145,6 +147,6 @@ export function obsidianNativeStyle(
         textHaloColor: t.land,
         fontStack: t.fontRegular,
       }),
-    ],
+    ]),
   };
 }
