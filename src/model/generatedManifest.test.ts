@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  domainAtPoint,
+  domainById,
   emptyManifest,
+  entriesForDomain,
   entriesForTile,
   manifestEntryId,
   parseManifest,
+  withDomain,
   withEntry,
+  withoutDomain,
   withoutEntry,
+  type ManifestCityDomain,
   type ManifestEntry,
 } from "./generatedManifest";
 
@@ -61,5 +67,62 @@ describe("parseManifest", () => {
     expect(parseManifest("{not json").invalidCount).toBe(1);
     expect(parseManifest("{not json").manifest.entries).toHaveLength(0);
     expect(parseManifest('{"entries": 42}').invalidCount).toBe(1);
+  });
+});
+
+// Procgen v3 (design §3.2): domains are additive — old vaults must open clean.
+describe("city domains", () => {
+  const dom: ManifestCityDomain = {
+    id: "dom:10:20",
+    cx: 300,
+    cy: 600,
+    radius: 900,
+    profile: "euro-medieval",
+    createdAt: 1720000000000,
+  };
+
+  it("pre-v3 Generated.json (no domains key) parses unchanged with domains defaulted []", () => {
+    const raw = JSON.stringify({ entries: [entry("city", 3, -2)] });
+    const { manifest, invalidCount } = parseManifest(raw);
+    expect(invalidCount).toBe(0);
+    expect(manifest.entries).toHaveLength(1);
+    expect(manifest.domains).toEqual([]);
+  });
+
+  it("round-trips domains and domainId entries", () => {
+    let m = withDomain(emptyManifest(), dom);
+    m = withEntry(m, { ...entry("city", 0, 0), domainId: dom.id });
+    const { manifest, invalidCount } = parseManifest(JSON.stringify(m));
+    expect(invalidCount).toBe(0);
+    expect(manifest).toEqual(m);
+  });
+
+  it("salvages per-domain: a malformed domain is counted, the rest survive", () => {
+    const raw = JSON.stringify({ entries: [], domains: [dom, { id: "bad", profile: "klingon" }] });
+    const { manifest, invalidCount } = parseManifest(raw);
+    expect(invalidCount).toBe(1);
+    expect(manifest.domains).toEqual([dom]);
+  });
+
+  it("withDomain upserts, withoutDomain removes, lookups resolve", () => {
+    let m = withDomain(emptyManifest(), dom);
+    m = withDomain(m, { ...dom, radius: 1200 });
+    expect(m.domains).toHaveLength(1);
+    expect(domainById(m, dom.id)?.radius).toBe(1200);
+    expect(withoutDomain(m, dom.id).domains).toHaveLength(0);
+  });
+
+  it("domainAtPoint hits inside the disc, misses outside", () => {
+    const m = withDomain(emptyManifest(), dom);
+    expect(domainAtPoint(m, 300, 600)?.id).toBe(dom.id);
+    expect(domainAtPoint(m, 300 + 899, 600)?.id).toBe(dom.id);
+    expect(domainAtPoint(m, 300 + 1201, 600)).toBeUndefined();
+  });
+
+  it("entriesForDomain filters by domainId", () => {
+    let m = withDomain(emptyManifest(), dom);
+    m = withEntry(m, { ...entry("city", 0, 0), domainId: dom.id });
+    m = withEntry(m, entry("city", 5, 5));
+    expect(entriesForDomain(m, dom.id)).toHaveLength(1);
   });
 });

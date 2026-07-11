@@ -11,6 +11,7 @@ import type { App } from "obsidian";
 import type { BBox } from "../../gen/spatialHash";
 import type { GenerationConstraints } from "../../gen/types";
 import type { GeneratorId, GenerationRequest, GenerationResponse } from "../../gen/worker/generationWorker";
+import type { CityDomain } from "../../gen/citynet";
 
 export class GenerationWorkerClient {
   private worker: Worker | null;
@@ -54,6 +55,25 @@ export class GenerationWorkerClient {
     if (!this.worker) return Promise.reject(new Error("worker terminated"));
     const requestId = this.nextRequestId++;
     const request: GenerationRequest = { requestId, generatorId, seed, bbox, constraints };
+    return new Promise((resolve, reject) => {
+      this.pending.set(requestId, { resolve, reject });
+      this.worker!.postMessage(request);
+    });
+  }
+
+  /** Procgen v3: whole-domain city-network computation — the expensive job
+   * that must run off-thread (design §7.4). `seed` is the campaign seed;
+   * the worker derives the position-keyed citySeed. `bbox` is informational
+   * (the domain disc's bbox) — the network is domain-scoped, not tile-scoped. */
+  generateNetwork(
+    seed: number,
+    domain: CityDomain,
+    bbox: BBox,
+    constraints: GenerationConstraints
+  ): Promise<GeoJSON.Feature[]> {
+    if (!this.worker) return Promise.reject(new Error("worker terminated"));
+    const requestId = this.nextRequestId++;
+    const request: GenerationRequest = { requestId, generatorId: "city-network", seed, bbox, constraints, domain };
     return new Promise((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });
       this.worker!.postMessage(request);

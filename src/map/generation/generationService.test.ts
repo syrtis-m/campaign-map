@@ -1,10 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import type { App } from "obsidian";
-import { generateTile, regenerateTile, type GenerationContext } from "./generationService";
+import {
+  generateDomainTile,
+  generateTile,
+  networkKeyFor,
+  regenerateTile,
+  type GenerationContext,
+  type NetworkCompute,
+} from "./generationService";
 import { removeCachedTiles } from "../../model/tileCache";
 import { GENERATION_ZOOM, tileKey } from "../../gen/cache/tileGrid";
 import { generateCityStreets } from "../../gen/city";
 import { generateSettlements } from "../../gen/world";
+import { citySeedFor, generateCityNetwork, makeDomain } from "../../gen/citynet";
 import type { ParsedCampaign } from "../../model/campaignConfig";
 import type { BBox } from "../../gen/spatialHash";
 
@@ -129,6 +137,57 @@ describe("generateTile naming constraints", () => {
     const generator = vi.fn(generateSettlements);
     await generateTile(ctx, 0, 0, "world-settlement", generator);
     expect(generator.mock.calls[0][2].namingCultureIds).toEqual(["fantasy-brackish"]);
+  });
+});
+
+describe("generateDomainTile (procgen v3 §3.3)", () => {
+  const directCompute: NetworkCompute = (seed, dom, _bbox, constraints) =>
+    generateCityNetwork(citySeedFor(seed, dom), dom, constraints);
+  const domain = makeDomain(300, 300, 900, "euro-medieval", 1720000000000);
+
+  it("computes the network ONCE for two tiles of the same domain, and per-tile records hit the cache after", async () => {
+    const { app } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const compute = vi.fn(directCompute);
+
+    const a1 = await generateDomainTile(ctx, domain, 0, 0, compute);
+    const b1 = await generateDomainTile(ctx, domain, -1, 0, compute);
+    expect(compute).toHaveBeenCalledTimes(1); // second tile clips the cached network
+
+    const a2 = await generateDomainTile(ctx, domain, 0, 0, compute);
+    expect(compute).toHaveBeenCalledTimes(1); // per-tile fast path, no re-clip
+    expect(a2).toEqual(a1);
+    expect(b1).not.toEqual(a1);
+  });
+
+  it("delete-the-cache-file determinism: regenerated records are deep-equal", async () => {
+    const { app, files } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const first = await generateDomainTile(ctx, domain, 0, 0, directCompute);
+    files.delete("Campaigns/Ashfall/.mapcache/generated.jsonl");
+    const second = await generateDomainTile(ctx, domain, 0, 0, directCompute);
+    expect(second).toEqual(first);
+  });
+
+  it("preloadedCache is honored: replay path never re-reads the file and shares one network compute", async () => {
+    const { app } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const compute = vi.fn(directCompute);
+    const shared = new Map();
+    await generateDomainTile(ctx, domain, 0, 0, compute, { preloadedCache: shared });
+    await generateDomainTile(ctx, domain, -1, -1, compute, { preloadedCache: shared });
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(shared.has(networkKeyFor(campaign().config.seed, domain))).toBe(true);
+  });
+
+  it("force recomputes the network and overwrites the records", async () => {
+    const { app } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const compute = vi.fn(directCompute);
+    const first = await generateDomainTile(ctx, domain, 0, 0, compute);
+    const again = await generateDomainTile(ctx, domain, 0, 0, compute, { force: true });
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(again).toEqual(first); // same constraints → same bytes, even forced
   });
 });
 

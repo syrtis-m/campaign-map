@@ -7,6 +7,7 @@
  */
 import { generateCityStreets, generateDistricts, generateCityBlocks } from "../city";
 import { generateWorldRegions, generateSettlements, generateRoutes } from "../world";
+import { generateCityNetwork, citySeedFor, type CityDomain } from "../citynet";
 import type { GenerationConstraints } from "../types";
 import type { BBox } from "../spatialHash";
 
@@ -29,10 +30,15 @@ const GENERATORS: Record<GeneratorId, (seed: number, bbox: BBox, c: GenerationCo
 
 export interface GenerationRequest {
   requestId: number;
-  generatorId: GeneratorId;
+  generatorId: GeneratorId | "city-network";
   seed: number;
   bbox: BBox;
   constraints: GenerationConstraints;
+  /** Procgen v3: present only for `city-network` jobs — the whole-domain
+   * network is the expensive computation, so it's the one that must run
+   * off-thread (design §7.4). `seed` stays the campaign seed; the worker
+   * derives the position-keyed citySeed itself. */
+  domain?: CityDomain;
 }
 
 export interface GenerationResponse {
@@ -42,11 +48,17 @@ export interface GenerationResponse {
 }
 
 self.onmessage = (event: MessageEvent<GenerationRequest>) => {
-  const { requestId, generatorId, seed, bbox, constraints } = event.data;
+  const { requestId, generatorId, seed, bbox, constraints, domain } = event.data;
   try {
-    const generator = GENERATORS[generatorId];
-    if (!generator) throw new Error(`unknown generatorId: ${generatorId}`);
-    const features = generator(seed, bbox, constraints);
+    let features: GeoJSON.Feature[];
+    if (generatorId === "city-network") {
+      if (!domain) throw new Error("city-network job missing domain");
+      features = generateCityNetwork(citySeedFor(seed, domain), domain, constraints);
+    } else {
+      const generator = GENERATORS[generatorId];
+      if (!generator) throw new Error(`unknown generatorId: ${generatorId}`);
+      features = generator(seed, bbox, constraints);
+    }
     const response: GenerationResponse = { requestId, features };
     (self as unknown as Worker).postMessage(response);
   } catch (err) {

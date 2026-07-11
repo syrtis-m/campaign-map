@@ -20,6 +20,45 @@
 - Poster PNG output still not eyeballed; per-type location icons still reverted (006).
 - Renderer degrades over a long CLI session (styles stop loading, `idle` stops firing) — only a full Obsidian process restart clears it; `plugin:reload`/`app:reload` do not.
 
+## Procgen v3 rewrite (2026-07-11, IN PROGRESS — procgen_v3_design.md)
+
+Replacing city-tier streamline/Voronoi generators with a city-scoped deterministic
+growth pipeline (domains → skeleton → growth → faces/parcels). Executing per the
+design doc's phases; state here + DECISIONS.md 2026-07-11.
+
+### v3.0 — domains + skeleton (DONE, gate green: `npx tsx scripts/gates/procgen30.ts` → 13/13)
+- [x] Manifest schema: `CityDomainSchema`, `domains[]` (default []), `entries[].domainId`
+      (optional) — pre-v3 Generated.json parses unchanged; per-domain salvage; 12 unit tests.
+- [x] `src/gen/citynet/` (Opus subagent): domain.ts (30 m lattice, position-keyed citySeed),
+      profiles.ts (all 4 §6 profiles), costField.ts (10 m lattice: slope/water/bridge/canon),
+      skeleton.ts (A* arterials, bridges, waterfront quays, plaza+landmarks), index.ts
+      (generateCityNetwork + clipNetworkToTile). 12/12 green.
+- [x] `generationService.generateDomainTile`: network record cache-or-compute at the domain
+      anchor cell, per-tile clip records (`city-street`/`city-landmark`), preloadedCache for
+      O(1-file-read) replay. 4 unit tests incl. delete-cache byte-determinism.
+- [x] Worker `city-network` job + `workerClient.generateNetwork`.
+- [x] MapView: domain resolve-or-create on city-tier generate (DomainProfileModal;
+      `opts.domainChoice` = headless path for gates), replay grouped by domainId,
+      regenerate/clear/auto-regen domain-aware, "Clear city domain here" menu item,
+      clear-all clears domains. KEY COLLISION FIX: legacy `city-street` excluded on domain
+      tiles (see DECISIONS.md — two writers on one cache key = nondeterminism).
+- [x] `generated-landmark` layer + roadClass width ramps (arterial/ring/alley/court).
+- [x] Gate script `scripts/gates/procgen30.ts` (unit gates + live: domain founding, manifest
+      persistence, cache records, render, cache-delete determinism, explicit-only, clear-domain,
+      Vespergate bridge-over-river check, review/ screenshot).
+- [x] citynet unit suite green (12/12; full suite 262/262)
+- [x] `npx tsx scripts/gates/procgen30.ts` → 13/13 live (incl. delete-cache byte-determinism,
+      Vespergate bridge-over-river, explicit-only under pan/zoom). Two real gate-harness
+      findings fixed en route: (1) Obsidian's `delete` command can't resolve dot-folder files
+      (.mapcache isn't vault-indexed) — gates rmSync instead, truest "GM deletes .mapcache"
+      simulation anyway; (2) queryRenderedFeatures needs the window fronted first (macOS
+      occluded-window compositing, the Phase-4 dev:screenshot gap resurfacing in a new check).
+- [x] Screenshot reviewed (review/006 + review/v3.0-vespergate-skeleton.png): radial spokes,
+      discrete river crossings, quays — town reads as shaped. Tier-B questions queued.
+- [x] committed
+
+### Next: v3.1 growth loop → v3.2 faces/parcels → v3.3 cityness/walls → v3.4 profiles+cleanup
+
 ## Environment (done)
 - [x] `scripts/preflight.sh` written and green (Obsidian 1.12.7 running, `dev-vault` registered + CLI-reachable, restricted mode off, Node v22.14.0 installed locally, git repo initialized, GitHub remote `syrtis-m/campaign-map` created)
 - [x] `.claude/skills/maplibre-agent-skills` and `.claude/skills/obsidian-skills` vendored (not submodules — `.git` stripped, tracked as plain files)

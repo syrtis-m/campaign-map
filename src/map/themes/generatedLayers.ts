@@ -57,6 +57,19 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.roadMinor, "fill-opacity": 0.3 },
     } as unknown as LayerSpecification,
     {
+      // Procgen v3 city landmarks: the plaza reads as paved open ground
+      // (road hue, light wash); church/market footprints read like heavier
+      // buildings (denser than the ambient footprint fill).
+      id: "generated-landmark",
+      type: "fill",
+      source: "generated",
+      filter: ["==", ["get", "generatorId"], "city-landmark"],
+      paint: {
+        "fill-color": ["match", ["get", "type"], "plaza", t.fabricRoad, t.roadMinor],
+        "fill-opacity": ["match", ["get", "type"], "plaza", 0.25, 0.5],
+      },
+    } as unknown as LayerSpecification,
+    {
       // World routes are roads by another tier — fabric road hue, dashed to
       // read as an overland route rather than a street.
       id: "generated-route",
@@ -89,13 +102,17 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
         // interpolate(zoom)]`) and that silently invalidates the whole style
         // (map loads blank, no error — 006-class). So the per-feature avenue
         // multiplier is folded into each interpolate output instead.
+        // Procgen v3 (§6): roadClass → width is the theme's job. Arterials
+        // read a step over ring roads, which read over plain streets;
+        // alleys/courts sit under streets. Legacy "major" (corridor
+        // avenues) keeps its arterial-equivalent width.
         "line-width": [
           "interpolate",
           ["linear"],
           ["zoom"],
-          8, ["*", 1, ["case", ["==", ["get", "roadClass"], "major"], 1.8, 1]],
-          12, ["*", 1.6, ["case", ["==", ["get", "roadClass"], "major"], 1.8, 1]],
-          18, ["*", 3.5, ["case", ["==", ["get", "roadClass"], "major"], 1.8, 1]],
+          8, ["*", 1, ["match", ["get", "roadClass"], ["major", "arterial"], 1.8, "ring", 1.5, ["alley", "court"], 0.7, 1]],
+          12, ["*", 1.6, ["match", ["get", "roadClass"], ["major", "arterial"], 1.8, "ring", 1.5, ["alley", "court"], 0.7, 1]],
+          18, ["*", 3.5, ["match", ["get", "roadClass"], ["major", "arterial"], 1.8, "ring", 1.5, ["alley", "court"], 0.7, 1]],
         ],
       },
     } as unknown as LayerSpecification,
