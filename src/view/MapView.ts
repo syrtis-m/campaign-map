@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Notice, TFile, setIcon, FuzzySuggestModal, App } from "obsidian";
 import maplibregl, { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature, StyleSpecification } from "maplibre-gl";
 import type { ParsedCampaign } from "../model/campaignConfig";
-import { LOCATION_TYPES, type ParsedLocation } from "../model/locationNote";
+import { LOCATION_TYPES, VISIBILITY_VALUES, type ParsedLocation, type Visibility } from "../model/locationNote";
 import { buildConnectionFeatures } from "../model/connections";
 import { parseSessionPath, sessionPathFeature } from "../model/sessionPath";
 import { appendLogEntry, campaignFolderFromConfigPath } from "../model/mutationLog";
@@ -47,7 +47,7 @@ import {
 } from "../map/generation/generationService";
 import type { GeneratorId } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
-import { addConnection, removeConnection } from "../vault/locationOps";
+import { addConnection, removeConnection, setLocationVisibility } from "../vault/locationOps";
 import { importNotes } from "../vault/importOps";
 import { importGeojson } from "../model/importGeojson";
 import { QuickAddModal } from "./QuickAddModal";
@@ -828,8 +828,8 @@ export class MapView extends ItemView {
     // culture territory the clicked point falls in, not one culture for the
     // whole campaign.
     const culture = cultureAt(config.seed, point[0], point[1], worldBounds, genre, config.namingCultures);
-    new QuickAddModal(this.app, culture, this.campaign.config.seed, ({ name, type }) => {
-      void this.plugin.createLocation(this.campaign!.id, point, name, type);
+    new QuickAddModal(this.app, culture, this.campaign.config.seed, ({ name, type, visibility }) => {
+      void this.plugin.createLocation(this.campaign!.id, point, name, type, visibility);
     }).open();
   }
 
@@ -1868,6 +1868,27 @@ export class MapView extends ItemView {
         void MarkdownRenderer.render(this.app, preview, previewEl, location.path, this);
       });
     }
+
+    // Plan 015: retune label visibility mid-session in one click — no
+    // frontmatter edit. Writes the explicit `visibility` field; the metadataCache
+    // change re-reconciles and the map updates.
+    const VIS_LABELS: Record<Visibility, string> = {
+      wide: "Wide — always shown",
+      mid: "Mid — from mid zoom",
+      close: "Close — only up close",
+    };
+    const visRow = el.createDiv({ cls: "campaign-map-place-card-visibility" });
+    visRow.createEl("label", { text: "Visibility", cls: "campaign-map-place-card-visibility-label" });
+    const visSelect = visRow.createEl("select", { cls: "campaign-map-place-card-visibility-select" });
+    for (const v of VISIBILITY_VALUES) {
+      const opt = visSelect.createEl("option", { text: VIS_LABELS[v], value: v });
+      if (v === location.visibility) opt.selected = true;
+    }
+    visSelect.onchange = () => {
+      void setLocationVisibility(this.app, location, visSelect.value as Visibility).then(() => {
+        new Notice(`Campaign Map: "${location.name}" visibility → ${visSelect.value}`);
+      });
+    };
 
     const actions = el.createDiv({ cls: "campaign-map-place-card-actions" });
     // One button, not two: "Open note" and "Edit" both just opened the file —

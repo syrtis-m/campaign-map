@@ -1,20 +1,40 @@
 import { App, Modal, Setting } from "obsidian";
-import { LOCATION_TYPES } from "../model/locationNote";
+import {
+  LOCATION_TYPES,
+  VISIBILITY_VALUES,
+  defaultVisibilityForType,
+  type Visibility,
+} from "../model/locationNote";
 import { generateNameSuggestions } from "../gen/naming/culture";
 import type { NamingCulture } from "../gen/naming/culture";
 
 export interface QuickAddResult {
   name: string;
   type: string;
+  visibility: Visibility;
 }
 
+/** Self-explanatory picker labels (plan 015) — the value maps 1:1 to a focus
+ * level, so the GM never reasons from `type`. */
+const VISIBILITY_LABELS: Record<Visibility, string> = {
+  wide: "Wide — name always shown",
+  mid: "Mid — name from mid zoom",
+  close: "Close — name only up close",
+};
+
 /**
- * The ≤5s yes-and flow (architecture §3b): name + type, with 3 culture-consistent
- * suggestions offered up front (tab/click to accept — faster than typing).
+ * The ≤5s yes-and flow (architecture §3b): name + type + visibility, with 3
+ * culture-consistent name suggestions offered up front (tab/click to accept —
+ * faster than typing). Label visibility is set here EXPLICITLY (plan 015) so the
+ * GM never has to remember which type is legible at which focus level.
  */
 export class QuickAddModal extends Modal {
   private name = "";
   private type = "custom";
+  private visibility: Visibility = defaultVisibilityForType("custom");
+  /** Once the GM touches the picker, `type` changes stop re-seeding it — the
+   * explicit choice wins, `type` is only ever a first-guess hint. */
+  private visibilityTouched = false;
 
   constructor(
     app: App,
@@ -49,29 +69,47 @@ export class QuickAddModal extends Modal {
       };
     }
 
+    let visibilityDropdown: import("obsidian").DropdownComponent | null = null;
+
     new Setting(contentEl).setName("Type").addDropdown((dropdown) => {
       for (const t of LOCATION_TYPES) dropdown.addOption(t, t);
       dropdown.setValue(this.type);
-      dropdown.onChange((v) => (this.type = v));
+      dropdown.onChange((v) => {
+        this.type = v;
+        // `type` is only a pre-selection hint (plan 015): re-seed the picker
+        // until the GM sets it themselves, then leave their choice alone.
+        if (!this.visibilityTouched) {
+          this.visibility = defaultVisibilityForType(v);
+          visibilityDropdown?.setValue(this.visibility);
+        }
+      });
     });
 
-    new Setting(contentEl).addButton((btn) =>
-      btn
-        .setButtonText("Add")
-        .setCta()
-        .onClick(() => {
-          const name = this.name.trim() || suggestions[0] || "New location";
-          this.close();
-          this.onSubmit({ name, type: this.type });
-        })
-    );
+    new Setting(contentEl)
+      .setName("Visibility")
+      .setDesc("When the label's name appears as you zoom in — independent of type.")
+      .addDropdown((dropdown) => {
+        visibilityDropdown = dropdown;
+        for (const v of VISIBILITY_VALUES) dropdown.addOption(v, VISIBILITY_LABELS[v]);
+        dropdown.setValue(this.visibility);
+        dropdown.onChange((v) => {
+          this.visibility = v as Visibility;
+          this.visibilityTouched = true;
+        });
+      });
+
+    const submit = (): void => {
+      const name = this.name.trim() || suggestions[0] || "New location";
+      this.close();
+      this.onSubmit({ name, type: this.type, visibility: this.visibility });
+    };
+
+    new Setting(contentEl).addButton((btn) => btn.setButtonText("Add").setCta().onClick(submit));
 
     contentEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        const name = this.name.trim() || suggestions[0] || "New location";
-        this.close();
-        this.onSubmit({ name, type: this.type });
+        submit();
       }
     });
   }

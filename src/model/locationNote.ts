@@ -48,6 +48,46 @@ export function typeDefaults(type: string): TypeDefaults {
 export const FOCUS_DEPTHS = ["deep", "medium", "shallow"] as const;
 export type FocusDepth = (typeof FOCUS_DEPTHS)[number];
 
+/**
+ * GM-facing visibility vocabulary (plan 015). Label visibility is an EXPLICIT,
+ * first-class note field — `visibility:` in frontmatter — fully decoupled from
+ * `type`. The three values name the focus level at which a location's NAME first
+ * appears (matching the +/- focus stepper's Wide/Mid/Close readout), so the GM
+ * never has to remember a type→visibility mapping:
+ *   wide  — name shown at every focus level (the big anchors)   → deep bucket
+ *   mid   — name shown from the Mid level inward                → medium bucket
+ *   close — name shown only at the Close level (fine grain)     → shallow bucket
+ * The internal runtime gate stays the `focus`/FocusDepth bucket (the label
+ * layers filter on the `focus` feature property by `minzoom`); `visibility` is
+ * mapped to it 1:1 at the parse boundary. Legacy `focus:` frontmatter is still
+ * accepted for back-compat.
+ */
+export const VISIBILITY_VALUES = ["wide", "mid", "close"] as const;
+export type Visibility = (typeof VISIBILITY_VALUES)[number];
+
+/** The single global fallback for a note with no explicit visibility — NOT
+ * type-derived (that derivation was exactly the invisible mental model plan 015
+ * removes). */
+export const DEFAULT_VISIBILITY: Visibility = "mid";
+
+const VISIBILITY_TO_FOCUS: Record<Visibility, FocusDepth> = {
+  wide: "deep",
+  mid: "medium",
+  close: "shallow",
+};
+const FOCUS_TO_VISIBILITY: Record<FocusDepth, Visibility> = {
+  deep: "wide",
+  medium: "mid",
+  shallow: "close",
+};
+
+export function visibilityToFocus(v: Visibility): FocusDepth {
+  return VISIBILITY_TO_FOCUS[v];
+}
+export function focusToVisibility(f: FocusDepth): Visibility {
+  return FOCUS_TO_VISIBILITY[f];
+}
+
 const TYPE_FOCUS: Record<string, FocusDepth> = {
   "nation/region": "deep",
   city: "deep",
@@ -63,8 +103,20 @@ const TYPE_FOCUS: Record<string, FocusDepth> = {
   "residence/minor": "shallow",
 };
 
+/**
+ * Type → depth bucket. Since plan 015 this is ONLY a convenience: it pre-selects
+ * a sensible default in the QuickAdd picker and seeds an explicit value for
+ * generated/imported features. It is NEVER read as the runtime visibility gate —
+ * the stored `visibility`/`focus` field is the sole source of truth.
+ */
 export function focusForType(type: string): FocusDepth {
   return TYPE_FOCUS[type] ?? "medium";
+}
+
+/** Type-hinted pre-selection for the QuickAdd/place-card visibility picker
+ * (plan 015). A hint only — the chosen value is always written explicitly. */
+export function defaultVisibilityForType(type: string): Visibility {
+  return FOCUS_TO_VISIBILITY[focusForType(type)];
 }
 
 const PointGeometry = z.tuple([z.number(), z.number()]);
@@ -81,7 +133,8 @@ export const LocationFrontmatterSchema = z.object({
   aliases: z.array(z.string()).optional(),
   importance: z.number().int().min(1).max(9).optional(),
   "zoom-range": z.tuple([z.number(), z.number()]).optional(), // legacy; no longer gates labels
-  focus: z.enum(FOCUS_DEPTHS).optional(), // per-note override of the type's depth-of-field bucket
+  visibility: z.enum(VISIBILITY_VALUES).optional(), // plan 015: explicit label-visibility field (wide/mid/close)
+  focus: z.enum(FOCUS_DEPTHS).optional(), // back-compat: legacy raw depth bucket (deep/medium/shallow)
   icon: z.string().optional(),
   connections: z.array(ConnectionSchema).optional(),
 });
@@ -97,7 +150,8 @@ export interface ParsedLocation {
   geometryRef: string | null; // sidecar path, if geometry is a string
   type: string;
   importance: number;
-  focus: FocusDepth;
+  focus: FocusDepth; // runtime label-visibility gate (feature `focus` prop; label layers filter on it)
+  visibility: Visibility; // GM-facing name for `focus` (wide/mid/close), for UI display + editing
   zoomMin: number;
   zoomMax: number;
   aliases: string[];
@@ -135,6 +189,13 @@ export function parseLocationNote(
   const point = Array.isArray(fm.geometry) ? (fm.geometry as [number, number]) : null;
   const geometryRef = typeof fm.geometry === "string" ? fm.geometry : null;
 
+  // Plan 015: label visibility is decoupled from `type`. Explicit `visibility`
+  // wins; else legacy `focus:`; else the single global default (medium/mid) —
+  // NEVER type-derived. `type` no longer gates what's visible.
+  const focus: FocusDepth = fm.visibility
+    ? VISIBILITY_TO_FOCUS[fm.visibility]
+    : fm.focus ?? VISIBILITY_TO_FOCUS[DEFAULT_VISIBILITY];
+
   return {
     ok: true,
     location: {
@@ -146,7 +207,8 @@ export function parseLocationNote(
       geometryRef,
       type: fm.type,
       importance: fm.importance ?? defaults.importance,
-      focus: fm.focus ?? focusForType(fm.type),
+      focus,
+      visibility: FOCUS_TO_VISIBILITY[focus],
       zoomMin: fm["zoom-range"]?.[0] ?? defaults.zoomMin,
       zoomMax: fm["zoom-range"]?.[1] ?? defaults.zoomMax,
       aliases: fm.aliases ?? [],

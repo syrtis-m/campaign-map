@@ -61,27 +61,32 @@ A location note carries minimal frontmatter; the body is yours to write freely.
 ---
 map: ashfall            # which campaign this belongs to
 geometry: [0, 0]        # a point [lng, lat]; complex shapes go in a sidecar .geojson
-type: city              # sets importance + depth-of-field bucket (see below)
+type: city              # what it IS — semantic only (naming, future icons)
+visibility: wide        # when its NAME appears as you zoom in (see below)
 ---
 The capital. Everything below the frontmatter is your normal note.
 ```
 
-The **type** does the cartographic discipline for you — you never hand-tune label
-sizes or zoom numbers. There are just **three focus levels** (Wide / Mid / Close,
-see below), and a type's job is to say at how many of them the location's *name* is
-legible. That's its **depth of field**:
+**Visibility is its own explicit field** — you set it directly, so you never have
+to remember which *type* is legible at which zoom. There are three **focus levels**
+(Wide / Mid / Close, see below), and `visibility` says at which one the location's
+*name* first appears:
 
-| Depth of field | Name shows at | Types |
+| `visibility` | Name shows at | Good for |
 |---|---|---|
-| **Deep** | all three levels | nation/region, city, water-feature |
-| **Medium** | Mid + Close | town, village, route, district, landmark, custom |
-| **Shallow** | Close only | street(named), shop/tavern/venue, residence/minor |
+| **wide** | all three levels | nations, capitals, rivers — the big anchors |
+| **mid** | Mid + Close | towns, districts, routes, landmarks *(the default)* |
+| **close** | Close only | streets, shops, minor residences — fine grain |
 
 The **dot is always drawn at every zoom** — locations never vanish; only their names
-reveal as you focus in (a river is named from the Wide view, a corner tavern only
-once you're at street level). Override a single note's bucket with `focus: deep`
-(or `medium`/`shallow`) in its frontmatter. Bad frontmatter never silently
-disappears — you get a warning badge and the note is left untouched.
+reveal as you focus in (a river named `wide` shows from the Wide view; a corner
+tavern set `close` only once you're at street level). A note with no `visibility`
+defaults to **mid**. You set it in the **Add location** dialog and can change it
+anytime from a location's place card — no frontmatter editing. `type` is purely
+semantic now and never controls visibility; changing a note's type alone doesn't
+change what's visible. (The old `focus: deep|medium|shallow` key is still accepted
+for older notes.) Bad frontmatter never silently disappears — you get a warning
+badge and the note is left untouched.
 
 ### Focus levels
 The map has three fixed **focus levels** — think of a camera's focal distances:
@@ -90,8 +95,8 @@ The map has three fixed **focus levels** — think of a camera's focal distances
 where you are; the mouse wheel / trackpad still zooms continuously for anything in
 between. The three levels are computed *per campaign* from its natural overview zoom,
 so a sprawling fictional world and a real city both get the same three-step feel —
-you never memorize zoom numbers. Depth of field (above) decides which names are
-legible at each level.
+you never memorize zoom numbers. A location's `visibility` (above) decides which
+names are legible at each level.
 
 ### Themes
 Themes are complete visual styles (colors, fonts, how every feature paints):

@@ -7,6 +7,7 @@ import {
   parseLocationNote,
   type ParsedLocation,
   type LocationParseError,
+  type Visibility,
 } from "./model/locationNote";
 import { LocationIndex } from "./map/locationIndex";
 import { createLocationNote, createLocationNoteFromFeature, moveLocationNote } from "./vault/locationOps";
@@ -372,11 +373,12 @@ export default class CampaignMapPlugin extends Plugin {
     campaignId: string,
     point: [number, number],
     name: string,
-    type: string
+    type: string,
+    visibility?: Visibility
   ): Promise<void> {
     const campaign = this.getCampaign(campaignId);
     if (!campaign) throw new Error(`Unknown campaign: ${campaignId}`);
-    await createLocationNote(this.app, campaign, point, name, type);
+    await createLocationNote(this.app, campaign, point, name, type, visibility);
   }
 
   async moveLocation(campaignId: string, location: ParsedLocation, newPoint: [number, number]): Promise<void> {
