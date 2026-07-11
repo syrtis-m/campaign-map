@@ -31,10 +31,10 @@ written-but-unrun.
 | 013 | Sketch mode — fabric store + LOD-aware render + draw tools | P1 | L | — | DONE — merged to `main` (Fable), live-verified: fabric road/water render, road LOD-hides <z8, water shows; +style-load fix |
 | 014 | Sketch → procedural inference ("Sims landscaping") | P1 | L | 013 | DONE (road→streets slice) — merged to `main` (Fable), 2×2 seam test green; live: generate-from-sketch → 76 corridor streets. District/river/wall/park elaboration = follow-ups |
 | — | Depth-of-field LOD — 3 focus levels + per-bucket label reveal | P1 | M | — | DONE — merged to `main` (`70fb361`), live-verified London+Ashfall. Superseded per-type zoom ranges |
-| 015 | Explicit visibility field (decouple label visibility from `type`) | P1 | M | — | TODO — Opus agent. User: "separate field for zoom levels, no mental model of type→visibility" |
-| 016 | Sketch mode UX — reliable exit, live feedback, undo, instant result | P1 | M | — | TODO — Opus agent. User: can't exit sketch mode; no feedback until generate; no undo |
-| 017 | Distinct per-kind fabric colors + cartographic polish (VISUALS) | P0 | M | — | TODO — **Fable** agent (user's #1 priority). Kinds share colors → muddy map |
-| 018 | Declutter toolbar — move generate/export into settings | P2 | S–M | — | TODO — Opus agent. User: "generate export etc should be in settings, not main items" |
+| 015 | Explicit visibility field (decouple label visibility from `type`) | P1 | M | — | DONE — merged to `main` (Opus). Live-verified: `type:city`+`visibility:close` → shallow bucket (decoupled). `visibility: wide/mid/close` field + QuickAdd/place-card pickers |
+| 016 | Sketch mode UX — reliable exit, live feedback, undo, instant result | P1 | M | — | DONE — merged to `main` (Opus). Live-verified: pencil active-state, draw→renders immediately, undo removes stroke, exit via re-toggle. Root cause was discoverability + silent mid-draw Escape |
+| 017 | Distinct per-kind fabric colors + cartographic polish (VISUALS) | P0 | M | — | DONE — merged to `main` (**Fable**). Live-verified 6 distinct kinds across obsidian-native/neon-sprawl/modern-clean; parchment+ink-soot unit-covered |
+| 018 | Declutter toolbar — move generate/export into settings | P2 | S–M | — | DONE — merged to `main` (Opus). Live-verified: toolbar = Add/Sketch/Search/Theme/Settings; generate/canonize/poster/atlas in settings modal |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason).
 
