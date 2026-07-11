@@ -1,5 +1,6 @@
 import type { BBox } from "./spatialHash";
 import type { NamingGenre } from "./naming/culture";
+import type { FabricFeature } from "../model/fabric";
 
 /**
  * Shared constraints contract for every Phase 3+ generator: `(seed, bbox,
@@ -15,6 +16,14 @@ export interface GenerationConstraints {
   /** Existing canon location features in or near the requested tile+halo.
    * Generators route around them; regeneration never touches them. */
   canonFeatures?: GeoJSON.Feature[];
+  /** ALL sketched fabric (plan 019 Phase 3) — same coordinate space as
+   * worldBounds, passed WHOLE to every tile (never pre-clipped, like a
+   * corridor in plan 014) or adjacent tiles would derive different fields
+   * and break seams. Water/rivers block streets and district sites; roads
+   * steer the street field; walls stop streets; sketched districts exclude
+   * generated district sites. `fabric.ts` is a pure zod leaf, so this import
+   * keeps generators host-agnostic. */
+  fabricFeatures?: FabricFeature[];
   /** Naming culture genre for any generator that pre-names its output (e.g.
    * settlements) — defaults per-generator if omitted. */
   namingGenre?: NamingGenre;

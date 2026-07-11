@@ -44,17 +44,11 @@ import { registerVaultBasemap, vaultBasemapBounds } from "../map/pmtilesVaultPro
 import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
 import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
-import {
-  generateCityStreets,
-  generateDistricts,
-  generateCityBlocks,
-  generateCorridorStreets,
-  CORRIDOR_HALO,
-  CORRIDOR_INFLUENCE,
-} from "../gen/city";
+import { generateCityStreets, generateDistricts, generateCityBlocks } from "../gen/city";
 import { generateWorldRegions, generateRoutes } from "../gen/world";
 import {
   tileXYForPoint,
+  tileBBox,
   bandForZoom,
   generatorIdsForBand,
   tileKey,
@@ -223,9 +217,6 @@ export class MapView extends ItemView {
   private fabricLoadedFor: string | null = null;
   private sketchMode = false;
   private sketchKind: FabricKind = "road";
-  /** Plan 014: whether newly drawn features are literal sketches or
-   * generator feed ("a la Sims landscaping"). */
-  private sketchDraftMode: "literal" | "generate" = "literal";
   private sketchController: SketchController | null = null;
   private sketchBarEl: HTMLDivElement | null = null;
   private selectedFabricId: string | null = null;
@@ -234,10 +225,12 @@ export class MapView extends ItemView {
    * state on it (plan 016: re-click to exit is only discoverable if the button
    * looks toggled). */
   private pencilBtnEl: HTMLButtonElement | null = null;
-  /** Debounce for auto-elaborating generate-mode corridors on commit (plan
-   * 016 "instant generation") — cleared on mode exit / onClose so it can never
-   * fire after teardown. */
+  /** Debounce for regenerating manifest tiles a sketch edit touches (plan
+   * 019 Phase 3: "sketch a river, streets adapt" is one gesture) — cleared
+   * on mode exit / onClose so it can never fire after teardown. */
   private sketchAutoBuildTimer: number | null = null;
+  /** Sketch edits accumulated while the regen debounce is pending. */
+  private pendingConstraintFeatures: FabricFeature[] = [];
 
   /**
    * Render store for generated fabric, keyed `${tier}:${tileX}:${tileY}` —
@@ -964,6 +957,8 @@ export class MapView extends ItemView {
           ? `Campaign Map: undid sketched ${parsed.data.properties.kind}`
           : `Campaign Map: restored deleted ${parsed.data.properties.kind}`
       );
+      // The constraint set changed either way — re-adapt generated tiles.
+      this.queueConstraintRegen(parsed.data);
     } else if (last.type === "generate-area") {
       // Undo a generate request = clear that area (appends its own
       // `clear-area`, keeping the log a faithful history — same pattern as
@@ -1043,7 +1038,10 @@ export class MapView extends ItemView {
 
   /** Generators work in meters (docs/06 §3 tuning ranges); a fictional
    * campaign's own coordinates are fake units (1 unit = `scaleMetersPerUnit`
-   * meters). worldBounds/canonFeatures cross into generation-space here. */
+   * meters). worldBounds/canonFeatures/fabricFeatures cross into
+   * generation-space here. Callers must have awaited loadFabricForCampaign()
+   * first (generateTierAt / replayGeneratedManifest do) or sketched
+   * constraints would silently be empty. */
   private generationContext(): GenerationContext {
     const config = this.campaign!.config;
     const scale = config.scaleMetersPerUnit;
@@ -1052,7 +1050,12 @@ export class MapView extends ItemView {
       .getCampaignState(this.campaign!.id)
       .index.toFeatureCollection()
       .features.map((f) => transformFeatureUnits(f, (n) => unitsToMeters(n, scale)));
-    return { app: this.app, campaign: this.campaign!, worldBounds, canonFeatures };
+    // Plan 019 Phase 3: ALL sketched fabric feeds every generator run as
+    // constraints — sketch a river, regenerate, streets stop at the water.
+    const fabricFeatures = this.fabricCollection.features.map(
+      (f) => transformFeatureUnits(f, (n) => unitsToMeters(n, scale)) as FabricFeature
+    );
+    return { app: this.app, campaign: this.campaign!, worldBounds, canonFeatures, fabricFeatures };
   }
 
   private tileKeyFor(band: ZoomBand, tileX: number, tileY: number): string {
@@ -1138,6 +1141,7 @@ export class MapView extends ItemView {
     tileY: number,
     force: boolean
   ): Promise<GeoJSON.Feature[]> {
+    await this.loadFabricForCampaign(); // sketched constraints must be in memory
     const ctx = this.generationContext();
     const worker = await this.plugin.getGenerationWorker();
     this.pendingGenerations++;
@@ -1190,6 +1194,7 @@ export class MapView extends ItemView {
     if (this.manifestReplayedFor === campaign.id) return;
     this.manifestReplayedFor = campaign.id;
     await this.loadManifestForCampaign();
+    await this.loadFabricForCampaign(); // constraints for any cache-miss regenerate
     if (this.campaign?.id !== campaign.id) return;
     if (this.manifest.entries.length === 0) return;
 
@@ -1428,10 +1433,9 @@ export class MapView extends ItemView {
     if (!this.map || !this.campaign) return;
     if (this.sketchMode) {
       this.sketchMode = false;
-      if (this.sketchAutoBuildTimer !== null) {
-        window.clearTimeout(this.sketchAutoBuildTimer);
-        this.sketchAutoBuildTimer = null;
-      }
+      // NOTE: a pending constraint-regen debounce is deliberately NOT
+      // cancelled here — "sketch a river, hit done" must still adapt the
+      // generated tiles (plan 019). onClose still cancels it on teardown.
       this.sketchController?.deactivate();
       this.sketchController = null;
       this.sketchBarEl?.remove();
@@ -1486,28 +1490,9 @@ export class MapView extends ItemView {
       b.onclick = () => setActiveKind(kind);
       kindButtons.set(kind, b);
     }
-    // Plan 014: literal vs generator-feed toggle for new drawings + the
-    // explicit "build from sketch" action (explicit, not live-as-you-draw,
-    // per the plan's preview/commit recommendation).
-    const modeBtn = this.sketchBarEl.createEl("button", {
-      cls: "campaign-map-sketch-kind-btn campaign-map-sketch-mode-btn",
-      attr: { title: 'New drawings feed the procedural generator ("generate" mode) instead of rendering literally' },
-    });
-    const renderModeBtn = (): void => {
-      modeBtn.setText(this.sketchDraftMode === "generate" ? "feed: on" : "feed: off");
-      modeBtn.toggleClass("is-active", this.sketchDraftMode === "generate");
-    };
-    modeBtn.onclick = () => {
-      this.sketchDraftMode = this.sketchDraftMode === "generate" ? "literal" : "generate";
-      renderModeBtn();
-    };
-    renderModeBtn();
-    const generateBtn = this.sketchBarEl.createEl("button", {
-      text: "build",
-      cls: "campaign-map-sketch-kind-btn",
-      attr: { title: "Generate street networks from generate-mode road corridors" },
-    });
-    generateBtn.onclick = () => void this.generateFromSketch();
+    // Plan 019: no feed-mode toggle, no "build" button — EVERY sketched
+    // feature is a generator constraint, and tiles the GM already generated
+    // regenerate on their own after a sketch edit (queueConstraintRegen).
     const undoBtn = this.sketchBarEl.createEl("button", {
       text: "↶ undo",
       cls: "campaign-map-sketch-kind-btn",
@@ -1610,11 +1595,7 @@ export class MapView extends ItemView {
       type: "Feature",
       id: makeFabricId(),
       geometry,
-      properties: {
-        kind,
-        // "literal" is the schema default — only "generate" is worth storing.
-        ...(this.sketchDraftMode === "generate" ? { mode: "generate" as const } : {}),
-      },
+      properties: { kind },
     };
     this.fabricCollection = withFeature(this.fabricCollection, feature);
     this.refreshFabric();
@@ -1622,26 +1603,78 @@ export class MapView extends ItemView {
     // Immediate confirmation regardless of zoom (a below-minzoom stroke paints
     // into the `fabric` source but its themed layer may be hidden until you
     // zoom in — the toast guarantees "something happened" feedback). Plan 016.
-    const feeds = this.sketchDraftMode === "generate";
-    new Notice(`Campaign Map: ${kind} added${feeds ? " — elaborating…" : ""}`);
-    // Generate-mode corridors elaborate into a street network without a manual
-    // trip to "build" (plan 016 "instant generation"): debounced so a flurry of
-    // strokes coalesces into one run.
-    if (feeds && kind === "road" && geometry.type === "LineString") {
-      this.scheduleSketchAutoBuild();
-    }
+    new Notice(`Campaign Map: ${kind} added`);
+    this.queueConstraintRegen(feature);
   }
 
-  /** Debounced auto-elaboration of generate-mode corridors (plan 016). Runs
-   * the same `generateFromSketch` the explicit "build" button does, silently
-   * (no per-run Notice), so committed corridors sprout streets on their own. */
-  private scheduleSketchAutoBuild(): void {
+  /**
+   * Plan 019 Phase 3, "sketch a river, streets adapt": a sketch edit
+   * (add/delete/undo) queues a debounced regenerate of the already-generated
+   * tiles it can influence. Only tiles in the manifest ever regenerate —
+   * sketching NEVER triggers first-time generation (generation stays
+   * explicit-only). Debounced so a flurry of strokes coalesces into one run
+   * (same pattern as plan 016's corridor auto-build, which this replaces).
+   */
+  private queueConstraintRegen(feature: FabricFeature): void {
+    if (!this.campaign || this.campaign.config.crs !== "fictional") return;
+    this.pendingConstraintFeatures.push(feature);
     if (this.sketchAutoBuildTimer !== null) window.clearTimeout(this.sketchAutoBuildTimer);
     this.sketchAutoBuildTimer = window.setTimeout(() => {
       this.sketchAutoBuildTimer = null;
-      if (!this.sketchMode) return;
-      void this.generateFromSketch({ silent: true });
+      void this.regenerateAffectedTiles();
     }, 400);
+  }
+
+  /** How far (in meters) a sketched feature can influence generated output:
+   * road alignment falls off over ROAD_FALLOFF but seeds up to a street
+   * half-length away can still cross into a tile — STREET_HALO covers that;
+   * add the alignment reach on top and round up. */
+  private static readonly CONSTRAINT_REACH = 200;
+
+  private async regenerateAffectedTiles(): Promise<void> {
+    const edited = this.pendingConstraintFeatures;
+    this.pendingConstraintFeatures = [];
+    if (!this.campaign || edited.length === 0) return;
+    const campaign = this.campaign;
+    await this.loadManifestForCampaign();
+    if (this.campaign?.id !== campaign.id) return;
+    const scale = campaign.config.scaleMetersPerUnit;
+
+    const affected = new Map<string, ManifestEntry>();
+    for (const f of edited) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      const scan = (coords: unknown): void => {
+        if (!Array.isArray(coords)) return;
+        if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+          const x = unitsToMeters(coords[0] as number, scale);
+          const y = unitsToMeters(coords[1] as number, scale);
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+          return;
+        }
+        for (const c of coords) scan(c);
+      };
+      scan(f.geometry.coordinates);
+      if (!Number.isFinite(minX)) continue;
+      const reach = MapView.CONSTRAINT_REACH;
+      for (const entry of this.manifest.entries) {
+        // Fabric constraints currently steer city-tier generators only.
+        if (entry.tier !== "city") continue;
+        const t = tileBBox(entry.tileX, entry.tileY);
+        const intersects =
+          minX - reach <= t.maxX && maxX + reach >= t.minX && minY - reach <= t.maxY && maxY + reach >= t.minY;
+        if (intersects) affected.set(entry.id, entry);
+      }
+    }
+    for (const entry of affected.values()) {
+      if (this.campaign?.id !== campaign.id) return;
+      await this.generateTierAt(entry.tier, entry.tileX, entry.tileY, true);
+    }
   }
 
   /** Saves the in-memory collection and appends the sketch log entry —
@@ -1675,6 +1708,8 @@ export class MapView extends ItemView {
     this.refreshFabric();
     void this.persistFabric("sketch-remove", feature);
     new Notice(`Campaign Map: deleted sketched ${feature.properties.kind}`);
+    // Removing a constraint reshapes generated output too (plan 019 Phase 3).
+    this.queueConstraintRegen(feature);
   }
 
   /** Sketch-mode undo (plan 016): removes the most-recently-added, still-live
@@ -1698,103 +1733,10 @@ export class MapView extends ItemView {
       this.sketchController?.clearSelection();
     }
     this.refreshFabric();
-    // A generate-mode corridor's elaborated streets are regenerable cache keyed
-    // `sketch:<id>:*` — evict them so undo doesn't leave orphan streets behind.
-    if (target.properties.kind === "road" && target.properties.mode === "generate") {
-      this.evictSketchTiles(target.id);
-    }
     await this.persistFabric("sketch-remove", target);
     new Notice(`Campaign Map: undid sketched ${target.properties.kind}`);
-  }
-
-  /** Drops the elaborated street tiles a generate-mode corridor produced
-   * (their own `sketch:<id>:*` key namespace) and repaints the generated
-   * source. */
-  private evictSketchTiles(id: string): void {
-    const prefix = `sketch:${id}:`;
-    let evicted = false;
-    for (const key of [...this.loadedTiles.keys()]) {
-      if (key.startsWith(prefix)) {
-        this.loadedTiles.delete(key);
-        evicted = true;
-      }
-    }
-    if (evicted) this.refreshGeneratedSource();
-  }
-
-  /** Plan 014 ("Generate from sketch"): elaborates every generate-mode road
-   * corridor into a street network via the pure corridor generator. The
-   * result is regenerable cache (same tile store/cache path as "generate
-   * city here" — deleting `.mapcache/` regenerates it identically); the
-   * sketch itself stays canon in Fabric.geojson and keeps rendering as the
-   * literal drawn line underneath its elaboration. */
-  async generateFromSketch(opts?: { silent?: boolean }): Promise<GeoJSON.Feature[]> {
-    const silent = opts?.silent === true;
-    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
-    await this.loadFabricForCampaign();
-    const corridors = this.fabricCollection.features.filter(
-      (f) => f.properties.kind === "road" && f.properties.mode === "generate" && f.geometry.type === "LineString"
-    );
-    if (corridors.length === 0) {
-      if (!silent) {
-        new Notice('Campaign Map: no generate-mode road corridors — draw a road with "feed: on" first');
-      }
-      return [];
-    }
-    const scale = this.campaign.config.scaleMetersPerUnit;
-    const ctx = this.generationContext();
-    const generated: GeoJSON.Feature[] = [];
-    for (const corridor of corridors) {
-      // The corridor crosses into generation-space (meters) whole — every
-      // tile must see the identical corridor or seams break (corridor.ts).
-      const line: GeoJSON.LineString = {
-        type: "LineString",
-        coordinates: (corridor.geometry.coordinates as [number, number][]).map(([x, y]) => [
-          unitsToMeters(x, scale),
-          unitsToMeters(y, scale),
-        ]),
-      };
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      for (const [x, y] of line.coordinates) {
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
-      }
-      // Every tile the elaboration can reach: corridor extent + seed
-      // influence radius + max streamline travel.
-      const reach = CORRIDOR_INFLUENCE + CORRIDOR_HALO;
-      const lo = tileXYForPoint(minX - reach, minY - reach);
-      const hi = tileXYForPoint(maxX + reach, maxY + reach);
-      for (let tileY = lo.tileY; tileY <= hi.tileY; tileY++) {
-        for (let tileX = lo.tileX; tileX <= hi.tileX; tileX++) {
-          const features = await generateTile(
-            ctx,
-            tileX,
-            tileY,
-            `sketch-corridor:${corridor.id}`,
-            (seed, bbox, constraints) => generateCorridorStreets(seed, bbox, line, constraints)
-          );
-          const kept = features.filter((f) => featureTouchesBBox(f, ctx.worldBounds));
-          if (kept.length === 0) continue;
-          // Own key namespace: the viewport dispatcher's band eviction
-          // ("city:"/"world:" prefixes) never evicts sketch elaborations;
-          // campaign switch clears them with the rest of loadedTiles.
-          this.loadedTiles.set(`sketch:${corridor.id}:${tileX}:${tileY}`, kept);
-          generated.push(...kept);
-        }
-      }
-    }
-    this.refreshGeneratedSource();
-    if (!silent) {
-      new Notice(
-        `Campaign Map: generated ${generated.length} street feature${generated.length === 1 ? "" : "s"} from ${corridors.length} sketched corridor${corridors.length === 1 ? "" : "s"}`
-      );
-    }
-    return generated.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+    // The undone sketch was a generator constraint — re-adapt generated tiles.
+    this.queueConstraintRegen(target);
   }
 
   private updateWarningBadge(): void {

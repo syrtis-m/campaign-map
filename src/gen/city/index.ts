@@ -8,8 +8,14 @@ import type { BBox } from "../spatialHash";
 import { expandBBox, jitteredGridPoints } from "../spatialHash";
 import type { GenerationConstraints } from "../types";
 import { clipPolylineToBBox } from "../clip";
-import { traceStreamline } from "./streamlines";
-import { buildTensorField } from "./tensorField";
+import {
+  blockedByWater,
+  fabricAngleSampler,
+  indexFabricConstraints,
+  truncateAtBarriers,
+} from "../fabricConstraints";
+import { traceStreamline, type AngleSampler } from "./streamlines";
+import { buildTensorField, sampleFieldAngle } from "./tensorField";
 
 export { generateDistricts } from "./districts";
 export { generateCityBlocks } from "./blocks";
@@ -46,6 +52,14 @@ export function generateCityStreets(
   const seeds = jitteredGridPoints(campaignSeed, haloBBox, STREET_SEED_CELL_SIZE, "street-seed");
 
   const canonPoints = (constraints.canonFeatures ?? []).flatMap(pointsOf);
+  // Sketched fabric steers generation (plan 019 Phase 3): roads blend into
+  // the direction field (every sketched road is a constraint — the
+  // generalization of plan 014's corridor blend), water/rivers block seeds
+  // and truncate traces, walls truncate traces. All pure functions of world
+  // coordinates + the whole fabric collection — seam-safe.
+  const fabric = indexFabricConstraints(constraints.fabricFeatures);
+  const sampler: AngleSampler =
+    fabricAngleSampler(field, fabric) ?? ((x, y) => sampleFieldAngle(field, x, y));
 
   const features: GeoJSON.Feature[] = [];
   for (const seed of seeds) {
@@ -55,12 +69,16 @@ export function generateCityStreets(
       ([cx, cy]) => Math.hypot(cx - seed.x, cy - seed.y) < STREET_SEED_CELL_SIZE * 0.5
     );
     if (tooCloseToCanon) continue;
+    if (blockedByWater(fabric, seed.x, seed.y)) continue;
 
-    const line = traceStreamline(field, seed, {
-      stepSize: STREET_STEP_SIZE,
-      maxSteps: STREET_MAX_STEPS,
-      bounds: haloBBox,
-    });
+    const line = truncateAtBarriers(
+      fabric,
+      traceStreamline(sampler, seed, {
+        stepSize: STREET_STEP_SIZE,
+        maxSteps: STREET_MAX_STEPS,
+        bounds: haloBBox,
+      })
+    );
     if (line.length < 2) continue;
 
     const parts = clipPolylineToBBox(line, bbox);

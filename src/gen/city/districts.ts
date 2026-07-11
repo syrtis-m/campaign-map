@@ -6,6 +6,7 @@ import { hashSeed } from "../rng";
 import type { BBox } from "../spatialHash";
 import type { GenerationConstraints } from "../types";
 import { generateVoronoiCells } from "../voronoiCells";
+import { blockedByWater, indexFabricConstraints, insideSketchedDistrict } from "../fabricConstraints";
 
 export { ensureClosedRing as ensureClosed } from "../voronoiCells";
 
@@ -19,7 +20,18 @@ export function generateDistricts(
 ): GeoJSON.Feature[] {
   const cells = generateVoronoiCells(campaignSeed, bbox, DISTRICT_CELL_SIZE, "district-seed");
 
-  const features: GeoJSON.Feature[] = cells.map((cell) => ({
+  // Sketched fabric constrains districts (plan 019 Phase 3): a cell whose
+  // SITE lands in water or inside a GM-drawn district polygon is dropped —
+  // the GM has claimed that ground. Site-keyed, so the decision is identical
+  // on every tile that sees the site (halo included) — seam-safe.
+  const fabric = indexFabricConstraints(constraints.fabricFeatures);
+  const kept = cells.filter(
+    (cell) =>
+      !blockedByWater(fabric, cell.site.x, cell.site.y) &&
+      !insideSketchedDistrict(fabric, cell.site.x, cell.site.y)
+  );
+
+  const features: GeoJSON.Feature[] = kept.map((cell) => ({
     type: "Feature",
     id: hashSeed(campaignSeed, cell.site.cellX, cell.site.cellY, "district"),
     geometry: { type: "Polygon", coordinates: [cell.ring] },
@@ -31,6 +43,5 @@ export function generateDistricts(
     const cb = (b.geometry as GeoJSON.Polygon).coordinates[0][0];
     return ca[0] - cb[0] || ca[1] - cb[1];
   });
-  void constraints; // districts don't yet avoid canon geometry directly — blocks/footprints do
   return features;
 }

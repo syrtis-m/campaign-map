@@ -290,17 +290,6 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "generate-from-sketch",
-      name: "Generate street network from sketched corridors",
-      checkCallback: (checking) => {
-        const view = this.activeMapView();
-        if (!view?.campaign) return false;
-        if (!checking) void view.generateFromSketch();
-        return true;
-      },
-    });
-
-    this.addCommand({
       id: "test-generation-worker",
       name: "Test generation worker (smoke test)",
       callback: async () => {

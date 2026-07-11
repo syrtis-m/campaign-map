@@ -11,6 +11,7 @@ import { hashSeed, mulberry32 } from "../rng";
 import type { BBox } from "../spatialHash";
 import type { GenerationConstraints } from "../types";
 import { clipPolygonToBBox } from "../clip";
+import { blockedByWater, indexFabricConstraints } from "../fabricConstraints";
 import { ensureClosed, generateDistricts } from "./districts";
 
 // Tuning per docs/06 §3: block subdivision min-area 400m^2.
@@ -97,6 +98,16 @@ export function generateCityBlocks(
 ): GeoJSON.Feature[] {
   const districts = generateDistricts(campaignSeed, bbox, constraints);
   const features: GeoJSON.Feature[] = [];
+  // District-site drops (districts.ts) already exclude claimed ground; this
+  // additionally drops individual blocks whose own center falls in sketched
+  // water — a kept district can still lap a shoreline. Pure function of the
+  // block's own vertices (blocks never cross tile edges: districts are
+  // pre-clipped), so it can't diverge across a seam.
+  const fabric = indexFabricConstraints(constraints.fabricFeatures);
+  const blockCenter = (ring: Pt[]): Pt => {
+    const box = ringBBox(ring);
+    return [(box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2];
+  };
 
   for (const district of districts) {
     const ring = (district.geometry as GeoJSON.Polygon).coordinates[0] as Pt[];
@@ -105,6 +116,8 @@ export function generateCityBlocks(
 
     blocks.forEach((block, blockIndex) => {
       if (block.length < 3) return;
+      const [bcx, bcy] = blockCenter(block);
+      if (blockedByWater(fabric, bcx, bcy)) return;
       const blockPath = `${districtPath}-b${blockIndex}`;
       features.push({
         type: "Feature",

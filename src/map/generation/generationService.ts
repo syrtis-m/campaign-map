@@ -10,6 +10,7 @@ import { appendCachedTile, getCachedTile } from "../../model/tileCache";
 import { GENERATION_ZOOM, tileBBox, tileKey } from "../../gen/cache/tileGrid";
 import type { BBox } from "../../gen/spatialHash";
 import type { GenerationConstraints } from "../../gen/types";
+import type { FabricFeature } from "../../model/fabric";
 import { genreForCampaign } from "../../gen/naming/cultures";
 
 /** Sync (direct pure-generator) or async (worker-dispatched) — `generateTile`
@@ -27,6 +28,9 @@ export interface GenerationContext {
   campaign: ParsedCampaign;
   worldBounds: BBox;
   canonFeatures: GeoJSON.Feature[];
+  /** Sketched fabric in generation-space (meters) — plan 019 Phase 3:
+   * every generator run sees the GM's hand-drawn geometry as constraints. */
+  fabricFeatures?: FabricFeature[];
 }
 
 /** Cache-or-generate a tile. Cached results are returned as-is; a cache hit
@@ -57,6 +61,7 @@ export async function generateTile(
   const constraints: GenerationConstraints = {
     worldBounds: ctx.worldBounds,
     canonFeatures: ctx.canonFeatures,
+    fabricFeatures: ctx.fabricFeatures,
     namingGenre: genreForCampaign(ctx.campaign.config.crs, ctx.campaign.config.theme),
     namingCultureIds: ctx.campaign.config.namingCultures,
   };
