@@ -2,7 +2,23 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: Phase 4 complete (Tier A green) — starting Phase 5
+## Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
+
+### Recent work (2026-07-10) — reverse-chronological, all merged to `main`
+- **Fabric always visible; LOD only hides location names** (`3e084ea`, Jonah's decision after the Kanto test). Removed all per-kind fabric `minzoom` + `applyFabricReveal` + the dead `DEFAULT_FABRIC_MINZOOM`/`FABRIC_REVEAL_OFFSET`. The depth-of-field *label* system stays (names reveal by zoom); dots always on. Two non-fabric minzooms left in place + flagged: `generated-footprint` and basemap buildings (z14). See DECISIONS 2026-07-10.
+- **Kanto test overworld** (`dev-vault/Campaigns/Kanto`) — a Pokémon-style region sketched with the fabric tools at real metric scale (1 unit = 150 m); built to test zoom/LOD. Surfaced that the procedural world generator auto-fills a hand-sketched fictional campaign with settlements/routes → led to **plan 019** (two-layer model: background vs. Locations, delete canonization, explicit-only generation) — TODO, Jonah shaping it.
+- **Fabric LOD relative-to-overview fix** (`331362c`) — later superseded by the always-visible decision above.
+- **Corrections batch 015–018** (all merged, live-verified): 015 explicit `visibility: wide/mid/close` field decoupled from `type` (QuickAdd + place-card pickers); 016 sketch-mode UX (reliable exit + pencil active-state, immediate render, undo, auto-elaborate on commit); 017 distinct per-kind fabric colors across all 5 themes (**Fable**); 018 toolbar decluttered (generate/canonize/export → settings modal).
+- **Depth-of-field LOD** (`70fb361`) — 3 per-campaign focus levels (Wide/Mid/Close from overview zoom) + `+`/`−` snap stepper; superseded the per-type continuous zoom ranges. `importance` still drives label size + collision.
+- **Gate hardening** (`d627bb8`) — live `isStyleLoaded()` gate (`scripts/gates/styleLoad.ts`) + static `validateStyleMin` over every theme (`styleValidation.test.ts`), closing the "green npm test but blank map" gap.
+- **User-facing README 101** — rewrote `README.md` as the product doc (GM + agents).
+- Branch/worktree cleanup: repo is back to a single `main`.
+
+### Open threads (not blocking)
+- **Plan 019** (two-layer background-vs-Locations model) — TODO, Jonah shaping.
+- Whether the two z14 building minzooms (generated-footprint, basemap) should also become always-visible.
+- Poster PNG output still not eyeballed; per-type location icons still reverted (006).
+- Renderer degrades over a long CLI session (styles stop loading, `idle` stops firing) — only a full Obsidian process restart clears it; `plugin:reload`/`app:reload` do not.
 
 ## Environment (done)
 - [x] `scripts/preflight.sh` written and green (Obsidian 1.12.7 running, `dev-vault` registered + CLI-reachable, restricted mode off, Node v22.14.0 installed locally, git repo initialized, GitHub remote `syrtis-m/campaign-map` created)

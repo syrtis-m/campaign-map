@@ -308,8 +308,10 @@ Then, the traps and invariants that bite hardest:
   inside a layer `filter`. Violating either **silently invalidates the entire
   style**: the map loads blank, with *no console error*, and `npm test` stays
   green. This has shipped twice. It is invisible without the live loop below. Put
-  per-zoom LOD floors on a layer's `minzoom` property, never in a filter. See
-  `src/map/themes/fabricLayers.ts` and `generatedLayers.ts` for the correct shape.
+  any per-zoom reveal on a layer's `minzoom` property, never in a filter. **LOD is
+  for location names only** — the `canon-label-*` layers use `minzoom` (set live
+  via `setLayerZoomRange` from the campaign overview); fabric carries no `minzoom`
+  and renders at every zoom. Never reintroduce a fabric `minzoom`.
 - **A green `npm test` does NOT prove the map renders.** Unit tests can't catch an
   invalid MapLibre style. You must drive the live app: `plugin:reload
   id=campaign-map` → `dev:errors` clean → check `map.isStyleLoaded() === true` →
