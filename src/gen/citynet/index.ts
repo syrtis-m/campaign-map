@@ -19,11 +19,16 @@ import { hashSeed } from "../rng";
 import type { BBox } from "../spatialHash";
 import { clipPolylineToBBox, clipPolygonToBBox, type Vec2 } from "../clip";
 import type { GenerationConstraints } from "../types";
+import { blockedByWater, indexFabricConstraints } from "../fabricConstraints";
 import type { CityDomain } from "./domain";
 import { PROFILES } from "./profiles";
 import { makeCostField } from "./costField";
 import { buildSkeleton } from "./skeleton";
 import { growNetwork, collectGrownChains } from "./growth";
+import { extractBlocks } from "./faces";
+import { subdivideBlocks } from "./parcels";
+import { buildWards } from "./wards";
+import { makeCityness } from "./cityness";
 
 // Package barrel: the host (MapView, generationService, worker, modal) imports
 // domain + profile helpers and types from `../citynet` directly.
@@ -33,11 +38,11 @@ export * from "./profiles";
 type Pt = [number, number];
 
 /**
- * Per-tile generator ids the domain network clips into. The full v3 list is
- * fixed here so cache/paint code can enumerate it up front; as of v3.1
- * `city-street` (arterials, bridges, waterfront, grown streets) and
- * `city-landmark` (plaza, landmark footprints) are emitted — blocks, parcels,
- * and footprints arrive in v3.2–v3.3.
+ * Per-tile generator ids the domain network clips into — all live as of v3.2:
+ * streets (arterials/bridges/waterfront/grown), blocks (faces), parcels,
+ * footprints, landmarks (plaza/church/market), and wards (`city-district` —
+ * deliberately the legacy Voronoi district id so wards inherit its paint
+ * layer; the legacy generator stops running on domain tiles from v3.2).
  */
 export const DOMAIN_TILE_GENERATOR_IDS: readonly string[] = [
   "city-street",
@@ -45,6 +50,7 @@ export const DOMAIN_TILE_GENERATOR_IDS: readonly string[] = [
   "city-parcel",
   "city-footprint",
   "city-landmark",
+  "city-district",
 ];
 
 /** D5 coordinate quantization: millimeter lattice. */
@@ -187,6 +193,82 @@ export function generateCityNetwork(
         generatorId: "city-street",
         type: "street",
         roadClass: "street",
+        domainId: domain.id,
+      },
+    });
+  }
+
+  // Stage C (v3.2): faces → blocks → parcels → footprints, plus wards.
+  // Block identity is the face's sorted node keys (position-derived); parcel/
+  // footprint identity is (blockKey, split path) — never emission order (D2).
+  const fabricIdx = indexFabricConstraints(constraints.fabricFeatures);
+  const { blocks } = extractBlocks(graph, domain);
+  const dryBlocks = blocks.filter((b) => {
+    // A face bounded by two quays can span the river; buildings don't swim.
+    let sx = 0;
+    let sy = 0;
+    const n = b.ring.length - 1;
+    for (let i = 0; i < n; i++) {
+      sx += b.ring[i][0];
+      sy += b.ring[i][1];
+    }
+    return !blockedByWater(fabricIdx, sx / n, sy / n);
+  });
+  for (const block of dryBlocks) {
+    features.push({
+      type: "Feature",
+      id: hashSeed(citySeed, "block", block.nodeKeys.join("|")),
+      geometry: { type: "Polygon", coordinates: [qLine(block.ring)] },
+      properties: {
+        generated: true,
+        generatorId: "city-block",
+        type: "block",
+        domainId: domain.id,
+      },
+    });
+  }
+
+  const cityness = makeCityness(citySeed, domain);
+  const { parcels, footprints } = subdivideBlocks(citySeed, dryBlocks, profile, cityness);
+  for (const p of parcels) {
+    const ring = [...p.ring, p.ring[0]];
+    features.push({
+      type: "Feature",
+      id: hashSeed(citySeed, "parcel", p.blockKey, p.path),
+      geometry: { type: "Polygon", coordinates: [qLine(ring)] },
+      properties: {
+        generated: true,
+        generatorId: "city-parcel",
+        type: "parcel",
+        domainId: domain.id,
+      },
+    });
+  }
+  for (const fp of footprints) {
+    const ring = [...fp.ring, fp.ring[0]];
+    features.push({
+      type: "Feature",
+      id: hashSeed(citySeed, "footprint", fp.blockKey, fp.path),
+      geometry: { type: "Polygon", coordinates: [qLine(ring)] },
+      properties: {
+        generated: true,
+        generatorId: "city-footprint",
+        type: "footprint",
+        domainId: domain.id,
+      },
+    });
+  }
+
+  for (const ward of buildWards(citySeed, domain, skel)) {
+    features.push({
+      type: "Feature",
+      id: hashSeed(citySeed, "ward", ward.siteKey),
+      geometry: { type: "Polygon", coordinates: [qLine(ward.ring)] },
+      properties: {
+        generated: true,
+        generatorId: "city-district",
+        type: "district",
+        ward: ward.tag,
         domainId: domain.id,
       },
     });

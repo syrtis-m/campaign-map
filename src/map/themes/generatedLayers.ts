@@ -57,6 +57,17 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.roadMinor, "fill-opacity": 0.3 },
     } as unknown as LayerSpecification,
     {
+      // Procgen v3.2 parcels: hairline lot boundaries, street-level only
+      // (minzoom 15 keeps the per-tile feature count off the mid-zoom paint
+      // path — §8's "gate parcels in themes, not in the generator").
+      id: "generated-parcel",
+      type: "line",
+      source: "generated",
+      filter: ["==", ["get", "generatorId"], "city-parcel"],
+      minzoom: 15,
+      paint: { "line-color": t.roadMinor, "line-width": 0.5, "line-opacity": 0.35 },
+    } as unknown as LayerSpecification,
+    {
       // Procgen v3 city landmarks: the plaza reads as paved open ground
       // (road hue, light wash); church/market footprints read like heavier
       // buildings (denser than the ambient footprint fill).

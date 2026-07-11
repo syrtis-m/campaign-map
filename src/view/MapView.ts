@@ -574,20 +574,37 @@ export class MapView extends ItemView {
       domain ? MapView.DOMAIN_SUPERSEDED_LEGACY_IDS : undefined
     );
     if (this.campaign?.id !== campaign.id) return [];
+
+    // The request unit at city tier is the DOMAIN: one ask paints the whole
+    // disc (every 600 m tile it overlaps — the network exists once anyway;
+    // per-tile clips are cheap). Painting only the clicked tile read as a
+    // bug on screen: a rectangular window into a city. See DECISIONS
+    // 2026-07-11 (v3.2).
+    const tiles = domain ? this.domainTileRange(domain) : [{ tileX, tileY }];
     if (domain) {
-      features.push(...(await this.generateDomainTileAt(domain, tileX, tileY, opts.force === true)));
+      features.push(...(await this.generateDomainTiles(domain, tiles, opts.force === true)));
       if (this.campaign?.id !== campaign.id) return [];
     }
 
-    const id = manifestEntryId(tier, tileX, tileY);
-    const existing = this.manifest.entries.find((e) => e.id === id);
-    const isNew = !existing || (domain && existing.domainId !== domain.id);
-    if (isNew) {
-      const entry: ManifestEntry = { id, tier, tileX, tileY, createdAt: Date.now(), domainId: domain?.id };
+    let manifestDirty = false;
+    for (const t of tiles) {
+      const id = manifestEntryId(tier, t.tileX, t.tileY);
+      const existing = this.manifest.entries.find((e) => e.id === id);
+      const isNew = !existing || (domain && existing.domainId !== domain.id);
+      if (!isNew) continue;
+      const entry: ManifestEntry = {
+        id,
+        tier,
+        tileX: t.tileX,
+        tileY: t.tileY,
+        createdAt: Date.now(),
+        domainId: domain?.id,
+      };
       this.manifest = withEntry(this.manifest, entry);
-      await saveGeneratedManifest(this.app, campaign, this.manifest);
+      manifestDirty = true;
       // Durable request → mutation log too (undo/replay): what's logged is
-      // the GM's ask, not the (regenerable) output.
+      // the GM's ask, not the (regenerable) output. One record per tile —
+      // single-step undo reverses one tile, matching the existing contract.
       await appendLogEntry(this.app, campaignFolderFromConfigPath(campaign.path), {
         ts: Date.now(),
         type: "generate-area",
@@ -596,10 +613,68 @@ export class MapView extends ItemView {
         data: entry,
       });
     }
+    if (manifestDirty) await saveGeneratedManifest(this.app, campaign, this.manifest);
     if (!opts.silent) {
       new Notice(`Campaign Map: generated ${features.length} ${tier} feature${features.length === 1 ? "" : "s"}`);
     }
     return features.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+  }
+
+  /** Every generation tile whose bbox intersects the domain disc, in
+   * deterministic (y, x) order. */
+  private domainTileRange(domain: ManifestCityDomain): { tileX: number; tileY: number }[] {
+    const b = domainBBox(domain as CityDomain);
+    const min = tileXYForPoint(b.minX, b.minY);
+    const max = tileXYForPoint(b.maxX, b.maxY);
+    const out: { tileX: number; tileY: number }[] = [];
+    for (let ty = min.tileY; ty <= max.tileY; ty++) {
+      for (let tx = min.tileX; tx <= max.tileX; tx++) {
+        const tb = tileBBox(tx, ty);
+        const nx = Math.max(tb.minX, Math.min(domain.cx, tb.maxX));
+        const ny = Math.max(tb.minY, Math.min(domain.cy, tb.maxY));
+        if ((nx - domain.cx) ** 2 + (ny - domain.cy) ** 2 <= domain.radius ** 2) {
+          out.push({ tileX: tx, tileY: ty });
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Batch-generates domain tiles sharing ONE network compute: non-forced
+   * runs preload the cache file once (O(1) file reads for N tiles); forced
+   * runs drop the network + per-tile records first, then rebuild against a
+   * fresh shared map — never N network recomputes.
+   */
+  private async generateDomainTiles(
+    domain: ManifestCityDomain,
+    tiles: { tileX: number; tileY: number }[],
+    force: boolean
+  ): Promise<GeoJSON.Feature[]> {
+    if (!this.campaign) return [];
+    const campaign = this.campaign;
+    const folder = campaignFolderFromConfigPath(campaign.path);
+    const seed = campaign.config.seed;
+    let preloaded: Map<string, CachedTile>;
+    if (force) {
+      const keys = [
+        networkKeyFor(seed, domain as CityDomain),
+        ...tiles.flatMap((t) =>
+          DOMAIN_TILE_GENERATOR_IDS.map((gid) => tileKey(seed, t.tileX, t.tileY, GENERATION_ZOOM, gid))
+        ),
+      ];
+      await removeCachedTiles(this.app, folder, keys);
+      preloaded = new Map();
+    } else {
+      preloaded = await readCachedTiles(this.app, folder);
+    }
+    if (this.campaign?.id !== campaign.id) return [];
+    const all: GeoJSON.Feature[] = [];
+    for (const t of tiles) {
+      if (this.campaign?.id !== campaign.id) return all;
+      all.push(...(await this.generateDomainTileAt(domain, t.tileX, t.tileY, false, preloaded)));
+    }
+    return all;
   }
 
   /**
@@ -1266,17 +1341,17 @@ export class MapView extends ItemView {
   }
 
   /** Legacy generator ids that still run for a tile. On DOMAIN tiles the v3
-   * network clip OWNS the `city-street` cache record (same tileKey — two
-   * writers would be last-write-wins nondeterminism), so the streamline
-   * street generator is excluded there; districts/blocks stay legacy until
-   * v3.2 (design §2/§9 transition plan). */
+   * network clip OWNS every city-tier cache record (same tileKeys — two
+   * writers would be last-write-wins nondeterminism): streets since v3.0,
+   * districts (wards) and blocks (faces) since v3.2. The legacy generators
+   * still serve pre-v3 manifest entries without a domainId. */
   private legacyIdsFor(tier: ZoomBand, excludeIds?: readonly string[]): readonly string[] {
     const ids = generatorIdsForBand(tier);
     return excludeIds?.length ? ids.filter((id) => !excludeIds.includes(id)) : ids;
   }
 
-  /** Ids the domain clip supersedes on its own tiles (grows in v3.2). */
-  private static readonly DOMAIN_SUPERSEDED_LEGACY_IDS = ["city-street"] as const;
+  /** Ids the domain clip supersedes on its own tiles (complete since v3.2). */
+  private static readonly DOMAIN_SUPERSEDED_LEGACY_IDS = ["city-street", "city-district", "city-block"] as const;
 
   /** Whole-domain network computation closure: worker when available (it's
    * the expensive job — design §7.4), direct otherwise; every actual
@@ -1366,25 +1441,12 @@ export class MapView extends ItemView {
    */
   private async regenerateDomain(domain: ManifestCityDomain): Promise<GeoJSON.Feature[]> {
     if (!this.campaign) return [];
-    const campaign = this.campaign;
-    const folder = campaignFolderFromConfigPath(campaign.path);
-    const seed = campaign.config.seed;
     const entries = entriesForDomain(this.manifest, domain.id);
-    const keys = [
-      networkKeyFor(seed, domain as CityDomain),
-      ...entries.flatMap((e) =>
-        DOMAIN_TILE_GENERATOR_IDS.map((gid) => tileKey(seed, e.tileX, e.tileY, GENERATION_ZOOM, gid))
-      ),
-    ];
-    await removeCachedTiles(this.app, folder, keys);
-    if (this.campaign?.id !== campaign.id) return [];
-    const shared = new Map<string, CachedTile>(); // fresh: one network compute, N clips
-    const all: GeoJSON.Feature[] = [];
-    for (const e of entries) {
-      if (this.campaign?.id !== campaign.id) return all;
-      all.push(...(await this.generateDomainTileAt(domain, e.tileX, e.tileY, false, shared)));
-    }
-    return all;
+    return this.generateDomainTiles(
+      domain,
+      entries.map((e) => ({ tileX: e.tileX, tileY: e.tileY })),
+      true
+    );
   }
 
   /** "Clear city domain here" (design §3.2): removes the domain, all its
@@ -1585,6 +1647,22 @@ export class MapView extends ItemView {
     for (const depth of ["deep", "medium", "shallow"] as const) {
       const id = `canon-label-${depth}`;
       if (this.map.getLayer(id)) this.map.setLayerZoomRange(id, reveal[depth], 24);
+    }
+    // Procgen v3.2 perf gating (design §8: "gate parcels to a higher minzoom
+    // in themes, not in the generator") made RELATIVE to the campaign
+    // overview — the baked z14/z15 floors are real-city calibrations that a
+    // fictional campaign (overview ~z4.5) never reaches, the same
+    // absolute-vs-relative trap as the retired fabric reveal (DECISIONS
+    // 2026-07-10). Footprints arrive between Mid and Close; parcel hairlines
+    // one step deeper. NOTE: this is zoom-gating generated BUILDING DETAIL
+    // for paint perf (12k+ tiny polygons per domain), not fabric-kind
+    // hiding — the Kanto ruling ("LOD only hides location names") left the
+    // footprint minzoom question explicitly open (PROGRESS open threads).
+    if (this.map.getLayer("generated-footprint")) {
+      this.map.setLayerZoomRange("generated-footprint", base + 4, 24);
+    }
+    if (this.map.getLayer("generated-parcel")) {
+      this.map.setLayerZoomRange("generated-parcel", base + 5, 24);
     }
   }
 

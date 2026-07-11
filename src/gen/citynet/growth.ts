@@ -60,6 +60,9 @@ export const CONTINUE_BIAS = 0.15;
 export const SEED_SPACING_FACTOR = 1.0;
 /** Bounded dead-end prune passes (D3). */
 export const MAX_PRUNE_PASSES = 8;
+/** Vertex spacing (meters) of skeleton polylines as inserted into the GRAPH
+ * (emitted features keep full smooth geometry) — keeps face rings lean. */
+export const GRAPH_RESAMPLE_M = 8;
 /** Minimum clearance between a grown segment (its whole span, not just the
  * endpoint) and a canon Point — never pave the GM's pins (I4). Endpoints get
  * the stricter `CANON_RADIUS_M`; interiors this. */
@@ -166,11 +169,66 @@ function insertPolyline(
     const y = toLattice(ym);
     if (prev && prev.x === x && prev.y === y) continue;
     const node = graph.addNode(x, y);
-    if (prev) graph.addEdge(prev.key, node.key, { ...props });
+    if (prev) insertSegmentPlanar(graph, prev.key, node.key, props);
     keys.push(node.key);
     prev = node;
   }
   return keys;
+}
+
+/** Planarization budget per inserted segment (D3) — a single ~8 m skeleton
+ * segment cannot legitimately cross more edges than this. */
+const MAX_SEGMENT_SPLITS = 32;
+
+/**
+ * Insert edge a→b, noding EVERY crossing with existing edges (v3.2
+ * prerequisite: faces need a true planar graph, so skeleton×skeleton and
+ * sketch×skeleton crossings become nodes too — growth already terminates its
+ * own segments at their first crossing). Deterministic: `firstCrossing`
+ * returns the minimum-t crossing with id tie-breaks, and the walk from a to b
+ * consumes crossings in that order. Never throws — on budget exhaustion the
+ * remaining sub-segment is inserted uncut (counted by planarity being
+ * imperfect, not by a crash; anti-Watabou).
+ */
+function insertSegmentPlanar(
+  graph: StreetGraph,
+  aKey: string,
+  bKey: string,
+  props: { roadClass: string; grown: boolean; sketch: boolean }
+): void {
+  let curKey = aKey;
+  for (let i = 0; i < MAX_SEGMENT_SPLITS; i++) {
+    if (curKey === bKey) return;
+    const target = graph.getNode(bKey)!;
+    const hit = graph.firstCrossing(curKey, target.x, target.y);
+    if (!hit) break;
+    const mid = graph.splitEdge(hit.edge.id, hit.x, hit.y);
+    if (!mid || mid.key === curKey) break;
+    graph.addEdge(curKey, mid.key, { ...props });
+    curKey = mid.key;
+  }
+  if (curKey !== bKey) graph.addEdge(curKey, bKey, { ...props });
+}
+
+/** Resample a polyline to ~`spacing`-meter vertex intervals (keeping first and
+ * last vertices). The emitted skeleton features keep their full smooth
+ * geometry; only the GRAPH gets the resampled version — fewer nodes, fewer
+ * face-ring vertices, and OBB parcelling stays cheap. Max deviation from the
+ * smooth curve is the chord sagitta (centimeter-scale for chaikin output). */
+export function resamplePolyline(coords: Pt[], spacing: number): Pt[] {
+  if (coords.length <= 2) return coords;
+  const out: Pt[] = [coords[0]];
+  let acc = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const [ax, ay] = coords[i - 1];
+    const [bx, by] = coords[i];
+    acc += Math.hypot(bx - ax, by - ay);
+    if (acc >= spacing || i === coords.length - 1) {
+      out.push(coords[i]);
+      acc = 0;
+    }
+  }
+  return out;
 }
 
 /** Walk a seed polyline's inserted nodes at ~`spacing` arc-length intervals,
@@ -243,12 +301,24 @@ export function growNetwork(
 
   // ── Pre-seed the graph ───────────────────────────────────────────────────
   // Stage-A arterials/waterfront: snappable targets + branch-candidate spines.
+  // Polylines are resampled to ~GRAPH_RESAMPLE_M for the graph (the emitted
+  // features keep full smooth geometry) and inserted PLANAR (v3.2): every
+  // skeleton×skeleton and sketch×skeleton crossing becomes a node, which face
+  // extraction requires.
   skeleton.arterials.forEach((art, i) => {
-    const keys = insertPolyline(graph, art.coords, { roadClass: "arterial", grown: false, sketch: false });
+    const keys = insertPolyline(graph, resamplePolyline(art.coords, GRAPH_RESAMPLE_M), {
+      roadClass: "arterial",
+      grown: false,
+      sketch: false,
+    });
     seedAlongPolyline(citySeed, graph, keys, `seed:art:${i}`, spacing, cityness, heap);
   });
   skeleton.waterfront.forEach((w, i) => {
-    const keys = insertPolyline(graph, w.coords, { roadClass: "street", grown: false, sketch: false });
+    const keys = insertPolyline(graph, resamplePolyline(w.coords, GRAPH_RESAMPLE_M), {
+      roadClass: "street",
+      grown: false,
+      sketch: false,
+    });
     seedAlongPolyline(citySeed, graph, keys, `seed:wf:${i}`, spacing, cityness, heap);
   });
   // Sketched roads (I4): immutable edges, clipped to the disc and smoothed the
@@ -257,7 +327,11 @@ export function growNetwork(
   idx.roadLines.forEach((road) => {
     const smoothed = chaikinSmooth(road, 2);
     for (const run of clipToDisc(smoothed, domain.cx, domain.cy, domain.radius)) {
-      insertPolyline(graph, run, { roadClass: "street", grown: false, sketch: true });
+      insertPolyline(graph, resamplePolyline(run, GRAPH_RESAMPLE_M), {
+        roadClass: "street",
+        grown: false,
+        sketch: true,
+      });
     }
   });
 
@@ -349,9 +423,24 @@ export function growNetwork(
         const psi = Math.atan2(b.y - a.y, b.x - a.x);
         const theta = Math.atan2(near.y - from.y, near.x - from.x);
         if (Math.min(angDiff(theta, psi), Math.PI - angDiff(theta, psi)) < profile.minAngle) continue;
-        ex = near.x;
-        ey = near.y;
-        splitEdgeId = near.edge.id;
+        // Planarity recheck (v3.2): the trim moved the endpoint sideways (up
+        // to snapDist), so the trimmed segment can cross an edge the proposed
+        // one did not. A crossing is physically first — prefer cutting there.
+        const recheck = graph.firstCrossing(from.key, near.x, near.y);
+        if (recheck && recheck.edge.id !== near.edge.id) {
+          const ra = graph.getNode(recheck.edge.a)!;
+          const rb = graph.getNode(recheck.edge.b)!;
+          const rpsi = Math.atan2(rb.y - ra.y, rb.x - ra.x);
+          const rtheta = Math.atan2(recheck.y - from.y, recheck.x - from.x);
+          if (Math.min(angDiff(rtheta, rpsi), Math.PI - angDiff(rtheta, rpsi)) < profile.minAngle) continue;
+          ex = recheck.x;
+          ey = recheck.y;
+          splitEdgeId = recheck.edge.id;
+        } else {
+          ex = near.x;
+          ey = near.y;
+          splitEdgeId = near.edge.id;
+        }
         terminal = true;
       }
     }

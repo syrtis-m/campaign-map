@@ -15,6 +15,9 @@ import { RIVER_HALF_WIDTH } from "../fabricConstraints";
 import { COST_CELL_M, makeCostField } from "./costField";
 import { buildSkeleton } from "./skeleton";
 import { growNetwork } from "./growth";
+import { extractBlocks } from "./faces";
+import { subdivideBlocks } from "./parcels";
+import { makeCityness } from "./cityness";
 import { toMeters, type StreetGraph } from "./graph";
 import { tileBBox, GENERATION_TILE_SIZE } from "../cache/tileGrid";
 
@@ -353,6 +356,86 @@ describe("v3.1 sketched-road pre-seed (gate g)", () => {
   });
 });
 
+// ── v3.2 Stage-C gates ──────────────────────────────────────────────────────
+
+describe("v3.2 blocks + parcels (gates a–d)", () => {
+  const { graph, seed, domain } = grownGraph(600, 600);
+  const { blocks, stats } = extractBlocks(graph, domain);
+
+  it("extracts a substantial block set with counted (not thrown) degenerates", () => {
+    expect(blocks.length).toBeGreaterThan(100);
+    expect(stats.degenerate).toBeGreaterThanOrEqual(0); // counted, never thrown
+    // Every block ring is closed and CCW-positive by construction.
+    for (const b of blocks.slice(0, 50)) {
+      expect(b.ring[0]).toEqual(b.ring[b.ring.length - 1]);
+      expect(b.area).toBeGreaterThanOrEqual(40);
+    }
+  });
+
+  it("block-shape entropy (gate c): quads are < 70% of blocks", () => {
+    // Sides = corners with a direction change > 25° (block rings carry
+    // near-collinear resample vertices that are not corners).
+    const cornersOf = (ring: [number, number][]): number => {
+      const n = ring.length - 1;
+      let corners = 0;
+      for (let i = 0; i < n; i++) {
+        const p = ring[(i - 1 + n) % n];
+        const q = ring[i];
+        const r = ring[(i + 1) % n];
+        const a1 = Math.atan2(q[1] - p[1], q[0] - p[0]);
+        const a2 = Math.atan2(r[1] - q[1], r[0] - q[0]);
+        let d = Math.abs(a2 - a1) % (2 * Math.PI);
+        if (d > Math.PI) d = 2 * Math.PI - d;
+        if (d > (25 * Math.PI) / 180) corners++;
+      }
+      return corners;
+    };
+    let quads = 0;
+    for (const b of blocks) {
+      if (cornersOf(b.ring as [number, number][]) === 4) quads++;
+    }
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(quads / blocks.length).toBeLessThan(0.7);
+  });
+
+  it("alignment (gate d): mean footprint long-axis vs frontage deviation < 15°", () => {
+    const cityness = makeCityness(seed, domain);
+    const { footprints, stats: pStats } = subdivideBlocks(seed, blocks, PROFILES["euro-medieval"], cityness);
+    expect(footprints.length).toBeGreaterThan(100);
+    const devs = pStats.alignmentDeviations;
+    expect(devs.length).toBe(footprints.length);
+    const meanDeg = ((devs.reduce((a, b) => a + b, 0) / devs.length) * 180) / Math.PI;
+    expect(meanDeg).toBeLessThan(15);
+  });
+
+  it("parcels/footprints are byte-deterministic (gate a)", () => {
+    const cityness = makeCityness(seed, domain);
+    const a = subdivideBlocks(seed, blocks, PROFILES["euro-medieval"], cityness);
+    const b = subdivideBlocks(seed, blocks, PROFILES["euro-medieval"], cityness);
+    expect(JSON.stringify(a.parcels)).toBe(JSON.stringify(b.parcels));
+    expect(JSON.stringify(a.footprints)).toBe(JSON.stringify(b.footprints));
+  });
+});
+
+describe("v3.2 wards", () => {
+  it("emits a handful of tagged district polygons clipped to the disc", () => {
+    const network = net(600, 600);
+    const wards = network.filter((f) => f.properties?.generatorId === "city-district");
+    expect(wards.length).toBeGreaterThanOrEqual(3);
+    expect(wards.length).toBeLessThan(40);
+    const tags = new Set(wards.map((w) => String(w.properties?.ward)));
+    expect([...tags].every((t) => ["market", "craft", "temple", "slum"].includes(t))).toBe(true);
+    expect(wards.some((w) => w.properties?.ward === "market")).toBe(true);
+    // Clipped to the disc: every vertex within radius (+ε for the 48-gon chord).
+    for (const w of wards) {
+      const ring = (w.geometry as GeoJSON.Polygon).coordinates[0] as [number, number][];
+      for (const [x, y] of ring) {
+        expect(Math.hypot(x - 600, y - 600)).toBeLessThanOrEqual(900 + 0.01);
+      }
+    }
+  });
+});
+
 describe("profile smoke (gate g)", () => {
   const profiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb"];
   for (const profile of profiles) {
@@ -362,7 +445,7 @@ describe("profile smoke (gate g)", () => {
         network = net(1200, -900, profile);
       }).not.toThrow();
       expect(network.length).toBeGreaterThan(0);
-      expect(network.length).toBeLessThan(6000); // grown network included since v3.1
+      expect(network.length).toBeLessThan(30000); // incl. blocks/parcels/footprints since v3.2
       expect(network.some((f) => f.properties?.type === "plaza")).toBe(true);
     });
   }

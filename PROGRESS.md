@@ -71,7 +71,24 @@ design doc's phases; state here + DECISIONS.md 2026-07-11.
       warren; density asymmetry across the river flagged as a Tier-B question for v3.3.
 - [x] committed
 
-### Next: v3.2 faces/parcels (planarize pre-seeds first!) → v3.3 cityness/walls → v3.4 profiles+cleanup
+### v3.2 — faces → parcels → footprints + wards (DONE, gate green: `npx tsx scripts/gates/procgen32.ts` → 12/12)
+- [x] `faces.ts` (half-edge extraction, int shoelace, degenerates counted never thrown),
+      `parcels.ts` (OBB lot recursion, frontage-facing footprints), `wards.ts` (ward-scale
+      Voronoi, market/craft/temple/slum tags); full skeleton/sketch planarization closed the
+      v3.1 planarity leak. 272 unit tests; 953 blocks / 6289 parcels / 5553 footprints at
+      radius 900 in ~160 ms; quad share 63% (<70% gate); fuzz 33 s zero-throw; artifact 3.96 MB.
+- [x] Legacy city-district/city-block cut off on domain tiles (all three legacy ids superseded);
+      wards inherit the district paint layer by reusing its generatorId.
+- [x] **One click = whole city**: founding a domain generates every tile the disc overlaps
+      (shared single network compute); painting only the clicked tile read as a bug on screen.
+- [x] Footprint/parcel reveal made relative to campaign overview (absolute z14/z15 never
+      reached on fictional campaigns — the documented absolute-vs-relative zoom trap).
+- [x] Live gate 12/12 incl. "exactly 0 generator executions for a clip-only neighbor tile"
+      (proves the legacy cutoff + network reuse) and delete-cache byte-determinism with Stage C.
+      Screenshots reviewed (review/008): full-disc city, genre readable in 3 s.
+- [x] committed
+
+### Next: v3.3 cityness/outskirts/walls/gates/landmarks → v3.4 profiles+cleanup
 
 ## Environment (done)
 - [x] `scripts/preflight.sh` written and green (Obsidian 1.12.7 running, `dev-vault` registered + CLI-reachable, restricted mode off, Node v22.14.0 installed locally, git repo initialized, GitHub remote `syrtis-m/campaign-map` created)

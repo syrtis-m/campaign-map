@@ -89,6 +89,12 @@ export interface CityProfile {
   /** Footprint inset from the parcel toward its frontage edge, meters
    * (buildings face the street; §5.3.3). */
   footprintInset: number;
+  /** Base building depth, meters (scaled by cityness — §5.3.3 "depth/coverage
+   * by cityness + profile"; v3.2 addition). Read by `parcels.ts`. */
+  footprintDepth: number;
+  /** Base fraction of the parcel's frontage width the building occupies
+   * (scaled by cityness; v3.2 addition). Read by `parcels.ts`. */
+  footprintCoverage: number;
 }
 
 /**
@@ -125,6 +131,8 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     parcelMaxAspect: 3.5,
     parcelMinFrontage: 6,
     footprintInset: 1.5,
+    footprintDepth: 10,
+    footprintCoverage: 0.78,
   },
   "euro-continental": {
     id: "euro-continental",
@@ -154,6 +162,8 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     parcelMaxAspect: 3,
     parcelMinFrontage: 8,
     footprintInset: 2,
+    footprintDepth: 14,
+    footprintCoverage: 0.7,
   },
   "na-grid": {
     id: "na-grid",
@@ -183,6 +193,8 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     parcelMaxAspect: 2.5,
     parcelMinFrontage: 10,
     footprintInset: 3,
+    footprintDepth: 15,
+    footprintCoverage: 0.6,
   },
   "na-suburb": {
     id: "na-suburb",
@@ -212,6 +224,8 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     parcelMaxAspect: 2,
     parcelMinFrontage: 14,
     footprintInset: 4,
+    footprintDepth: 10,
+    footprintCoverage: 0.4,
   },
 };
 
