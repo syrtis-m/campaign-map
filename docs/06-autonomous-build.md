@@ -50,28 +50,35 @@ The agent's first act is `scripts/preflight.sh` (build it in Phase 0 before anyt
 | accent/selection | #1a73e8 | #7d1f1f | #b8860b | #fcee0a |
 | poi | #5f6368 | #5c4a2e | #948b7f | #00e5ff |
 
-**Type taxonomy defaults** (importance 1=highest; focus = depth-of-field bucket):
+**Type taxonomy defaults** (importance 1=highest; visibility-hint = the QuickAdd
+pre-selection only — since plan 015 it does NOT gate labels at runtime):
 
-| type | importance | focus | | type | importance | focus |
+| type | importance | vis-hint | | type | importance | vis-hint |
 |---|---|---|---|---|---|---|
-| nation/region | 1 | deep | | district | 4 | medium |
-| city | 2 | deep | | street(named) | 5 | shallow |
-| town | 3 | medium | | landmark | 4 | medium |
-| village | 4 | medium | | shop/tavern/venue | 6 | shallow |
-| route | 3 | medium | | residence/minor | 7 | shallow |
-| water-feature | 2 | deep | | custom (GM) | 5 | medium |
+| nation/region | 1 | wide | | district | 4 | mid |
+| city | 2 | wide | | street(named) | 5 | close |
+| town | 3 | mid | | landmark | 4 | mid |
+| village | 4 | mid | | shop/tavern/venue | 6 | close |
+| route | 3 | mid | | residence/minor | 7 | close |
+| water-feature | 2 | wide | | custom (GM) | 5 | mid |
 
 *Depth-of-field label model (superseded the per-type continuous zoom range,
 2026-07-10 — Jonah-authorized; see DECISIONS.md).* The map has **three focus
 levels** (Wide/Mid/Close), computed per campaign from its overview zoom, not
-absolute. A location's **dot always renders at every zoom**; its `focus` bucket
-sets at how many focus levels its **name** is legible — `deep` all three,
-`medium` from Mid inward, `shallow` at Close only. `importance` still drives label
-size + collision priority; the old `zoomMin`/`zoomMax` are retained only for
+absolute. A location's **dot always renders at every zoom**; its **explicit
+`visibility` field** (plan 015 — `wide`/`mid`/`close`, mapped 1:1 to the internal
+`deep`/`medium`/`shallow` bucket at the parse boundary) sets at how many focus
+levels its **name** is legible — `wide` all three, `mid` from Mid inward, `close`
+at Close only. **Visibility is decoupled from `type`**: `type` is semantic only
+(naming, future icons); the vis-hint column above is used ONLY to pre-select the
+QuickAdd picker, and the chosen value is always written explicitly to the note. A
+note with no `visibility` (and no legacy `focus:` key) falls back to the single
+global default **mid** — never a type-derived bucket. `importance` still drives
+label size + collision priority; the old `zoomMin`/`zoomMax` are retained only for
 incidental camera math (fly-to, generation-band split), never for label gating.
-Reveal is per-layer `minzoom` (three bucketed label layers) — zoom is NEVER put
-in a filter (invalidates the whole style; see the styleValidation test + styleLoad
-gate).
+Reveal is per-layer `minzoom` (three bucketed label layers, still filtered on the
+feature's `focus` property) — zoom is NEVER put in a filter (invalidates the whole
+style; see the styleValidation test + styleLoad gate).
 
 **Naming cultures** (seed profiles, one per test campaign): `fantasy-brackish` (harsh coastal: consonant clusters, -haven/-wick/-mire), `modern-anglo` (real-city overlay: person-name + generic), `neon-corpo` (portmanteau + kana-esque syllables + Inc/Corp). Profiles are phoneme tables in `src/gen/naming/cultures/` — agent authors 2 more per genre later, same format.
 

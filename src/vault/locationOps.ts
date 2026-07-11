@@ -1,6 +1,13 @@
 import type { App, TFile } from "obsidian";
 import type { ParsedCampaign } from "../model/campaignConfig";
-import type { ParsedLocation } from "../model/locationNote";
+import {
+  type ParsedLocation,
+  type Visibility,
+  type FocusDepth,
+  FOCUS_DEPTHS,
+  defaultVisibilityForType,
+  focusToVisibility,
+} from "../model/locationNote";
 import { appendLogEntry, campaignFolderFromConfigPath } from "../model/mutationLog";
 
 function sanitizeFilename(name: string): string {
@@ -18,13 +25,17 @@ async function uniquePath(app: App, folder: string, name: string, ext = "md"): P
   return candidate;
 }
 
-/** The ≤5s yes-and flow's write path: quick-add confirm → vault note → mutation log. */
+/** The ≤5s yes-and flow's write path: quick-add confirm → vault note → mutation log.
+ * `visibility` (plan 015) is written EXPLICITLY so label visibility is a visible,
+ * editable field and never re-derived from `type`; callers that don't set it get a
+ * type-hinted default (a convenience, still written explicitly). */
 export async function createLocationNote(
   app: App,
   campaign: ParsedCampaign,
   point: [number, number],
   name: string,
-  type: string
+  type: string,
+  visibility: Visibility = defaultVisibilityForType(type)
 ): Promise<TFile> {
   const campaignFolder = campaignFolderFromConfigPath(campaign.path);
   const locationsFolder = `${campaignFolder}/Locations`;
@@ -37,8 +48,9 @@ export async function createLocationNote(
     map: campaign.id,
     geometry: point,
     type,
+    visibility,
   };
-  const body = `---\nmap: ${frontmatter.map}\ngeometry: [${point[0]}, ${point[1]}]\ntype: ${type}\n---\n`;
+  const body = `---\nmap: ${frontmatter.map}\ngeometry: [${point[0]}, ${point[1]}]\ntype: ${type}\nvisibility: ${visibility}\n---\n`;
   const file = await app.vault.create(path, body);
 
   await appendLogEntry(app, campaignFolder, {
@@ -63,7 +75,8 @@ export async function createLocationNoteWithSidecar(
   campaign: ParsedCampaign,
   geometry: GeoJSON.Geometry,
   name: string,
-  type: string
+  type: string,
+  visibility: Visibility = defaultVisibilityForType(type)
 ): Promise<TFile> {
   const campaignFolder = campaignFolderFromConfigPath(campaign.path);
   const locationsFolder = `${campaignFolder}/Locations`;
@@ -76,8 +89,8 @@ export async function createLocationNoteWithSidecar(
   await app.vault.create(geojsonPath, JSON.stringify(sidecar, null, 2));
 
   const path = await uniquePath(app, locationsFolder, name);
-  const frontmatter = { map: campaign.id, geometry: geojsonPath, type };
-  const body = `---\nmap: ${frontmatter.map}\ngeometry: "${geojsonPath}"\ntype: ${type}\n---\n`;
+  const frontmatter = { map: campaign.id, geometry: geojsonPath, type, visibility };
+  const body = `---\nmap: ${frontmatter.map}\ngeometry: "${geojsonPath}"\ntype: ${type}\nvisibility: ${visibility}\n---\n`;
   const file = await app.vault.create(path, body);
 
   await appendLogEntry(app, campaignFolder, {
@@ -101,10 +114,20 @@ export async function createLocationNoteFromFeature(
   name: string,
   type: string
 ): Promise<TFile> {
+  // Plan 015: carry the generated feature's `focus` bucket → explicit visibility
+  // so a canonized city stays as visible as its pin was (before this, the note
+  // lost its bucket and fell to the global default — a regression the decoupling
+  // would otherwise introduce). Absent/invalid → type-hinted default.
+  const rawFocus = (feature.properties ?? {})["focus"];
+  const visibility: Visibility =
+    typeof rawFocus === "string" && (FOCUS_DEPTHS as readonly string[]).includes(rawFocus)
+      ? focusToVisibility(rawFocus as FocusDepth)
+      : defaultVisibilityForType(type);
+
   if (feature.geometry.type === "Point") {
-    return createLocationNote(app, campaign, feature.geometry.coordinates as [number, number], name, type);
+    return createLocationNote(app, campaign, feature.geometry.coordinates as [number, number], name, type, visibility);
   }
-  return createLocationNoteWithSidecar(app, campaign, feature.geometry, name, type);
+  return createLocationNoteWithSidecar(app, campaign, feature.geometry, name, type, visibility);
 }
 
 /** Drag-to-move: writes through Obsidian's frontmatter API (never hand-parse YAML). */
@@ -129,6 +152,23 @@ export async function moveLocationNote(
     campaignId: campaign.id,
     path: location.path,
     data: { from, to: newPoint },
+  });
+}
+
+/** Plan 015 place-card edit: retune a note's label visibility mid-session with
+ * one control. Writes the explicit `visibility` field and drops any legacy
+ * `focus` key so the note never carries two conflicting sources of truth. The
+ * metadataCache `changed` event re-reconciles and re-dispatches the map. */
+export async function setLocationVisibility(
+  app: App,
+  location: ParsedLocation,
+  visibility: Visibility
+): Promise<void> {
+  const file = app.vault.getFileByPath(location.path);
+  if (!file) return;
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    fm.visibility = visibility;
+    delete fm.focus; // legacy raw-bucket key; `visibility` is now the source of truth
   });
 }
 

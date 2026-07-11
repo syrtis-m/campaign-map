@@ -11,6 +11,7 @@ function loc(overrides: Partial<ParsedLocation> & { path: string; name: string }
     type: "custom",
     importance: 5,
     focus: "medium",
+    visibility: "mid",
     zoomMin: 12,
     zoomMax: 24,
     aliases: [],
