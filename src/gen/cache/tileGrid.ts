@@ -28,19 +28,26 @@ export function tileKey(campaignSeed: number, tileX: number, tileY: number, zoom
 }
 
 /**
- * Zoom-band dispatch table (Phase 4: "zoom-band dispatcher over
- * `.mapcache/` chunks"). World-tier content (regions/settlements/routes)
- * is coarse and appropriate below street level; city-tier (streets/
- * districts/blocks) is the fine fabric that replaces it once zoomed in far
- * enough to read individual streets. Both bands reuse the same
+ * Generation tiers (plan 019 — formerly "zoom bands"). World-tier content
+ * (regions/routes/coastline) is coarse and appropriate below street level;
+ * city-tier (streets/districts/blocks) is the fine fabric for street-level
+ * zooms. `bandForZoom` picks which tier an explicit "Generate fabric here"
+ * runs at, from the zoom the GM is looking at — generation itself is
+ * explicit-only, never dispatched from pan/zoom. Both tiers reuse the same
  * `GENERATION_TILE_SIZE` grid — these are small fictional campaigns
  * (docs/06), not continents, so a separate coarser world-tile grid isn't
  * needed yet; the cache key's `zoom`/generatorId fields already make this
  * additive, not a format break, if that changes later.
+ *
+ * `world-settlement` is deliberately NOT in the world set (plan 019, D2):
+ * named places are Locations the GM creates, not generator output. The
+ * settlements generator stays in-tree (populate-area shares its naming),
+ * it's just unwired from generate-here.
  */
-export type ZoomBand = "world" | "city";
+export const GENERATION_TIERS = ["world", "city"] as const;
+export type ZoomBand = (typeof GENERATION_TIERS)[number];
 export const CITY_BAND_MIN_ZOOM = 8;
-export const WORLD_GENERATOR_IDS = ["world-region", "world-settlement", "world-route"] as const;
+export const WORLD_GENERATOR_IDS = ["world-region", "world-route"] as const;
 export const CITY_GENERATOR_IDS = ["city-street", "city-district", "city-block"] as const;
 
 export function bandForZoom(zoom: number): ZoomBand {

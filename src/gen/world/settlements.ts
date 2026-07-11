@@ -62,8 +62,7 @@ export function generateSettlements(
   const genre = constraints.namingGenre ?? "fantasy";
 
   // Pre-named at generation time (region-based naming, docs/03 3a feeding 3c)
-  // so generated pins never read as blank/generic — canonizing just accepts
-  // or edits this name, it isn't invented from scratch at that point.
+  // so generated pins never read as blank/generic.
   const features: GeoJSON.Feature[] = candidates.map((s) => {
     const culture = cultureAt(campaignSeed, s.x, s.y, constraints.worldBounds, genre, constraints.namingCultureIds);
     const name = generateName(hashSeed(campaignSeed, s.cellX, s.cellY, "settlement-name"), culture);

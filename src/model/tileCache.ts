@@ -7,8 +7,8 @@ import type { App } from "obsidian";
  * → deletable, sync-excluded, conflict-immune); no SQLite." Same
  * log-structured append pattern as mutationLog.ts: appending a record with
  * an existing key logically overwrites it (last write wins on replay),
- * which is what makes "canonize a feature, it disappears from the cache"
- * and "regenerate a tile" both cheap appends rather than in-place file edits.
+ * which makes "regenerate a tile" a cheap append rather than an in-place
+ * file edit.
  */
 export const CachedTileSchema = z.object({
   key: z.string(),
@@ -57,6 +57,22 @@ export async function readCachedTiles(app: App, campaignFolder: string): Promise
 export async function getCachedTile(app: App, campaignFolder: string, key: string): Promise<CachedTile | undefined> {
   const tiles = await readCachedTiles(app, campaignFolder);
   return tiles.get(key);
+}
+
+/**
+ * Removes specific tile records (plan 019 "Clear generated fabric here"):
+ * rewrites the log without the given keys, so a later generate on the same
+ * tile is a true cache MISS and regenerates — an empty-features tombstone
+ * append would instead read back as "cached: nothing", silently blanking
+ * future generates. Compacts last-write-wins duplicates as a side effect.
+ */
+export async function removeCachedTiles(app: App, campaignFolder: string, keys: string[]): Promise<void> {
+  const path = cachePath(campaignFolder);
+  if (!(await app.vault.adapter.exists(path))) return;
+  const tiles = await readCachedTiles(app, campaignFolder);
+  for (const key of keys) tiles.delete(key);
+  const lines = [...tiles.values()].map((t) => JSON.stringify(t) + "\n").join("");
+  await app.vault.adapter.write(path, lines);
 }
 
 /** Deleting this file must be harmless — the next request just regenerates

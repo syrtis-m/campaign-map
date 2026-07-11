@@ -9,8 +9,8 @@ import { createLocationNote, createLocationNoteWithSidecar } from "./locationOps
  * Writes imported notes into the vault (plan 011). Reuses the same
  * write paths as the rest of the app: point notes go through
  * `createLocationNote` (the quick-add flow's path); Line/Polygon notes go
- * through `createLocationNoteWithSidecar` (the canonize-a-generated-feature
- * path), which writes a `<name>.geojson` sidecar and a note whose
+ * through `createLocationNoteWithSidecar` (the complex-geometry path),
+ * which writes a `<name>.geojson` sidecar and a note whose
  * `geometry` frontmatter is the sidecar's vault-relative path — the shape
  * `locationNote.ts`'s validator expects. Both append to the mutation log,
  * same as any other map-originated write.

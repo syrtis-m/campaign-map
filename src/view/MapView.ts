@@ -18,7 +18,23 @@ import {
   type FabricFeature,
   type FabricKind,
 } from "../model/fabric";
-import { fabricPath, loadFabric, saveFabric, promoteFabricToNote } from "../vault/fabricStore";
+import { fabricPath, loadFabric, saveFabric } from "../vault/fabricStore";
+import {
+  emptyManifest,
+  entriesForTile,
+  manifestEntryId,
+  withEntry,
+  withoutEntry,
+  ManifestEntrySchema,
+  type GeneratedManifest,
+  type ManifestEntry,
+} from "../model/generatedManifest";
+import {
+  generatedManifestPath,
+  loadGeneratedManifest,
+  saveGeneratedManifest,
+} from "../vault/generatedManifestStore";
+import { readCachedTiles, removeCachedTiles } from "../model/tileCache";
 import { FABRIC_LAYER_IDS } from "../map/themes/fabricLayers";
 import { SketchController } from "./SketchController";
 import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
@@ -36,13 +52,18 @@ import {
   CORRIDOR_HALO,
   CORRIDOR_INFLUENCE,
 } from "../gen/city";
-import { generateWorldRegions, generateSettlements, generateRoutes } from "../gen/world";
-import { tileXYForPoint, bandForZoom, generatorIdsForBand, GENERATION_TILE_SIZE, type ZoomBand } from "../gen/cache/tileGrid";
+import { generateWorldRegions, generateRoutes } from "../gen/world";
+import {
+  tileXYForPoint,
+  bandForZoom,
+  generatorIdsForBand,
+  tileKey,
+  GENERATION_ZOOM,
+  type ZoomBand,
+} from "../gen/cache/tileGrid";
 import type { BBox } from "../gen/spatialHash";
 import {
   generateTile,
-  regenerateTile,
-  canonizeFeature,
   type GenerationContext,
   type TileGenerator,
 } from "../map/generation/generationService";
@@ -88,32 +109,6 @@ class SessionSearchModal extends FuzzySuggestModal<TFile> {
 
   onChooseItem(file: TFile): void {
     this.onChoose(file);
-  }
-}
-
-/** Picks a sketched fabric feature (plan 013's promote-to-note flow) — same
- * FuzzySuggestModal pattern as SessionSearchModal. */
-class FabricFeaturePickerModal extends FuzzySuggestModal<FabricFeature> {
-  constructor(
-    app: App,
-    private features: FabricFeature[],
-    private onChoose: (feature: FabricFeature) => void
-  ) {
-    super(app);
-    this.setPlaceholder("Promote sketched fabric to a location note...");
-  }
-
-  getItems(): FabricFeature[] {
-    return this.features;
-  }
-
-  getItemText(feature: FabricFeature): string {
-    const label = feature.properties.name?.trim() || feature.properties.kind;
-    return `${label} (${feature.geometry.type}, ${feature.id})`;
-  }
-
-  onChooseItem(feature: FabricFeature): void {
-    this.onChoose(feature);
   }
 }
 
@@ -245,37 +240,33 @@ export class MapView extends ItemView {
   private sketchAutoBuildTimer: number | null = null;
 
   /**
-   * Viewport-windowed tile store (Phase 4: "zoom-band dispatcher over
-   * `.mapcache/` chunks"), keyed `${band}:${tileX}:${tileY}` — generation-
-   * space (meters), same as `.mapcache/` itself. This replaced a flat
-   * merge-by-id array that only ever grew: `source.setData()` re-parses the
-   * *entire* FeatureCollection on every merge, so an unbounded array makes
-   * every subsequent tile slower to render as a pan accumulates history,
-   * directly undermining the perf gate. Eviction (tiles outside viewport+
-   * margin get dropped on every dispatch) keeps render cost bounded by
-   * what's on screen, not by how far the GM has panned this session —
-   * cheap to re-fetch on revisit since `.mapcache/` still has it cached.
+   * Render store for generated fabric, keyed `${tier}:${tileX}:${tileY}` —
+   * generation-space (meters), same as `.mapcache/` itself. Fed ONLY by
+   * (a) manifest replay on campaign open and (b) explicit generate actions
+   * (plan 019: no viewport dispatch, no generate-on-pan, ever). Sketch-
+   * corridor elaborations live under their own `sketch:<id>:` key namespace.
    */
   private loadedTiles = new Map<string, GeoJSON.Feature[]>();
-  /** Tile keys with a generation request in flight — dedup key, not
-   * `requestId`, so re-crossing a tile mid-pan doesn't re-dispatch it. */
-  private pendingTiles = new Set<string>();
-  /** Recomputed on every dispatch; a `loadTile()` in flight checks this on
-   * resolution and discards its result if the tile panned out of view
-   * while it was generating, instead of resurrecting a stale eviction. */
-  private wantedTiles = new Set<string>();
-  private dispatchTimer: number | null = null;
-  /** Which band the dispatcher last computed, so a genuine zoom-band
-   * transition (not just "band unchanged") is what triggers wiping the
-   * other tier's tiles — see dispatchViewportTiles() for why this matters. */
-  private lastDispatchedBand: ZoomBand | null = null;
+  /** In-memory mirror of `<campaign>/Generated.json` (plan 019, D1) — the
+   * durable record of areas the GM asked to generate. MapView is the only
+   * writer, same authority model as `fabricCollection`. */
+  private manifest: GeneratedManifest = emptyManifest();
+  private manifestLoadedFor: string | null = null;
+  /** Guards manifest replay so it runs once per campaign open, not on every
+   * config-change setCampaign() (theme switches etc. repaint from
+   * `loadedTiles` via refreshGeneratedSource, no replay needed). */
+  private manifestReplayedFor: string | null = null;
+  /** Explicit generate/replay runs in flight — drives the loading badge. */
+  private pendingGenerations = 0;
+  /** Gate counter (plan 019 Phase 2): actual generator EXECUTIONS (cache
+   * hits don't count) — pan/zoom must leave this untouched. */
+  private generatorRunCounter = 0;
 
   private readonly directGenerators: Record<string, TileGenerator> = {
     "city-street": generateCityStreets,
     "city-district": generateDistricts,
     "city-block": generateCityBlocks,
     "world-region": generateWorldRegions,
-    "world-settlement": generateSettlements,
     "world-route": generateRoutes,
   };
 
@@ -316,8 +307,9 @@ export class MapView extends ItemView {
       this.campaign?.config.basemap !== campaign.config.basemap;
     if (this.campaign && this.campaign.id !== campaign.id) {
       this.loadedTiles.clear();
-      this.pendingTiles.clear();
-      this.wantedTiles.clear();
+      this.manifest = emptyManifest();
+      this.manifestLoadedFor = null;
+      this.manifestReplayedFor = null;
       this.currentSessionPathFeature = null;
       this.replayToken++; // stop any in-flight replay from the previous campaign
       this.fabricCollection = emptyFabric();
@@ -337,7 +329,10 @@ export class MapView extends ItemView {
       });
     }
     if (this.map) this.applyCampaign();
-    this.scheduleDispatch();
+    // Plan 019: the ONLY generation on open is replaying the GM's own past
+    // requests (cache hit or deterministic regenerate) — pan/zoom never
+    // dispatches generators.
+    void this.replayGeneratedManifest();
   }
 
   switchTheme(): void {
@@ -446,6 +441,7 @@ export class MapView extends ItemView {
       // already started fetching for the jumped-to viewport.
       if (this.campaign && !this.campaignAppliedOnce) this.applyCampaign();
       this.refreshSource();
+      this.refreshGeneratedSource();
       this.applyFocusReveal();
       this.updateScaleBar();
       this.updateFocusReadout();
@@ -455,8 +451,6 @@ export class MapView extends ItemView {
       this.updateScaleBar();
       this.updateFocusReadout();
     });
-    this.map.on("moveend", () => this.scheduleDispatch());
-    this.map.on("zoomend", () => this.scheduleDispatch());
     this.map.on("click", (e) => this.handleClick(e));
     this.map.on("dblclick", (e) => this.handleSketchDblClick(e));
     this.map.on("contextmenu", (e) => this.handleContextMenu(e));
@@ -495,10 +489,10 @@ export class MapView extends ItemView {
     });
 
     // Toolbar holds only the frequent, in-the-moment builder actions (plan 018).
-    // The occasional/heavy actions — Generate fabric here, Canonize nearest,
-    // Export poster, Export atlas — now live in the settings/control-panel modal
-    // under "Generate & export" (still on the command palette too). See
-    // generateFabricHere() / canonizeNearestHere() for the shared "here" logic.
+    // The occasional/heavy actions — Generate fabric here, Export poster,
+    // Export atlas — now live in the settings/control-panel modal under
+    // "Generate & export" (still on the command palette too). See
+    // generateFabricHere() for the shared "here" logic.
     // The pencil keeps a ref so sketch mode can show an active/pressed state (016).
     this.pencilBtnEl = btn("pencil", "Sketch fabric (roads, walls, rivers, districts…)", () =>
       this.toggleSketchMode()
@@ -506,32 +500,156 @@ export class MapView extends ItemView {
     this.pencilBtnEl.toggleClass("is-active", this.sketchMode);
     btn("search", "Search locations", () => this.openSearch());
     btn("palette", "Switch map theme", () => this.switchTheme());
-    btn("settings", "Campaign settings (generate, canonize, export live here)", () => this.plugin.openControlPanel());
+    btn("settings", "Campaign settings (generate, export live here)", () => this.plugin.openControlPanel());
   }
 
   /**
-   * Generate procedural fabric at the current map center, picking the tier
-   * (world vs city) from the current zoom so the GM doesn't have to know the
-   * band distinction. Extracted from the old toolbar button so the (moved)
-   * "Generate & export" settings action triggers the exact same behaviour,
-   * still acting on the live viewport center (plan 018).
+   * "Generate fabric here" (plan 019) — THE explicit generation trigger,
+   * and the only way first-time generation ever happens (no viewport
+   * dispatch, no generate-on-pan). Picks the tier (world vs city) from the
+   * current zoom so the GM doesn't have to know the distinction, paints the
+   * tile at `point` (display-space; defaults to the map center), and
+   * appends a durable manifest entry so the area repaints on every future
+   * open (cache hit or deterministic regenerate). Real-city campaigns get
+   * their fabric from the Protomaps basemap instead.
    */
-  generateFabricHere(): void {
-    if (!this.map) return;
-    const band = bandForZoom(this.map.getZoom());
-    const run = band === "world" ? this.generateWorldHere() : this.generateCityHere();
-    void run.then((f) => new Notice(`Campaign Map: generated ${f.length} ${band} feature${f.length === 1 ? "" : "s"}`));
-  }
-
-  /**
-   * Canonize the nearest generated feature to the current map center, with the
-   * same user feedback the old toolbar button gave. Shared by the moved
-   * "Generate & export" settings action (plan 018).
-   */
-  canonizeNearestHere(): void {
-    void this.canonizeGeneratedNear().then((ok) =>
-      new Notice(ok ? "Campaign Map: canonized nearest feature" : "Campaign Map: nothing generated nearby to canonize")
+  async generateFabricHere(
+    point?: [number, number],
+    opts: { force?: boolean; silent?: boolean } = {}
+  ): Promise<GeoJSON.Feature[]> {
+    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
+    const campaign = this.campaign;
+    await this.loadManifestForCampaign();
+    if (this.campaign?.id !== campaign.id) return [];
+    const tier = bandForZoom(this.map.getZoom());
+    const scale = campaign.config.scaleMetersPerUnit;
+    const centerUnits = point ?? this.mapCenterUnits();
+    const { tileX, tileY } = tileXYForPoint(
+      unitsToMeters(centerUnits[0], scale),
+      unitsToMeters(centerUnits[1], scale)
     );
+
+    const features = await this.generateTierAt(tier, tileX, tileY, opts.force === true);
+    if (this.campaign?.id !== campaign.id) return [];
+
+    const id = manifestEntryId(tier, tileX, tileY);
+    const isNew = !this.manifest.entries.some((e) => e.id === id);
+    if (isNew) {
+      const entry: ManifestEntry = { id, tier, tileX, tileY, createdAt: Date.now() };
+      this.manifest = withEntry(this.manifest, entry);
+      await saveGeneratedManifest(this.app, campaign, this.manifest);
+      // Durable request → mutation log too (undo/replay): what's logged is
+      // the GM's ask, not the (regenerable) output.
+      await appendLogEntry(this.app, campaignFolderFromConfigPath(campaign.path), {
+        ts: Date.now(),
+        type: "generate-area",
+        campaignId: campaign.id,
+        path: generatedManifestPath(campaign),
+        data: entry,
+      });
+    }
+    if (!opts.silent) {
+      new Notice(`Campaign Map: generated ${features.length} ${tier} feature${features.length === 1 ? "" : "s"}`);
+    }
+    return features.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+  }
+
+  /**
+   * "Regenerate fabric here" (plan 019, D4): re-runs every tier the GM has
+   * generated at this tile against CURRENT constraints (canon + sketched
+   * fabric) — the manifest entries stay as they are; only the regenerable
+   * output changes. On a tile with no manifest entry it behaves as a
+   * first-time generate (forced, so a stale orphan cache can't shadow it).
+   */
+  async regenerateFabricHere(point?: [number, number]): Promise<GeoJSON.Feature[]> {
+    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
+    const campaign = this.campaign;
+    await this.loadManifestForCampaign();
+    if (this.campaign?.id !== campaign.id) return [];
+    const scale = campaign.config.scaleMetersPerUnit;
+    const centerUnits = point ?? this.mapCenterUnits();
+    const { tileX, tileY } = tileXYForPoint(
+      unitsToMeters(centerUnits[0], scale),
+      unitsToMeters(centerUnits[1], scale)
+    );
+    const entries = entriesForTile(this.manifest, tileX, tileY);
+    if (entries.length === 0) return this.generateFabricHere(point, { force: true });
+
+    const all: GeoJSON.Feature[] = [];
+    for (const entry of entries) {
+      all.push(...(await this.generateTierAt(entry.tier, tileX, tileY, true)));
+      if (this.campaign?.id !== campaign.id) return [];
+    }
+    new Notice(`Campaign Map: regenerated ${all.length} feature${all.length === 1 ? "" : "s"}`);
+    return all.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+  }
+
+  /** "Clear generated fabric here" (plan 019, D4): drops this tile's
+   * manifest entries + cache records + paint. Gone and stays gone after
+   * reopen — the manifest is what replays, and it no longer asks. */
+  async clearGeneratedHere(point?: [number, number]): Promise<number> {
+    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return 0;
+    const campaign = this.campaign;
+    await this.loadManifestForCampaign();
+    if (this.campaign?.id !== campaign.id) return 0;
+    const scale = campaign.config.scaleMetersPerUnit;
+    const centerUnits = point ?? this.mapCenterUnits();
+    const { tileX, tileY } = tileXYForPoint(
+      unitsToMeters(centerUnits[0], scale),
+      unitsToMeters(centerUnits[1], scale)
+    );
+    const entries = entriesForTile(this.manifest, tileX, tileY);
+    if (entries.length === 0) {
+      new Notice("Campaign Map: nothing generated at this tile to clear");
+      return 0;
+    }
+    await this.clearManifestEntries(entries);
+    return entries.length;
+  }
+
+  /** "Clear all generated fabric" (plan 019, D4). Sketched fabric and
+   * locations are untouched — this only removes generator output + the
+   * requests that produced it. */
+  async clearAllGenerated(): Promise<number> {
+    if (!this.campaign || this.campaign.config.crs !== "fictional") return 0;
+    const campaign = this.campaign;
+    await this.loadManifestForCampaign();
+    if (this.campaign?.id !== campaign.id) return 0;
+    const entries = [...this.manifest.entries];
+    if (entries.length === 0) {
+      new Notice("Campaign Map: nothing generated to clear");
+      return 0;
+    }
+    await this.clearManifestEntries(entries);
+    return entries.length;
+  }
+
+  /** Shared clear path: cache records out (real removal, not a tombstone —
+   * see removeCachedTiles), manifest entries out, paint out, one `clear-area`
+   * log record with the removed entries so undo can restore them. */
+  private async clearManifestEntries(entries: ManifestEntry[]): Promise<void> {
+    if (!this.campaign) return;
+    const campaign = this.campaign;
+    const folder = campaignFolderFromConfigPath(campaign.path);
+    const seed = campaign.config.seed;
+    const keys = entries.flatMap((e) =>
+      generatorIdsForBand(e.tier).map((gid) => tileKey(seed, e.tileX, e.tileY, GENERATION_ZOOM, gid))
+    );
+    await removeCachedTiles(this.app, folder, keys);
+    for (const e of entries) {
+      this.manifest = withoutEntry(this.manifest, e.id);
+      this.loadedTiles.delete(this.tileKeyFor(e.tier, e.tileX, e.tileY));
+    }
+    await saveGeneratedManifest(this.app, campaign, this.manifest);
+    this.refreshGeneratedSource();
+    await appendLogEntry(this.app, folder, {
+      ts: Date.now(),
+      type: "clear-area",
+      campaignId: campaign.id,
+      path: generatedManifestPath(campaign),
+      data: { entries } as unknown as Record<string, unknown>,
+    });
+    new Notice(`Campaign Map: cleared ${entries.length} generated area${entries.length === 1 ? "" : "s"}`);
   }
 
   /**
@@ -561,7 +679,6 @@ export class MapView extends ItemView {
   }
 
   async onClose(): Promise<void> {
-    if (this.dispatchTimer !== null) window.clearTimeout(this.dispatchTimer);
     if (this.sketchAutoBuildTimer !== null) {
       window.clearTimeout(this.sketchAutoBuildTimer);
       this.sketchAutoBuildTimer = null;
@@ -709,7 +826,7 @@ export class MapView extends ItemView {
    * anything else that speaks GeoJSON). No network, no Node fs — the GM
    * drops the export into the vault first; this just picks it, converts
    * Point/Line/Polygon features to note specs, and writes them via
-   * `importOps.importNotes` (same write paths as quick-add/canonize). */
+   * `importOps.importNotes` (same write paths as quick-add). */
   async importGeojson(): Promise<void> {
     if (!this.campaign) {
       new Notice("Campaign Map: open a campaign first");
@@ -847,6 +964,32 @@ export class MapView extends ItemView {
           ? `Campaign Map: undid sketched ${parsed.data.properties.kind}`
           : `Campaign Map: restored deleted ${parsed.data.properties.kind}`
       );
+    } else if (last.type === "generate-area") {
+      // Undo a generate request = clear that area (appends its own
+      // `clear-area`, keeping the log a faithful history — same pattern as
+      // sketch undo).
+      const entry = ManifestEntrySchema.safeParse(last.data);
+      if (!entry.success) {
+        new Notice("Campaign Map: can't undo generate — malformed log entry");
+        return;
+      }
+      await this.loadManifestForCampaign();
+      await this.clearManifestEntries([entry.data]);
+    } else if (last.type === "clear-area") {
+      // Undo a clear = restore the manifest entries; output regenerates
+      // deterministically from the cache path.
+      const parsed = ManifestEntrySchema.array().safeParse((last.data as { entries?: unknown }).entries);
+      if (!parsed.success) {
+        new Notice("Campaign Map: can't undo clear — malformed log entry");
+        return;
+      }
+      await this.loadManifestForCampaign();
+      for (const entry of parsed.data) {
+        this.manifest = withEntry(this.manifest, entry);
+        await this.generateTierAt(entry.tier, entry.tileX, entry.tileY, false);
+      }
+      await saveGeneratedManifest(this.app, this.campaign, this.manifest);
+      new Notice(`Campaign Map: restored ${parsed.data.length} generated area${parsed.data.length === 1 ? "" : "s"}`);
     }
   }
 
@@ -931,13 +1074,19 @@ export class MapView extends ItemView {
   }
 
   private updateLoadingIndicator(): void {
-    this.loadingIndicatorEl.style.display = this.pendingTiles.size > 0 ? "" : "none";
+    this.loadingIndicatorEl.style.display = this.pendingGenerations > 0 ? "" : "none";
   }
 
-  /** Test/perf-gate surface: how many viewport-window tile entries are
-   * currently held (bounded by eviction, not by how far the GM has panned). */
+  /** Test/perf-gate surface: how many tile entries the render store holds
+   * (bounded by what the GM has explicitly generated, plan 019). */
   get loadedTileCount(): number {
     return this.loadedTiles.size;
+  }
+
+  /** Gate surface (plan 019 Phase 2): actual generator executions this
+   * session — pan/zoom aggressively and this must not move. */
+  get generatorRunCount(): number {
+    return this.generatorRunCounter;
   }
 
   /** Display-space (fictional units) — matches what's actually rendered/queryable on the map. */
@@ -967,222 +1116,109 @@ export class MapView extends ItemView {
     return [lng, lat];
   }
 
-  /** Debounced entry point for the viewport dispatcher — coalesces the
-   * flurry of moveend/zoomend/setCampaign calls a single pan or campaign
-   * switch can produce into one dispatch pass. */
-  private scheduleDispatch(): void {
-    if (this.dispatchTimer !== null) window.clearTimeout(this.dispatchTimer);
-    this.dispatchTimer = window.setTimeout(() => {
-      this.dispatchTimer = null;
-      void this.dispatchViewportTiles();
-    }, 200);
+  /** Wraps a tier generator so (a) the worker path is used when available
+   * and (b) every actual EXECUTION bumps the gate counter — cache hits
+   * never reach this closure, so the counter measures real generator work. */
+  private tierGenerator(worker: GenerationWorkerClient | null, id: string): TileGenerator {
+    const inner: TileGenerator = worker
+      ? (seed, bbox, constraints) => worker.generate(id as GeneratorId, seed, bbox, constraints)
+      : this.directGenerators[id];
+    return (seed, bbox, constraints) => {
+      this.generatorRunCounter++;
+      return inner(seed, bbox, constraints);
+    };
+  }
+
+  /** Runs every generator of `tier` for one tile through the cache path,
+   * stores the result in the render store, and paints. Generation-space in,
+   * generation-space stored — callers convert for display. */
+  private async generateTierAt(
+    tier: ZoomBand,
+    tileX: number,
+    tileY: number,
+    force: boolean
+  ): Promise<GeoJSON.Feature[]> {
+    const ctx = this.generationContext();
+    const worker = await this.plugin.getGenerationWorker();
+    this.pendingGenerations++;
+    this.updateLoadingIndicator();
+    let features: GeoJSON.Feature[];
+    try {
+      const results = await Promise.all(
+        generatorIdsForBand(tier).map((id) =>
+          generateTile(ctx, tileX, tileY, id, this.tierGenerator(worker, id), { force })
+        )
+      );
+      features = results.flat().filter((f) => featureTouchesBBox(f, ctx.worldBounds));
+    } finally {
+      this.pendingGenerations--;
+      this.updateLoadingIndicator();
+    }
+    this.loadedTiles.set(this.tileKeyFor(tier, tileX, tileY), features);
+    this.refreshGeneratedSource();
+    return features;
+  }
+
+  /** Loads `<campaign>/Generated.json` into memory once per campaign; bad
+   * entries get a warning notice (never a silent drop — CLAUDE.md). */
+  private async loadManifestForCampaign(): Promise<void> {
+    if (!this.campaign) return;
+    const target = this.campaign.id;
+    if (this.manifestLoadedFor === target) return;
+    const { manifest, invalidCount } = await loadGeneratedManifest(this.app, this.campaign);
+    if (this.campaign?.id !== target) return; // switched campaigns mid-load
+    this.manifest = manifest;
+    this.manifestLoadedFor = target;
+    if (invalidCount > 0) {
+      new Notice(
+        `Campaign Map: skipped ${invalidCount} invalid generation request${invalidCount === 1 ? "" : "s"} in Generated.json`
+      );
+    }
   }
 
   /**
-   * Phase 4 core: for the current viewport + zoom, generate whichever tier
-   * (world or city, per `bandForZoom`) is active, fetch any tile touching
-   * viewport+margin that isn't already loaded or in flight, and evict
-   * tiles that fell outside that window.
-   *
-   * Eviction is scoped to the *current* band's own tile-key prefix, not
-   * the whole store: a manual `generate-city-here`/`generate-world-here`
-   * call (docs/03 3b/3c) can legitimately add a tile from the *other* tier
-   * at a zoom the automatic dispatcher would never have picked — e.g. the
-   * GM forces city fabric while still zoomed out at world scale. If a
-   * same-band-only sweep also nuked cross-band keys, the very next
-   * automatic dispatch pass (200ms later, on the same unchanged zoom)
-   * would erase what the GM just asked for. A genuine zoom-band
-   * *transition* still needs to clear the outgoing tier wholesale (that's
-   * the "world tiles disappear when you zoom into city fabric" contract),
-   * so that's handled separately, keyed on the band actually changing —
-   * not on "some key isn't in this pass's wanted set."
+   * Manifest replay (plan 019): on campaign open, repaint every area the GM
+   * has asked to generate — cache hit or deterministic regenerate, so
+   * deleting `.mapcache/` stays harmless. Reads the tile cache ONCE up
+   * front: `generateTile`'s own `getCachedTile` re-reads and re-parses the
+   * whole JSONL per call, which would be O(entries × file-size) across a
+   * replay — the plan's own STOP condition (~1s for 20 areas) forbids that.
    */
-  private async dispatchViewportTiles(): Promise<void> {
-    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return;
-    const band = bandForZoom(this.map.getZoom());
-    const generatorIds = generatorIdsForBand(band);
-    const scale = this.campaign.config.scaleMetersPerUnit;
-
-    let evicted = false;
-    if (this.lastDispatchedBand !== null && this.lastDispatchedBand !== band) {
-      evicted = this.loadedTiles.size > 0;
-      this.loadedTiles.clear();
-    }
-    this.lastDispatchedBand = band;
-
-    const bounds = this.map.getBounds();
-    const viewportUnits: BBox = {
-      minX: bounds.getWest(),
-      minY: bounds.getSouth(),
-      maxX: bounds.getEast(),
-      maxY: bounds.getNorth(),
-    };
-    const viewportMeters = bboxUnitsToMeters(viewportUnits, scale);
-    // Capped, not proportional to viewport size: at low (world-tier) zoom the
-    // viewport can span dozens of 600m tiles, and an uncapped margin turned a
-    // single moveend into 16+ concurrent tile fetches (48+ simultaneous
-    // generator calls) — a real perf/concurrency problem, not just a test
-    // flakiness one, since it's the same "bound the work per dispatch" issue
-    // advisor flagged for the tile *store*, just showing up in the fetch
-    // burst instead of the eviction side.
-    const margin = Math.min(
-      Math.max(viewportMeters.maxX - viewportMeters.minX, viewportMeters.maxY - viewportMeters.minY) * 0.5,
-      GENERATION_TILE_SIZE * 2
-    );
-    const padded: BBox = {
-      minX: viewportMeters.minX - margin,
-      minY: viewportMeters.minY - margin,
-      maxX: viewportMeters.maxX + margin,
-      maxY: viewportMeters.maxY + margin,
-    };
-    const { tileX: minTX, tileY: minTY } = tileXYForPoint(padded.minX, padded.minY);
-    const { tileX: maxTX, tileY: maxTY } = tileXYForPoint(padded.maxX, padded.maxY);
-
-    const wanted = new Set<string>();
-    for (let tx = minTX; tx <= maxTX; tx++) {
-      for (let ty = minTY; ty <= maxTY; ty++) {
-        wanted.add(this.tileKeyFor(band, tx, ty));
-      }
-    }
-    this.wantedTiles = wanted;
-
-    const bandPrefix = `${band}:`;
-    for (const key of this.loadedTiles.keys()) {
-      if (key.startsWith(bandPrefix) && !wanted.has(key)) {
-        this.loadedTiles.delete(key);
-        evicted = true;
-      }
-    }
-    if (evicted) this.refreshGeneratedSource();
+  private async replayGeneratedManifest(): Promise<void> {
+    if (!this.campaign || this.campaign.config.crs !== "fictional") return;
+    const campaign = this.campaign;
+    if (this.manifestReplayedFor === campaign.id) return;
+    this.manifestReplayedFor = campaign.id;
+    await this.loadManifestForCampaign();
+    if (this.campaign?.id !== campaign.id) return;
+    if (this.manifest.entries.length === 0) return;
 
     const ctx = this.generationContext();
     const worker = await this.plugin.getGenerationWorker();
-    for (const key of wanted) {
-      if (this.loadedTiles.has(key) || this.pendingTiles.has(key)) continue;
-      const [, txStr, tyStr] = key.split(":");
-      this.pendingTiles.add(key);
-      this.updateLoadingIndicator();
-      void this.loadTile(ctx, worker, key, Number(txStr), Number(tyStr), generatorIds).finally(() => {
-        this.pendingTiles.delete(key);
-        this.updateLoadingIndicator();
-      });
-    }
-  }
-
-  private async loadTile(
-    ctx: GenerationContext,
-    worker: GenerationWorkerClient | null,
-    key: string,
-    tileX: number,
-    tileY: number,
-    generatorIds: readonly string[]
-  ): Promise<void> {
-    const results = await Promise.all(
-      generatorIds.map((id) => {
-        const compute: TileGenerator = worker
-          ? (seed, bbox, constraints) => worker.generate(id as GeneratorId, seed, bbox, constraints)
-          : this.directGenerators[id];
-        return generateTile(ctx, tileX, tileY, id, compute);
-      })
-    );
-    // Panned away while this was in flight — the tile's no longer wanted;
-    // storing it now would resurrect something dispatchViewportTiles already evicted.
-    if (!this.wantedTiles.has(key)) return;
-    const features = results.flat().filter((f) => featureTouchesBBox(f, ctx.worldBounds));
-    this.loadedTiles.set(key, features);
-    this.refreshGeneratedSource();
-  }
-
-  /** "Generate city fabric here" (docs/03 3b/3d) — streets/districts/blocks
-   * for the tile at `point` (display-space; defaults to the map center).
-   * Manual trigger sharing the same tile store as the viewport dispatcher —
-   * a manually-forced tile is subject to the same eviction on the next
-   * dispatch pass, which is correct: revisiting re-fetches from `.mapcache/`
-   * identically (determinism), it's just not pinned in memory forever.
-   * Procedural generation targets fictional worlds — real-city campaigns
-   * already have their fabric from the Protomaps basemap (Phase 2). */
-  async generateCityHere(point?: [number, number], force = false): Promise<GeoJSON.Feature[]> {
-    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
-    const scale = this.campaign.config.scaleMetersPerUnit;
-    const centerUnits = point ?? this.mapCenterUnits();
-    const centerMeters: [number, number] = [unitsToMeters(centerUnits[0], scale), unitsToMeters(centerUnits[1], scale)];
-    const ctx = this.generationContext();
-    const { tileX, tileY } = tileXYForPoint(centerMeters[0], centerMeters[1]);
-    const run = force ? regenerateTile : generateTile;
-    const [streets, districts, blocks] = await Promise.all([
-      run(ctx, tileX, tileY, "city-street", generateCityStreets),
-      run(ctx, tileX, tileY, "city-district", generateDistricts),
-      run(ctx, tileX, tileY, "city-block", generateCityBlocks),
-    ]);
-    const newFeatures = [...streets, ...districts, ...blocks].filter((f) => featureTouchesBBox(f, ctx.worldBounds));
-    this.loadedTiles.set(this.tileKeyFor("city", tileX, tileY), newFeatures);
-    this.refreshGeneratedSource();
-    return newFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
-  }
-
-  /** "Generate world fabric here" (docs/03 3c) — regions/settlements/routes. */
-  async generateWorldHere(point?: [number, number], force = false): Promise<GeoJSON.Feature[]> {
-    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
-    const scale = this.campaign.config.scaleMetersPerUnit;
-    const centerUnits = point ?? this.mapCenterUnits();
-    const centerMeters: [number, number] = [unitsToMeters(centerUnits[0], scale), unitsToMeters(centerUnits[1], scale)];
-    const ctx = this.generationContext();
-    const { tileX, tileY } = tileXYForPoint(centerMeters[0], centerMeters[1]);
-    const run = force ? regenerateTile : generateTile;
-    const [regions, settlements, routes] = await Promise.all([
-      run(ctx, tileX, tileY, "world-region", generateWorldRegions),
-      run(ctx, tileX, tileY, "world-settlement", generateSettlements),
-      run(ctx, tileX, tileY, "world-route", generateRoutes),
-    ]);
-    const newFeatures = [...regions, ...settlements, ...routes].filter((f) => featureTouchesBBox(f, ctx.worldBounds));
-    this.loadedTiles.set(this.tileKeyFor("world", tileX, tileY), newFeatures);
-    this.refreshGeneratedSource();
-    return newFeatures.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
-  }
-
-  /** Canonize whichever generated Point feature is nearest `point`
-   * (display-space; defaults to the map center) — docs/02 §5: "canonize =
-   * create the note, remove from cache." Uses the name/type the generator
-   * already assigned; no modal, consistent with the ≤5s add-location bar. */
-  async canonizeGeneratedNear(point?: [number, number], maxDistanceMeters = 40): Promise<boolean> {
-    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return false;
-    const scale = this.campaign.config.scaleMetersPerUnit;
-    const atUnits = point ?? this.mapCenterUnits();
-    const atMeters: [number, number] = [unitsToMeters(atUnits[0], scale), unitsToMeters(atUnits[1], scale)];
-
-    let best: GeoJSON.Feature | null = null;
-    let bestDist = Infinity;
-    let bestTileKey: string | null = null;
-    for (const [key, features] of this.loadedTiles) {
-      for (const f of features) {
-        if (f.geometry.type !== "Point") continue;
-        const [fx, fy] = f.geometry.coordinates as [number, number];
-        const d = Math.hypot(fx - atMeters[0], fy - atMeters[1]);
-        if (d < bestDist) {
-          bestDist = d;
-          best = f;
-          bestTileKey = key;
-        }
+    const folder = campaignFolderFromConfigPath(campaign.path);
+    const cached = await readCachedTiles(this.app, folder);
+    const seed = campaign.config.seed;
+    this.pendingGenerations++;
+    this.updateLoadingIndicator();
+    try {
+      for (const entry of [...this.manifest.entries]) {
+        if (this.campaign?.id !== campaign.id) return; // switched mid-replay
+        const perGenerator = await Promise.all(
+          generatorIdsForBand(entry.tier).map((gid) => {
+            const key = tileKey(seed, entry.tileX, entry.tileY, GENERATION_ZOOM, gid);
+            const hit = cached.get(key);
+            if (hit) return Promise.resolve(hit.features as unknown as GeoJSON.Feature[]);
+            return generateTile(ctx, entry.tileX, entry.tileY, gid, this.tierGenerator(worker, gid));
+          })
+        );
+        const features = perGenerator.flat().filter((f) => featureTouchesBBox(f, ctx.worldBounds));
+        this.loadedTiles.set(this.tileKeyFor(entry.tier, entry.tileX, entry.tileY), features);
       }
+    } finally {
+      this.pendingGenerations--;
+      this.updateLoadingIndicator();
     }
-    if (!best || !bestTileKey || bestDist > maxDistanceMeters) return false;
-
-    const props = (best.properties ?? {}) as Record<string, unknown>;
-    const name = String(props.name ?? "Unnamed");
-    const type = String(props.type ?? "custom");
-    const noteFeature = transformFeatureUnits(best, (n) => metersToUnits(n, scale));
-    await canonizeFeature(this.generationContext(), this.plugin, best, name, type, noteFeature);
-    // The dispatcher's debounced eviction can fire during the vault I/O
-    // canonizeFeature() just awaited — the tile may already be gone (panned
-    // out of view mid-canonize). That's fine: canonizeFeature() already
-    // stripped the feature from the on-disk cache either way, so there's
-    // nothing left to reconcile in memory.
-    const stillLoaded = this.loadedTiles.get(bestTileKey);
-    if (stillLoaded) {
-      this.loadedTiles.set(bestTileKey, stillLoaded.filter((f) => f.id !== best!.id));
-      this.refreshGeneratedSource();
-    }
-    return true;
+    this.refreshGeneratedSource();
   }
 
   private applyCampaign(): void {
@@ -1686,37 +1722,6 @@ export class MapView extends ItemView {
     if (evicted) this.refreshGeneratedSource();
   }
 
-  /** "Promote to location note" (plan 013): the selected fabric feature — or
-   * one picked from a list — becomes a real note + sidecar .geojson (lore
-   * home); the drawing itself stays in Fabric.geojson (see fabricStore). */
-  async promoteFabricFeature(): Promise<void> {
-    if (!this.campaign) return;
-    const campaign = this.campaign;
-    await this.loadFabricForCampaign();
-    const features = this.fabricCollection.features;
-    if (features.length === 0) {
-      new Notice("Campaign Map: no sketched fabric to promote (draw some in sketch mode first)");
-      return;
-    }
-    const promote = (feature: FabricFeature): void => {
-      void promoteFabricToNote(this.app, campaign, feature.id).then((file) => {
-        new Notice(
-          file
-            ? `Campaign Map: promoted sketch → "${file.basename}"`
-            : "Campaign Map: couldn't promote — feature not found in Fabric.geojson"
-        );
-      });
-    };
-    const selected = this.selectedFabricId
-      ? features.find((f) => f.id === this.selectedFabricId)
-      : undefined;
-    if (selected) {
-      promote(selected);
-      return;
-    }
-    new FabricFeaturePickerModal(this.app, features, promote).open();
-  }
-
   /** Plan 014 ("Generate from sketch"): elaborates every generate-mode road
    * corridor into a street network via the pure corridor generator. The
    * result is regenerable cache (same tile store/cache path as "generate
@@ -1864,11 +1869,6 @@ export class MapView extends ItemView {
       this.showPlaceCard(canon);
       return;
     }
-    const generated = this.pickFeatureNear(e.point, ["generated-point", "generated-label"]);
-    if (generated) {
-      this.showGeneratedCard(generated, e.lngLat);
-      return;
-    }
     const line = this.map.queryRenderedFeatures(e.point, {
       layers: this.map.getLayer("connection-line") ? ["connection-line"] : [],
     })[0];
@@ -1900,6 +1900,30 @@ export class MapView extends ItemView {
           new Notice("Campaign Map: coordinates copied");
         })
     );
+    // Explicit generation lives on the right-click grammar (plan 019): the
+    // only way procedural fabric appears, changes, or goes away is the GM
+    // asking at a spot. Fictional campaigns only — real cities have basemaps.
+    if (this.campaign.config.crs === "fictional") {
+      menu.addSeparator();
+      menu.addItem((item) =>
+        item
+          .setTitle("Generate fabric here")
+          .setIcon("wand")
+          .onClick(() => void this.generateFabricHere(point))
+      );
+      menu.addItem((item) =>
+        item
+          .setTitle("Regenerate fabric here")
+          .setIcon("refresh-cw")
+          .onClick(() => void this.regenerateFabricHere(point))
+      );
+      menu.addItem((item) =>
+        item
+          .setTitle("Clear generated fabric here")
+          .setIcon("eraser")
+          .onClick(() => void this.clearGeneratedHere(point))
+      );
+    }
     menu.showAtPosition({ x: e.originalEvent.clientX, y: e.originalEvent.clientY });
   }
 
@@ -2040,34 +2064,6 @@ export class MapView extends ItemView {
           new Notice(`Campaign Map: connected ${location.name} → ${target.name}`);
         });
       }).open();
-    };
-
-    this.placeCardPopup = new maplibregl.Popup({ closeButton: true, maxWidth: "280px", className: "campaign-map-place-card-popup" })
-      .setLngLat(feature.geometry.coordinates as [number, number])
-      .setDOMContent(el)
-      .addTo(this.map);
-  }
-
-  private showGeneratedCard(feature: MapGeoJSONFeature, lngLat: maplibregl.LngLat): void {
-    if (!this.map || !this.campaign || feature.geometry.type !== "Point") return;
-    this.droppedPinPopup?.remove();
-    this.placeCardPopup?.remove();
-
-    const name = String(feature.properties?.name ?? "Unnamed");
-    const type = String(feature.properties?.type ?? "settlement");
-
-    const el = document.createElement("div");
-    el.addClass("campaign-map-place-card");
-    el.createEl("h4", { text: name });
-    el.createDiv({ cls: "campaign-map-place-card-preview", text: `Generated ${type} — not yet canon.` });
-
-    const actions = el.createDiv({ cls: "campaign-map-place-card-actions" });
-    const at = feature.geometry.coordinates as [number, number];
-    actions.createEl("button", { text: "Add to canon" }).onclick = () => {
-      void this.canonizeGeneratedNear(at).then((ok) => {
-        this.placeCardPopup?.remove();
-        new Notice(ok ? `Campaign Map: "${name}" is now canon` : "Campaign Map: could not canonize");
-      });
     };
 
     this.placeCardPopup = new maplibregl.Popup({ closeButton: true, maxWidth: "280px", className: "campaign-map-place-card-popup" })

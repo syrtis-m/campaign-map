@@ -10,7 +10,7 @@ import {
   type Visibility,
 } from "./model/locationNote";
 import { LocationIndex } from "./map/locationIndex";
-import { createLocationNote, createLocationNoteFromFeature, moveLocationNote } from "./vault/locationOps";
+import { createLocationNote, moveLocationNote } from "./vault/locationOps";
 import { GenerationWorkerClient } from "./map/generation/workerClient";
 import { readLog, campaignFolderFromConfigPath, type LogEntry } from "./model/mutationLog";
 
@@ -75,10 +75,15 @@ export default class CampaignMapPlugin extends Plugin {
   get rescanTimeMs(): number {
     return this.lastRescanMs;
   }
-  // Phase 4 dispatcher surface: how many tile-store entries the active
-  // view currently holds (viewport-windowed, not ever-growing — see MapView).
+  // Render-store surface: how many tile entries the active view holds
+  // (bounded by what the GM explicitly generated — plan 019).
   get loadedTileCount(): number {
     return this.activeMapView()?.loadedTileCount ?? 0;
+  }
+  // Plan 019 Phase 2 gate surface: actual generator executions in the active
+  // view — pan/zoom aggressively and this must stay put.
+  get generatorRunCount(): number {
+    return this.activeMapView()?.generatorRunCount ?? 0;
   }
 
   /** Lazily created, shared across the session; the Phase 4 viewport
@@ -230,56 +235,45 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "generate-city-here",
-      name: "Generate city fabric here",
+      id: "generate-fabric-here",
+      name: "Generate fabric here",
       checkCallback: (checking) => {
         const view = this.activeMapView();
         if (!view?.campaign) return false;
-        if (!checking) void view.generateCityHere();
+        if (!checking) void view.generateFabricHere();
         return true;
       },
     });
 
     this.addCommand({
-      id: "regenerate-city-here",
-      name: "Regenerate city fabric here",
+      id: "regenerate-fabric-here",
+      name: "Regenerate fabric here (re-run against current constraints)",
       checkCallback: (checking) => {
         const view = this.activeMapView();
         if (!view?.campaign) return false;
-        if (!checking) void view.generateCityHere(undefined, true);
+        if (!checking) void view.regenerateFabricHere();
         return true;
       },
     });
 
     this.addCommand({
-      id: "generate-world-here",
-      name: "Generate world fabric here",
+      id: "clear-generated-here",
+      name: "Clear generated fabric here",
       checkCallback: (checking) => {
         const view = this.activeMapView();
         if (!view?.campaign) return false;
-        if (!checking) void view.generateWorldHere();
+        if (!checking) void view.clearGeneratedHere();
         return true;
       },
     });
 
     this.addCommand({
-      id: "regenerate-world-here",
-      name: "Regenerate world fabric here",
+      id: "clear-all-generated",
+      name: "Clear all generated fabric",
       checkCallback: (checking) => {
         const view = this.activeMapView();
         if (!view?.campaign) return false;
-        if (!checking) void view.generateWorldHere(undefined, true);
-        return true;
-      },
-    });
-
-    this.addCommand({
-      id: "canonize-nearest-generated",
-      name: "Canonize nearest generated feature",
-      checkCallback: (checking) => {
-        const view = this.activeMapView();
-        if (!view?.campaign) return false;
-        if (!checking) void view.canonizeGeneratedNear();
+        if (!checking) void view.clearAllGenerated();
         return true;
       },
     });
@@ -302,17 +296,6 @@ export default class CampaignMapPlugin extends Plugin {
         const view = this.activeMapView();
         if (!view?.campaign) return false;
         if (!checking) void view.generateFromSketch();
-        return true;
-      },
-    });
-
-    this.addCommand({
-      id: "promote-fabric-feature",
-      name: "Promote sketched fabric to location note",
-      checkCallback: (checking) => {
-        const view = this.activeMapView();
-        if (!view?.campaign) return false;
-        if (!checking) void view.promoteFabricFeature();
         return true;
       },
     });
@@ -385,18 +368,6 @@ export default class CampaignMapPlugin extends Plugin {
     const campaign = this.getCampaign(campaignId);
     if (!campaign) throw new Error(`Unknown campaign: ${campaignId}`);
     await moveLocationNote(this.app, campaign, location, newPoint);
-  }
-
-  /** Canonization entry point (docs/02 §5): Point → plain note, other geometry → note + sidecar .geojson. */
-  async createLocationFromFeature(
-    campaignId: string,
-    feature: GeoJSON.Feature,
-    name: string,
-    type: string
-  ): Promise<void> {
-    const campaign = this.getCampaign(campaignId);
-    if (!campaign) throw new Error(`Unknown campaign: ${campaignId}`);
-    await createLocationNoteFromFeature(this.app, campaign, feature, name, type);
   }
 
   private async readCampaignLog(campaignId: string): Promise<LogEntry[]> {

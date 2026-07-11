@@ -3,10 +3,7 @@ import type { ParsedCampaign } from "../model/campaignConfig";
 import {
   type ParsedLocation,
   type Visibility,
-  type FocusDepth,
-  FOCUS_DEPTHS,
   defaultVisibilityForType,
-  focusToVisibility,
 } from "../model/locationNote";
 import { appendLogEntry, campaignFolderFromConfigPath } from "../model/mutationLog";
 
@@ -65,10 +62,10 @@ export async function createLocationNote(
 }
 
 /**
- * Non-point canon geometry (e.g. a canonized generated street) — "complex
- * geometry → sidecar .geojson" (CLAUDE.md conventions). Frontmatter's
- * `geometry` field holds the vault-relative sidecar path instead of a point
- * tuple; `parseLocationNote` already accepts either shape.
+ * Non-point location geometry (e.g. an imported river or district) —
+ * "complex geometry → sidecar .geojson" (CLAUDE.md conventions).
+ * Frontmatter's `geometry` field holds the vault-relative sidecar path
+ * instead of a point tuple; `parseLocationNote` already accepts either shape.
  */
 export async function createLocationNoteWithSidecar(
   app: App,
@@ -102,32 +99,6 @@ export async function createLocationNoteWithSidecar(
   });
 
   return file;
-}
-
-/** Canonizes any generated feature (Point → a plain location note; other
- * geometry → note + sidecar .geojson). "Canonize = create the note, remove
- * from cache" (docs/02 §5). */
-export async function createLocationNoteFromFeature(
-  app: App,
-  campaign: ParsedCampaign,
-  feature: GeoJSON.Feature,
-  name: string,
-  type: string
-): Promise<TFile> {
-  // Plan 015: carry the generated feature's `focus` bucket → explicit visibility
-  // so a canonized city stays as visible as its pin was (before this, the note
-  // lost its bucket and fell to the global default — a regression the decoupling
-  // would otherwise introduce). Absent/invalid → type-hinted default.
-  const rawFocus = (feature.properties ?? {})["focus"];
-  const visibility: Visibility =
-    typeof rawFocus === "string" && (FOCUS_DEPTHS as readonly string[]).includes(rawFocus)
-      ? focusToVisibility(rawFocus as FocusDepth)
-      : defaultVisibilityForType(type);
-
-  if (feature.geometry.type === "Point") {
-    return createLocationNote(app, campaign, feature.geometry.coordinates as [number, number], name, type, visibility);
-  }
-  return createLocationNoteWithSidecar(app, campaign, feature.geometry, name, type, visibility);
 }
 
 /** Drag-to-move: writes through Obsidian's frontmatter API (never hand-parse YAML). */

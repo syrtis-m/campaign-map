@@ -1,7 +1,6 @@
-import type { App, TFile } from "obsidian";
+import type { App } from "obsidian";
 import type { ParsedCampaign } from "../model/campaignConfig";
 import { campaignFolderFromConfigPath } from "../model/mutationLog";
-import { createLocationNoteWithSidecar } from "./locationOps";
 import {
   emptyFabric,
   parseFabric,
@@ -9,13 +8,13 @@ import {
   withoutFeature,
   type FabricCollection,
   type FabricFeature,
-  type FabricKind,
 } from "../model/fabric";
 
 /**
  * Sketched-fabric store (plan 013): ONE per-campaign `<campaign>/Fabric.geojson`
- * — canon (durable, synced, NOT under `.mapcache/`), read/written via the
- * Vault adapter only (CLAUDE.md: never Node fs).
+ * — durable, synced, NOT under `.mapcache/` — read/written via the Vault
+ * adapter only (CLAUDE.md: never Node fs). Fabric is background geometry
+ * ("things on the map", plan 019); it never becomes a location note.
  */
 export function fabricPath(campaign: ParsedCampaign): string {
   return `${campaignFolderFromConfigPath(campaign.path)}/Fabric.geojson`;
@@ -68,43 +67,4 @@ export async function removeFabricFeature(
   const next = withoutFeature(fabric, id);
   await saveFabric(app, campaign, next);
   return { fabric: next, removed };
-}
-
-/** Fabric kinds → the location-type taxonomy (locationNote.ts) a promoted
- * note gets, so importance/zoom-range defaults keep doing the cartographic
- * discipline for promoted fabric too. */
-export const FABRIC_KIND_NOTE_TYPE: Record<FabricKind, string> = {
-  road: "street(named)",
-  wall: "landmark",
-  river: "water-feature",
-  water: "water-feature",
-  district: "district",
-  park: "landmark",
-};
-
-/**
- * "Promote to location note" (plan 013): creates a real location note whose
- * geometry sidecar is the fabric feature's geometry — mirroring canonize's
- * non-point path (`createLocationNoteWithSidecar`). The fabric feature is
- * intentionally KEPT in Fabric.geojson: unlike canonize (cache → note), fabric
- * is already canon, and the fabric layer is what renders the line/polygon —
- * the note adds lore + a searchable identity, it doesn't replace the drawing.
- */
-export async function promoteFabricToNote(
-  app: App,
-  campaign: ParsedCampaign,
-  id: string
-): Promise<TFile | null> {
-  const { fabric } = await loadFabric(app, campaign);
-  const feature = fabric.features.find((f) => f.id === id);
-  if (!feature) return null;
-  const kind = feature.properties.kind;
-  const name = feature.properties.name?.trim() || `Sketched ${kind}`;
-  return createLocationNoteWithSidecar(
-    app,
-    campaign,
-    feature.geometry as GeoJSON.Geometry,
-    name,
-    FABRIC_KIND_NOTE_TYPE[kind]
-  );
 }

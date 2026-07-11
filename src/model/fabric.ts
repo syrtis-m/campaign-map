@@ -1,12 +1,13 @@
 import { z } from "zod";
 
 /**
- * Sketched city fabric (plan 013, Phase 6) — non-location map geometry the GM
- * draws directly (roads, walls, rivers, water, districts, parks). ONE
- * promotable per-campaign `Fabric.geojson` (no note-per-feature clutter);
- * individual features can be promoted to a location note when they deserve
- * lore. This file is pure (zod only — no DOM/map/Obsidian imports) so plan
- * 014's generators can read fabric features as constraints headlessly.
+ * Sketched fabric (plans 013/019) — "things on the map": background geometry
+ * the GM draws directly (roads, walls, rivers, water, districts, parks),
+ * stored in ONE per-campaign `Fabric.geojson` (no note-per-feature clutter).
+ * Fabric is a separate layer from Locations (note-backed places) and never
+ * promotes to one — the two-layer model of plan 019. This file is pure (zod
+ * only — no DOM/map/Obsidian imports) so generators can read fabric features
+ * as constraints headlessly.
  */
 export const FABRIC_KINDS = ["road", "wall", "river", "water", "district", "park"] as const;
 export type FabricKind = (typeof FABRIC_KINDS)[number];

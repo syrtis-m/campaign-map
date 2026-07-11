@@ -38,34 +38,50 @@ export class CampaignControlModal extends Modal {
   /**
    * Occasional/heavy builder actions relocated from the on-map toolbar (plan
    * 018) so the map surface stays clean and fast to read. "Generate fabric
-   * here" and "Canonize nearest" stay viewport-relative: they call the same
-   * MapView methods the toolbar did, which read the live map center / zoom —
-   * the modal is just a new trigger, the "here" semantics are unchanged. Every
-   * action here is also on the command palette.
+   * here" stays viewport-relative: it calls the same MapView method the
+   * toolbar did, which reads the live map center / zoom — the modal is just a
+   * new trigger, the "here" semantics are unchanged. Every action here is
+   * also on the command palette.
    */
   private renderGenerateAndExport(root: HTMLElement): void {
     new Setting(root).setName("Generate & export").setHeading();
     root.createEl("p", {
       cls: "setting-item-description",
-      text: "Occasional/heavy actions. Generate and Canonize act on the current map center and zoom (position the view first). All are also in the command palette.",
+      text: "Occasional/heavy actions. Generate acts on the current map center and zoom (position the view first). All are also in the command palette.",
     });
 
     new Setting(root)
       .setName("Generate fabric here")
-      .setDesc("Paints procedural fabric around the map center — world or city tier, chosen from the current zoom.")
+      .setDesc("Paints procedural fabric around the map center — world or city tier, chosen from the current zoom. Durable: the area repaints on every open until cleared.")
       .addButton((btn) =>
         btn.setButtonText("Generate").onClick(() => {
-          this.view.generateFabricHere();
+          void this.view.generateFabricHere();
           this.close();
         })
       );
 
     new Setting(root)
-      .setName("Canonize nearest generated")
-      .setDesc("Turns the generated feature nearest the map center into a real canon note.")
+      .setName("Regenerate fabric here")
+      .setDesc("Re-runs generation at the map center against current constraints (locations + sketched fabric).")
       .addButton((btn) =>
-        btn.setButtonText("Canonize").onClick(() => {
-          this.view.canonizeNearestHere();
+        btn.setButtonText("Regenerate").onClick(() => {
+          void this.view.regenerateFabricHere();
+          this.close();
+        })
+      );
+
+    new Setting(root)
+      .setName("Clear generated fabric")
+      .setDesc("Remove generated fabric at the map center, or all of it. Sketched fabric and locations are never touched.")
+      .addButton((btn) =>
+        btn.setButtonText("Clear here").onClick(() => {
+          void this.view.clearGeneratedHere();
+          this.close();
+        })
+      )
+      .addButton((btn) =>
+        btn.setButtonText("Clear all").onClick(() => {
+          void this.view.clearAllGenerated();
           this.close();
         })
       );

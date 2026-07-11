@@ -3,14 +3,13 @@ import type { ThemeTokens } from "./tokens";
 import { CANON_DOT_RADIUS, focusLabelLayers } from "./canonLayers";
 
 /**
- * Generated city/world fabric (Phase 3), styled from the same theme tokens
- * as the real-city basemap and canon layers so it reads as "part of the
- * map," not a debug overlay — quality-bar F2 (provenance invisibility): a
- * GM shouldn't be able to eyeball canon vs. generated, only distinguish
- * them through the "Canonize" action. Settlement points reuse canon-point's
- * exact circle+label recipe (same property schema: importance/minZoom/
- * maxZoom/name — see gen/world/settlements.ts) against the "generated"
- * source instead of "canon".
+ * Generated fabric, styled from the same theme tokens as the real-city
+ * basemap and fabric layers so it reads as "part of the map," not a debug
+ * overlay — quality-bar F2 (provenance invisibility): sketched and
+ * generated fabric of the same kind should look like the same class of
+ * thing. Settlement points reuse canon-point's exact circle+label recipe
+ * (same property schema — see gen/world/settlements.ts) against the
+ * "generated" source instead of "canon".
  */
 export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
   return [

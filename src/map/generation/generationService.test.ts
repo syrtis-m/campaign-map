@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { App } from "obsidian";
-import { canonizeFeature, generateTile, regenerateTile, type GenerationContext, type LocationCreator } from "./generationService";
+import { generateTile, regenerateTile, type GenerationContext } from "./generationService";
+import { removeCachedTiles } from "../../model/tileCache";
+import { GENERATION_ZOOM, tileKey } from "../../gen/cache/tileGrid";
 import { generateCityStreets } from "../../gen/city";
 import { generateSettlements } from "../../gen/world";
-import { createLocationNoteFromFeature } from "../../vault/locationOps";
 import type { ParsedCampaign } from "../../model/campaignConfig";
 import type { BBox } from "../../gen/spatialHash";
 
@@ -131,58 +132,32 @@ describe("generateTile naming constraints", () => {
   });
 });
 
-describe("canonizeFeature", () => {
-  it("creates the note and removes the feature from its cached tile", async () => {
+describe("removeCachedTiles (plan 019 'clear generated fabric')", () => {
+  it("a cleared tile is a true cache MISS: the next generate re-runs the generator (not a blank tombstone)", async () => {
     const { app } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
-    const settlements = await generateTile(ctx, 0, 0, "world-settlement", generateSettlements);
-    expect(settlements.length).toBeGreaterThan(0);
-    const target = settlements[0];
+    const generator = vi.fn(generateCityStreets);
 
-    const createLocationFromFeature = vi.fn(
-      async (_campaignId: string, _feature: GeoJSON.Feature, _name: string, _type: string) => {}
-    );
-    const locations: LocationCreator = { createLocationFromFeature };
+    const first = await generateTile(ctx, 0, 0, "city-street", generator);
+    const key = tileKey(campaign().config.seed, 0, 0, GENERATION_ZOOM, "city-street");
+    await removeCachedTiles(app, "Campaigns/Ashfall", [key]);
+    const second = await generateTile(ctx, 0, 0, "city-street", generator);
 
-    await canonizeFeature(ctx, locations, target, "Test Town", "town");
-
-    expect(createLocationFromFeature).toHaveBeenCalledTimes(1);
-    const [campaignId, feature, name, type] = createLocationFromFeature.mock.calls[0];
-    expect(campaignId).toBe("ashfall");
-    expect(feature).toBe(target);
-    expect(name).toBe("Test Town");
-    expect(type).toBe("town");
-
-    const after = await generateTile(ctx, 0, 0, "world-settlement", generateSettlements);
-    expect(after.find((f) => f.id === target.id)).toBeUndefined();
-    expect(after.length).toBe(settlements.length - 1);
+    expect(generator).toHaveBeenCalledTimes(2);
+    expect(second).toEqual(first); // determinism holds across clear+regenerate
   });
 
-  it("canonizes a LineString (street) via a sidecar .geojson — not yet reachable from the UI (canonizeGeneratedNear only offers Points, since there's no canon-line render layer yet; see DECISIONS.md), but the mechanism the roadmap's 'canonize a street' exit test names is real and tested here", async () => {
-    const { app, files } = fakeApp();
+  it("only removes the given keys — other tiles' records survive the rewrite", async () => {
+    const { app } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
-    const streets = await generateTile(ctx, 0, 0, "city-street", generateCityStreets);
-    expect(streets.length).toBeGreaterThan(0);
-    const street = streets[0];
-    expect(street.geometry.type).toBe("LineString");
+    const generator = vi.fn(generateCityStreets);
 
-    const locations: LocationCreator = {
-      createLocationFromFeature: (campaignId, feature, name, type) =>
-        createLocationNoteFromFeature(app, ctx.campaign, feature, name, type).then(() => undefined),
-    };
-
-    await canonizeFeature(ctx, locations, street, "Test Street", "street(named)");
-
-    const notePath = "Campaigns/Ashfall/Locations/Test Street.md";
-    const sidecarPath = "Campaigns/Ashfall/Locations/Test Street.geojson";
-    expect(files.has(notePath)).toBe(true);
-    expect(files.get(notePath)).toContain(`geometry: "${sidecarPath}"`);
-    expect(files.has(sidecarPath)).toBe(true);
-    const sidecar = JSON.parse(files.get(sidecarPath)!) as GeoJSON.Feature;
-    expect(sidecar.geometry).toEqual(street.geometry);
-
-    // Stripped from its cached tile like any other canonized feature.
-    const after = await generateTile(ctx, 0, 0, "city-street", generateCityStreets);
-    expect(after.find((f) => f.id === street.id)).toBeUndefined();
+    await generateTile(ctx, 0, 0, "city-street", generator);
+    await generateTile(ctx, 1, 0, "city-street", generator);
+    await removeCachedTiles(app, "Campaigns/Ashfall", [
+      tileKey(campaign().config.seed, 0, 0, GENERATION_ZOOM, "city-street"),
+    ]);
+    await generateTile(ctx, 1, 0, "city-street", generator); // still cached
+    expect(generator).toHaveBeenCalledTimes(2);
   });
 });

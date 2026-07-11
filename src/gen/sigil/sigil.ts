@@ -66,7 +66,7 @@ function chargePath(charge: (typeof CHARGES)[number], size: number): string {
   }
 }
 
-/** `(seed) => svgString` — deterministic sigil, e.g. for a canonized settlement or faction. */
+/** `(seed) => svgString` — deterministic sigil, e.g. for a settlement or faction location. */
 export function generateSigil(seed: number, opts: SigilOptions = {}): string {
   const size = opts.size ?? 64;
   const rng = mulberry32(seed);

@@ -9,12 +9,15 @@ import type { App } from "obsidian";
  */
 export const LogEntrySchema = z.object({
   ts: z.number(),
-  type: z.enum(["create", "move", "sketch-add", "sketch-remove"]),
+  type: z.enum(["create", "move", "sketch-add", "sketch-remove", "generate-area", "clear-area"]),
   campaignId: z.string(),
   path: z.string(),
   // create: the full frontmatter written. move: {from:[x,y], to:[x,y]}.
   // sketch-add/sketch-remove (plan 013): the full FabricFeature, so undo can
   // remove a just-drawn feature or restore a just-deleted one.
+  // generate-area (plan 019): the ManifestEntry the GM requested.
+  // clear-area (plan 019): { entries: ManifestEntry[] } that were removed,
+  // so undo can restore them (output regenerates deterministically).
   data: z.record(z.string(), z.unknown()),
 });
 export type LogEntry = z.infer<typeof LogEntrySchema>;

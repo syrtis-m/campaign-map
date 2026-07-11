@@ -11,8 +11,8 @@ describe("bandForZoom", () => {
 });
 
 describe("generatorIdsForBand", () => {
-  it("world band is regions/settlements/routes, city band is streets/districts/blocks", () => {
-    expect(generatorIdsForBand("world")).toEqual(["world-region", "world-settlement", "world-route"]);
+  it("world tier is regions/routes (no settlements — named places are Locations, plan 019 D2), city tier is streets/districts/blocks", () => {
+    expect(generatorIdsForBand("world")).toEqual(["world-region", "world-route"]);
     expect(generatorIdsForBand("city")).toEqual(["city-street", "city-district", "city-block"]);
   });
 });
