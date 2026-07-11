@@ -110,21 +110,30 @@ data never carries color or style, so any map looks right in every theme.
 
 ## The map toolbar
 
-Top-left of the map, in order:
+Top-left of the map, in order — kept deliberately small: only the actions you
+reach for constantly mid-session.
 
 | Button | Does |
 |---|---|
 | ➕ **Add location at center** | Quick-add a canon location at the current center. |
-| 🪄 **Generate fabric here** | Paints procedural fabric around here. Picks *world* (regions/settlements/routes) or *city* (streets/districts) automatically from your zoom. |
-| 🔖 **Canonize nearest generated** | Turns the nearest generated feature into a real canon note. |
 | ✏️ **Sketch fabric** | Enters sketch mode to hand-draw roads, walls, rivers, water, districts, parks (see Sketching). |
 | 🔍 **Search locations** | Quick-switcher-style jump-to-location. |
 | 🎨 **Switch map theme** | Cycle the visual style. |
+| ⚙️ **Campaign settings** | Theme, naming culture, basemap — and the **Generate & export** actions below. |
+
+The occasional/heavy actions live one click deeper, under **Campaign settings →
+Generate & export**, so they don't clutter the map:
+
+| Action (in ⚙️ settings) | Does |
+|---|---|
+| 🪄 **Generate fabric here** | Paints procedural fabric around the map center. Picks *world* (regions/settlements/routes) or *city* (streets/districts) automatically from your zoom. |
+| 🔖 **Canonize nearest generated** | Turns the generated feature nearest the map center into a real canon note. |
 | 🖼️ **Export map poster** | High-res PNG of the current view. |
 | 📖 **Export campaign atlas (PDF)** | Map renders + your location notes as a gazetteer. |
-| ⚙️ **Campaign settings** | Theme, naming culture, basemap. |
 
-Everything here is also in the command palette (search "Campaign Map").
+Generate and Canonize still act on the current map center and zoom — position
+the view first, then open settings. Everything here (toolbar and settings) is
+also in the command palette (search "Campaign Map").
 
 ### Interaction grammar (borrowed wholesale from Google Maps)
 - **Click a pin** → place card with a note preview + Open / Center / Connect to…

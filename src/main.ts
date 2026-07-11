@@ -570,7 +570,7 @@ export default class CampaignMapPlugin extends Plugin {
       new Notice("Campaign Map: open a campaign map first");
       return;
     }
-    new CampaignControlModal(this.app, this, view.campaign).open();
+    new CampaignControlModal(this.app, this, view.campaign, view).open();
   }
 
   private async openCampaign(campaign: ParsedCampaign): Promise<void> {
