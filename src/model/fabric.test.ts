@@ -9,9 +9,11 @@ import {
   isPolygonKind,
   makeFabricId,
   parseFabric,
+  sketchUndoTarget,
   withFeature,
   withoutFeature,
   type FabricFeature,
+  type SketchLogEntryLike,
 } from "./fabric";
 
 function roadFeature(id = "fabric-a"): FabricFeature {
@@ -137,6 +139,49 @@ describe("parseFabric (IO boundary)", () => {
     expect(parseFabric("not json").invalidCount).toBe(1);
     expect(parseFabric("not json").fabric.features).toHaveLength(0);
     expect(parseFabric(JSON.stringify({ type: "Feature" })).invalidCount).toBe(1);
+  });
+});
+
+describe("sketchUndoTarget (plan 016 log-driven undo)", () => {
+  const add = (f: FabricFeature): SketchLogEntryLike => ({ type: "sketch-add", data: f as unknown as Record<string, unknown> });
+  const remove = (f: FabricFeature): SketchLogEntryLike => ({ type: "sketch-remove", data: f as unknown as Record<string, unknown> });
+
+  it("returns null for an empty log", () => {
+    expect(sketchUndoTarget([])).toBeNull();
+  });
+
+  it("returns the single added feature", () => {
+    const a = roadFeature("a");
+    expect(sketchUndoTarget([add(a)])?.id).toBe("a");
+  });
+
+  it("returns the most recently added of several", () => {
+    expect(sketchUndoTarget([add(roadFeature("a")), add(districtFeature("b"))])?.id).toBe("b");
+  });
+
+  it("nets a later remove against its add (skips undone features)", () => {
+    const log = [add(roadFeature("a")), add(districtFeature("b")), remove(districtFeature("b"))];
+    // b was removed, so the next undo target is a
+    expect(sketchUndoTarget(log)?.id).toBe("a");
+  });
+
+  it("returns null once every add has been removed", () => {
+    const a = roadFeature("a");
+    expect(sketchUndoTarget([add(a), remove(a)])).toBeNull();
+  });
+
+  it("treats a re-added id as live again", () => {
+    const a = roadFeature("a");
+    expect(sketchUndoTarget([add(a), remove(a), add(a)])?.id).toBe("a");
+  });
+
+  it("ignores non-sketch and malformed entries", () => {
+    const log: SketchLogEntryLike[] = [
+      { type: "create", data: { anything: true } },
+      { type: "sketch-add", data: { not: "a feature" } },
+      add(roadFeature("a")),
+    ];
+    expect(sketchUndoTarget(log)?.id).toBe("a");
   });
 });
 
