@@ -494,30 +494,44 @@ export class MapView extends ItemView {
       this.openQuickAdd([c.lng, c.lat]);
     });
 
-    // One "Generate here" that picks the tier from the current zoom, so the GM
-    // doesn't have to know the world/city band distinction.
-    btn("wand-2", "Generate fabric here", () => {
-      if (!this.map) return;
-      const band = bandForZoom(this.map.getZoom());
-      const run = band === "world" ? this.generateWorldHere() : this.generateCityHere();
-      void run.then((f) => new Notice(`Campaign Map: generated ${f.length} ${band} feature${f.length === 1 ? "" : "s"}`));
-    });
-
-    btn("stamp", "Canonize nearest generated feature", () => {
-      void this.canonizeGeneratedNear().then((ok) =>
-        new Notice(ok ? "Campaign Map: canonized nearest feature" : "Campaign Map: nothing generated nearby to canonize")
-      );
-    });
-
+    // Toolbar holds only the frequent, in-the-moment builder actions (plan 018).
+    // The occasional/heavy actions — Generate fabric here, Canonize nearest,
+    // Export poster, Export atlas — now live in the settings/control-panel modal
+    // under "Generate & export" (still on the command palette too). See
+    // generateFabricHere() / canonizeNearestHere() for the shared "here" logic.
+    // The pencil keeps a ref so sketch mode can show an active/pressed state (016).
     this.pencilBtnEl = btn("pencil", "Sketch fabric (roads, walls, rivers, districts…)", () =>
       this.toggleSketchMode()
     );
     this.pencilBtnEl.toggleClass("is-active", this.sketchMode);
     btn("search", "Search locations", () => this.openSearch());
     btn("palette", "Switch map theme", () => this.switchTheme());
-    btn("image", "Export map poster", () => void this.exportPoster());
-    btn("book-open", "Export campaign atlas (PDF)", () => void this.exportAtlas());
-    btn("settings", "Campaign settings", () => this.plugin.openControlPanel());
+    btn("settings", "Campaign settings (generate, canonize, export live here)", () => this.plugin.openControlPanel());
+  }
+
+  /**
+   * Generate procedural fabric at the current map center, picking the tier
+   * (world vs city) from the current zoom so the GM doesn't have to know the
+   * band distinction. Extracted from the old toolbar button so the (moved)
+   * "Generate & export" settings action triggers the exact same behaviour,
+   * still acting on the live viewport center (plan 018).
+   */
+  generateFabricHere(): void {
+    if (!this.map) return;
+    const band = bandForZoom(this.map.getZoom());
+    const run = band === "world" ? this.generateWorldHere() : this.generateCityHere();
+    void run.then((f) => new Notice(`Campaign Map: generated ${f.length} ${band} feature${f.length === 1 ? "" : "s"}`));
+  }
+
+  /**
+   * Canonize the nearest generated feature to the current map center, with the
+   * same user feedback the old toolbar button gave. Shared by the moved
+   * "Generate & export" settings action (plan 018).
+   */
+  canonizeNearestHere(): void {
+    void this.canonizeGeneratedNear().then((ok) =>
+      new Notice(ok ? "Campaign Map: canonized nearest feature" : "Campaign Map: nothing generated nearby to canonize")
+    );
   }
 
   /**

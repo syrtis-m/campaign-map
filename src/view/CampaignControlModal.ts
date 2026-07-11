@@ -1,5 +1,6 @@
 import { App, Modal, Notice, Setting } from "obsidian";
 import type CampaignMapPlugin from "../main";
+import type { MapView } from "./MapView";
 import type { ParsedCampaign } from "../model/campaignConfig";
 import { THEME_IDS } from "../model/campaignConfig";
 import { genreForCampaign, culturesForGenre } from "../gen/naming/cultures";
@@ -8,14 +9,17 @@ import { genreForCampaign, culturesForGenre } from "../gen/naming/cultures";
  * Single discoverable entry point for everything that previously had no UI at
  * all (Jonah: "how do i ... change themes of a map, etc? no UIUX right now" /
  * "how do i change what the naming generator is doing"): theme, naming
- * culture selection, and basemap status/acquisition, all in one place.
- * Reachable via the "settings" ribbon icon or the campaign-settings command.
+ * culture selection, basemap status/acquisition, plus the occasional/heavy
+ * "Generate & export" actions moved off the on-map toolbar (plan 018). All in
+ * one place. Reachable via the "settings" ribbon icon or the campaign-settings
+ * command.
  */
 export class CampaignControlModal extends Modal {
   constructor(
     app: App,
     private plugin: CampaignMapPlugin,
-    private campaign: ParsedCampaign
+    private campaign: ParsedCampaign,
+    private view: MapView
   ) {
     super(app);
   }
@@ -25,9 +29,66 @@ export class CampaignControlModal extends Modal {
     contentEl.empty();
     contentEl.createEl("h3", { text: `Campaign settings — ${this.campaign.name}` });
 
+    this.renderGenerateAndExport(contentEl);
     this.renderTheme(contentEl);
     this.renderNamingCultures(contentEl);
     if (this.campaign.config.crs === "real") this.renderBasemap(contentEl);
+  }
+
+  /**
+   * Occasional/heavy builder actions relocated from the on-map toolbar (plan
+   * 018) so the map surface stays clean and fast to read. "Generate fabric
+   * here" and "Canonize nearest" stay viewport-relative: they call the same
+   * MapView methods the toolbar did, which read the live map center / zoom —
+   * the modal is just a new trigger, the "here" semantics are unchanged. Every
+   * action here is also on the command palette.
+   */
+  private renderGenerateAndExport(root: HTMLElement): void {
+    new Setting(root).setName("Generate & export").setHeading();
+    root.createEl("p", {
+      cls: "setting-item-description",
+      text: "Occasional/heavy actions. Generate and Canonize act on the current map center and zoom (position the view first). All are also in the command palette.",
+    });
+
+    new Setting(root)
+      .setName("Generate fabric here")
+      .setDesc("Paints procedural fabric around the map center — world or city tier, chosen from the current zoom.")
+      .addButton((btn) =>
+        btn.setButtonText("Generate").onClick(() => {
+          this.view.generateFabricHere();
+          this.close();
+        })
+      );
+
+    new Setting(root)
+      .setName("Canonize nearest generated")
+      .setDesc("Turns the generated feature nearest the map center into a real canon note.")
+      .addButton((btn) =>
+        btn.setButtonText("Canonize").onClick(() => {
+          this.view.canonizeNearestHere();
+          this.close();
+        })
+      );
+
+    new Setting(root)
+      .setName("Export map poster")
+      .setDesc("High-res PNG of the current view.")
+      .addButton((btn) =>
+        btn.setButtonText("Export poster").onClick(() => {
+          void this.view.exportPoster();
+          this.close();
+        })
+      );
+
+    new Setting(root)
+      .setName("Export campaign atlas (PDF)")
+      .setDesc("Map renders plus your location notes as a gazetteer.")
+      .addButton((btn) =>
+        btn.setButtonText("Export atlas").onClick(() => {
+          void this.view.exportAtlas();
+          this.close();
+        })
+      );
   }
 
   private file() {
