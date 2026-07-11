@@ -7,7 +7,6 @@ import { parseSessionPath, sessionPathFeature } from "../model/sessionPath";
 import { appendLogEntry, campaignFolderFromConfigPath } from "../model/mutationLog";
 import {
   FABRIC_KINDS,
-  FABRIC_REVEAL_OFFSET,
   FabricFeatureSchema,
   emptyFabric,
   isPolygonKind,
@@ -335,7 +334,6 @@ export class MapView extends ItemView {
         this.refreshSource();
         this.refreshGeneratedSource();
         this.applyFocusReveal();
-        this.applyFabricReveal();
       });
     }
     if (this.map) this.applyCampaign();
@@ -449,7 +447,6 @@ export class MapView extends ItemView {
       if (this.campaign && !this.campaignAppliedOnce) this.applyCampaign();
       this.refreshSource();
       this.applyFocusReveal();
-      this.applyFabricReveal();
       this.updateScaleBar();
       this.updateFocusReadout();
     });
@@ -1235,7 +1232,6 @@ export class MapView extends ItemView {
     this.overviewZoom = base;
     this.focusZooms = [base, base + 3, base + 6];
     this.applyFocusReveal();
-    this.applyFabricReveal();
     this.updateFocusReadout();
   }
 
@@ -1256,26 +1252,6 @@ export class MapView extends ItemView {
       for (const depth of ["deep", "medium", "shallow"] as const) {
         const id = `${prefix}-label-${depth}`;
         if (this.map.getLayer(id)) this.map.setLayerZoomRange(id, reveal[depth], 24);
-      }
-    }
-  }
-
-  /**
-   * Reveal sketched fabric relative to the campaign overview zoom (fix for "I
-   * can't see parks/walls on a fictional map"). The fabric layers ship with
-   * absolute `minzoom`s calibrated for a real city (~z11), so on a fictional
-   * world (~z5) the finest kinds — park (10), wall (11) — never render at any
-   * zoom the GM uses. Re-floor each kind to `overview + FABRIC_REVEAL_OFFSET`
-   * via `setLayerZoomRange` (same mechanism as the label reveal), so every
-   * campaign gets the same coarse→fine LOD anchored to its own overview. Safe to
-   * call before layers/overview exist (no-ops); re-applied on restyle.
-   */
-  private applyFabricReveal(): void {
-    if (!this.map || this.overviewZoom == null) return;
-    for (const kind of FABRIC_KINDS) {
-      const id = `fabric-${kind}`;
-      if (this.map.getLayer(id)) {
-        this.map.setLayerZoomRange(id, this.overviewZoom + FABRIC_REVEAL_OFFSET[kind], 24);
       }
     }
   }
@@ -1835,7 +1811,6 @@ export class MapView extends ItemView {
     this.map.once("styledata", () => {
       this.refreshSource();
       this.applyFocusReveal();
-      this.applyFabricReveal();
     });
   }
 

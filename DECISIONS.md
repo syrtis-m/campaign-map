@@ -181,3 +181,17 @@
 **Verified live:** after the fix, Ashfall (overview 4.7) fabric floors = water/river 4.7, district 5.2, road 5.7, park 6.2, wall 6.7; at z7 all six kinds render (park + wall included). Applies to every campaign — a real city (London overview 11) gets park at 12.5, wall at 13, still sensible for street-level detail. Typecheck + 217 tests green (added `FABRIC_REVEAL_OFFSET` ordering/compression tests).
 
 **Reversibility:** additive (offset table + one MapView method + four one-line call additions); revert = drop `applyFabricReveal` calls, layers fall back to the baked absolute minzooms.
+
+## 2026-07-10 — LOD only hides location names; fabric always visible (Kanto-test decision)
+
+**Decision (Jonah, after the Kanto overworld test):** "everything should be visible at every LOD/zoom level" → clarified to "**LOD should only impact visibility of location names**." So zoom-based hiding now applies to ONE thing — location-name labels (the depth-of-field `visibility: wide/mid/close` system, kept as-is). Everything else — every sketched fabric kind (road/wall/river/water/district/park) and every location dot — renders at every zoom, never gated by kind/type.
+
+**What changed:** removed all fabric zoom-LOD. `fabricLayers.ts` layers no longer carry a `minzoom`; deleted `MapView.applyFabricReveal()` + its 4 call sites; deleted the now-dead `DEFAULT_FABRIC_MINZOOM` / `defaultMinZoomFor` / `FABRIC_REVEAL_OFFSET` from `fabric.ts`. The `fabric` source keeps its `tolerance` (that's geometry *simplification* for perf when zoomed out — fewer vertices — NOT hiding; the feature always draws). This supersedes the two prior fabric-LOD steps (plan 013's baked minzooms and the 2026-07-10 relative-reveal fix `331362c`).
+
+**Kept:** the depth-of-field LABEL system (bucketed canon/generated label layers + `applyFocusReveal` + the `visibility` field) — names still reveal by zoom, which is the one place LOD is wanted. Location dots stay constant/always-on. `importance` still drives label size + collision priority (that's sizing/collision, not zoom-hiding).
+
+**Left in place, flagged for a follow-up decision:** two non-fabric, non-name minzooms — `generated-footprint` (procedural building footprints, z14) and the real-city basemap buildings (z14). Removing them means drawing every building at region zoom (real perf/clutter cost), so they're out of scope for "sketched fabric + names"; revisit if "everything" should extend to procedural/basemap building detail.
+
+**Live-verified:** full restart → on Kanto at the overview zoom (z4.6) all six fabric kinds render (park/wall were 0 before) while only the two `wide` town labels show and the `mid` ones (Route 1, Viridian Forest) stay bare dots — LOD confined to names. No fabric layer carries a minzoom. `dev:errors` clean; styleValidation + 212 tests green.
+
+**Reversibility:** the removed machinery is recoverable from git (`331362c`/`70fb361`); re-adding a `minzoom` per fabric kind restores gating.

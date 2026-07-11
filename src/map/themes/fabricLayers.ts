@@ -1,18 +1,18 @@
 import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "./tokens";
-import { FABRIC_KINDS, defaultMinZoomFor, isPolygonKind, type FabricKind } from "../../model/fabric";
+import { FABRIC_KINDS, isPolygonKind, type FabricKind } from "../../model/fabric";
 
 /**
  * Sketched-fabric layers (plan 013) — one line/fill layer per fabric kind on
  * the `fabric` geojson source, themed via tokens like connections/session-path
  * so sketches read consistently across every map style.
  *
- * LOD discipline is NON-NEGOTIABLE here (the plan's load-bearing constraint):
- * every layer carries a per-kind `minzoom` (so a road web drawn at z14 simply
- * drops out at z7 instead of tangling), plus a zoom filter honoring an
- * optional per-feature `minZoom` override (which can only *raise* visibility
- * past the kind default — the layer `minzoom` is the floor). Geometry
- * simplification comes from the source's `tolerance` (see FABRIC_SOURCE_SPEC).
+ * NO zoom-based LOD here: fabric renders at EVERY zoom (Jonah's decision after
+ * the Kanto test — "LOD should only impact visibility of location names", so a
+ * drawn road/wall/river/park/water/district is always visible, never gated by a
+ * per-kind `minzoom`). Only the source's `tolerance` still applies — that's
+ * geometry *simplification* for perf (fewer vertices far out), not hiding: the
+ * feature always draws, just with a coarser outline when zoomed way out.
  */
 
 export const FABRIC_LAYER_IDS = FABRIC_KINDS.map((k) => `fabric-${k}`);
@@ -27,12 +27,10 @@ export const FABRIC_SOURCE_SPEC = {
 };
 
 function kindFilter(kind: FabricKind): unknown {
-  // Filter by kind ONLY. The per-kind LOD floor is each layer's `minzoom`
-  // property (set below) — a `["zoom"]` expression is NOT allowed inside a
-  // layer `filter` and silently invalidates the ENTIRE style: the map loads
-  // with no style at all and no console error (the 006-class failure). A
-  // per-feature `minZoom` override can't live in a filter; do it via a
-  // separate layer if ever needed.
+  // Filter by kind ONLY. Never put a `["zoom"]` expression in a layer `filter`
+  // — it silently invalidates the ENTIRE style (map loads blank, no console
+  // error; the 006-class failure). Fabric has no zoom gating at all now, so
+  // there's nothing zoom-related to express here anyway.
   return ["==", ["get", "kind"], kind];
 }
 
@@ -48,7 +46,6 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       id: "fabric-water",
       type: "fill",
       source: "fabric",
-      minzoom: defaultMinZoomFor("water"),
       filter: kindFilter("water"),
       paint: {
         "fill-color": tokens.fabricWater,
@@ -62,7 +59,6 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       id: "fabric-district",
       type: "fill",
       source: "fabric",
-      minzoom: defaultMinZoomFor("district"),
       filter: kindFilter("district"),
       // Low opacity is load-bearing: a heavier district fill turned the
       // near-black neon base into a purple slab (see generatedLayers.ts).
@@ -76,7 +72,6 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       id: "fabric-park",
       type: "fill",
       source: "fabric",
-      minzoom: defaultMinZoomFor("park"),
       filter: kindFilter("park"),
       paint: {
         "fill-color": tokens.fabricPark,
@@ -89,7 +84,6 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       id: "fabric-river",
       type: "line",
       source: "fabric",
-      minzoom: defaultMinZoomFor("river"),
       filter: kindFilter("river"),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
@@ -102,7 +96,6 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       id: "fabric-road",
       type: "line",
       source: "fabric",
-      minzoom: defaultMinZoomFor("road"),
       filter: kindFilter("road"),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
@@ -114,7 +107,6 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       id: "fabric-wall",
       type: "line",
       source: "fabric",
-      minzoom: defaultMinZoomFor("wall"),
       filter: kindFilter("wall"),
       layout: { "line-cap": "butt", "line-join": "miter" },
       paint: {

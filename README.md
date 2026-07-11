@@ -176,11 +176,12 @@ you draw it. Click the pencil to enter **sketch mode**, then a sub-bar appears:
   you get.
 - **build** — elaborates your generate-mode road corridors into street networks.
 
-Sketched fabric lives in **one file** per campaign (`Fabric.geojson`) and, like
-generated fabric, respects level-of-detail: a dense street web drawn at close zoom
-cleanly drops out when you zoom way out instead of tangling into noise. Any sketched
-feature can be **promoted** to a full location note (**Promote sketched fabric**
-command).
+Sketched fabric lives in **one file** per campaign (`Fabric.geojson`). It's
+**always visible at every zoom** — roads, walls, rivers, water, districts, and
+parks never disappear when you zoom out (zoom-based hiding applies only to
+location *names*, see Focus levels). Geometry is simplified far out for
+performance (fewer vertices), but the feature always draws. Any sketched feature
+can be **promoted** to a full location note (**Promote sketched fabric** command).
 
 ---
 

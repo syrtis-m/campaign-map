@@ -53,47 +53,10 @@ export const FabricCollectionSchema = z.object({
   features: z.array(FabricFeatureSchema),
 });
 export type FabricCollection = z.infer<typeof FabricCollectionSchema>;
-
-/**
- * Per-kind default min-zoom (LOD discipline — the load-bearing constraint of
- * plan 013): a road network drawn at z14 must not become an unreadable tangle
- * at z7. Major rivers/water/districts read earlier (lower z); walls/parks are
- * detail that only appears close-in.
- */
-export const DEFAULT_FABRIC_MINZOOM: Record<FabricKind, number> = {
-  river: 4,
-  water: 4,
-  district: 6,
-  road: 8,
-  park: 10,
-  wall: 11,
-};
-
-export function defaultMinZoomFor(kind: FabricKind): number {
-  return DEFAULT_FABRIC_MINZOOM[kind];
-}
-
-/**
- * Per-kind fabric reveal offset RELATIVE to the campaign's overview zoom — the
- * fix for "I can't see my parks/walls." The baked `DEFAULT_FABRIC_MINZOOM` above
- * is absolute and calibrated for a real city (overview ~z11), so on a fictional
- * world (overview ~z5) the finest kinds (park 10, wall 11) sit far beyond any
- * zoom the GM actually uses and never render. Instead, MapView applies
- * `overview + offset` per kind at runtime via `setLayerZoomRange` (same trick as
- * the depth-of-field label reveal), so every campaign — fictional or real — gets
- * the same coarse→fine LOD: water/river at the overview, walls/parks a couple
- * levels in. Compressed spread (≤2) so all six appear within a gentle zoom-in
- * rather than requiring extreme close-up. Absolute values remain the fallback
- * for offscreen export (no live overview).
- */
-export const FABRIC_REVEAL_OFFSET: Record<FabricKind, number> = {
-  water: 0,
-  river: 0,
-  district: 0.5,
-  road: 1,
-  park: 1.5,
-  wall: 2,
-};
+// NOTE: fabric has NO zoom-based LOD — every kind renders at every zoom
+// (Jonah's decision after the Kanto test: "LOD should only impact visibility of
+// location names"). The former per-kind `DEFAULT_FABRIC_MINZOOM` /
+// `FABRIC_REVEAL_OFFSET` machinery is gone; the fabric layers carry no `minzoom`.
 
 export function emptyFabric(): FabricCollection {
   return { type: "FeatureCollection", features: [] };

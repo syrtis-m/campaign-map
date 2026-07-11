@@ -63,6 +63,8 @@ The agent's first act is `scripts/preflight.sh` (build it in Phase 0 before anyt
 
 `obsidian-native` derives fabric colors at runtime: road = `--text-muted`, district wash = `--interactive-accent`; water/river/park/wall are fixed neutral hues picked per background luminance (light vs dark palette in `src/map/theme.ts`). District/park fills render at low opacity (0.18 / 0.45) — the wash must never slab the base.
 
+**Fabric has NO zoom LOD** (Jonah, 2026-07-10 — "LOD should only impact visibility of location names"): the `fabric-*` layers carry no `minzoom`; every kind renders at every zoom. Only the source `tolerance` applies (geometry simplification for perf, not hiding). Do not reintroduce per-kind fabric minzooms. Zoom-based hiding is exclusively for location-name labels (the depth-of-field model below).
+
 **Type taxonomy defaults** (importance 1=highest; visibility-hint = the QuickAdd
 pre-selection only — since plan 015 it does NOT gate labels at runtime):
 

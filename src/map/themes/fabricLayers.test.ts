@@ -3,9 +3,9 @@ import type { LayerSpecification } from "maplibre-gl";
 import { fabricLayers, FABRIC_LAYER_IDS, FABRIC_SOURCE_SPEC } from "./fabricLayers";
 import { HANDCRAFTED_THEMES, PARCHMENT } from "./tokens";
 import { obsidianNativeStyle, type ObsidianCssTokens } from "../theme";
-import { FABRIC_KINDS, defaultMinZoomFor, isPolygonKind, type FabricKind } from "../../model/fabric";
+import { FABRIC_KINDS, isPolygonKind, type FabricKind } from "../../model/fabric";
 
-describe("fabricLayers (LOD discipline — plan 013 non-negotiable)", () => {
+describe("fabricLayers — always visible, no zoom LOD (Jonah's Kanto-test decision)", () => {
   const layers = fabricLayers(PARCHMENT);
 
   it("emits exactly one layer per fabric kind, on the fabric source", () => {
@@ -15,10 +15,12 @@ describe("fabricLayers (LOD discipline — plan 013 non-negotiable)", () => {
     for (const l of layers) expect((l as { source?: string }).source).toBe("fabric");
   });
 
-  it("every layer carries its kind's minzoom", () => {
+  it("NO layer carries a minzoom — fabric renders at every zoom", () => {
+    // LOD may only hide location NAMES, never fabric. A per-kind minzoom here is
+    // exactly the regression we removed (parks/walls vanishing when zoomed out).
     for (const kind of FABRIC_KINDS) {
       const layer = layers.find((l) => l.id === `fabric-${kind}`) as { minzoom?: number };
-      expect(layer?.minzoom).toBe(defaultMinZoomFor(kind));
+      expect(layer?.minzoom).toBeUndefined();
     }
   });
 
@@ -39,19 +41,11 @@ describe("fabricLayers (LOD discipline — plan 013 non-negotiable)", () => {
   it("filters are kind-only and never put zoom in a filter (invalidates the whole style)", () => {
     // MapLibre disallows a `["zoom"]` expression inside a layer `filter`; it
     // silently invalidates the entire style (map loads blank, no console
-    // error). The per-kind LOD floor lives on the layer's `minzoom` property
-    // instead (asserted below), never in the filter.
+    // error). Fabric has no zoom gating at all, so filters are purely kind.
     for (const layer of layers) {
       const filter = JSON.stringify((layer as { filter?: unknown }).filter);
       expect(filter).not.toContain('"zoom"');
       expect(filter).toContain('"kind"');
-    }
-  });
-
-  it("each layer carries a per-kind minzoom (the LOD floor)", () => {
-    for (const kind of FABRIC_KINDS) {
-      const layer = layers.find((l) => l.id === `fabric-${kind}`)! as { minzoom?: number };
-      expect(typeof layer.minzoom).toBe("number");
     }
   });
 
