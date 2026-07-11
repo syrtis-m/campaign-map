@@ -30,8 +30,22 @@ written-but-unrun.
 | 012 | Phase 5 Tier-A gate (`scripts/gates/phase5.ts`) | P1 | M | 008,009,010,011 | DONE — `scripts/gates/phase5.ts` authored + run 8/8 |
 | 013 | Sketch mode — fabric store + LOD-aware render + draw tools | P1 | L | — | DONE — merged to `main` (Fable), live-verified: fabric road/water render, road LOD-hides <z8, water shows; +style-load fix |
 | 014 | Sketch → procedural inference ("Sims landscaping") | P1 | L | 013 | DONE (road→streets slice) — merged to `main` (Fable), 2×2 seam test green; live: generate-from-sketch → 76 corridor streets. District/river/wall/park elaboration = follow-ups |
+| — | Depth-of-field LOD — 3 focus levels + per-bucket label reveal | P1 | M | — | DONE — merged to `main` (`70fb361`), live-verified London+Ashfall. Superseded per-type zoom ranges |
+| 015 | Explicit visibility field (decouple label visibility from `type`) | P1 | M | — | TODO — Opus agent. User: "separate field for zoom levels, no mental model of type→visibility" |
+| 016 | Sketch mode UX — reliable exit, live feedback, undo, instant result | P1 | M | — | TODO — Opus agent. User: can't exit sketch mode; no feedback until generate; no undo |
+| 017 | Distinct per-kind fabric colors + cartographic polish (VISUALS) | P0 | M | — | TODO — **Fable** agent (user's #1 priority). Kinds share colors → muddy map |
+| 018 | Declutter toolbar — move generate/export into settings | P2 | S–M | — | TODO — Opus agent. User: "generate export etc should be in settings, not main items" |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason).
+
+**Corrections batch (015–018), 2026-07-10:** five live-use corrections from
+Jonah, batched into four plans + one already-shipped LOD change. 017 (visuals) is
+the top priority and goes to a Fable agent; 015/016/018 to Opus 4.8 agents. Agents
+implement + typecheck + test + push their branch; the orchestrator live-verifies
+(only it can drive the Obsidian loop) and merges sequentially — recommended order
+**017 → 015 → 016 → 018** (017 isolated to fabric paint; 016 & 018 both touch
+`MapView.ts` so 016's sketch region merges before 018's toolbar region). Each plan
+is written to be restartable from scratch.
 
 **Phase 5 (autonomous build, GOAL.md):** 008–011 are the remaining Phase-5
 roadmap features; 012 is the phase-5 gate that verifies them. After they merge,
