@@ -14,7 +14,7 @@ you draw by hand (roads, walls, rivers, water, districts, parks), the way shapes
 PowerPoint work: selectable and editable any time. At the bottom, **procgen fabric**
 — background geometry the generator paints **only when you ask**. Locations always
 render above sketch, sketch above procgen, and fabric never turns into a Location —
-the layers never trade members. The payoff (plan 020, in progress): **you sketch a
+the layers never trade members. The payoff (plan 020, shipped): **you sketch a
 district and the generator fills that exact polygon with a city** — the wall traces
 your boundary, nothing spills past your line, and editing the shape reshapes the
 city.
@@ -28,8 +28,8 @@ city.
    pick a type, done. It's now a note in your vault and a pin on the map.
 3. Need the surrounding city to *look* like a city? **Sketch a district** and the
    generator fills that polygon with streets/blocks/walls — **only when asked**,
-   never on its own, and reactive to anything you've already drawn. (Plan 020, in
-   progress; the world tier still generates via **Generate fabric here**.)
+   never on its own, and reactive to anything you've already drawn. (The world
+   tier still generates via **Generate fabric here**.)
 4. Want a specific road or river *exactly there*, or to steer what generation does
    somewhere? **Sketch** it by hand — the generator treats your strokes as
    constraints and adapts around them.
@@ -174,7 +174,7 @@ What's durable is the *request*, and there are two kinds:
 - **World tier** (regions, routes, coastline): **Generate fabric here** records the
   area in `Generated.json`; on every open those areas repaint from cache or
   regenerate deterministically.
-- **City tier** (plan 020, in progress): **the request is the sketch.** You sketch a
+- **City tier** (plan 020, shipped): **the request is the sketch.** You sketch a
   district polygon, confirm a profile, and the whole city fills that polygon — the
   wall traces your boundary and nothing spills past your line. The request lives on
   the shape itself (a `procgen` block in `Fabric.geojson`), so editing the shape
@@ -193,10 +193,14 @@ you draw it. Click the pencil to enter **sketch mode**, then a sub-bar appears:
   polygons chosen automatically per kind.)
 - **Draw:** click to drop vertices, double-click or **Enter** to finish, **Esc** to
   cancel, **Del** to delete a selected feature.
-- **Select & edit** (plan 020, in progress): a **Select** tool lets you pick any
+- **Select & edit** (plan 020, shipped): a **Select** tool lets you pick any
   sketch shape and drag its vertices, insert/delete points, or rename it — the
   PowerPoint-style editing the map has been missing. For a district, its editor also
-  holds the city's procgen settings (profile, re-roll, remove).
+  holds the city's procgen settings (profile, re-roll, regenerate, remove), plus a
+  draggable **center handle**: put the plaza where YOU want it — a pinned center
+  also keeps the city stable while you edit the boundary (edits adapt the city;
+  only re-roll replaces it). Building footprints and lot lines render at every
+  zoom — no pop-in.
 
 Most sketched features are also a **generator constraint** — no toggle, no build
 button: roads steer generated street networks to align with them, water and rivers
@@ -310,14 +314,16 @@ These are real and shipped-around, not hidden:
 - **Renderer degrades over very long sessions** — p95 pan FPS drops after many
   generate/eval cycles; only a full Obsidian restart clears it (`plugin:reload`
   doesn't). Under investigation.
-- **Sketch v1 is draw/delete only** — no vertex re-editing, snapping, or
-  freehand brush yet. (Plan 020 adds a Select tool with vertex/property editing;
-  in progress.)
-- **City generation is moving to sketch-driven regions (plan 020, in progress)** —
-  today's shipped city tier still founds a disc "city domain" from a click at city
-  zoom; plan 020 replaces that with sketching a district polygon that the city fills
-  exactly (wall traces your boundary). Until it lands, the click-to-found flow is
-  what runs.
+- **Sketch editing shipped (plan 020), with two gaps** — the Select tool covers
+  vertex drag/insert/delete and property edits, but there's no snapping or
+  freehand brush yet, and **undo on shape edits is single-level** (repeating
+  undo re-reverses the same edit rather than peeling further back).
+- **Sketch-driven city generation is live (plan 020)** — sketch a district and the
+  city fills it exactly (wall traces your boundary). Old click-founded disc
+  "domains" migrate automatically to editable district shapes on first open.
+  Known limits: ward coverage can gap near sharp concave notches, and perf with
+  always-visible building detail is unmeasured on low-end hardware (budget is a
+  Surface Pro; the dev Mac proves nothing).
 - **Fabric constraints are city-tier only** — world-tier regions/routes ignore
   sketches (a route can still cross a sketched lake); coastline *snapping* (vs
   avoidance) is likewise a follow-up.
@@ -339,7 +345,7 @@ These are real and shipped-around, not hidden:
 - **Detail band z16+** — building/POI-level fabric.
 - **Multi-step undo/redo** — today undo reverses only the single last edit.
 - **Obsidian Bases integration** — locations as a Bases view (API-gated spike).
-- **Sketch polish** — vertex editing (plan 020, in progress), snapping, curve
+- **Sketch polish** — snapping, curve
   smoothing, freehand.
 - **Richer connections** — curves, waypoints, arrowheads, travel-time labels.
 

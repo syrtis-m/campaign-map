@@ -77,3 +77,44 @@ Unit tests need no Obsidian and stay fast — that's why generators are host-agn
 - `eval` is for *reading* state and driving the map; write vault content via `create`/`property:set` etc. (goes through Obsidian's own file layer, exercising the same events users trigger).
 - `plugin:reload` after every build; `obsidian reload` (full window) if view registration changed.
 - The CLI targets the vault of the cwd — run from `dev-vault/`, or pass `vault=dev-vault` as the first parameter, so you never touch Jonah's real campaign vault.
+
+## Hard-won pitfalls (every one of these cost an agent real hours — plan-020 build, 2026-07)
+
+- **`plugin:reload`, never `plugin:enable`.** `enable` is a silent no-op when the
+  plugin is already enabled — you will spend a gate run testing stale code.
+- **Long Obsidian sessions degrade the renderer.** After many back-to-back gate
+  runs in one process, `isStyleLoaded()` starts returning false everywhere and
+  render checks time out. Nothing in-app recovers it — fully quit and relaunch
+  the Obsidian process. Final gate boards run **one gate per fresh process**.
+- **Async evals**: `eval` returns synchronously — park promise results on
+  `window` globals (`window.__myTest__ = …`) and poll with follow-up evals.
+- **Screenshots on macOS need the window fronted** first, or you capture
+  whatever is on top. Then actually Read the png.
+- **Modals hang CLI automation.** Every GM flow that opens a modal needs a
+  headless test-API twin on `app.plugins.plugins['campaign-map']`
+  (precedents: `createRegionForTest`, `moveVertex`, `setRegionParams`,
+  `rerollRegion`) that runs the FULL commit path — validation, mutation log,
+  persist, regen — not a shortcut around it.
+- **Never bake absolute zoom thresholds.** Fictional campaigns sit at overview
+  zoom ~z4.5; layer minzooms like z14 are unreachable there. Jonah's standing
+  ruling (Kanto test, reaffirmed 2026-07-12): zoom LOD affects location-name
+  visibility ONLY — sketched and generated fabric render at every zoom.
+- **`dev-vault/Campaigns/Vespergate` contains Jonah's real campaign data**
+  (the migrated procgen district, hand-sketched districts). Gate fixtures are
+  name-tagged (`__p40_test__` style), self-clean on rerun, and must leave his
+  files byte-intact — `git diff` those files after a gate run; if dirty,
+  `git checkout --` and find the leak.
+- **Perf on the dev machine proves nothing.** The Mac Neo is several times
+  faster than the Surface Pro budget target (and its Retina/ProMotion display
+  further distorts "feels smooth"). Perf claims need numbers under CPU
+  throttle (frame times during a scripted pan, `setData` durations), not
+  vibes. Known unmeasured hotspots: always-visible footprints/parcels (~12k
+  fills), whole-collection `setData` on regen.
+- **Determinism is per-machine, not cross-machine.** V8's transcendental
+  functions aren't guaranteed bit-identical across architectures — which is
+  fine because `.mapcache/` is local, sync-excluded, and disposable. Never
+  sync the cache between machines or assert byte-equality across them; the
+  durable truth is the sketches + manifest, and each machine regenerates.
+- **Never bypass `appendCachedTile`** (`src/model/tileCache.ts`): cache appends
+  serialize through a per-file promise chain — two racing writers on a freshly
+  deleted file used to clobber records (fixed 2026-07-11; don't reintroduce).
