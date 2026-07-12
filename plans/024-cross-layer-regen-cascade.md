@@ -1,10 +1,10 @@
-# Plan 023 — Cross-layer regen cascade: layer-2 procgen output constrains layer 1
+# Plan 024 — Cross-layer regen cascade: layer-2 procgen output constrains layer 1
 
 **Status:** research/design, approved direction from Jonah 2026-07-12 ("we want
 all procgen meshes/things on layer 2 to impact layer 1 — so if we have a river
 going through a city and we increase the windy-ness of the river, and it
 regenerates, that should regenerate the city as well around that constraint").
-Builds on plans 020/021/022. This is the contract that makes the suite feel
+Builds on plans 020/022/023. This is the contract that makes the suite feel
 like one world instead of independent stamps.
 
 
@@ -77,7 +77,7 @@ the `[gate: …]` message convention. Open questions need a ruling from Jonah or
 the orchestrator — if unavailable, decide, log decision AND rationale in
 DECISIONS.md, and flag it prominently in your report; never guess silently.
 
-**Plan-023-specific intent:** the cascade exists so the world composes — the
+**Plan-024-specific intent:** the cascade exists so the world composes — the
 GM should never manually re-run downstream things after tuning an upstream
 knob. Two properties carry the whole design, and every implementation choice
 must preserve them: (1) *cycle-freedom by construction* — the stage numbers
@@ -103,7 +103,7 @@ automatically, deterministically, and without cycles.
 Every registry algorithm declares a `stage`:
 
 ```
-0 elevation   (mountain regions — a FIELD, plan 022)
+0 elevation   (mountain regions — a FIELD, plan 023)
 1 hydrology   (river, water bodies)
 2 vegetation  (forest, park)
 3 settlement  (city)
@@ -120,7 +120,7 @@ Every registry algorithm declares a `stage`:
 
 ## 3. Constraint interface — fields, not feature soup
 
-Plan 022's `Field`/SDF is the currency. Registry entries declare what they
+Plan 023's `Field`/SDF is the currency. Registry entries declare what they
 produce and consume:
 
 ```ts
@@ -153,7 +153,7 @@ interface ProcgenAlgorithm {
   (no canopy in the river). **One direction only:** the CITY (stage 3) sees
   vegetation (growth cost bump); the forest (stage 2) NEVER sees the city —
   canopy is not clipped by footprints; the town reads as a clearing because
-  city fabric paints above canopy within layer 1 (see plan 021 §3.2, corrected
+  city fabric paints above canopy within layer 1 (see plan 022 §3.2, corrected
   2026-07-12 — an earlier draft implied a reverse dependency; reverse
   dependencies are rejected outright, they break cycle-freedom).
 
@@ -222,7 +222,7 @@ downstream regenerates without any manual action; byte-diff gates unaffected
 - Explicit-only: cascade never generates an un-requested feature; pan Δ0.
 
 ## 7. Open questions
-1. ~~Stage of `wall`~~ RESOLVED (2026-07-12, with 021 §3.4's correction):
+1. ~~Stage of `wall`~~ RESOLVED (2026-07-12, with 022 §3.4's correction):
    the raw wall SKETCH is a stage-agnostic constraint every stage may read
    (suppresses the city's own wall near the rim, as today it stops streets);
    the procgen wall ELABORATION (towers/gates/moat) is stage 4, consuming

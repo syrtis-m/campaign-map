@@ -76,19 +76,25 @@ zero generator runs; a pre-v4 campaign with disc domains migrates to district
 sketches on load. *(All exit-test behaviors verified live by gates procgen40/41;
 v4.3's full one-gate-per-fresh-process board is the remaining formality.)*
 
-## Next procgen arc — Plans 021–023 (designed, not started)
+## Next procgen arc — Plans 021–025 (designed, not started; numeric order = execution order)
 
 Numbered by build order; each plan is self-contained for a cold-start agent
 (intent, invariants, pitfalls in its §0):
-1. **021 — algorithm suite**: rivers (windiness/braiding), forests (types),
-   parks (incl. japanese-garden), walls; preset-dropdown pattern everywhere;
-   spine (line-kind) procgen.
-2. **022 — constraint fields + elevation**: layered SDFs + masked noise;
+1. **021 — fast testing** (first, so the rest build quicker): fuzz-tier
+   split, renderer-degradation root cause, single-process board runner,
+   MapController + FakeHost headless harness, change-scoped gating, T0–T3.
+2. **022 — algorithm suite**: rivers (windiness/braiding), forests (types),
+   parks (incl. japanese-garden), walls, farmland; preset-dropdown pattern
+   everywhere; spine (line-kind) procgen.
+3. **023 — constraint fields + elevation**: layered SDFs + masked noise;
    analytic-derivative fBm with gradient-damped octaves; contour lines;
    hillshade + 3D terrain via raster-DEM.
-3. **023 — cross-layer regen cascade**: generated output of lower stages
+4. **024 — cross-layer regen cascade**: generated output of lower stages
    (river channel) constrains higher stages (city); turning a river's
    windiness knob regenerates the city around the new channel.
+5. **025 — street-pattern presets + benchmarks** (Salat research): haussmann/
+   tartan/ward-grid/eixample/baroque-axial/superblock/canal-rings/radial-star;
+   metrics module makes the screenshot test numeric; preset gallery map.
 
 ## Standing risks
 | Risk | Mitigation |

@@ -1,4 +1,4 @@
-# Plan 024 — Street-pattern presets & benchmark-driven city quality (Salat research)
+# Plan 025 — Street-pattern presets & benchmark-driven city quality (Salat research)
 
 **Status:** research/design done 2026-07-12, approved direction from Jonah ("use
 this pdf containing research on street patterns to define other templates/styles
@@ -6,8 +6,8 @@ for city procgen — and use it to consider how city procgen might be improved")
 Source: Serge Salat, *Integrated Guidelines for Sustainable Neighbourhood
 Design*, ch. 2.4 "Connect People Movement and Street Patterns", Urban
 Morphology & Complex Systems Institute / UNEP, 2021. Builds on plan 020
-(regions) and plan 021 §1 (the preset pattern — this plan's presets ride that
-mechanism); independent of plans 022/023 except where marked.
+(regions) and plan 022 §1 (the preset pattern — this plan's presets ride that
+mechanism); independent of plans 023/024 except where marked.
 
 ## 0. Context for a cold-start implementer (read even if you skip everything else)
 
@@ -18,7 +18,7 @@ generated *only on explicit GM request*, deterministically, forever.
 
 **Read before writing code:** `CLAUDE.md` (locked decisions — binding),
 `plans/020-sketch-driven-procgen-regions.md` (regions architecture),
-`plans/021-procgen-suite-rivers-forests-parks-walls.md` §0–§1 (the full
+`plans/022-procgen-suite-rivers-forests-parks-walls.md` §0–§1 (the full
 cold-start context — invariants, infra pitfalls, protocol — plus the preset
 pattern this plan extends; everything there applies here verbatim),
 `procgen_v3_design.md` §4 (determinism rules D1–D6), and the city pipeline
@@ -31,8 +31,8 @@ computes the whole network which tiles clip (seam story); profiles are data
 objects in `src/gen/citynet/profiles.ts` (segment lengths, branch probabilities,
 snap behavior, grid azimuths, wall chance, parcel/footprint params); the four
 existing profiles (euro-medieval, euro-continental, na-grid, na-suburb) become
-presets of the `city` algorithm under plan 021 §1. Identity property: vertex
-edits and version upgrades must not re-roll existing cities (021 §1
+presets of the `city` algorithm under plan 022 §1. Identity property: vertex
+edits and version upgrades must not re-roll existing cities (022 §1
 additive-params rule). All emitted features are typed; themes own paint.
 
 ## 1. Research digest (what the source actually establishes)
@@ -117,9 +117,9 @@ additive-params rule). All emitted features are typed; themes own paint.
   is an anti-pattern; combine both.
 - **Water linkages** (Kyoto Philosopher's Path, Venice Strada Nova): canal- or
   spine-following pedestrian paths with perpendicular laterals — pairs with
-  plan 021 rivers (a `towpath` river option is a cheap, high-charm follow-up).
+  plan 022 rivers (a `towpath` river option is a cheap, high-charm follow-up).
 
-## 2. New city presets (ride plan 021 §1's preset mechanism)
+## 2. New city presets (ride plan 022 §1's preset mechanism)
 
 Each is a `city`-algorithm preset = a `profiles.ts` data object + at most one
 new pipeline operator (§3). Default theme pairings in parentheses.
@@ -218,7 +218,7 @@ version with a DECISIONS entry, same precedent as the v3→v4 migration).
   budget-bounded — D3).
 - **Perimeter-block assertion**: % of block perimeter fronted by parcels
   (frontage discipline already exists; make it a measured gate).
-- **`towpath` river option** (with plan 021 rivers): canal-side pedestrian
+- **`towpath` river option** (with plan 022 rivers): canal-side pedestrian
   path + perpendicular laterals (Kyoto/Venice §1.3) — one param, big charm.
 
 ## 3.5 The preset gallery map (Jonah 2026-07-12 — required deliverable)
@@ -247,7 +247,7 @@ laid out on a spaced grid so every city renders in isolation:
 - The gallery campaign is a committed fixture: its `Fabric.geojson` (district
   shapes + procgen blocks) is durable repo content; its `.mapcache/` is not.
 
-## 4. Sequencing (after plan 021 phase 1 lands the preset mechanism)
+## 4. Sequencing (after plan 022 phase 1 lands the preset mechanism)
 1. **Metrics module + benchmark gates for the four EXISTING profiles** (pure,
    no visual change, immediately hardens everything else) **+ the §3.5 preset
    gallery campaign and gate, seeded with the four existing presets** — the
@@ -259,7 +259,7 @@ laid out on a spaced grid so every city renders in isolation:
 5. euro-medieval growth rings; curve knob; permeability floor; towpath.
 
 Each phase: unit gates (determinism, seams, containment, metrics benchmarks,
-preset fuzz) + live gate + screenshots per docs/06. The §0 protocol of plan 021
+preset fuzz) + live gate + screenshots per docs/06. The §0 protocol of plan 022
 applies verbatim.
 
 ## 5. Open questions
@@ -270,5 +270,5 @@ applies verbatim.
    options or preview thumbnails in RegionProcgenModal (UX ruling for Jonah
    when the list grows past ~8).
 3. Superblock + cascade: its arterial canyons should probably suppress
-   plan-021 farmland/forest inside the region — same raw-sketch mechanism,
+   plan-022 farmland/forest inside the region — same raw-sketch mechanism,
    decide when both exist.

@@ -9,7 +9,7 @@ Obsidian plugin: Google-Maps-style map tab for tabletop campaigns (fantasy, real
 - `docs/04-quality-bar.md` — failure modes + acceptance criteria; the "screenshot test"
 - `docs/05-dev-workflow.md` — build/test loop via the official Obsidian CLI (reload → drive → eval → dev:errors → screenshot)
 - `docs/06-autonomous-build.md` — unattended-build protocol: preflight, Tier A/B gates, pinned aesthetic defaults, state files (PROGRESS.md, DECISIONS.md, review/)
-- `plans/README.md` — numbered feature plans; 020 (sketch-driven procgen regions, shipped v4.0–4.2) is the current architecture, 021–023 (algorithm suite / fields+elevation / cross-layer cascade) are the designed next arc — each plan carries a cold-start §0 with intent + pitfalls
+- `plans/README.md` — numbered feature plans; 020 (sketch-driven procgen regions, shipped v4.0–4.2) is the current architecture; 021–025 (fast-testing / algorithm suite / fields+elevation / cascade / street-pattern presets — numeric order = execution order) are the designed next arc — each plan carries a cold-start §0 with intent + pitfalls
 - `GOAL.md` — the goal command for an unattended Phase 0–5 run
 
 ## Locked decisions (don't relitigate without Jonah)

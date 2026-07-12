@@ -1,12 +1,12 @@
-# Plan 022 — Constraint fields (layered SDFs + masked noise) and elevation
+# Plan 023 — Constraint fields (layered SDFs + masked noise) and elevation
 
 **Status:** research/design, approved direction from Jonah 2026-07-12 ("explore the
 method of doing elevation as described in iquilezles.org/articles/morenoise and
 the fractal perlin noise + gradient trick… elevation lines on the map, but also
 the ability to do a 3d terrain style thing… include a research into layered
 signed distance fields + masked noise layering"). Builds on plan 020 (sketch-
-driven procgen regions). Build order: plan 021 (algorithm suite) starts first with documented
-fallbacks; its field-coupled variants and 023 (cross-layer cascade) depend on
+driven procgen regions). Build order: plan 022 (algorithm suite) starts first with documented
+fallbacks; its field-coupled variants and 024 (cross-layer cascade) depend on
 the field architecture in §2.
 
 
@@ -79,7 +79,7 @@ the `[gate: …]` message convention. Open questions need a ruling from Jonah or
 the orchestrator — if unavailable, decide, log decision AND rationale in
 DECISIONS.md, and flag it prominently in your report; never guess silently.
 
-**Plan-022-specific intent:** everything here exists to serve ONE property —
+**Plan-023-specific intent:** everything here exists to serve ONE property —
 *point-evaluability*. A field must answer `f(x, y)` from durable inputs alone,
 with no neighborhood, no iteration over the map, no global pass. That is what
 makes tiles seam-free (identical samples on shared edges) and determinism
@@ -164,7 +164,7 @@ direction matters: the fields module must CALL the existing `region.ts`
 distance code (or move it verbatim), never reimplement it. A float-level
 difference in `distanceToBoundary` changes `interiorT`, which changes cityness,
 which re-rolls every existing city on upgrade — violating the cross-version
-identity property (plan 021 §1). Gate: after the retrofit, a fixture region's
+identity property (plan 022 §1). Gate: after the retrofit, a fixture region's
 `generateCityNetwork` output must be byte-identical to the pre-retrofit
 snapshot. Same rule for fabricConstraints' water/river predicates.
 
@@ -179,22 +179,22 @@ elevation(x,y) = base(x,y)                          // gentle continental fBm (e
   ± cityRegions:         fMask · flatten-toward-local-mean (grade the town site)
 ```
 
-- **Sketched mountain regions** (new `mountain` polygon kind, plan 021) carry a
+- **Sketched mountain regions** (new `mountain` polygon kind, plan 022) carry a
   procgen block with elevation params — presets: `alpine` (high damping, ridged),
   `mesa` (terraced transform), `rolling-hills` (low octaves, no ridging), plus
   amplitude/roughness sliders. The GM shapes relief by sketching, same grammar
   as cities.
-- The field is an INPUT to other generators (plan 023 stage 0): rivers flow
+- The field is an INPUT to other generators (plan 024 stage 0): rivers flow
   downhill, routes prefer gentle gradients (analytic derivative = free slope
   queries), city cost fields penalize steep ground.
 - Determinism: elevation is `f(campaignSeed, sketch layer, position)` only.
   Editing a mountain region's params/ring dirties elevation under its bbox →
-  cascade per plan 023.
+  cascade per plan 024.
 - **Compatibility (adversarial review 2026-07-12):** the existing
   `world/heightmap.ts#heightAt` feeds world-tier regions/biomes TODAY —
   swapping its guts would silently reshape every existing campaign's world
   tier. The new elevation field is a NEW function consumed only by NEW
-  features (contours, DEM, plan-021 river slope, plan-023 stage 0); world-tier
+  features (contours, DEM, plan-022 river slope, plan-024 stage 0); world-tier
   generators keep the old `heightAt` untouched until a deliberate, flagged
   migration with its own plan. Expose `elevationWithGrad(x,y)` (value + analytic
   gradient) — rivers/routes need slope queries, and the derivative is already

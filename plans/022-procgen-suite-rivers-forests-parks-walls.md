@@ -1,11 +1,11 @@
-# Plan 021 — Procgen algorithm suite: rivers, forests, parks, walls (+ the preset pattern)
+# Plan 022 — Procgen algorithm suite: rivers, forests, parks, walls (+ the preset pattern)
 
 **Status:** research/design, approved direction from Jonah 2026-07-12 ("procgen
 rivers, walls, forests, parks, etc. all of those should let the person change
 the default behavior — e.g. make a river very windy/split, forests of different
 types — i like the dropdown when creating a city here, similar templates are
-good throughout"). Builds on plan 020's registry; consumes plan 022 fields
-where noted; regen interactions are plan 023's contract. **Plan 025 (fast
+good throughout"). Builds on plan 020's registry; consumes plan 023 fields
+where noted; regen interactions are plan 024's contract. **Plan 021 (fast
 testing) executes BEFORE this plan** — build your per-algorithm lifecycle
 tests headless-first against its MapController/FakeHost harness and reserve
 live gates for paint/interaction/screenshots; use its tier protocol (T0–T3)
@@ -134,7 +134,7 @@ not the geometry type). Output containment rule becomes a corridor: all output
 within `maxOffset` of the spine (gate-asserted per algorithm). **`maxOffset` is
 a pure function of the params** (for a river: f(windiness amplitude, width,
 braiding lens width)) — computed by the algorithm, exposed to the host, and
-reused as the feature's cascade influence margin (plan 023 `inputBBox`/
+reused as the feature's cascade influence margin (plan 024 `inputBBox`/
 `outputBBox`); a windiness increase must widen the corridor, not violate the
 containment gate. RegionProcgenModal already generalizes (it is param-schema
 driven); line kinds reuse it unchanged.
@@ -162,31 +162,31 @@ driven); line kinds reuse it unchanged.
   the spine at a fixed step BEFORE offsetting, mm-quantized. Braids = seeded
   intervals splitting into 2 channels offset by a lens shape, rejoining
   (islands emerge as the lens interior). Emit `river-channel` polygons
-  (+ `river-island`), banks as the channel SDF's zero set. When plan 022
+  (+ `river-island`), banks as the channel SDF's zero set. When plan 023
   lands: meander amplitude modulated by local slope (flat → windy, steep →
   straight) and flow direction sanity-checked downhill.
 - **Tributaries:** river spines MAY cross/touch (same-stage, so neither sees
-  the other's output — plan 023): channels simply union where they overlap.
+  the other's output — plan 024): channels simply union where they overlap.
   Junction hydrology (width growth after a confluence, smooth bank merge) is
   explicitly out of scope v1 — log it as a known limitation; do not reject
   crossing spines like polygons reject overlap.
 - **Constraint face:** the GENERATED channel polygons (not the sketched spine)
-  become the water constraint downstream — that is plan 023's cascade; until
+  become the water constraint downstream — that is plan 024's cascade; until
   then the spine keeps feeding constraints as today (RIVER_HALF_WIDTH).
 
 ### 3.2 Forest (new `forest` polygon kind)
 - New FabricKind (additive zod change; sketch sub-bar gains the kind button).
 - **Params:** preset `broadleaf` / `conifer` / `mixed` / `swamp` / `dead-wood`;
   `density` (0–1); `clearings` (0–1); `edgeRaggedness`.
-- **Generation:** canopy = region SDF mask × masked noise (plan 022 primitives;
-  pre-022 fallback: interiorT + existing valueNoise2D). Emit `forest-canopy`
+- **Generation:** canopy = region SDF mask × masked noise (plan 023 primitives;
+  pre-023 fallback: interiorT + existing valueNoise2D). Emit `forest-canopy`
   polygons (marching squares on the masked density field, same seam discipline
   as contours), `forest-clearing` holes, and sparse `forest-tree` point symbols
   near the boundary at high zoom (position-hashed jitter grid = deterministic
   Poisson-ish). Themes own paint per preset type property.
 - Cities and forests overlap legitimately (a town in the woods). **One
   dependency direction only (adversarial review 2026-07-12 — the earlier
-  draft contradicted plan 023 here):** forest is stage 2, city is stage 3, so
+  draft contradicted plan 024 here):** forest is stage 2, city is stage 3, so
   the CITY sees vegetation (growth cost bump, sparser outskirts under canopy)
   and the forest NEVER sees the city — canopy is not clipped by footprints.
   Visually the town reads as a clearing anyway because city fabric paints
@@ -216,7 +216,7 @@ driven); line kinds reuse it unchanged.
   the entrance when the region is large enough. Emits the same feature types as
   other presets plus `park-rock` (Point) and reuses the island/bridge
   emitters from §3.1 at pond scale (extract them to a shared module rather
-  than importing the river generator). Pre-022 pond fallback: a seeded
+  than importing the river generator). Pre-023 pond fallback: a seeded
   harmonic-radius blob (same closed-form trick as the meander) instead of
   smooth-min SDFs — themes decide the aesthetic per preset
   property (ink-soot should render these beautifully). Good preset-fuzz target:
@@ -248,7 +248,7 @@ driven); line kinds reuse it unchanged.
   hedged fields, rolling-countryside look), `grid-quarters` (rectilinear
   sections + straight section roads — pairs with na-grid), `orchard` (regular
   tree rows), `paddy-terraces` (contour-following banks — the field-coupled
-  variant: needs plan 022 elevation; pre-022 fallback: concentric interiorT
+  variant: needs plan 023 elevation; pre-023 fallback: concentric interiorT
   bands); `fieldSize`, `hedging` (none/fences/hedgerows), `laneDensity`,
   `farmsteads` (0–1).
 - **Generation:** heavy reuse — field subdivision is the parcels.ts OBB/strip
@@ -258,7 +258,7 @@ driven); line kinds reuse it unchanged.
   deterministic lane junctions (position-hashed); hedges/fences as field-edge
   lines. Emit `farm-field` polygons (crop-variety property for theme texture),
   `farm-lane` lines, `farm-hedge` lines, `farm-building` footprints,
-  `orchard-tree` points. Stage 2 (vegetation/agriculture) in plan 023 — the
+  `orchard-tree` points. Stage 2 (vegetation/agriculture) in plan 024 — the
   city sees farmland (growth cost bump: streets skirt fields rather than
   bulldoze them); farmland never sees the city.
 - **Overlap with city outskirts:** the city already grows its own outskirt
@@ -269,12 +269,12 @@ driven); line kinds reuse it unchanged.
 
 ## 4. Sequencing (each algorithm = one subagent-sized phase, own gate)
 1. Preset pattern + city retrofit (pure UX/registry; no new generator).
-2. Spine support + **river** (biggest payoff, Jonah's example; pre-022 version
+2. Spine support + **river** (biggest payoff, Jonah's example; pre-023 version
    ships without elevation coupling).
-3. **Forest** (first consumer of masked-noise; can pull plan 022 §2 forward or
+3. **Forest** (first consumer of masked-noise; can pull plan 023 §2 forward or
    use the interiorT fallback).
 4. Park, then wall, then farmland (all mostly reuse; farmland's
-   `paddy-terraces` preset alone waits on plan 022).
+   `paddy-terraces` preset alone waits on plan 023).
 
 Each: pure generator + unit gates (determinism, containment-corridor, 2×2 seam
 via whole-artifact clip, preset fuzz), live gate (sketch → generate → edit

@@ -1,16 +1,15 @@
-# Plan 025 — Make testing fast (the board must stop costing an afternoon)
+# Plan 021 — Make testing fast (the board must stop costing an afternoon)
 
 **Status:** design done 2026-07-12, approved direction from Jonah ("make testing
 take less time? testing right now takes forever, with all these gates etc";
 follow-up same day: "if executed before, it could speed up implementation of
 plans 21,22,23 — that would be huge"). **Executes FIRST — before plans
-021–024.** Rationale: 021–023 are five new algorithms plus cascade wiring,
+022–025.** Rationale: 022–024 are five new algorithms plus cascade wiring,
 each with its own gates; every minute cut from the loop multiplies across all
 of them, and with the §2.4 harness in place their host-lifecycle tests are
-born headless instead of migrated later. (Plan numbers 021–024 were assigned
-before this reordering — the execution order in plans/README.md is
-authoritative, not the numbering.) The §0 cold-start context
-of `plans/021-procgen-suite-rivers-forests-parks-walls.md` applies verbatim —
+born headless instead of migrated later. (The arc was renumbered 2026-07-12 so numbering = execution
+order; this plan is 021 because it runs first.) The §0 cold-start context
+of `plans/022-procgen-suite-rivers-forests-parks-walls.md` applies verbatim —
 read it first, especially the infra pitfalls (several exist only because
 testing is slow; this plan attacks their root causes).
 
@@ -107,10 +106,10 @@ from its critical path).
    instrument: the probe + per-gate timings ARE the repro harness).
 3. 2.4 controller extraction + FakeHost (the big one — own phase, zero-
    behavior-change bar, full board green before and after). Do this BEFORE
-   plan 021 despite the refactor cost: 021–023 add more host wiring than
+   plan 022 despite the refactor cost: 022–024 add more host wiring than
    everything that exists today, and each piece lands ~free on a testable
    controller vs. expensive on MapView. The refactor also carves the seam the
-   plan-023 cascade orchestration needs anyway — it was coming either way;
+   plan-024 cascade orchestration needs anyway — it was coming either way;
    early is cheaper.
 
 ## 4. Acceptance (numbers, not vibes)
@@ -130,7 +129,7 @@ from its critical path).
    is still >15 min).
 2. Golden-screenshot pixel-diffing to automate part of the visual review
    (risk: theme/font drift makes it flaky — Jonah's call whether the
-   maintenance tax is worth it; the plan-024 gallery contact sheet may be the
+   maintenance tax is worth it; the plan-025 gallery contact sheet may be the
    better artifact).
 3. CI (GitHub Actions) for T0/T1 on push — needs the FakeHost work first;
    live gates stay local (Obsidian licensing/GUI).
