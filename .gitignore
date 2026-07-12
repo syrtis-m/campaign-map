@@ -18,3 +18,12 @@ dev-vault/**/*.pmtiles
 assets/fonts/src/
 assets/fonts/glyphs/
 dev-vault/.obsidian/plugins/campaign-map/assets/
+
+# Claude-local: installable agent skills (see CLAUDE.md for their upstream
+# URLs) and agent worktrees — machine-local, never repo content
+.claude/skills/
+.claude/settings.local.json
+/skills/
+/worktrees/
+# scratch screenshot from the docs/05 inner loop (goldens in shots/ ARE tracked)
+shots/latest*.png
