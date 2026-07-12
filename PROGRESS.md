@@ -396,3 +396,14 @@ asserts `map.isStyleLoaded()` after opening each campaign.**
   fuzz zero-throw · suite 306/306 · tsc + production build green.
 - Next: v4.1 host lifecycle (RegionProcgenModal, sketch-finish trigger, region
   cache keys, replay from sketch layer, disc→district migration, gate procgen40).
+
+- **v4.1 host lifecycle (2026-07-12, committed)**: sketching a district now
+  drives city procgen. RegionProcgenModal (registry-driven, replaces
+  DomainProfileModal); region cache keys `region:<id>:…`; replay derives city
+  fabric from the sketch layer (city-tier manifest entries retired); one-way
+  disc→district migration (ran live on Vespergate's real domain);
+  clear/delete/undo via `sketch-procgen-set`/`sketch-procgen-clear` log types;
+  worker job `procgen-region` via the registry; disc shim removed. Gate
+  procgen40 10/10 · 306/306 · tsc + build green ·
+  review/v4.1-vespergate-sketch-city.png (square wall traces the sketched box).
+- Next: v4.2 edit UX (select tool, vertex handles, params panel, edit→regen).

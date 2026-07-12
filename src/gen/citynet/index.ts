@@ -30,8 +30,7 @@ import type { BBox } from "../spatialHash";
 import { clipPolylineToBBox, clipPolygonToBBox, type Vec2 } from "../clip";
 import type { GenerationConstraints } from "../types";
 import { blockedByWater, indexFabricConstraints } from "../fabricConstraints";
-import { makeRegion, regionContains, type ProcgenRegion } from "../region";
-import { discToRing, type CityDomain } from "./domain";
+import { regionContains, type ProcgenRegion } from "../region";
 import { PROFILES } from "./profiles";
 import type { ProfileId } from "./domain";
 import { makeCostField } from "./costField";
@@ -404,25 +403,6 @@ export function generateCityNetwork(
 
   sortCanonical(features);
   return features;
-}
-
-/**
- * COMPILE SHIM (v4.0 → v4.1): the pre-migration host (MapView,
- * generationService, workers) still requests generation per CityDomain.
- * This wrapper converts the disc to its 32-gon region — the SAME conversion
- * the v4.1 migration will persist — and delegates. Deterministic: the shim
- * region id is `dom-shim:<domain.id>` and the ring is `discToRing(domain)`,
- * both pure functions of the domain.
- *
- * @deprecated v4.1 replaces this call path with regions from the sketch layer.
- */
-export function generateCityNetworkForDomain(
-  citySeed: number,
-  domain: CityDomain,
-  constraints: GenerationConstraints
-): GeoJSON.Feature[] {
-  const region = makeRegion(`dom-shim:${domain.id}`, discToRing(domain));
-  return generateCityNetwork(citySeed, region, domain.profile, constraints);
 }
 
 function toVec2(coords: Pt[]): Vec2[] {

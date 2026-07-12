@@ -1,17 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 import type { App } from "obsidian";
 import {
-  generateDomainTile,
+  generateRegionTile,
   generateTile,
-  networkKeyFor,
+  regionNetworkKey,
   regenerateTile,
   type GenerationContext,
-  type NetworkCompute,
+  type RegionNetworkCompute,
 } from "./generationService";
 import { removeCachedTiles } from "../../model/tileCache";
 import { GENERATION_ZOOM, tileKey } from "../../gen/cache/tileGrid";
 import { generateSettlements } from "../../gen/world";
-import { citySeedFor, generateCityNetworkForDomain, makeDomain } from "../../gen/citynet";
+import {
+  citySeedFor,
+  discToRing,
+  generateCityNetwork,
+  makeDomain,
+  DOMAIN_TILE_GENERATOR_IDS,
+} from "../../gen/citynet";
+import { makeRegion } from "../../gen/region";
 import type { ParsedCampaign } from "../../model/campaignConfig";
 import type { BBox } from "../../gen/spatialHash";
 
@@ -156,21 +163,26 @@ describe("generateTile naming constraints", () => {
   });
 });
 
-describe("generateDomainTile (procgen v3 §3.3)", () => {
-  const directCompute: NetworkCompute = (seed, dom, _bbox, constraints) =>
-    generateCityNetworkForDomain(citySeedFor(seed, dom), dom, constraints);
+describe("generateRegionTile (procgen v4, plan 020 §3.3)", () => {
+  // A region built from a v3 disc (32-gon), with the v3-equivalent seed —
+  // the same fixture the citynet unit gates use.
   const domain = makeDomain(300, 300, 900, "euro-medieval", 1720000000000);
+  const region = makeRegion("fabric-region-1", discToRing(domain));
+  const seed = citySeedFor(4181, domain);
+  const gids = DOMAIN_TILE_GENERATOR_IDS;
+  const directCompute: RegionNetworkCompute = (r, constraints) =>
+    generateCityNetwork(seed, r, "euro-medieval", constraints);
 
-  it("computes the network ONCE for two tiles of the same domain, and per-tile records hit the cache after", async () => {
+  it("computes the network ONCE for two tiles of the same region, and per-tile records hit the cache after", async () => {
     const { app } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
     const compute = vi.fn(directCompute);
 
-    const a1 = await generateDomainTile(ctx, domain, 0, 0, compute);
-    const b1 = await generateDomainTile(ctx, domain, -1, 0, compute);
+    const a1 = await generateRegionTile(ctx, region, gids, 0, 0, compute);
+    const b1 = await generateRegionTile(ctx, region, gids, -1, 0, compute);
     expect(compute).toHaveBeenCalledTimes(1); // second tile clips the cached network
 
-    const a2 = await generateDomainTile(ctx, domain, 0, 0, compute);
+    const a2 = await generateRegionTile(ctx, region, gids, 0, 0, compute);
     expect(compute).toHaveBeenCalledTimes(1); // per-tile fast path, no re-clip
     expect(a2).toEqual(a1);
     expect(b1).not.toEqual(a1);
@@ -179,9 +191,9 @@ describe("generateDomainTile (procgen v3 §3.3)", () => {
   it("delete-the-cache-file determinism: regenerated records are deep-equal", async () => {
     const { app, files } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
-    const first = await generateDomainTile(ctx, domain, 0, 0, directCompute);
+    const first = await generateRegionTile(ctx, region, gids, 0, 0, directCompute);
     files.delete("Campaigns/Ashfall/.mapcache/generated.jsonl");
-    const second = await generateDomainTile(ctx, domain, 0, 0, directCompute);
+    const second = await generateRegionTile(ctx, region, gids, 0, 0, directCompute);
     expect(second).toEqual(first);
   });
 
@@ -190,18 +202,18 @@ describe("generateDomainTile (procgen v3 §3.3)", () => {
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
     const compute = vi.fn(directCompute);
     const shared = new Map();
-    await generateDomainTile(ctx, domain, 0, 0, compute, { preloadedCache: shared });
-    await generateDomainTile(ctx, domain, -1, -1, compute, { preloadedCache: shared });
+    await generateRegionTile(ctx, region, gids, 0, 0, compute, { preloadedCache: shared });
+    await generateRegionTile(ctx, region, gids, -1, -1, compute, { preloadedCache: shared });
     expect(compute).toHaveBeenCalledTimes(1);
-    expect(shared.has(networkKeyFor(campaign().config.seed, domain))).toBe(true);
+    expect(shared.has(regionNetworkKey(region.id))).toBe(true);
   });
 
   it("force recomputes the network and overwrites the records", async () => {
     const { app } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
     const compute = vi.fn(directCompute);
-    const first = await generateDomainTile(ctx, domain, 0, 0, compute);
-    const again = await generateDomainTile(ctx, domain, 0, 0, compute, { force: true });
+    const first = await generateRegionTile(ctx, region, gids, 0, 0, compute);
+    const again = await generateRegionTile(ctx, region, gids, 0, 0, compute, { force: true });
     expect(compute).toHaveBeenCalledTimes(2);
     expect(again).toEqual(first); // same constraints → same bytes, even forced
   });

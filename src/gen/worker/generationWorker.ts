@@ -6,14 +6,14 @@
  * it lives in its own worker/ subfolder rather than alongside the generators.
  */
 import { generateWorldRegions, generateSettlements, generateRoutes } from "../world";
-import { generateCityNetworkForDomain, citySeedFor, type CityDomain } from "../citynet";
+import { algorithmById } from "../procgen/registry";
+import { makeRegion } from "../region";
 import type { GenerationConstraints } from "../types";
 import type { BBox } from "../spatialHash";
 
-/** City-tier generation is domain-scoped since procgen v3.4 — the legacy
- * per-tile city generators (streamline fur, Voronoi districts, bisection
- * blocks) are deleted; `city-network` is the only city job. World tier is
- * untouched by the v3 rewrite. */
+/** World-tier generators are per-tile; city-tier generation is region-scoped
+ * (plan 020) — the whole-region network is the one expensive job that must
+ * run off-thread, dispatched via the procgen registry. */
 export type GeneratorId = "world-region" | "world-settlement" | "world-route";
 
 const GENERATORS: Record<GeneratorId, (seed: number, bbox: BBox, c: GenerationConstraints) => GeoJSON.Feature[]> = {
@@ -22,18 +22,33 @@ const GENERATORS: Record<GeneratorId, (seed: number, bbox: BBox, c: GenerationCo
   "world-route": generateRoutes,
 };
 
-export interface GenerationRequest {
+type Pt = [number, number];
+
+/** A whole-region procgen job (plan 020 §5). The worker resolves the
+ * algorithm from the registry, rebuilds the region from its ring, and runs
+ * the pure generator — `seed`/`params` come from the region's persisted
+ * procgen block, so identity is durable data, never derived at run time. */
+export interface ProcgenRegionJob {
+  kind: "procgen-region";
   requestId: number;
-  generatorId: GeneratorId | "city-network";
+  algorithmId: string;
+  seed: number;
+  regionId: string;
+  ring: Pt[];
+  params: Record<string, unknown>;
+  constraints: GenerationConstraints;
+}
+
+export interface TileJob {
+  kind?: undefined;
+  requestId: number;
+  generatorId: GeneratorId;
   seed: number;
   bbox: BBox;
   constraints: GenerationConstraints;
-  /** Procgen v3: present only for `city-network` jobs — the whole-domain
-   * network is the expensive computation, so it's the one that must run
-   * off-thread (design §7.4). `seed` stays the campaign seed; the worker
-   * derives the position-keyed citySeed itself. */
-  domain?: CityDomain;
 }
+
+export type GenerationRequest = TileJob | ProcgenRegionJob;
 
 export interface GenerationResponse {
   requestId: number;
@@ -42,21 +57,26 @@ export interface GenerationResponse {
 }
 
 self.onmessage = (event: MessageEvent<GenerationRequest>) => {
-  const { requestId, generatorId, seed, bbox, constraints, domain } = event.data;
+  const req = event.data;
   try {
     let features: GeoJSON.Feature[];
-    if (generatorId === "city-network") {
-      if (!domain) throw new Error("city-network job missing domain");
-      features = generateCityNetworkForDomain(citySeedFor(seed, domain), domain, constraints);
+    if (req.kind === "procgen-region") {
+      const algorithm = algorithmById(req.algorithmId);
+      if (!algorithm) throw new Error(`unknown procgen algorithm: ${req.algorithmId}`);
+      const region = makeRegion(req.regionId, req.ring);
+      features = algorithm.generate(req.seed, region, req.params, req.constraints);
     } else {
-      const generator = GENERATORS[generatorId];
-      if (!generator) throw new Error(`unknown generatorId: ${generatorId}`);
-      features = generator(seed, bbox, constraints);
+      const generator = GENERATORS[req.generatorId];
+      if (!generator) throw new Error(`unknown generatorId: ${req.generatorId}`);
+      features = generator(req.seed, req.bbox, req.constraints);
     }
-    const response: GenerationResponse = { requestId, features };
+    const response: GenerationResponse = { requestId: req.requestId, features };
     (self as unknown as Worker).postMessage(response);
   } catch (err) {
-    const response: GenerationResponse = { requestId, error: err instanceof Error ? err.message : String(err) };
+    const response: GenerationResponse = {
+      requestId: req.requestId,
+      error: err instanceof Error ? err.message : String(err),
+    };
     (self as unknown as Worker).postMessage(response);
   }
 };

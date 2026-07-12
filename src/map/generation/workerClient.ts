@@ -11,7 +11,6 @@ import type { App } from "obsidian";
 import type { BBox } from "../../gen/spatialHash";
 import type { GenerationConstraints } from "../../gen/types";
 import type { GeneratorId, GenerationRequest, GenerationResponse } from "../../gen/worker/generationWorker";
-import type { CityDomain } from "../../gen/citynet";
 
 export class GenerationWorkerClient {
   private worker: Worker | null;
@@ -61,19 +60,30 @@ export class GenerationWorkerClient {
     });
   }
 
-  /** Procgen v3: whole-domain city-network computation — the expensive job
-   * that must run off-thread (design §7.4). `seed` is the campaign seed;
-   * the worker derives the position-keyed citySeed. `bbox` is informational
-   * (the domain disc's bbox) — the network is domain-scoped, not tile-scoped. */
-  generateNetwork(
+  /** Procgen v4 (plan 020 §5): whole-region network computation — the
+   * expensive job that must run off-thread. `seed`/`params` come from the
+   * region's persisted procgen block; the worker rebuilds the region from
+   * `ring` + `regionId` and dispatches the registry algorithm. */
+  generateRegion(
+    algorithmId: string,
     seed: number,
-    domain: CityDomain,
-    bbox: BBox,
+    regionId: string,
+    ring: [number, number][],
+    params: Record<string, unknown>,
     constraints: GenerationConstraints
   ): Promise<GeoJSON.Feature[]> {
     if (!this.worker) return Promise.reject(new Error("worker terminated"));
     const requestId = this.nextRequestId++;
-    const request: GenerationRequest = { requestId, generatorId: "city-network", seed, bbox, constraints, domain };
+    const request: GenerationRequest = {
+      kind: "procgen-region",
+      requestId,
+      algorithmId,
+      seed,
+      regionId,
+      ring,
+      params,
+      constraints,
+    };
     return new Promise((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });
       this.worker!.postMessage(request);

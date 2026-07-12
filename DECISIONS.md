@@ -271,3 +271,24 @@
 - Ruling trail: extra derived region fields, gate-as-ring-vertex representation,
   `clipPolylineToRegion` multi-part arterials, concave ward strategy — all
   orchestrator-approved before implementation.
+
+## 2026-07-12 — Plan 020 v4.1 (host lifecycle) — deviations & judgment calls
+- **`generateRegionTile` takes `tileGeneratorIds` explicitly** rather than the
+  FabricFeature (host resolves the algorithm once; service stays dumb).
+- **`createRegionForTest(ringUnits, algorithmId, params, name?)`** is the
+  headless modal bypass for gates (modal hangs CLI automation — same split as
+  the old `domainChoice`). Consequence: overlap-reject/invalid-ring Notices and
+  the modal itself have no automated coverage; the geometry beneath them is
+  unit-covered in region.ts. Manual/visual check owed at v4.2.
+- **Undo asymmetry kept** (matches generate-area/clear-area precedent):
+  `sketch-procgen-set` undo appends a `sketch-procgen-clear`;
+  `sketch-procgen-clear` undo restores without appending — no undo ping-pong.
+- **Live Vespergate migration ran as the real test**: `dom:-8:10` (Jonah's
+  city, founded 2026-07-12) → district feature `fabric-mri7r4bj-ll0bd5` with a
+  city procgen block; seed carried over via `citySeedFor` so the city keeps its
+  identity. Manifest domains now `[]`; the 5 hand-sketched inert districts
+  untouched. The migrated dev-vault state is committed as the new baseline.
+- Gate procgen40 10/10 (containment 2900 features outside:0, migration,
+  byte-identical replay after rm .mapcache, pan Δ0, remove-city persistence,
+  dev:errors clean). Gate lesson: `plugin:reload`, never `plugin:enable`
+  (enable is a no-op when already enabled → stale code).

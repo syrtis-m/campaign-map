@@ -12,13 +12,8 @@ import type { BBox } from "../../gen/spatialHash";
 import type { GenerationConstraints } from "../../gen/types";
 import type { FabricFeature } from "../../model/fabric";
 import { genreForCampaign } from "../../gen/naming/cultures";
-import {
-  anchorCellForPoint,
-  clipNetworkToTile,
-  domainBBox,
-  DOMAIN_TILE_GENERATOR_IDS,
-  type CityDomain,
-} from "../../gen/citynet";
+import { clipNetworkToTile } from "../../gen/citynet";
+import type { ProcgenRegion } from "../../gen/region";
 
 /** Sync (direct pure-generator) or async (worker-dispatched) — `generateTile`
  * awaits either uniformly, so the Phase 4 viewport dispatcher can pass a
@@ -88,26 +83,27 @@ export async function generateTile(
   return features;
 }
 
-/** The generatorId under which a whole-domain network record is cached —
- * keyed at the domain's 30 m anchor cell, not a 600 m tile (design §3.3). */
-export const NETWORK_GENERATOR_ID = "city-network";
-
-/** Sync (direct) or async (worker) whole-domain network computation. `seed`
- * is the campaign seed — implementations derive the citySeed. */
-export type NetworkCompute = (
-  seed: number,
-  domain: CityDomain,
-  bbox: BBox,
+/** Sync (direct) or async (worker) whole-region network computation. The
+ * closure captures the algorithm id, seed, and params (plan 020 §3.1) — the
+ * service only supplies the (host-built) region and current constraints. */
+export type RegionNetworkCompute = (
+  region: ProcgenRegion,
   constraints: GenerationConstraints
 ) => GeoJSON.Feature[] | Promise<GeoJSON.Feature[]>;
 
-/** Cache key of a domain's whole-network record. */
-export function networkKeyFor(campaignSeed: number, domain: CityDomain): string {
-  const { cellX, cellY } = anchorCellForPoint(domain.cx, domain.cy);
-  return tileKey(campaignSeed, cellX, cellY, GENERATION_ZOOM, NETWORK_GENERATOR_ID);
+/** Whole-region network cache key (plan 020 §3.3): the unclipped network
+ * artifact, namespaced by region id so two overlapping regions on the same
+ * tile never clobber. */
+export function regionNetworkKey(regionId: string): string {
+  return `region:${regionId}:network`;
 }
 
-function domainConstraints(ctx: GenerationContext): GenerationConstraints {
+/** Per-tile clip cache key (plan 020 §3.3): `region:<id>:<x>:<y>:<gid>`. */
+export function regionTileKey(regionId: string, tileX: number, tileY: number, generatorId: string): string {
+  return `region:${regionId}:${tileX}:${tileY}:${generatorId}`;
+}
+
+function regionConstraints(ctx: GenerationContext): GenerationConstraints {
   return {
     worldBounds: ctx.worldBounds,
     canonFeatures: ctx.canonFeatures,
@@ -118,33 +114,33 @@ function domainConstraints(ctx: GenerationContext): GenerationConstraints {
 }
 
 /**
- * Procgen v3 (design §3.3): cache-or-compute one tile of a city domain.
- * The whole-domain network is computed ONCE per domain — internally
- * sequential growth is legal because every tile that overlaps the domain
- * reads the SAME artifact and clips its own bbox from it (the halo argument
- * taken to its limit: halo = the whole city). Two cache record kinds:
- *   1. the network record (`city-network`, keyed at the domain anchor cell,
- *      the whole unclipped network), and
- *   2. per-tile records (`city-street`/`city-landmark`/... — exactly the
- *      shape MapView already paints), the clip of (1) to the tile bbox.
+ * Procgen v4 (plan 020 §3.3): cache-or-compute one tile of a procgen region.
+ * The whole-region network is computed ONCE per region — internally
+ * sequential growth is legal because every tile that overlaps the region
+ * reads the SAME artifact and clips its own bbox from it. Two cache record
+ * kinds:
+ *   1. the network record (`region:<id>:network`, the whole unclipped
+ *      network), and
+ *   2. per-tile records (`region:<id>:<x>:<y>:<gid>`), the clip of (1) to the
+ *      tile bbox — one record per `tileGeneratorId`, EMPTY BUCKET OR NOT, so
+ *      the fast-path present-check below can prove the tile is fully cached.
  *
- * Replay perf (explainer §6 applies doubly): callers replaying a manifest
- * MUST pass `opts.preloadedCache` (one file read shared across entries) —
- * per-call `getCachedTile` re-reads the whole JSONL each time.
+ * Replay perf: callers replaying the sketch layer MUST pass
+ * `opts.preloadedCache` (one file read shared across regions) — per-call
+ * `getCachedTile` re-reads the whole JSONL each time.
  */
-export async function generateDomainTile(
+export async function generateRegionTile(
   ctx: GenerationContext,
-  domain: CityDomain,
+  region: ProcgenRegion,
+  tileGeneratorIds: readonly string[],
   tileX: number,
   tileY: number,
-  computeNetwork: NetworkCompute,
+  computeNetwork: RegionNetworkCompute,
   opts: { force?: boolean; preloadedCache?: Map<string, CachedTile> } = {}
 ): Promise<GeoJSON.Feature[]> {
   const campaignFolder = campaignFolderFromConfigPath(ctx.campaign.path);
   const seed = ctx.campaign.config.seed;
-  const tileKeys = DOMAIN_TILE_GENERATOR_IDS.map((gid) =>
-    tileKey(seed, tileX, tileY, GENERATION_ZOOM, gid)
-  );
+  const tileKeys = tileGeneratorIds.map((gid) => regionTileKey(region.id, tileX, tileY, gid));
 
   const readCached = async (key: string): Promise<CachedTile | undefined> =>
     opts.preloadedCache ? opts.preloadedCache.get(key) : getCachedTile(ctx.app, campaignFolder, key);
@@ -158,20 +154,19 @@ export async function generateDomainTile(
     }
   }
 
-  // Network record: cache-or-compute once per domain.
-  const netKey = networkKeyFor(seed, domain);
-  const { cellX, cellY } = anchorCellForPoint(domain.cx, domain.cy);
+  // Network record: cache-or-compute once per region.
+  const netKey = regionNetworkKey(region.id);
   let network: GeoJSON.Feature[];
   const cachedNet = opts.force ? undefined : await readCached(netKey);
   if (cachedNet) {
     network = cachedNet.features as unknown as GeoJSON.Feature[];
   } else {
-    network = await computeNetwork(seed, domain, domainBBox(domain), domainConstraints(ctx));
+    network = await computeNetwork(region, regionConstraints(ctx));
     const record: CachedTile = {
       key: netKey,
-      generatorId: NETWORK_GENERATOR_ID,
-      tileX: cellX,
-      tileY: cellY,
+      generatorId: "region-network",
+      tileX: 0,
+      tileY: 0,
       zoom: GENERATION_ZOOM,
       campaignSeed: seed,
       features: network as unknown as Record<string, unknown>[],
@@ -184,8 +179,8 @@ export async function generateDomainTile(
   // Clip to this tile and persist the per-tile records MapView paints.
   const buckets = clipNetworkToTile(network, tileBBox(tileX, tileY));
   const out: GeoJSON.Feature[] = [];
-  for (let i = 0; i < DOMAIN_TILE_GENERATOR_IDS.length; i++) {
-    const gid = DOMAIN_TILE_GENERATOR_IDS[i];
+  for (let i = 0; i < tileGeneratorIds.length; i++) {
+    const gid = tileGeneratorIds[i];
     const features = buckets[gid] ?? [];
     const record: CachedTile = {
       key: tileKeys[i],

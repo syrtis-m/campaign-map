@@ -4,7 +4,11 @@ crs: fictional
 theme: ink-soot
 seed: 7741
 scaleMetersPerUnit: 50
-bounds: [-48, -36, 48, 36]
+bounds:
+  - -48
+  - -36
+  - 48
+  - 36
 ---
 
 Vespergate — a large walled harbor city (procgen tuning demo, plan 019 era).

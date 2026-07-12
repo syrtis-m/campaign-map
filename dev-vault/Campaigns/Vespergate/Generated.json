@@ -1,4 +1,12 @@
 {
-  "entries": [],
+  "entries": [
+    {
+      "id": "world:-1:0",
+      "tier": "world",
+      "tileX": -1,
+      "tileY": 0,
+      "createdAt": 1783879651987
+    }
+  ],
   "domains": []
 }

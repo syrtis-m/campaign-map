@@ -8,29 +8,30 @@ import { appendLogEntry, campaignFolderFromConfigPath } from "../model/mutationL
 import {
   FABRIC_KINDS,
   FabricFeatureSchema,
+  ProcgenBlockSchema,
   emptyFabric,
   isPolygonKind,
+  isProcgenRegion,
   makeFabricId,
   sketchUndoTarget,
   withFeature,
   withoutFeature,
+  withProcgen,
+  withoutProcgen,
   type FabricCollection,
   type FabricFeature,
   type FabricKind,
+  type ProcgenBlock,
 } from "../model/fabric";
 import { fabricPath, loadFabric, saveFabric } from "../vault/fabricStore";
 import {
-  domainAtPoint,
-  domainById,
   emptyManifest,
   entriesForDomain,
   entriesForTile,
   manifestEntryId,
-  withDomain,
   withEntry,
   withoutDomain,
   withoutEntry,
-  CityDomainSchema,
   ManifestEntrySchema,
   type GeneratedManifest,
   type ManifestEntry,
@@ -63,24 +64,32 @@ import {
 } from "../gen/cache/tileGrid";
 import type { BBox } from "../gen/spatialHash";
 import {
-  generateDomainTile,
+  generateRegionTile,
   generateTile,
-  networkKeyFor,
+  regionNetworkKey,
+  regionTileKey,
   type GenerationContext,
-  type NetworkCompute,
+  type RegionNetworkCompute,
   type TileGenerator,
 } from "../map/generation/generationService";
 import {
+  anchorCellForPoint,
   citySeedFor,
-  domainBBox,
-  domainsOverlap,
-  generateCityNetworkForDomain,
-  makeDomain,
-  DOMAIN_DEFAULT_RADIUS_M,
+  discToRing,
+  DISC_TO_RING_SEGMENTS,
   DOMAIN_TILE_GENERATOR_IDS,
   type CityDomain,
 } from "../gen/citynet";
-import { DomainProfileModal } from "./DomainProfileModal";
+import {
+  makeRegion,
+  regionContains,
+  segmentCrossesBoundary,
+  validateRegionRing,
+  distanceToBoundary,
+  type ProcgenRegion,
+} from "../gen/region";
+import { algorithmById, algorithmForKind, type ProcgenAlgorithm } from "../gen/procgen/registry";
+import { RegionProcgenModal } from "./RegionProcgenModal";
 import type { GeneratorId } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
 import { addConnection, removeConnection, setLocationVisibility } from "../vault/locationOps";
@@ -97,8 +106,20 @@ import { hashSeed } from "../gen/rng";
 import { renderPoster, posterDimensions } from "../map/posterExport";
 import { buildAtlasPdf, type AtlasLocation } from "../map/atlasExport";
 import type CampaignMapPlugin from "../main";
+import { z } from "zod";
 
 export const VIEW_TYPE_MAP = "campaign-map-view";
+
+/** Data shape of a `sketch-procgen-set` / `sketch-procgen-clear` log entry
+ * (plan 020 §8.4): the region's before/after procgen block + the post-op
+ * feature, so undo can strip a block (dropping its cache) or re-attach one
+ * (regenerating). Parsed at the undo IO boundary. */
+const ProcgenLogDataSchema = z.object({
+  featureId: z.string(),
+  before: ProcgenBlockSchema.nullable(),
+  after: ProcgenBlockSchema.nullable(),
+  feature: FabricFeatureSchema,
+});
 
 /** Picks a session note (`<campaign>/Sessions/*.md`) whose body's `[[wikilinks]]`
  * become a travel path (plan 009) — same FuzzySuggestModal pattern as
@@ -516,26 +537,17 @@ export class MapView extends ItemView {
   }
 
   /**
-   * "Generate fabric here" (plan 019) — THE explicit generation trigger,
-   * and the only way first-time generation ever happens (no viewport
-   * dispatch, no generate-on-pan). Picks the tier (world vs city) from the
-   * current zoom so the GM doesn't have to know the distinction, paints the
-   * tile at `point` (display-space; defaults to the map center), and
-   * appends a durable manifest entry so the area repaints on every future
-   * open (cache hit or deterministic regenerate). Real-city campaigns get
-   * their fabric from the Protomaps basemap instead.
+   * "Generate fabric here" (plan 019/020) — the explicit generation trigger
+   * for the WORLD tier, and the re-clip trigger for a procgen region at city
+   * zoom. World tier: paints the clicked tile and appends a durable manifest
+   * entry (unchanged). City tier: city procgen is polygon-scoped now — a
+   * click INSIDE a region re-clips/repaints it (cache path); a click outside
+   * any region points the GM at the district tool. Founding a city by
+   * clicking is retired (plan 020 §8.1): sketch a district instead.
    */
   async generateFabricHere(
     point?: [number, number],
-    opts: {
-      force?: boolean;
-      silent?: boolean;
-      /** Founds a new domain WITHOUT the profile modal when the point is
-       * outside every existing domain — the headless path for gates/tests
-       * (a modal would hang CLI automation) and for callers that already
-       * know the answer. Interactive flows omit it and get the modal. */
-      domainChoice?: { profile: CityDomain["profile"]; radius?: number };
-    } = {}
+    opts: { force?: boolean; silent?: boolean } = {}
   ): Promise<GeoJSON.Feature[]> {
     if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
     const campaign = this.campaign;
@@ -546,70 +558,34 @@ export class MapView extends ItemView {
     const centerUnits = point ?? this.mapCenterUnits();
     const px = unitsToMeters(centerUnits[0], scale);
     const py = unitsToMeters(centerUnits[1], scale);
-    const { tileX, tileY } = tileXYForPoint(px, py);
 
-    // Procgen v3 (design §3.1): city-tier generation is domain-scoped. A
-    // click inside an existing domain generates/clips further tiles of it;
-    // outside, the GM is asked for a profile and the click founds a new
-    // domain (recorded in the manifest — the domain is part of the REQUEST).
-    let domain: ManifestCityDomain | undefined;
     if (tier === "city") {
-      domain = domainAtPoint(this.manifest, px, py);
-      if (!domain) {
-        const created = opts.domainChoice
-          ? await this.createDomain(px, py, opts.domainChoice.profile, opts.domainChoice.radius)
-          : await this.promptCreateDomain(px, py);
-        if (this.campaign?.id !== campaign.id) return [];
-        if (!created) return []; // cancelled, or overlap rejected
-        domain = created;
-      }
-    }
-
-    // Copy, don't alias: generateTierAt stores the SAME array object in the
-    // render store — pushing domain features into it would silently inject
-    // them into the legacy tile entry too (double-paint live, and a
-    // replay-vs-live mismatch, caught by phase4's revisit-determinism gate).
-    const features = [
-      ...(await this.generateTierAt(
-        tier,
-        tileX,
-        tileY,
-        opts.force === true,
-        domain ? MapView.DOMAIN_SUPERSEDED_LEGACY_IDS : undefined
-      )),
-    ];
-    if (this.campaign?.id !== campaign.id) return [];
-
-    // The request unit at city tier is the DOMAIN: one ask paints the whole
-    // disc (every 600 m tile it overlaps — the network exists once anyway;
-    // per-tile clips are cheap). Painting only the clicked tile read as a
-    // bug on screen: a rectangular window into a city. See DECISIONS
-    // 2026-07-11 (v3.2).
-    const tiles = domain ? this.domainTileRange(domain) : [{ tileX, tileY }];
-    if (domain) {
-      features.push(...(await this.generateDomainTiles(domain, tiles, opts.force === true)));
+      await this.loadFabricForCampaign();
       if (this.campaign?.id !== campaign.id) return [];
+      const regionFeature = this.regionFeatureAt(px, py);
+      if (!regionFeature) {
+        if (!opts.silent) {
+          new Notice("Campaign Map: sketch a district to generate a city (pencil → district)");
+        }
+        return [];
+      }
+      const feats = await this.generateRegion(regionFeature, { force: opts.force === true });
+      if (this.campaign?.id !== campaign.id) return [];
+      if (!opts.silent) {
+        new Notice(`Campaign Map: generated ${feats.length} city feature${feats.length === 1 ? "" : "s"}`);
+      }
+      return feats.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
     }
 
-    let manifestDirty = false;
-    for (const t of tiles) {
-      const id = manifestEntryId(tier, t.tileX, t.tileY);
-      const existing = this.manifest.entries.find((e) => e.id === id);
-      const isNew = !existing || (domain && existing.domainId !== domain.id);
-      if (!isNew) continue;
-      const entry: ManifestEntry = {
-        id,
-        tier,
-        tileX: t.tileX,
-        tileY: t.tileY,
-        createdAt: Date.now(),
-        domainId: domain?.id,
-      };
+    // World tier — unchanged: paint the clicked tile, record the request.
+    const { tileX, tileY } = tileXYForPoint(px, py);
+    const features = [...(await this.generateTierAt(tier, tileX, tileY, opts.force === true))];
+    if (this.campaign?.id !== campaign.id) return [];
+    const id = manifestEntryId(tier, tileX, tileY);
+    if (!this.manifest.entries.find((e) => e.id === id)) {
+      const entry: ManifestEntry = { id, tier, tileX, tileY, createdAt: Date.now() };
       this.manifest = withEntry(this.manifest, entry);
-      manifestDirty = true;
-      // Durable request → mutation log too (undo/replay): what's logged is
-      // the GM's ask, not the (regenerable) output. One record per tile —
-      // single-step undo reverses one tile, matching the existing contract.
+      await saveGeneratedManifest(this.app, campaign, this.manifest);
       await appendLogEntry(this.app, campaignFolderFromConfigPath(campaign.path), {
         ts: Date.now(),
         type: "generate-area",
@@ -618,120 +594,228 @@ export class MapView extends ItemView {
         data: entry,
       });
     }
-    if (manifestDirty) await saveGeneratedManifest(this.app, campaign, this.manifest);
     if (!opts.silent) {
       new Notice(`Campaign Map: generated ${features.length} ${tier} feature${features.length === 1 ? "" : "s"}`);
     }
     return features.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
 
-  /** Every generation tile whose bbox intersects the domain disc, in
-   * deterministic (y, x) order. */
-  private domainTileRange(domain: ManifestCityDomain): { tileX: number; tileY: number }[] {
-    const b = domainBBox(domain as CityDomain);
-    const min = tileXYForPoint(b.minX, b.minY);
-    const max = tileXYForPoint(b.maxX, b.maxY);
+  // ─── Procgen regions (plan 020) ────────────────────────────────────────
+
+  /** Fabric features that carry a procgen block — the sketch layer IS the
+   * request record for city-tier generation (plan 020 §3.2). */
+  private regionFeatures(): FabricFeature[] {
+    return this.fabricCollection.features.filter(isProcgenRegion);
+  }
+
+  /** Build a ProcgenRegion (generation-space meters) from a district fabric
+   * feature (display units). Null for non-polygon geometry. */
+  private buildRegionFromFeature(feature: FabricFeature): ProcgenRegion | null {
+    if (feature.geometry.type !== "Polygon" || !this.campaign) return null;
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const ring = feature.geometry.coordinates[0].map(
+      ([x, y]) => [unitsToMeters(x, scale), unitsToMeters(y, scale)] as [number, number]
+    );
+    return makeRegion(feature.id, ring);
+  }
+
+  /** The region feature whose polygon contains the generation-space point. */
+  private regionFeatureAt(px: number, py: number): FabricFeature | undefined {
+    for (const feature of this.regionFeatures()) {
+      const region = this.buildRegionFromFeature(feature);
+      if (region && regionContains(region, px, py)) return feature;
+    }
+    return undefined;
+  }
+
+  /** Render-store key for a region-clipped tile (plan 020 §3.3). */
+  private regionRenderKey(regionId: string, tileX: number, tileY: number): string {
+    return `region:${regionId}:${tileX}:${tileY}`;
+  }
+
+  /** Every generation tile whose bbox overlaps the region polygon, in
+   * deterministic (y, x) order. Pure function of the region — same geometry
+   * yields the same set at generate-time and replay-time (the byte-identical
+   * cache invariant now leans on this, since regions carry no manifest tile
+   * list). */
+  private regionTileRange(region: ProcgenRegion): { tileX: number; tileY: number }[] {
+    const min = tileXYForPoint(region.bbox.minX, region.bbox.minY);
+    const max = tileXYForPoint(region.bbox.maxX, region.bbox.maxY);
     const out: { tileX: number; tileY: number }[] = [];
     for (let ty = min.tileY; ty <= max.tileY; ty++) {
       for (let tx = min.tileX; tx <= max.tileX; tx++) {
-        const tb = tileBBox(tx, ty);
-        const nx = Math.max(tb.minX, Math.min(domain.cx, tb.maxX));
-        const ny = Math.max(tb.minY, Math.min(domain.cy, tb.maxY));
-        if ((nx - domain.cx) ** 2 + (ny - domain.cy) ** 2 <= domain.radius ** 2) {
-          out.push({ tileX: tx, tileY: ty });
-        }
+        if (this.tileOverlapsRegion(region, tileBBox(tx, ty))) out.push({ tileX: tx, tileY: ty });
       }
     }
     return out;
   }
 
+  /** Robust rectangle/polygon overlap: any ring vertex inside the tile, any
+   * tile corner inside the region, or any region edge crossing a tile edge. */
+  private tileOverlapsRegion(region: ProcgenRegion, tb: BBox): boolean {
+    for (const [x, y] of region.ring) {
+      if (x >= tb.minX && x <= tb.maxX && y >= tb.minY && y <= tb.maxY) return true;
+    }
+    const corners: [number, number][] = [
+      [tb.minX, tb.minY],
+      [tb.maxX, tb.minY],
+      [tb.maxX, tb.maxY],
+      [tb.minX, tb.maxY],
+    ];
+    for (const [x, y] of corners) if (regionContains(region, x, y)) return true;
+    for (let i = 0; i < 4; i++) {
+      const [ax, ay] = corners[i];
+      const [bx, by] = corners[(i + 1) % 4];
+      if (segmentCrossesBoundary(region, ax, ay, bx, by)) return true;
+    }
+    return false;
+  }
+
+  /** Do two regions overlap? (Same-algorithm regions may not — plan 020 §6.) */
+  private regionsOverlap(a: ProcgenRegion, b: ProcgenRegion): boolean {
+    if (a.bbox.maxX < b.bbox.minX || b.bbox.maxX < a.bbox.minX) return false;
+    if (a.bbox.maxY < b.bbox.minY || b.bbox.maxY < a.bbox.minY) return false;
+    for (const [x, y] of a.ring) if (regionContains(b, x, y)) return true;
+    for (const [x, y] of b.ring) if (regionContains(a, x, y)) return true;
+    for (let i = 0; i < a.ring.length - 1; i++) {
+      if (segmentCrossesBoundary(b, a.ring[i][0], a.ring[i][1], a.ring[i + 1][0], a.ring[i + 1][1])) return true;
+    }
+    return false;
+  }
+
+  /** The first existing same-algorithm region that overlaps `feature`'s
+   * polygon (excluding itself). */
+  private overlappingRegion(feature: FabricFeature, algorithmId: string): FabricFeature | undefined {
+    const region = this.buildRegionFromFeature(feature);
+    if (!region) return undefined;
+    for (const other of this.regionFeatures()) {
+      if (other.id === feature.id) continue;
+      if (other.properties.procgen?.algorithm !== algorithmId) continue;
+      const otherRegion = this.buildRegionFromFeature(other);
+      if (otherRegion && this.regionsOverlap(region, otherRegion)) return other;
+    }
+    return undefined;
+  }
+
+  /** Whole-region network computation closure (plan 020 §5): worker when
+   * available (the expensive off-thread job), direct otherwise. seed/params
+   * come from the feature's persisted procgen block. Every real execution
+   * bumps the explicit-only gate counter — cache hits never reach here. */
+  private regionCompute(
+    worker: GenerationWorkerClient | null,
+    feature: FabricFeature
+  ): RegionNetworkCompute {
+    const block = feature.properties.procgen!;
+    const algorithm = algorithmById(block.algorithm);
+    return (region, constraints) => {
+      this.generatorRunCounter++;
+      if (worker) {
+        return worker.generateRegion(block.algorithm, block.seed, region.id, region.ring, block.params, constraints);
+      }
+      if (!algorithm) throw new Error(`unknown procgen algorithm: ${block.algorithm}`);
+      return algorithm.generate(block.seed, region, block.params, constraints);
+    };
+  }
+
   /**
-   * Batch-generates domain tiles sharing ONE network compute: non-forced
-   * runs preload the cache file once (O(1) file reads for N tiles); forced
-   * runs drop the network + per-tile records first, then rebuild against a
-   * fresh shared map — never N network recomputes.
+   * Generate a whole procgen region: ONE network compute (worker job), clip
+   * to every overlapping tile, store per-tile in the render store, paint.
+   * `force` drops the network + per-tile records first, then rebuilds; else a
+   * cache hit returns byte-identical bytes. Replay passes `preloadedCache` so
+   * every region shares one file read.
    */
-  private async generateDomainTiles(
-    domain: ManifestCityDomain,
-    tiles: { tileX: number; tileY: number }[],
-    force: boolean
+  private async generateRegion(
+    feature: FabricFeature,
+    opts: { force?: boolean; preloadedCache?: Map<string, CachedTile> } = {}
   ): Promise<GeoJSON.Feature[]> {
     if (!this.campaign) return [];
     const campaign = this.campaign;
+    await this.loadFabricForCampaign();
+    if (this.campaign?.id !== campaign.id) return [];
+    const region = this.buildRegionFromFeature(feature);
+    const block = feature.properties.procgen;
+    if (!region || !block) return [];
+    const algorithm = algorithmById(block.algorithm);
+    if (!algorithm) return [];
     const folder = campaignFolderFromConfigPath(campaign.path);
-    const seed = campaign.config.seed;
-    let preloaded: Map<string, CachedTile>;
-    if (force) {
+    const tiles = this.regionTileRange(region);
+    let preloaded = opts.preloadedCache;
+    if (opts.force) {
       const keys = [
-        networkKeyFor(seed, domain as CityDomain),
-        ...tiles.flatMap((t) =>
-          DOMAIN_TILE_GENERATOR_IDS.map((gid) => tileKey(seed, t.tileX, t.tileY, GENERATION_ZOOM, gid))
-        ),
+        regionNetworkKey(region.id),
+        ...tiles.flatMap((t) => algorithm.tileGeneratorIds.map((gid) => regionTileKey(region.id, t.tileX, t.tileY, gid))),
       ];
       await removeCachedTiles(this.app, folder, keys);
-      preloaded = new Map();
-    } else {
+      preloaded = preloaded ?? new Map();
+    } else if (!preloaded) {
       preloaded = await readCachedTiles(this.app, folder);
     }
     if (this.campaign?.id !== campaign.id) return [];
+    const ctx = this.generationContext();
+    const worker = await this.plugin.getGenerationWorker();
+    const compute = this.regionCompute(worker, feature);
+    this.pendingGenerations++;
+    this.updateLoadingIndicator();
     const all: GeoJSON.Feature[] = [];
-    for (const t of tiles) {
-      if (this.campaign?.id !== campaign.id) return all;
-      all.push(...(await this.generateDomainTileAt(domain, t.tileX, t.tileY, false, preloaded)));
+    try {
+      for (const t of tiles) {
+        if (this.campaign?.id !== campaign.id) return all;
+        const feats = (
+          await generateRegionTile(ctx, region, algorithm.tileGeneratorIds, t.tileX, t.tileY, compute, {
+            force: opts.force,
+            preloadedCache: preloaded,
+          })
+        ).filter((f) => featureTouchesBBox(f, ctx.worldBounds));
+        this.loadedTiles.set(this.regionRenderKey(region.id, t.tileX, t.tileY), feats);
+        all.push(...feats);
+      }
+    } finally {
+      this.pendingGenerations--;
+      this.updateLoadingIndicator();
     }
+    this.refreshGeneratedSource();
     return all;
   }
 
   /**
-   * "Regenerate fabric here" (plan 019, D4): re-runs every tier the GM has
-   * generated at this tile against CURRENT constraints (canon + sketched
-   * fabric) — the manifest entries stay as they are; only the regenerable
-   * output changes. On a tile with no manifest entry it behaves as a
-   * first-time generate (forced, so a stale orphan cache can't shadow it).
+   * "Regenerate fabric here" (plan 019/020, D4): re-runs generation at this
+   * spot against CURRENT constraints. A region under the point regenerates
+   * whole (drops its network + tile records, recomputes); world-tier entries
+   * on the tile regenerate their tile. Nothing here → first-time generate.
    */
   async regenerateFabricHere(point?: [number, number]): Promise<GeoJSON.Feature[]> {
     if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return [];
     const campaign = this.campaign;
     await this.loadManifestForCampaign();
+    await this.loadFabricForCampaign();
     if (this.campaign?.id !== campaign.id) return [];
     const scale = campaign.config.scaleMetersPerUnit;
     const centerUnits = point ?? this.mapCenterUnits();
-    const { tileX, tileY } = tileXYForPoint(
-      unitsToMeters(centerUnits[0], scale),
-      unitsToMeters(centerUnits[1], scale)
-    );
-    const entries = entriesForTile(this.manifest, tileX, tileY);
-    if (entries.length === 0) return this.generateFabricHere(point, { force: true });
+    const px = unitsToMeters(centerUnits[0], scale);
+    const py = unitsToMeters(centerUnits[1], scale);
+    const { tileX, tileY } = tileXYForPoint(px, py);
 
+    const regionFeature = this.regionFeatureAt(px, py);
+    const worldEntries = entriesForTile(this.manifest, tileX, tileY).filter((e) => e.tier !== "city");
+    if (!regionFeature && worldEntries.length === 0) {
+      return this.generateFabricHere(point, { force: true });
+    }
     const all: GeoJSON.Feature[] = [];
-    for (const entry of entries) {
-      all.push(
-        ...(await this.generateTierAt(
-          entry.tier,
-          tileX,
-          tileY,
-          true,
-          entry.domainId ? MapView.DOMAIN_SUPERSEDED_LEGACY_IDS : undefined
-        ))
-      );
+    if (regionFeature) {
+      all.push(...(await this.generateRegion(regionFeature, { force: true })));
       if (this.campaign?.id !== campaign.id) return [];
     }
-    // Domain tiles regenerate as a WHOLE domain (growth is globally coupled
-    // within the disc — per-tile regen would strand siblings on a stale
-    // network). See regenerateDomain.
-    for (const domainId of new Set(entries.map((e) => e.domainId).filter((d): d is string => !!d))) {
-      const dom = domainById(this.manifest, domainId);
-      if (!dom) continue;
-      all.push(...(await this.regenerateDomain(dom)));
+    for (const entry of worldEntries) {
+      all.push(...(await this.generateTierAt(entry.tier, tileX, tileY, true)));
       if (this.campaign?.id !== campaign.id) return [];
     }
     new Notice(`Campaign Map: regenerated ${all.length} feature${all.length === 1 ? "" : "s"}`);
     return all.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
 
-  /** "Clear generated fabric here" (plan 019, D4): drops this tile's
-   * manifest entries + cache records + paint. Gone and stays gone after
-   * reopen — the manifest is what replays, and it no longer asks. */
+  /** "Clear generated fabric here" (plan 019, D4): drops this tile's WORLD
+   * manifest entries + cache records + paint. City procgen is removed via
+   * "Remove generated city here" (strips the shape's procgen block) instead. */
   async clearGeneratedHere(point?: [number, number]): Promise<number> {
     if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return 0;
     const campaign = this.campaign;
@@ -752,60 +836,45 @@ export class MapView extends ItemView {
     return entries.length;
   }
 
-  /** "Clear all generated fabric" (plan 019, D4). Sketched fabric and
-   * locations are untouched — this only removes generator output + the
-   * requests that produced it. */
+  /** "Clear all generated fabric" (plan 019/020, D4): removes world manifest
+   * entries + records, and strips every region's procgen block (each shape
+   * stays, inert). Sketched geometry and locations are untouched. */
   async clearAllGenerated(): Promise<number> {
     if (!this.campaign || this.campaign.config.crs !== "fictional") return 0;
     const campaign = this.campaign;
     await this.loadManifestForCampaign();
+    await this.loadFabricForCampaign();
     if (this.campaign?.id !== campaign.id) return 0;
     const entries = [...this.manifest.entries];
-    const domains = [...this.manifest.domains];
-    if (entries.length === 0 && domains.length === 0) {
+    const regions = this.regionFeatures();
+    if (entries.length === 0 && regions.length === 0) {
       new Notice("Campaign Map: nothing generated to clear");
       return 0;
     }
-    await this.clearManifestEntries(entries);
-    if (this.campaign?.id !== campaign.id) return entries.length;
-    // Domains are requests too (procgen v3): clear-all removes them and
-    // their whole-network records, or the next city generate would silently
-    // resurrect the old city from the surviving domain.
-    if (domains.length > 0) {
-      const folder = campaignFolderFromConfigPath(campaign.path);
-      await removeCachedTiles(
-        this.app,
-        folder,
-        domains.map((d) => networkKeyFor(campaign.config.seed, d as CityDomain))
-      );
-      for (const d of domains) this.manifest = withoutDomain(this.manifest, d.id);
-      await saveGeneratedManifest(this.app, campaign, this.manifest);
+    if (entries.length > 0) await this.clearManifestEntries(entries);
+    if (this.campaign?.id !== campaign.id) return entries.length + regions.length;
+    for (const feature of regions) {
+      await this.stripRegionProcgen(feature, true);
+      if (this.campaign?.id !== campaign.id) return entries.length + regions.length;
     }
-    return entries.length;
+    return entries.length + regions.length;
   }
 
-  /** Shared clear path: cache records out (real removal, not a tombstone —
-   * see removeCachedTiles), manifest entries out, paint out, one `clear-area`
-   * log record with the removed entries so undo can restore them. */
+  /** Shared clear path (world tier): cache records out (real removal, not a
+   * tombstone — see removeCachedTiles), manifest entries out, paint out, one
+   * `clear-area` log record with the removed entries so undo can restore. */
   private async clearManifestEntries(entries: ManifestEntry[]): Promise<void> {
-    if (!this.campaign) return;
+    if (!this.campaign || entries.length === 0) return;
     const campaign = this.campaign;
     const folder = campaignFolderFromConfigPath(campaign.path);
     const seed = campaign.config.seed;
-    const keys = entries.flatMap((e) => [
-      ...generatorIdsForBand(e.tier).map((gid) => tileKey(seed, e.tileX, e.tileY, GENERATION_ZOOM, gid)),
-      // Domain-clipped per-tile records go with the entry; the domain and
-      // its network record survive (clear-here clears TILES — clearing the
-      // whole domain is clearDomainHere, design §3.2).
-      ...(e.domainId
-        ? DOMAIN_TILE_GENERATOR_IDS.map((gid) => tileKey(seed, e.tileX, e.tileY, GENERATION_ZOOM, gid))
-        : []),
-    ]);
+    const keys = entries.flatMap((e) =>
+      generatorIdsForBand(e.tier).map((gid) => tileKey(seed, e.tileX, e.tileY, GENERATION_ZOOM, gid))
+    );
     await removeCachedTiles(this.app, folder, keys);
     for (const e of entries) {
       this.manifest = withoutEntry(this.manifest, e.id);
       this.loadedTiles.delete(this.tileKeyFor(e.tier, e.tileX, e.tileY));
-      this.loadedTiles.delete(this.domainTileKey(e.tileX, e.tileY));
     }
     await saveGeneratedManifest(this.app, campaign, this.manifest);
     this.refreshGeneratedSource();
@@ -1116,10 +1185,15 @@ export class MapView extends ItemView {
         return;
       }
       await this.loadFabricForCampaign();
-      this.fabricCollection =
-        last.type === "sketch-add"
-          ? withoutFeature(this.fabricCollection, parsed.data.id)
-          : withFeature(this.fabricCollection, parsed.data);
+      if (last.type === "sketch-add") {
+        // If the live feature carries a procgen block, its generation dies
+        // with it (plan 020 §8.4).
+        const live = this.fabricCollection.features.find((f) => f.id === parsed.data.id);
+        if (live && isProcgenRegion(live)) await this.dropRegionCacheAndUnpaint(live);
+        this.fabricCollection = withoutFeature(this.fabricCollection, parsed.data.id);
+      } else {
+        this.fabricCollection = withFeature(this.fabricCollection, parsed.data);
+      }
       if (this.selectedFabricId === parsed.data.id) {
         this.selectedFabricId = null;
         this.sketchController?.clearSelection();
@@ -1131,8 +1205,39 @@ export class MapView extends ItemView {
           ? `Campaign Map: undid sketched ${parsed.data.properties.kind}`
           : `Campaign Map: restored deleted ${parsed.data.properties.kind}`
       );
-      // The constraint set changed either way — re-adapt generated tiles.
+      // Restoring a region feature must restore its generation too (plan 020
+      // §8.4); either way the constraint set changed, so re-adapt neighbours.
+      if (last.type === "sketch-remove" && isProcgenRegion(parsed.data)) {
+        await this.generateRegion(parsed.data);
+      }
       this.queueConstraintRegen(parsed.data);
+    } else if (last.type === "sketch-procgen-set") {
+      // Undo attaching a procgen block = strip it (drop records + unpaint),
+      // appending a `sketch-procgen-clear` so the log stays faithful.
+      const parsed = ProcgenLogDataSchema.safeParse(last.data);
+      if (!parsed.success) {
+        new Notice("Campaign Map: can't undo — malformed log entry");
+        return;
+      }
+      await this.loadFabricForCampaign();
+      const feature = this.fabricCollection.features.find((f) => f.id === parsed.data.featureId) ?? parsed.data.feature;
+      await this.stripRegionProcgen(feature, true);
+      new Notice("Campaign Map: removed the generated city");
+    } else if (last.type === "sketch-procgen-clear") {
+      // Undo removing a procgen block = re-attach the carried block +
+      // regenerate. Restore WITHOUT appending a new log entry (same
+      // asymmetry as `clear-area` undo — undoing a negative action just
+      // restores; appending a `set` here would ping-pong with a following
+      // undo). Replay reads fabric, not the log tail, so the state is sound.
+      const parsed = ProcgenLogDataSchema.safeParse(last.data);
+      if (!parsed.success || !parsed.data.before) {
+        new Notice("Campaign Map: can't undo — malformed log entry");
+        return;
+      }
+      await this.loadFabricForCampaign();
+      const base = this.fabricCollection.features.find((f) => f.id === parsed.data.featureId) ?? parsed.data.feature;
+      await this.setRegionProcgen(withoutProcgen(base), parsed.data.before, null, false);
+      new Notice("Campaign Map: restored the generated city");
     } else if (last.type === "generate-area") {
       // Undo a generate request = clear that area (appends its own
       // `clear-area`, keeping the log a faithful history — same pattern as
@@ -1145,8 +1250,7 @@ export class MapView extends ItemView {
       await this.loadManifestForCampaign();
       await this.clearManifestEntries([entry.data]);
     } else if (last.type === "clear-area") {
-      // Undo a clear = restore the manifest entries (and the domain, if the
-      // clear was a clear-domain — its record carries it); output
+      // Undo a clear = restore the (world-tier) manifest entries; output
       // regenerates deterministically from the cache path.
       const parsed = ManifestEntrySchema.array().safeParse((last.data as { entries?: unknown }).entries);
       if (!parsed.success) {
@@ -1154,24 +1258,9 @@ export class MapView extends ItemView {
         return;
       }
       await this.loadManifestForCampaign();
-      const dom = CityDomainSchema.safeParse((last.data as { domain?: unknown }).domain);
-      if (dom.success) this.manifest = withDomain(this.manifest, dom.data);
       for (const entry of parsed.data) {
         this.manifest = withEntry(this.manifest, entry);
-        await this.generateTierAt(
-          entry.tier,
-          entry.tileX,
-          entry.tileY,
-          false,
-          entry.domainId ? MapView.DOMAIN_SUPERSEDED_LEGACY_IDS : undefined
-        );
-      }
-      if (dom.success) {
-        await this.generateDomainTiles(
-          dom.data,
-          parsed.data.map((e) => ({ tileX: e.tileX, tileY: e.tileY })),
-          false
-        );
+        await this.generateTierAt(entry.tier, entry.tileX, entry.tileY, false);
       }
       await saveGeneratedManifest(this.app, this.campaign, this.manifest);
       new Notice(`Campaign Map: restored ${parsed.data.length} generated area${parsed.data.length === 1 ? "" : "s"}`);
@@ -1324,13 +1413,14 @@ export class MapView extends ItemView {
 
   /** Runs every generator of `tier` for one tile through the cache path,
    * stores the result in the render store, and paints. Generation-space in,
-   * generation-space stored — callers convert for display. */
+   * generation-space stored — callers convert for display. City tier has no
+   * per-tile generators (city fabric is the region network clip, plan 020),
+   * so this only meaningfully runs at the world tier. */
   private async generateTierAt(
     tier: ZoomBand,
     tileX: number,
     tileY: number,
-    force: boolean,
-    excludeIds?: readonly string[]
+    force: boolean
   ): Promise<GeoJSON.Feature[]> {
     await this.loadFabricForCampaign(); // sketched constraints must be in memory
     const ctx = this.generationContext();
@@ -1340,7 +1430,7 @@ export class MapView extends ItemView {
     let features: GeoJSON.Feature[];
     try {
       const results = await Promise.all(
-        this.legacyIdsFor(tier, excludeIds).map((id) =>
+        this.legacyIdsFor(tier).map((id) =>
           generateTile(ctx, tileX, tileY, id, this.tierGenerator(worker, id), { force })
         )
       );
@@ -1354,172 +1444,290 @@ export class MapView extends ItemView {
     return features;
   }
 
-  /** Render-store key for a domain-clipped tile — its own namespace so v3
-   * domain output coexists with the legacy city-tier records during the
-   * transition (design §2: old generators stay on until v3.2). */
-  private domainTileKey(tileX: number, tileY: number): string {
-    return `domnet:${tileX}:${tileY}`;
-  }
-
-  /** Generator ids that still RUN for a tile. Since v3.4 the city tier has
-   * no per-tile generators at all — city fabric is the domain network clip,
-   * and the legacy generators (streamline fur, Voronoi districts, bisection
-   * blocks) are deleted. Pre-v3 city manifest entries render from their
-   * surviving cache records only (see replayGeneratedManifest); world tier
-   * is untouched. CITY_GENERATOR_IDS lives on solely so clear flows can
-   * enumerate and remove old cache records. */
-  private legacyIdsFor(tier: ZoomBand, excludeIds?: readonly string[]): readonly string[] {
+  /** Per-tile generator ids that RUN for a tier. City tier is region-scoped
+   * (plan 020) — no per-tile city generators; world tier is untouched. */
+  private legacyIdsFor(tier: ZoomBand): readonly string[] {
     if (tier === "city") return [];
-    const ids = generatorIdsForBand(tier);
-    return excludeIds?.length ? ids.filter((id) => !excludeIds.includes(id)) : ids;
+    return generatorIdsForBand(tier);
   }
 
-  /** Ids the domain clip supersedes on its own tiles (complete since v3.2). */
-  private static readonly DOMAIN_SUPERSEDED_LEGACY_IDS = ["city-street", "city-district", "city-block"] as const;
+  // ─── Region procgen lifecycle (plan 020 §8.1/§8.4) ────────────────────
 
-  /** Whole-domain network computation closure: worker when available (it's
-   * the expensive job — design §7.4), direct otherwise; every actual
-   * execution bumps the explicit-only gate counter (cache hits never get
-   * here, same contract as tierGenerator). */
-  private networkCompute(worker: GenerationWorkerClient | null): NetworkCompute {
-    return (seed, dom, bbox, constraints) => {
-      this.generatorRunCounter++;
-      if (worker) return worker.generateNetwork(seed, dom, bbox, constraints);
-      return generateCityNetworkForDomain(citySeedFor(seed, dom), dom, constraints);
-    };
-  }
-
-  /** One domain tile through the cache path (network cache-or-compute, then
-   * clip — generationService.generateDomainTile), stored + painted. */
-  private async generateDomainTileAt(
-    domain: ManifestCityDomain,
-    tileX: number,
-    tileY: number,
-    force: boolean,
-    preloadedCache?: Map<string, CachedTile>
+  /** Attach a procgen block to a district shape and generate it, appending a
+   * `sketch-procgen-set` log entry (undo-restorable). Persisted-request-
+   * before-output: the block + log land before generation, so a generation
+   * throw still regenerates next load. */
+  private async setRegionProcgen(
+    feature: FabricFeature,
+    block: ProcgenBlock,
+    before: ProcgenBlock | null,
+    log: boolean
   ): Promise<GeoJSON.Feature[]> {
-    await this.loadFabricForCampaign();
-    const ctx = this.generationContext();
-    const worker = await this.plugin.getGenerationWorker();
-    this.pendingGenerations++;
-    this.updateLoadingIndicator();
-    try {
-      const features = (
-        await generateDomainTile(ctx, domain, tileX, tileY, this.networkCompute(worker), {
-          force,
-          preloadedCache,
-        })
-      ).filter((f) => featureTouchesBBox(f, ctx.worldBounds));
-      this.loadedTiles.set(this.domainTileKey(tileX, tileY), features);
-      this.refreshGeneratedSource();
-      return features;
-    } finally {
-      this.pendingGenerations--;
-      this.updateLoadingIndicator();
-    }
-  }
-
-  /** Founds a new city domain at (px, py) (generation-space meters).
-   * Overlapping an existing domain is rejected with a Notice (merge is out
-   * of scope — design §10). Persists the domain into the manifest — the
-   * domain is part of the durable REQUEST, not the regenerable output. */
-  private async createDomain(
-    px: number,
-    py: number,
-    profile: CityDomain["profile"],
-    radius: number = DOMAIN_DEFAULT_RADIUS_M
-  ): Promise<ManifestCityDomain | null> {
-    if (!this.campaign) return null;
-    const campaign = this.campaign;
-    const domain = makeDomain(px, py, radius, profile, Date.now());
-    const clash = this.manifest.domains.find((d) => domainsOverlap(d as CityDomain, domain));
-    if (clash) {
-      new Notice(
-        `Campaign Map: overlaps the existing city at (${Math.round(clash.cx)}, ${Math.round(clash.cy)}) — domains can't overlap (clear it first, or click inside it to extend it)`,
-        8000
-      );
-      return null;
-    }
-    this.manifest = withDomain(this.manifest, domain);
-    await saveGeneratedManifest(this.app, campaign, this.manifest);
-    return this.campaign?.id === campaign.id ? domain : null;
-  }
-
-  /** Interactive domain creation: profile modal, then createDomain. */
-  private promptCreateDomain(px: number, py: number): Promise<ManifestCityDomain | null> {
-    return new Promise((resolve) => {
-      new DomainProfileModal(this.app, this.campaign?.config.theme, (choice) => {
-        if (!choice) return resolve(null);
-        void this.createDomain(px, py, choice.profile, choice.radius).then(resolve);
-      }).open();
-    });
-  }
-
-  /**
-   * Regenerates a whole domain against CURRENT constraints: drops the
-   * network record + every per-tile record, then recomputes the network
-   * ONCE (shared in-memory cache map) and re-clips each manifest tile.
-   * Growth is globally coupled within a domain, so per-tile regeneration
-   * would leave sibling tiles clipped from a stale network — the domain is
-   * the regeneration unit (design §7.3).
-   */
-  private async regenerateDomain(domain: ManifestCityDomain): Promise<GeoJSON.Feature[]> {
     if (!this.campaign) return [];
-    const entries = entriesForDomain(this.manifest, domain.id);
-    return this.generateDomainTiles(
-      domain,
-      entries.map((e) => ({ tileX: e.tileX, tileY: e.tileY })),
-      true
-    );
+    const campaign = this.campaign;
+    await this.loadFabricForCampaign();
+    const updated = withProcgen(feature, block);
+    this.fabricCollection = withFeature(this.fabricCollection, updated);
+    await saveFabric(this.app, campaign, this.fabricCollection);
+    this.refreshFabric();
+    if (log) {
+      await appendLogEntry(this.app, campaignFolderFromConfigPath(campaign.path), {
+        ts: Date.now(),
+        type: "sketch-procgen-set",
+        campaignId: campaign.id,
+        path: fabricPath(campaign),
+        data: { featureId: feature.id, before, after: block, feature: updated } as unknown as Record<string, unknown>,
+      });
+    }
+    return this.generateRegion(updated);
   }
 
-  /** "Clear city domain here" (design §3.2): removes the domain, all its
-   * manifest entries, and all its cache records (per-tile + network). */
-  async clearDomainHere(point?: [number, number]): Promise<number> {
+  /** Strip a region's procgen block (drop its cache records + unpaint), the
+   * shape stays inert. Appends a `sketch-procgen-clear` log entry. */
+  private async stripRegionProcgen(feature: FabricFeature, log: boolean): Promise<void> {
+    if (!this.campaign) return;
+    const campaign = this.campaign;
+    const block = feature.properties.procgen;
+    if (!block) return;
+    await this.loadFabricForCampaign();
+    await this.dropRegionCacheAndUnpaint(feature);
+    const stripped = withoutProcgen(feature);
+    this.fabricCollection = withFeature(this.fabricCollection, stripped);
+    await saveFabric(this.app, campaign, this.fabricCollection);
+    this.refreshFabric();
+    if (log) {
+      await appendLogEntry(this.app, campaignFolderFromConfigPath(campaign.path), {
+        ts: Date.now(),
+        type: "sketch-procgen-clear",
+        campaignId: campaign.id,
+        path: fabricPath(campaign),
+        data: { featureId: feature.id, before: block, after: null, feature: stripped } as unknown as Record<
+          string,
+          unknown
+        >,
+      });
+    }
+  }
+
+  /** Drop every cache record + render-store tile for a region and repaint. */
+  private async dropRegionCacheAndUnpaint(feature: FabricFeature): Promise<void> {
+    if (!this.campaign) return;
+    const folder = campaignFolderFromConfigPath(this.campaign.path);
+    const region = this.buildRegionFromFeature(feature);
+    const block = feature.properties.procgen;
+    const algorithm = block ? algorithmById(block.algorithm) : undefined;
+    if (region && algorithm) {
+      const tiles = this.regionTileRange(region);
+      const keys = [
+        regionNetworkKey(region.id),
+        ...tiles.flatMap((t) => algorithm.tileGeneratorIds.map((gid) => regionTileKey(region.id, t.tileX, t.tileY, gid))),
+      ];
+      await removeCachedTiles(this.app, folder, keys);
+    }
+    // Belt-and-suspenders: prune any render-store tile under this region id
+    // (covers a tile set that shifted since the records were written).
+    const prefix = `region:${feature.id}:`;
+    for (const k of [...this.loadedTiles.keys()]) if (k.startsWith(prefix)) this.loadedTiles.delete(k);
+    this.refreshGeneratedSource();
+  }
+
+  /** "Remove generated city here" (plan 020 §8.4): strips the procgen block
+   * of the region under the point — the shape stays, the city is gone. */
+  async removeGeneratedCityHere(point?: [number, number]): Promise<number> {
     if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return 0;
     const campaign = this.campaign;
-    await this.loadManifestForCampaign();
+    await this.loadFabricForCampaign();
     if (this.campaign?.id !== campaign.id) return 0;
     const scale = campaign.config.scaleMetersPerUnit;
     const centerUnits = point ?? this.mapCenterUnits();
-    const domain = domainAtPoint(
-      this.manifest,
+    const feature = this.regionFeatureAt(
       unitsToMeters(centerUnits[0], scale),
       unitsToMeters(centerUnits[1], scale)
     );
-    if (!domain) {
-      new Notice("Campaign Map: no city domain here to clear");
+    if (!feature) {
+      new Notice("Campaign Map: no generated city here to remove");
       return 0;
     }
+    await this.stripRegionProcgen(feature, true);
+    new Notice("Campaign Map: removed generated city (the shape stays)");
+    return 1;
+  }
+
+  /** Offer procgen for a just-finished district sketch (plan 020 §8.1): the
+   * interactive path — validate the ring, reject overlap, open the modal, and
+   * (on confirm) attach + generate. Cancel keeps the shape inert. */
+  private maybeOfferProcgen(feature: FabricFeature): void {
+    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return;
+    const algorithm = algorithmForKind(feature.properties.kind);
+    if (!algorithm) return;
+    const region = this.buildRegionFromFeature(feature);
+    if (!region) return;
+    const validation = validateRegionRing(region.ring);
+    if (!validation.ok) {
+      new Notice(
+        `Campaign Map: can't grow a ${algorithm.label.toLowerCase()} here — ${validation.reason}. Kept as a plain shape.`,
+        8000
+      );
+      return;
+    }
+    const clash = this.overlappingRegion(feature, algorithm.id);
+    if (clash) {
+      new Notice(
+        `Campaign Map: overlaps an existing ${algorithm.label.toLowerCase()} — they can't overlap. Kept as a plain shape.`,
+        8000
+      );
+      return;
+    }
+    new RegionProcgenModal(this.app, algorithm, this.campaign.config.theme, (choice) => {
+      if (!choice) return; // "Keep as plain shape" — inert district
+      void this.attachProcgenAndGenerate(feature, algorithm, choice.params);
+    }).open();
+  }
+
+  /** Validate params at the IO boundary, mint the persisted seed, attach the
+   * block, and generate (plan 020 §3.1). Seed = hashSeed(campaignSeed, id). */
+  private async attachProcgenAndGenerate(
+    feature: FabricFeature,
+    algorithm: ProcgenAlgorithm,
+    params: Record<string, unknown>
+  ): Promise<GeoJSON.Feature[]> {
+    if (!this.campaign) return [];
+    const parsedParams = algorithm.paramsSchema.parse(params);
+    const block: ProcgenBlock = {
+      algorithm: algorithm.id,
+      seed: hashSeed(this.campaign.config.seed, feature.id),
+      version: 1,
+      params: parsedParams,
+    };
+    return this.setRegionProcgen(feature, block, null, true);
+  }
+
+  /** Headless region creation (gate/test path — a modal would hang CLI
+   * automation, mirroring the retired `domainChoice` split): sketch a district
+   * from a display-space ring, attach a procgen block, and generate. Returns a
+   * containment summary so a gate can assert every emitted coordinate is
+   * inside the polygon. */
+  async createRegionForTest(
+    ringUnits: [number, number][],
+    algorithmId: string,
+    params: Record<string, unknown>,
+    name?: string
+  ): Promise<{ featureId: string; count: number; outside: number }> {
+    if (!this.campaign || this.campaign.config.crs !== "fictional") throw new Error("fictional campaigns only");
+    const algorithm = algorithmById(algorithmId);
+    if (!algorithm) throw new Error(`unknown algorithm: ${algorithmId}`);
+    await this.loadFabricForCampaign();
+    const closed =
+      ringUnits.length >= 1 &&
+      (ringUnits[0][0] !== ringUnits[ringUnits.length - 1][0] ||
+        ringUnits[0][1] !== ringUnits[ringUnits.length - 1][1])
+        ? [...ringUnits, ringUnits[0]]
+        : [...ringUnits];
+    const feature: FabricFeature = {
+      type: "Feature",
+      id: makeFabricId(),
+      geometry: { type: "Polygon", coordinates: [closed] },
+      properties: name ? { kind: "district", name } : { kind: "district" },
+    };
+    this.fabricCollection = withFeature(this.fabricCollection, feature);
+    this.refreshFabric();
+    await this.persistFabric("sketch-add", feature);
+    const region = this.buildRegionFromFeature(feature);
+    if (!region) throw new Error("non-polygon region");
+    const validation = validateRegionRing(region.ring);
+    if (!validation.ok) throw new Error(validation.reason);
+    const feats = await this.attachProcgenAndGenerate(feature, algorithm, params);
+    // Containment: every emitted coordinate should lie inside the polygon
+    // (on-boundary within ~1 m tolerance counts as inside).
+    let outside = 0;
+    const scan = (coords: unknown): void => {
+      if (!Array.isArray(coords)) return;
+      if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+        if (distanceToBoundary(region, coords[0] as number, coords[1] as number) < -1.0) outside++;
+        return;
+      }
+      for (const c of coords) scan(c);
+    };
+    for (const f of feats) scan((f.geometry as unknown as { coordinates: unknown }).coordinates);
+    return { featureId: feature.id, count: feats.length, outside };
+  }
+
+  /**
+   * One-way migration (plan 020 §3.2): pre-v4 disc domains become sketched
+   * district features carrying the city procgen block. Runs once on campaign
+   * load; the migrated district inherits the domain's seed (`citySeedFor`) so
+   * the city keeps its identity, and old-scheme cache records are dropped.
+   * The region regenerates under the new polygon math afterward (region
+   * replay), so output may differ from the disc build (accepted, pre-release).
+   */
+  private async migrateDomainsIfNeeded(): Promise<void> {
+    if (!this.campaign) return;
+    const campaign = this.campaign;
+    await this.loadManifestForCampaign();
+    await this.loadFabricForCampaign();
+    if (this.campaign?.id !== campaign.id) return;
+    const domains = [...this.manifest.domains];
+    if (domains.length === 0) return;
     const folder = campaignFolderFromConfigPath(campaign.path);
     const seed = campaign.config.seed;
-    const entries = entriesForDomain(this.manifest, domain.id);
-    const keys = [
-      networkKeyFor(seed, domain as CityDomain),
-      ...entries.flatMap((e) => [
-        ...DOMAIN_TILE_GENERATOR_IDS.map((gid) => tileKey(seed, e.tileX, e.tileY, GENERATION_ZOOM, gid)),
-        // The entry itself goes away, so its legacy city-tier records go too.
-        ...generatorIdsForBand(e.tier).map((gid) => tileKey(seed, e.tileX, e.tileY, GENERATION_ZOOM, gid)),
-      ]),
-    ];
-    await removeCachedTiles(this.app, folder, keys);
-    for (const e of entries) {
-      this.manifest = withoutEntry(this.manifest, e.id);
-      this.loadedTiles.delete(this.tileKeyFor(e.tier, e.tileX, e.tileY));
-      this.loadedTiles.delete(this.domainTileKey(e.tileX, e.tileY));
+    const scale = campaign.config.scaleMetersPerUnit;
+    const oldKeys: string[] = [];
+    for (const domain of domains) {
+      const ringMeters = discToRing(domain as CityDomain, DISC_TO_RING_SEGMENTS);
+      const ringUnits = ringMeters.map(
+        ([x, y]) => [metersToUnits(x, scale), metersToUnits(y, scale)] as [number, number]
+      );
+      const block: ProcgenBlock = {
+        algorithm: "city",
+        seed: citySeedFor(seed, domain as CityDomain),
+        version: 1,
+        params: { profile: domain.profile },
+      };
+      const bare: FabricFeature = {
+        type: "Feature",
+        id: makeFabricId(),
+        geometry: { type: "Polygon", coordinates: [ringUnits] },
+        properties: { kind: "district" },
+      };
+      const full = withProcgen(bare, block);
+      this.fabricCollection = withFeature(this.fabricCollection, full);
+      // Log sketch-add (bare) then sketch-procgen-set (block) so undo peels
+      // the migration apart the same way an interactive create would.
+      await appendLogEntry(this.app, folder, {
+        ts: Date.now(),
+        type: "sketch-add",
+        campaignId: campaign.id,
+        path: fabricPath(campaign),
+        data: bare as unknown as Record<string, unknown>,
+      });
+      await appendLogEntry(this.app, folder, {
+        ts: Date.now(),
+        type: "sketch-procgen-set",
+        campaignId: campaign.id,
+        path: fabricPath(campaign),
+        data: { featureId: bare.id, before: null, after: block, feature: full } as unknown as Record<string, unknown>,
+      });
+      // Old-scheme cache records to drop: the v3 `city-network` record (keyed
+      // at the domain anchor cell) + per-tile clips for the domain's entries.
+      const { cellX, cellY } = anchorCellForPoint(domain.cx, domain.cy);
+      oldKeys.push(tileKey(seed, cellX, cellY, GENERATION_ZOOM, "city-network"));
+      for (const entry of entriesForDomain(this.manifest, domain.id)) {
+        for (const gid of DOMAIN_TILE_GENERATOR_IDS) {
+          oldKeys.push(tileKey(seed, entry.tileX, entry.tileY, GENERATION_ZOOM, gid));
+        }
+        this.manifest = withoutEntry(this.manifest, entry.id);
+      }
+      this.manifest = withoutDomain(this.manifest, domain.id);
     }
-    this.manifest = withoutDomain(this.manifest, domain.id);
+    await saveFabric(this.app, campaign, this.fabricCollection);
     await saveGeneratedManifest(this.app, campaign, this.manifest);
-    this.refreshGeneratedSource();
-    await appendLogEntry(this.app, folder, {
-      ts: Date.now(),
-      type: "clear-area",
-      campaignId: campaign.id,
-      path: generatedManifestPath(campaign),
-      data: { domainId: domain.id, domain, entries } as unknown as Record<string, unknown>,
-    });
-    new Notice(`Campaign Map: cleared city domain (${entries.length} tile${entries.length === 1 ? "" : "s"})`);
-    return entries.length;
+    await removeCachedTiles(this.app, folder, oldKeys);
+    this.refreshFabric();
+    new Notice(
+      `Campaign Map: ${domains.length} city domain${domains.length === 1 ? "" : "s"} migrated to sketched district${
+        domains.length === 1 ? "" : "s"
+      }`
+    );
   }
 
   /** Loads `<campaign>/Generated.json` into memory once per campaign; bad
@@ -1540,12 +1748,12 @@ export class MapView extends ItemView {
   }
 
   /**
-   * Manifest replay (plan 019): on campaign open, repaint every area the GM
-   * has asked to generate — cache hit or deterministic regenerate, so
-   * deleting `.mapcache/` stays harmless. Reads the tile cache ONCE up
-   * front: `generateTile`'s own `getCachedTile` re-reads and re-parses the
-   * whole JSONL per call, which would be O(entries × file-size) across a
-   * replay — the plan's own STOP condition (~1s for 20 areas) forbids that.
+   * Replay on campaign open (plan 020 §8.2): first run the one-way domain→
+   * district migration, then repaint every generated area. World-tier manifest
+   * entries replay as before (cache hit or deterministic regenerate); then
+   * every fabric feature with a procgen block regenerates from the sketch
+   * layer — the manifest no longer records city tiles. One shared cache read
+   * across all of it, so deleting `.mapcache/` stays harmless (and cheap).
    */
   private async replayGeneratedManifest(): Promise<void> {
     if (!this.campaign || this.campaign.config.crs !== "fictional") return;
@@ -1555,7 +1763,12 @@ export class MapView extends ItemView {
     await this.loadManifestForCampaign();
     await this.loadFabricForCampaign(); // constraints for any cache-miss regenerate
     if (this.campaign?.id !== campaign.id) return;
-    if (this.manifest.entries.length === 0) return;
+    await this.migrateDomainsIfNeeded(); // mutates fabric + manifest, one-time
+    if (this.campaign?.id !== campaign.id) return;
+
+    const regions = this.regionFeatures();
+    const worldEntries = this.manifest.entries.filter((e) => e.tier === "world");
+    if (worldEntries.length === 0 && regions.length === 0) return;
 
     const ctx = this.generationContext();
     const worker = await this.plugin.getGenerationWorker();
@@ -1565,54 +1778,24 @@ export class MapView extends ItemView {
     this.pendingGenerations++;
     this.updateLoadingIndicator();
     try {
-      let orphanMisses = 0;
-      for (const entry of [...this.manifest.entries]) {
+      // World-tier entries: cache hit or deterministic regenerate.
+      for (const entry of worldEntries) {
         if (this.campaign?.id !== campaign.id) return; // switched mid-replay
         const perGenerator = await Promise.all(
-          this.legacyIdsFor(entry.tier, entry.domainId ? MapView.DOMAIN_SUPERSEDED_LEGACY_IDS : undefined).map(
-            (gid) => {
-              const key = tileKey(seed, entry.tileX, entry.tileY, GENERATION_ZOOM, gid);
-              const hit = cached.get(key);
-              if (hit) return Promise.resolve(hit.features as unknown as GeoJSON.Feature[]);
-              return generateTile(ctx, entry.tileX, entry.tileY, gid, this.tierGenerator(worker, gid));
-            }
-          )
-        );
-        // Pre-v3 city entries (no domainId): the legacy generators are gone
-        // (v3.4), so these render from surviving cache records only. A cache
-        // miss can't regenerate — counted, surfaced once below, never thrown
-        // (the GM rebuilds the area as a city domain with one click).
-        if (entry.tier === "city" && !entry.domainId) {
-          for (const gid of generatorIdsForBand("city")) {
+          this.legacyIdsFor(entry.tier).map((gid) => {
             const hit = cached.get(tileKey(seed, entry.tileX, entry.tileY, GENERATION_ZOOM, gid));
-            if (hit) perGenerator.push(hit.features as unknown as GeoJSON.Feature[]);
-            else orphanMisses++;
-          }
-        }
+            if (hit) return Promise.resolve(hit.features as unknown as GeoJSON.Feature[]);
+            return generateTile(ctx, entry.tileX, entry.tileY, gid, this.tierGenerator(worker, gid));
+          })
+        );
         const features = perGenerator.flat().filter((f) => featureTouchesBBox(f, ctx.worldBounds));
         this.loadedTiles.set(this.tileKeyFor(entry.tier, entry.tileX, entry.tileY), features);
-
-        // Procgen v3: domain entries additionally clip their domain network.
-        // `cached` doubles as generateDomainTile's preloadedCache, so replay
-        // stays O(one file read): a cache-miss network compute is inserted
-        // into the shared map and every later tile of that domain hits it.
-        if (entry.domainId) {
-          const dom = domainById(this.manifest, entry.domainId);
-          if (dom) {
-            const domFeatures = (
-              await generateDomainTile(ctx, dom, entry.tileX, entry.tileY, this.networkCompute(worker), {
-                preloadedCache: cached,
-              })
-            ).filter((f) => featureTouchesBBox(f, ctx.worldBounds));
-            this.loadedTiles.set(this.domainTileKey(entry.tileX, entry.tileY), domFeatures);
-          }
-        }
       }
-      if (orphanMisses > 0) {
-        new Notice(
-          `Campaign Map: ${orphanMisses} pre-v3 generated area${orphanMisses === 1 ? "" : "s"} can't regenerate under the new city model — right-click → "Generate fabric here" to rebuild them as city domains`,
-          10000
-        );
+      // Region tier: regenerate each region from the sketch layer, sharing the
+      // one cache read (cache-hit per-tile clips, else recompute network once).
+      for (const feature of regions) {
+        if (this.campaign?.id !== campaign.id) return;
+        await this.generateRegion(feature, { preloadedCache: cached });
       }
     } finally {
       this.pendingGenerations--;
@@ -2016,6 +2199,9 @@ export class MapView extends ItemView {
     // zoom in — the toast guarantees "something happened" feedback). Plan 016.
     new Notice(`Campaign Map: ${kind} added`);
     this.queueConstraintRegen(feature);
+    // Plan 020 §8.1: a district sketch IS the request for city procgen — offer
+    // it (modal); other kinds (or a cancelled modal) stay inert overlay shapes.
+    this.maybeOfferProcgen(feature);
   }
 
   /**
@@ -2047,12 +2233,20 @@ export class MapView extends ItemView {
     this.pendingConstraintFeatures = [];
     if (!this.campaign || edited.length === 0) return;
     const campaign = this.campaign;
-    await this.loadManifestForCampaign();
+    await this.loadFabricForCampaign();
     if (this.campaign?.id !== campaign.id) return;
     const scale = campaign.config.scaleMetersPerUnit;
 
-    const affected = new Map<string, ManifestEntry>();
-    const affectedDomains = new Map<string, ManifestCityDomain>();
+    // Plan 020 §8.3: a constraint-sketch edit (river/road/wall/water) invalidates
+    // every region whose bbox intersects the edited feature — growth is globally
+    // coupled within a region, so a touch anywhere invalidates the whole network.
+    const regionFeatures = this.regionFeatures();
+    const regions = new Map<string, { feature: FabricFeature; region: ProcgenRegion }>();
+    for (const rf of regionFeatures) {
+      const region = this.buildRegionFromFeature(rf);
+      if (region) regions.set(rf.id, { feature: rf, region });
+    }
+    const affected = new Map<string, FabricFeature>();
     for (const f of edited) {
       let minX = Infinity;
       let minY = Infinity;
@@ -2074,36 +2268,16 @@ export class MapView extends ItemView {
       scan(f.geometry.coordinates);
       if (!Number.isFinite(minX)) continue;
       const reach = MapView.CONSTRAINT_REACH;
-      for (const entry of this.manifest.entries) {
-        // Fabric constraints currently steer city-tier generators only.
-        if (entry.tier !== "city") continue;
-        const t = tileBBox(entry.tileX, entry.tileY);
+      for (const { feature, region } of regions.values()) {
+        const d = region.bbox;
         const intersects =
-          minX - reach <= t.maxX && maxX + reach >= t.minX && minY - reach <= t.maxY && maxY + reach >= t.minY;
-        if (intersects) affected.set(entry.id, entry);
-      }
-      // Procgen v3 (design §7.3): a domain's influence radius is its whole
-      // disc — growth is globally coupled within it, so a sketch touching
-      // any part of the domain invalidates the whole network.
-      for (const dom of this.manifest.domains) {
-        const d = domainBBox(dom as CityDomain);
-        const intersects = minX <= d.maxX && maxX >= d.minX && minY <= d.maxY && maxY >= d.minY;
-        if (intersects) affectedDomains.set(dom.id, dom);
+          minX - reach <= d.maxX && maxX + reach >= d.minX && minY - reach <= d.maxY && maxY + reach >= d.minY;
+        if (intersects) affected.set(feature.id, feature);
       }
     }
-    for (const entry of affected.values()) {
+    for (const feature of affected.values()) {
       if (this.campaign?.id !== campaign.id) return;
-      await this.generateTierAt(
-        entry.tier,
-        entry.tileX,
-        entry.tileY,
-        true,
-        entry.domainId ? MapView.DOMAIN_SUPERSEDED_LEGACY_IDS : undefined
-      );
-    }
-    for (const dom of affectedDomains.values()) {
-      if (this.campaign?.id !== campaign.id) return;
-      await this.regenerateDomain(dom);
+      await this.generateRegion(feature, { force: true });
     }
   }
 
@@ -2136,6 +2310,8 @@ export class MapView extends ItemView {
     this.selectedFabricId = null;
     this.sketchController?.clearSelection();
     this.refreshFabric();
+    // A deleted region takes its generated city with it (plan 020 §8.4).
+    if (isProcgenRegion(feature)) void this.dropRegionCacheAndUnpaint(feature);
     void this.persistFabric("sketch-remove", feature);
     new Notice(`Campaign Map: deleted sketched ${feature.properties.kind}`);
     // Removing a constraint reshapes generated output too (plan 019 Phase 3).
@@ -2157,13 +2333,17 @@ export class MapView extends ItemView {
     // Reconcile against on-disk fabric first so we remove from the authoritative
     // collection (mirrors deleteSelectedFabric / undoLastEdit).
     await this.loadFabricForCampaign();
+    // If the live feature became a procgen region since it was sketched, its
+    // generated city dies with it (plan 020 §8.4).
+    const live = this.fabricCollection.features.find((f) => f.id === target.id);
+    if (live && isProcgenRegion(live)) await this.dropRegionCacheAndUnpaint(live);
     this.fabricCollection = withoutFeature(this.fabricCollection, target.id);
     if (this.selectedFabricId === target.id) {
       this.selectedFabricId = null;
       this.sketchController?.clearSelection();
     }
     this.refreshFabric();
-    await this.persistFabric("sketch-remove", target);
+    await this.persistFabric("sketch-remove", live ?? target);
     new Notice(`Campaign Map: undid sketched ${target.properties.kind}`);
     // The undone sketch was a generator constraint — re-adapt generated tiles.
     this.queueConstraintRegen(target);
@@ -2297,9 +2477,9 @@ export class MapView extends ItemView {
       );
       menu.addItem((item) =>
         item
-          .setTitle("Clear city domain here")
+          .setTitle("Remove generated city here")
           .setIcon("building-2")
-          .onClick(() => void this.clearDomainHere(point))
+          .onClick(() => void this.removeGeneratedCityHere(point))
       );
     }
     menu.showAtPosition({ x: e.originalEvent.clientX, y: e.originalEvent.clientY });

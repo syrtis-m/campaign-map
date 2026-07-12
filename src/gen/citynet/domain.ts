@@ -15,17 +15,10 @@
  * identity across the plan-020 migration.
  */
 import { hashSeed } from "../rng";
-import type { BBox } from "../spatialHash";
 
 /** Center-snapping lattice for domains: a click is quantized to this grid so
  * near-identical clicks resolve to one domain (D1 — center is lattice-exact). */
 export const DOMAIN_LATTICE_M = 30;
-/** Default disc radius when the GM doesn't specify one. */
-export const DOMAIN_DEFAULT_RADIUS_M = 900;
-/** Clamp range for a domain radius (host validates; documented here as the
- * generator's supported envelope). Matches the manifest zod bounds' spirit. */
-export const DOMAIN_MIN_RADIUS_M = 400;
-export const DOMAIN_MAX_RADIUS_M = 1500;
 /** Sides of the polygon a disc migrates to (plan 020 §3.2). */
 export const DISC_TO_RING_SEGMENTS = 32;
 
@@ -118,24 +111,4 @@ export function discToRing(domain: CityDomain, segments = DISC_TO_RING_SEGMENTS)
   }
   ring.push(ring[0]);
   return ring;
-}
-
-/** Do two domain discs intersect?
- * @deprecated v4.1 removes it (region overlap is checked at sketch creation);
- * kept only because the pre-migration host still rejects overlapping discs. */
-export function domainsOverlap(a: CityDomain, b: CityDomain): boolean {
-  return Math.hypot(a.cx - b.cx, a.cy - b.cy) < a.radius + b.radius;
-}
-
-/** World bbox of the domain disc, optionally grown by `margin` meters.
- * @deprecated v4.1 removes it (use `region.bbox` / `bboxWithMargin` from
- * `src/gen/region.ts`); kept only for the pre-migration host's paint/replay
- * bounds. */
-export function domainBBox(d: CityDomain, margin = 0): BBox {
-  return {
-    minX: d.cx - d.radius - margin,
-    minY: d.cy - d.radius - margin,
-    maxX: d.cx + d.radius + margin,
-    maxY: d.cy + d.radius + margin,
-  };
 }

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   generateCityNetwork,
-  generateCityNetworkForDomain,
   clipNetworkToTile,
   discToRing,
   makeDomain,
@@ -48,8 +47,8 @@ function net(
   constraints: Partial<GenerationConstraints> = {},
   radius = 900
 ) {
-  const { domain, seed } = fixtureAt(cx, cy, profile, radius);
-  return generateCityNetworkForDomain(seed, domain, { worldBounds: WORLD_BOUNDS, ...constraints });
+  const { seed, region } = fixtureAt(cx, cy, profile, radius);
+  return generateCityNetwork(seed, region, profile, { worldBounds: WORLD_BOUNDS, ...constraints });
 }
 
 /** A river line that fully bisects the region's cost-field bbox horizontally. */
