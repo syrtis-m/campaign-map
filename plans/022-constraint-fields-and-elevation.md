@@ -1,12 +1,13 @@
-# Plan 021 — Constraint fields (layered SDFs + masked noise) and elevation
+# Plan 022 — Constraint fields (layered SDFs + masked noise) and elevation
 
 **Status:** research/design, approved direction from Jonah 2026-07-12 ("explore the
 method of doing elevation as described in iquilezles.org/articles/morenoise and
 the fractal perlin noise + gradient trick… elevation lines on the map, but also
 the ability to do a 3d terrain style thing… include a research into layered
 signed distance fields + masked noise layering"). Builds on plan 020 (sketch-
-driven procgen regions). Not yet scheduled; plan 022 (algorithm suite) and 023
-(cross-layer cascade) depend on the field architecture in §2.
+driven procgen regions). Build order: plan 021 (algorithm suite) starts first with documented
+fallbacks; its field-coupled variants and 023 (cross-layer cascade) depend on
+the field architecture in §2.
 
 ## 1. Research findings
 
@@ -88,7 +89,7 @@ elevation(x,y) = base(x,y)                          // gentle continental fBm (e
   ± cityRegions:         fMask · flatten-toward-local-mean (grade the town site)
 ```
 
-- **Sketched mountain regions** (new `mountain` polygon kind, plan 022) carry a
+- **Sketched mountain regions** (new `mountain` polygon kind, plan 021) carry a
   procgen block with elevation params — presets: `alpine` (high damping, ridged),
   `mesa` (terraced transform), `rolling-hills` (low octaves, no ridging), plus
   amplitude/roughness sliders. The GM shapes relief by sketching, same grammar

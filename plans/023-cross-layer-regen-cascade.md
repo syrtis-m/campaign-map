@@ -19,7 +19,7 @@ automatically, deterministically, and without cycles.
 Every registry algorithm declares a `stage`:
 
 ```
-0 elevation   (mountain regions — a FIELD, plan 021)
+0 elevation   (mountain regions — a FIELD, plan 022)
 1 hydrology   (river, water bodies)
 2 vegetation  (forest, park)
 3 settlement  (city)
@@ -36,7 +36,7 @@ Every registry algorithm declares a `stage`:
 
 ## 3. Constraint interface — fields, not feature soup
 
-Plan 021's `Field`/SDF is the currency. Registry entries declare what they
+Plan 022's `Field`/SDF is the currency. Registry entries declare what they
 produce and consume:
 
 ```ts
@@ -113,7 +113,7 @@ and the gate must prove it with a multi-stage fixture (river+city+forest).
 ## 7. Open questions
 1. Stage of `wall`: sketched-wall-as-constraint is stage-agnostic today
    (feeds city growth); procgen wall elaboration is stage 4 consuming city
-   streets (gates where streets cross). Ruling needed when 022 §3.4 lands.
+   streets (gates where streets cross). Ruling needed when 021 §3.4 lands.
 2. Elevation edits (stage 0) potentially cascade EVERYTHING — is a mountain-
    params drag too hot? Mitigation: elevation-consuming algorithms sample
    coarsely; consider a "apply on release" (no live preview) commit mode for

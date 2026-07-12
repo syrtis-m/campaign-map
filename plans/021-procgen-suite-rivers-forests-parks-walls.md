@@ -1,10 +1,10 @@
-# Plan 022 — Procgen algorithm suite: rivers, forests, parks, walls (+ the preset pattern)
+# Plan 021 — Procgen algorithm suite: rivers, forests, parks, walls (+ the preset pattern)
 
 **Status:** research/design, approved direction from Jonah 2026-07-12 ("procgen
 rivers, walls, forests, parks, etc. all of those should let the person change
 the default behavior — e.g. make a river very windy/split, forests of different
 types — i like the dropdown when creating a city here, similar templates are
-good throughout"). Builds on plan 020's registry; consumes plan 021 fields
+good throughout"). Builds on plan 020's registry; consumes plan 022 fields
 where noted; regen interactions are plan 023's contract.
 
 ## 1. The preset pattern (do this first — it's the UX Jonah endorsed)
@@ -52,7 +52,7 @@ within `maxOffset` of the spine (gate-asserted per algorithm).
   braids = seeded arc-length intervals splitting into 2 channels offset by a
   lens shape, rejoining (islands emerge as the lens interior). Emit
   `river-channel` polygons (+ `river-island`), banks as the channel SDF's zero
-  set. When plan 021 lands: meander amplitude modulated by local slope
+  set. When plan 022 lands: meander amplitude modulated by local slope
   (flat → windy, steep → straight) and flow direction sanity-checked downhill.
 - **Constraint face:** the GENERATED channel polygons (not the sketched spine)
   become the water constraint downstream — that is plan 023's cascade; until
@@ -62,8 +62,8 @@ within `maxOffset` of the spine (gate-asserted per algorithm).
 - New FabricKind (additive zod change; sketch sub-bar gains the kind button).
 - **Params:** preset `broadleaf` / `conifer` / `mixed` / `swamp` / `dead-wood`;
   `density` (0–1); `clearings` (0–1); `edgeRaggedness`.
-- **Generation:** canopy = region SDF mask × masked noise (plan 021 primitives;
-  pre-021 fallback: interiorT + existing valueNoise2D). Emit `forest-canopy`
+- **Generation:** canopy = region SDF mask × masked noise (plan 022 primitives;
+  pre-022 fallback: interiorT + existing valueNoise2D). Emit `forest-canopy`
   polygons (marching squares on the masked density field, same seam discipline
   as contours), `forest-clearing` holes, and sparse `forest-tree` point symbols
   near the boundary at high zoom (position-hashed jitter grid = deterministic
@@ -110,9 +110,9 @@ within `maxOffset` of the spine (gate-asserted per algorithm).
 
 ## 4. Sequencing (each algorithm = one subagent-sized phase, own gate)
 1. Preset pattern + city retrofit (pure UX/registry; no new generator).
-2. Spine support + **river** (biggest payoff, Jonah's example; pre-021 version
+2. Spine support + **river** (biggest payoff, Jonah's example; pre-022 version
    ships without elevation coupling).
-3. **Forest** (first consumer of masked-noise; can pull plan 021 §2 forward or
+3. **Forest** (first consumer of masked-noise; can pull plan 022 §2 forward or
    use the interiorT fallback).
 4. Park, then wall (mostly reuse).
 
