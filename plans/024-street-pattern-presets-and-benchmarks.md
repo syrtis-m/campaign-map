@@ -221,9 +221,38 @@ version with a DECISIONS entry, same precedent as the v3→v4 migration).
 - **`towpath` river option** (with plan 021 rivers): canal-side pedestrian
   path + perpendicular laterals (Kyoto/Venice §1.3) — one param, big charm.
 
+## 3.5 The preset gallery map (Jonah 2026-07-12 — required deliverable)
+
+A dedicated dev-vault campaign (`Campaigns/Preset Gallery/`, fictional CRS,
+default theme) whose ONLY content is one sketched district per city preset,
+laid out on a spaced grid so every city renders in isolation:
+
+- All districts are the SAME shape and size (a regular polygon, effective
+  radius ~700 m) so styles compare apples-to-apples — differences on screen
+  are the preset, never the boundary. Name each district feature after its
+  preset (`gallery: haussmann`, …).
+- A gate script (`scripts/gates/presetGallery.ts`) regenerates the whole
+  gallery, then produces per-preset screenshots at a FIXED zoom + one overview
+  contact-sheet screenshot of the full gallery grid, all into `review/gallery/`
+  (overwrite in place — the folder is the living style catalog).
+- The same gate runs the §3.1 metrics per preset and prints a comparison table
+  against the §1.2 calibration anchors — the numeric and visual reviews come
+  from one artifact.
+- Every phase in §4 that adds or changes a preset MUST re-run the gallery gate
+  and include the refreshed contact sheet in its review notes; Jonah calibrates
+  taste from `review/gallery/`, and diffs of the gallery become the visual
+  regression story for city procgen (determinism means an unchanged preset's
+  gallery city must not change AT ALL between runs — assert byte-stability for
+  untouched presets).
+- The gallery campaign is a committed fixture: its `Fabric.geojson` (district
+  shapes + procgen blocks) is durable repo content; its `.mapcache/` is not.
+
 ## 4. Sequencing (after plan 021 phase 1 lands the preset mechanism)
 1. **Metrics module + benchmark gates for the four EXISTING profiles** (pure,
-   no visual change, immediately hardens everything else).
+   no visual change, immediately hardens everything else) **+ the §3.5 preset
+   gallery campaign and gate, seeded with the four existing presets** — the
+   gallery exists BEFORE any new preset so each addition lands with a
+   before/after contact sheet.
 2. Width system (3.3) + superblock preset (data-only, no new operator).
 3. Tartan-grid + ward-grid + eixample (+ chamfer operator).
 4. Axial-breakthrough operator → haussmann + baroque-axial presets.
