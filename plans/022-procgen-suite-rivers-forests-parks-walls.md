@@ -75,10 +75,26 @@ within `maxOffset` of the spine (gate-asserted per algorithm).
 ### 3.3 Park (`park` polygon kind — currently inert)
 - **Params:** preset `formal-garden` (axial paths, symmetric beds),
   `city-park` (curved paths, lawns, pond option), `wild-common` (paths only,
-  scattered trees); `pathDensity`, `pond` (bool).
+  scattered trees), `japanese-garden` (Jonah 2026-07-12 — see below);
+  `pathDensity`, `pond` (bool).
 - **Generation:** mini path web (P&M growth with park-tuned profile — reuse of
   the plan-019/020 growth loop at small scale), lawn/bed faces from the path
   graph (reuse faces.ts), tree rows along paths. Small scope; mostly reuse.
+- **`japanese-garden` preset:** deliberately asymmetric where formal-garden is
+  axial — composition by *placement*, not symmetry. Elements: a winding
+  single-track path circuit (strolling-garden style: low branchProb, high
+  curvature, no straight runs); a pond as the composition anchor (irregular
+  smooth-min blob via the SDF primitives, sized to the region — the classic
+  pond-and-hill garden), with an island and 1–2 short bridges where the path
+  crosses; deterministic rock groupings (2–3–5 clusters, position-hashed like
+  tree stipples but sparse and weighted toward pond edge and path bends);
+  specimen trees placed individually at path viewpoints rather than in rows;
+  optional raked-gravel court (`karesansui`) as one rectangular clearing near
+  the entrance when the region is large enough. Emits the same feature types as
+  other presets plus `park-rock` (Point) and reuses `river-island`/bridge
+  emitters from §3.1 at pond scale — themes decide the aesthetic per preset
+  property (ink-soot should render these beautifully). Good preset-fuzz target:
+  small regions must degrade gracefully (drop court → drop island → pond only).
 
 ### 3.4 Wall (`wall` line kind)
 - **Params:** preset `curtain-wall` (stone, towers), `palisade` (wood, no
