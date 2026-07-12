@@ -56,9 +56,22 @@ additive-params rule). All emitted features are typed; themes own paint.
   ~16× lower economic density and up to 11× higher street-infrastructure cost
   per unit of GDP than fine-grain walkable fabric. (For US: a legible
   narrative hook — superblock fabric should *read* emptier at street level.)
-- **Urban grain** (block size): 40 m in Tokyo/Kyoto; ~120 m in historic
+- **Urban grain** (block size): 50 m in Tokyo/Kyoto; ~120 m in historic
   European centres, Hong Kong, Melbourne; guidance favors short blocks
-  60–120 m with many intersections.
+  60–120 m with many intersections; grid spacing 50 m (Japanese cities) to
+  70 m (Roman Empire grid — still legible after 2000 years) where pedestrian
+  activity is intense, 80–100 m generally; Manhattan blocks 60 m wide ×
+  160–260 m long, intersection tempo ~80 m.
+- **Named figure-ground reference values** (intersections/km², from the
+  source's one-square-mile figure-ground studies — use these as preset
+  calibration anchors AND as visual acceptance references for screenshots):
+  Venice 688 · Toledo 420 · Florence 255 · Amsterdam 17th-c. 195 · Turin 191 ·
+  London Mayfair 165 · Paris Étoile 133 · Barcelona Cerdà 103 · HK Central 459 ·
+  Tokyo Nihonbashi 386 · Seoul 313 · Amsterdam core 314 · Paris Louvre 242 ·
+  Lower Manhattan ~192 · Midtown ~112 · San Francisco ~114 · Chongqing
+  superblocks ~49–66. Street linear density: **≥18 km of street per km²** is
+  the guideline floor (Amsterdam 30.7, Tokyo 30.2, Paris 27.9, Manhattan 22.7,
+  Chongqing superblocks 12–14).
 - **Land share**: 25–30% of neighbourhood land in streets (Paris intra-muros:
   27%, 17.2 km of street per km², average width 15 m; Opéra district: 20 km/km²,
   117 intersections/km²).
@@ -94,6 +107,11 @@ additive-params rule). All emitted features are typed; themes own paint.
 - **Growth rings** (Paris Châtelet study): successive walls; streets parallel
   inside the wall, radials sprouting outside the gates; each ring's fabric
   datable. (Our euro-medieval already grows radially from gates — one wall.)
+- **Concentric grids** (Scotland 2010 typology diagrams; Amsterdam canal
+  rings; Paris Étoile): arc streets concentric on a centre (canal, plaza,
+  transport node) crossed by radials — a first-class pattern family distinct
+  from both grid and organic, explicitly recommended "to promote access to
+  local centres".
 - **Perimeter blocks + curve/straight balance**: buildings front the street;
   short curved/irregular streets add place-character but excessive curvature
   is an anti-pattern; combine both.
@@ -130,7 +148,24 @@ new pipeline operator (§3). Default theme pairings in parentheses.
    ~10–15/km². The quality bar here is genre fidelity (Dishonored/dystopia
    reads), not urbanism virtue — document that inversion in the preset so a
    future agent doesn't "fix" it.
-7. **`euro-medieval` upgrade — growth rings** (param `rings: 1|2`, default 1 =
+7. **`canal-rings`** (parchment/ink-soot — Vespergate-friendly) — Amsterdam
+   17th c.: concentric canal ARCS around the generation center crossed by
+   radials; the canals emit as water features (they feed the constraint
+   system: bridges where radials cross, quays along banks — the citynet
+   machinery for this already exists); elongated blocks between rings;
+   calibration anchor ≈195 intersections/km². Highest-charm preset for
+   harbor/canal cities.
+8. **`radial-star`** (parchment/modern-clean) — Paris Étoile / baroque star:
+   avenues radiating from a rond-point (the region center or a landmark),
+   concentric connector rings, wedge blocks subdividing toward the rim;
+   calibration anchor ≈133 intersections/km². Distinct from `baroque-axial`
+   (which composes a few axes through organic fabric; this IS the fabric).
+9. **`na-grid` upgrade — seam boulevards** (San Francisco / Lower Manhattan
+   reading): the existing per-quadrant azimuth collisions currently just jog;
+   promote the collision seam into a wide diagonal boulevard (Market Street) —
+   the seam becomes a feature instead of an artifact. Additive param
+   (`seamBoulevard`, default off).
+10. **`euro-medieval` upgrade — growth rings** (param `rings: 1|2`, default 1 =
    today's behavior per the additive-params rule): a second, older inner wall;
    inner fabric denser/finer grain; radial streets sprouting outside the inner
    gates toward the outer ring (the Paris Châtelet reading).
