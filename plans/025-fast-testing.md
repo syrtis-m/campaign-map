@@ -1,9 +1,15 @@
 # Plan 025 — Make testing fast (the board must stop costing an afternoon)
 
 **Status:** design done 2026-07-12, approved direction from Jonah ("make testing
-take less time? testing right now takes forever, with all these gates etc").
-Scheduled AFTER plans 021–024 land (it hardens the workflow they'll all use;
-pieces marked ⚡ are safe to pull forward any time). The §0 cold-start context
+take less time? testing right now takes forever, with all these gates etc";
+follow-up same day: "if executed before, it could speed up implementation of
+plans 21,22,23 — that would be huge"). **Executes FIRST — before plans
+021–024.** Rationale: 021–023 are five new algorithms plus cascade wiring,
+each with its own gates; every minute cut from the loop multiplies across all
+of them, and with the §2.4 harness in place their host-lifecycle tests are
+born headless instead of migrated later. (Plan numbers 021–024 were assigned
+before this reordering — the execution order in plans/README.md is
+authoritative, not the numbering.) The §0 cold-start context
 of `plans/021-procgen-suite-rivers-forests-parks-walls.md` applies verbatim —
 read it first, especially the infra pitfalls (several exist only because
 testing is slow; this plan attacks their root causes).
@@ -100,7 +106,12 @@ from its critical path).
    (build it during the investigation — it's also the investigation's
    instrument: the probe + per-gate timings ARE the repro harness).
 3. 2.4 controller extraction + FakeHost (the big one — own phase, zero-
-   behavior-change bar, full board green before and after).
+   behavior-change bar, full board green before and after). Do this BEFORE
+   plan 021 despite the refactor cost: 021–023 add more host wiring than
+   everything that exists today, and each piece lands ~free on a testable
+   controller vs. expensive on MapView. The refactor also carves the seam the
+   plan-023 cascade orchestration needs anyway — it was coming either way;
+   early is cheaper.
 
 ## 4. Acceptance (numbers, not vibes)
 - Inner loop (edit → fast unit + tsc): **<45 s**.

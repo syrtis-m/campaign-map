@@ -5,7 +5,11 @@ rivers, walls, forests, parks, etc. all of those should let the person change
 the default behavior — e.g. make a river very windy/split, forests of different
 types — i like the dropdown when creating a city here, similar templates are
 good throughout"). Builds on plan 020's registry; consumes plan 022 fields
-where noted; regen interactions are plan 023's contract.
+where noted; regen interactions are plan 023's contract. **Plan 025 (fast
+testing) executes BEFORE this plan** — build your per-algorithm lifecycle
+tests headless-first against its MapController/FakeHost harness and reserve
+live gates for paint/interaction/screenshots; use its tier protocol (T0–T3)
+rather than running full boards per phase.
 
 ## 0. Context for a cold-start implementer (read even if you skip everything else)
 
