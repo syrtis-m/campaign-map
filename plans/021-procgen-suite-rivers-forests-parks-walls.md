@@ -236,13 +236,41 @@ driven); line kinds reuse it unchanged.
   The stage-4 elaboration then decorates the GM's wall with towers/gates that
   align to the stage-3 streets. Two mechanisms, one line on the map.
 
+### 3.5 Farmland (new `farmland` polygon kind — Jonah 2026-07-12)
+- New FabricKind (additive zod change, sketch sub-bar button, theme paint per
+  the new-feature-type checklist below).
+- **Params:** preset `open-field-strips` (medieval long strips radiating off
+  lanes — pairs with euro-medieval cities), `enclosed-patchwork` (irregular
+  hedged fields, rolling-countryside look), `grid-quarters` (rectilinear
+  sections + straight section roads — pairs with na-grid), `orchard` (regular
+  tree rows), `paddy-terraces` (contour-following banks — the field-coupled
+  variant: needs plan 022 elevation; pre-022 fallback: concentric interiorT
+  bands); `fieldSize`, `hedging` (none/fences/hedgerows), `laneDensity`,
+  `farmsteads` (0–1).
+- **Generation:** heavy reuse — field subdivision is the parcels.ts OBB/strip
+  splitter at field scale, keyed per preset (strips = one long axis; patchwork
+  = irregular recursive splits; quarters = axis-aligned grid); sparse lane web
+  (growth loop, very low branchProb) with farmstead footprint clusters at
+  deterministic lane junctions (position-hashed); hedges/fences as field-edge
+  lines. Emit `farm-field` polygons (crop-variety property for theme texture),
+  `farm-lane` lines, `farm-hedge` lines, `farm-building` footprints,
+  `orchard-tree` points. Stage 2 (vegetation/agriculture) in plan 023 — the
+  city sees farmland (growth cost bump: streets skirt fields rather than
+  bulldoze them); farmland never sees the city.
+- **Overlap with city outskirts:** the city already grows its own outskirt
+  fields (v3.3) — double-painting where a farmland sketch touches a city rim
+  would look broken. Same mechanism as the wall (§3.4): the city reads the RAW
+  farmland sketch and suppresses its own outskirt fields inside it — the GM's
+  farmland claims that ground.
+
 ## 4. Sequencing (each algorithm = one subagent-sized phase, own gate)
 1. Preset pattern + city retrofit (pure UX/registry; no new generator).
 2. Spine support + **river** (biggest payoff, Jonah's example; pre-022 version
    ships without elevation coupling).
 3. **Forest** (first consumer of masked-noise; can pull plan 022 §2 forward or
    use the interiorT fallback).
-4. Park, then wall (mostly reuse).
+4. Park, then wall, then farmland (all mostly reuse; farmland's
+   `paddy-terraces` preset alone waits on plan 022).
 
 Each: pure generator + unit gates (determinism, containment-corridor, 2×2 seam
 via whole-artifact clip, preset fuzz), live gate (sketch → generate → edit
