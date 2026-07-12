@@ -30,6 +30,7 @@ import {
   withEntry,
   withoutDomain,
   withoutEntry,
+  CityDomainSchema,
   ManifestEntrySchema,
   type GeneratedManifest,
   type ManifestEntry,
@@ -50,7 +51,6 @@ import { registerVaultBasemap, vaultBasemapBounds } from "../map/pmtilesVaultPro
 import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
 import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
-import { generateCityStreets, generateDistricts, generateCityBlocks } from "../gen/city";
 import { generateWorldRegions, generateRoutes } from "../gen/world";
 import {
   tileXYForPoint,
@@ -275,10 +275,9 @@ export class MapView extends ItemView {
    * hits don't count) — pan/zoom must leave this untouched. */
   private generatorRunCounter = 0;
 
+  /** World tier only since v3.4 — city fabric is domain-scoped (citynet),
+   * and the legacy per-tile city generators are deleted. */
   private readonly directGenerators: Record<string, TileGenerator> = {
-    "city-street": generateCityStreets,
-    "city-district": generateDistricts,
-    "city-block": generateCityBlocks,
     "world-region": generateWorldRegions,
     "world-route": generateRoutes,
   };
@@ -566,13 +565,19 @@ export class MapView extends ItemView {
       }
     }
 
-    const features = await this.generateTierAt(
-      tier,
-      tileX,
-      tileY,
-      opts.force === true,
-      domain ? MapView.DOMAIN_SUPERSEDED_LEGACY_IDS : undefined
-    );
+    // Copy, don't alias: generateTierAt stores the SAME array object in the
+    // render store — pushing domain features into it would silently inject
+    // them into the legacy tile entry too (double-paint live, and a
+    // replay-vs-live mismatch, caught by phase4's revisit-determinism gate).
+    const features = [
+      ...(await this.generateTierAt(
+        tier,
+        tileX,
+        tileY,
+        opts.force === true,
+        domain ? MapView.DOMAIN_SUPERSEDED_LEGACY_IDS : undefined
+      )),
+    ];
     if (this.campaign?.id !== campaign.id) return [];
 
     // The request unit at city tier is the DOMAIN: one ask paints the whole
@@ -1140,17 +1145,33 @@ export class MapView extends ItemView {
       await this.loadManifestForCampaign();
       await this.clearManifestEntries([entry.data]);
     } else if (last.type === "clear-area") {
-      // Undo a clear = restore the manifest entries; output regenerates
-      // deterministically from the cache path.
+      // Undo a clear = restore the manifest entries (and the domain, if the
+      // clear was a clear-domain — its record carries it); output
+      // regenerates deterministically from the cache path.
       const parsed = ManifestEntrySchema.array().safeParse((last.data as { entries?: unknown }).entries);
       if (!parsed.success) {
         new Notice("Campaign Map: can't undo clear — malformed log entry");
         return;
       }
       await this.loadManifestForCampaign();
+      const dom = CityDomainSchema.safeParse((last.data as { domain?: unknown }).domain);
+      if (dom.success) this.manifest = withDomain(this.manifest, dom.data);
       for (const entry of parsed.data) {
         this.manifest = withEntry(this.manifest, entry);
-        await this.generateTierAt(entry.tier, entry.tileX, entry.tileY, false);
+        await this.generateTierAt(
+          entry.tier,
+          entry.tileX,
+          entry.tileY,
+          false,
+          entry.domainId ? MapView.DOMAIN_SUPERSEDED_LEGACY_IDS : undefined
+        );
+      }
+      if (dom.success) {
+        await this.generateDomainTiles(
+          dom.data,
+          parsed.data.map((e) => ({ tileX: e.tileX, tileY: e.tileY })),
+          false
+        );
       }
       await saveGeneratedManifest(this.app, this.campaign, this.manifest);
       new Notice(`Campaign Map: restored ${parsed.data.length} generated area${parsed.data.length === 1 ? "" : "s"}`);
@@ -1340,12 +1361,15 @@ export class MapView extends ItemView {
     return `domnet:${tileX}:${tileY}`;
   }
 
-  /** Legacy generator ids that still run for a tile. On DOMAIN tiles the v3
-   * network clip OWNS every city-tier cache record (same tileKeys — two
-   * writers would be last-write-wins nondeterminism): streets since v3.0,
-   * districts (wards) and blocks (faces) since v3.2. The legacy generators
-   * still serve pre-v3 manifest entries without a domainId. */
+  /** Generator ids that still RUN for a tile. Since v3.4 the city tier has
+   * no per-tile generators at all — city fabric is the domain network clip,
+   * and the legacy generators (streamline fur, Voronoi districts, bisection
+   * blocks) are deleted. Pre-v3 city manifest entries render from their
+   * surviving cache records only (see replayGeneratedManifest); world tier
+   * is untouched. CITY_GENERATOR_IDS lives on solely so clear flows can
+   * enumerate and remove old cache records. */
   private legacyIdsFor(tier: ZoomBand, excludeIds?: readonly string[]): readonly string[] {
+    if (tier === "city") return [];
     const ids = generatorIdsForBand(tier);
     return excludeIds?.length ? ids.filter((id) => !excludeIds.includes(id)) : ids;
   }
@@ -1541,6 +1565,7 @@ export class MapView extends ItemView {
     this.pendingGenerations++;
     this.updateLoadingIndicator();
     try {
+      let orphanMisses = 0;
       for (const entry of [...this.manifest.entries]) {
         if (this.campaign?.id !== campaign.id) return; // switched mid-replay
         const perGenerator = await Promise.all(
@@ -1553,6 +1578,17 @@ export class MapView extends ItemView {
             }
           )
         );
+        // Pre-v3 city entries (no domainId): the legacy generators are gone
+        // (v3.4), so these render from surviving cache records only. A cache
+        // miss can't regenerate — counted, surfaced once below, never thrown
+        // (the GM rebuilds the area as a city domain with one click).
+        if (entry.tier === "city" && !entry.domainId) {
+          for (const gid of generatorIdsForBand("city")) {
+            const hit = cached.get(tileKey(seed, entry.tileX, entry.tileY, GENERATION_ZOOM, gid));
+            if (hit) perGenerator.push(hit.features as unknown as GeoJSON.Feature[]);
+            else orphanMisses++;
+          }
+        }
         const features = perGenerator.flat().filter((f) => featureTouchesBBox(f, ctx.worldBounds));
         this.loadedTiles.set(this.tileKeyFor(entry.tier, entry.tileX, entry.tileY), features);
 
@@ -1571,6 +1607,12 @@ export class MapView extends ItemView {
             this.loadedTiles.set(this.domainTileKey(entry.tileX, entry.tileY), domFeatures);
           }
         }
+      }
+      if (orphanMisses > 0) {
+        new Notice(
+          `Campaign Map: ${orphanMisses} pre-v3 generated area${orphanMisses === 1 ? "" : "s"} can't regenerate under the new city model — right-click → "Generate fabric here" to rebuild them as city domains`,
+          10000
+        );
       }
     } finally {
       this.pendingGenerations--;

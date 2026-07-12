@@ -1,24 +1,27 @@
 # How the procedural generation works (and why)
 
-*A guided tour of the procgen system as of plan 019 (July 2026). This explains
-what each piece does, the reasoning behind the design, and how everything
-clicks together — from the moment you click "Generate fabric here" to the
-pixels on the map.*
+*A guided tour of the procgen system as of procgen v3 (July 2026). This
+explains what each piece does, the reasoning behind the design, and how
+everything clicks together — from the moment you click "Generate fabric here"
+to the pixels on the map.*
 
 ---
 
 ## The one-paragraph version
 
-Generation is a set of **pure functions** `(seed, bbox, constraints) →
-Feature[]` that carve the world into fixed 600 m tiles and are only ever run
-when the GM explicitly asks. Every random-looking decision is a hash of *where
-it is* plus the campaign seed — never of generation order — so any tile
-computes the same result forever, on any machine, in any sequence. Output is
-disposable cache; what persists is the GM's *request* (a tiny manifest) and
-the GM's own hand (locations and sketches), which feed back into every run as
-constraints. Delete the cache and the map regenerates identically. That single
-property — **determinism anchored to position** — is what everything else is
-built around.
+Generation is **pure functions** run only when the GM explicitly asks, keyed
+so that every random-looking decision is a hash of *where it is* plus the
+campaign seed — never of generation order — and cached against fixed 600 m
+tiles. The world tier still generates per tile: `(seed, bbox, constraints) →
+Feature[]`. The city tier (procgen v3) generates per **city domain** — a
+bounded disc the GM founds with a click — computing the whole street network
+once as `(citySeed, domain, constraints) → Feature[]` and letting every
+overlapping tile clip its piece from that single deterministic artifact.
+Output is disposable cache either way; what persists is the GM's *request* (a
+tiny manifest of tiles and domains) and the GM's own hand (locations and
+sketches), which feed back into every run as constraints. Delete the cache and
+the map regenerates identically. That single property — **determinism anchored
+to position** — is what everything else is built around.
 
 ---
 
@@ -53,9 +56,9 @@ truth. Now there is nothing to promote and nothing to lose.
 - **The PRNG** is mulberry32 (`src/gen/rng.ts`), seeded via `hashSeed(...)` —
   an FNV-1a hash over any mix of numbers/strings. There is no `Math.random()`
   anywhere in a generator.
-- **Every decision is keyed to position, not order.** A street's identity is
-  `hashSeed(campaignSeed, cellX, cellY, "street", partIndex)`. A block's split
-  ratio is `hashSeed(campaignSeed, recursionPath, "block-split")`. Nothing
+- **Every decision is keyed to position, not order.** A city's seed is
+  `hashSeed(campaignSeed, "domain", anchorCellX, anchorCellY)`. A parcel's
+  split ratio is `hashSeed(citySeed, blockId, recursionPath)`. Nothing
   depends on "what was generated before this."
 - **Cache keys** are `hash(campaignSeed, tileX, tileY, zoom, generatorId)`
   (`src/gen/cache/tileGrid.ts`) — the identity of a tile's content *is* its
@@ -81,10 +84,10 @@ same seed + same constraints = same output. A cache hit deliberately does
 
 Space is carved into fixed **600 m tiles** anchored at the world origin
 (`GENERATION_TILE_SIZE`), independent of the campaign's own bounds. Generators
-are tuned in meters (street spacing ~60 m, district cells ~220 m, block
-min-area 400 m²), so fictional campaigns convert their fake units through
-`scaleMetersPerUnit` at the MapView boundary — generators never know about
-display units.
+are tuned in meters (street segments ~40–80 m by profile, parcels a few
+hundred m², domains 400–1500 m radius), so fictional campaigns convert their
+fake units through `scaleMetersPerUnit` at the MapView boundary — generators
+never know about display units.
 
 There are two **tiers** of generator, selected by the zoom you're looking at
 when you ask (`bandForZoom`, split at z8):
@@ -92,9 +95,15 @@ when you ask (`bandForZoom`, split at z8):
 - **world**: `world-region` (Voronoi cells classified into biomes from
   noise-based height/moisture fields — this is where coastlines come from) and
   `world-route` (settlement-to-settlement paths).
-- **city**: `city-street` (tensor-field streamlines), `city-district`
-  (Voronoi), `city-block` (recursive subdivision of districts, plus building
-  footprints).
+- **city** (procgen v3): domain-scoped. Clicking at city tier founds — or
+  extends — a **city domain**: a disc (center snapped to a 30 m lattice,
+  radius 400–1500 m, one of four profiles: euro-medieval, euro-continental,
+  na-grid, na-suburb) recorded in the manifest. One pipeline
+  (`src/gen/citynet/`) computes the whole city for the domain; tiles clip
+  per-tile records with generator ids `city-street`, `city-block`,
+  `city-parcel`, `city-footprint`, `city-landmark`, and `city-district`
+  (wards — deliberately reusing the legacy district id so themes' paint
+  carries over unchanged).
 
 `world-settlement` still exists in-tree but is deliberately **not** in the
 generate set (plan 019, D2): named places are Locations the GM creates — the
@@ -142,25 +151,70 @@ from order-free substitutes:
    can't diverge across an edge (an MST would be cleaner but is globally
    coupled, exactly the failure class this design exists to avoid).
 
+**The city tier takes the halo argument to its limit** (procgen v3). Growth-
+based street generation is inherently *sequential* — priority-queue expansion,
+T-junction snapping — which is exactly the order-dependence the rules above
+exist to avoid. The resolution isn't order-free math; it's scope: the whole
+network is computed **once per domain** as a pure function of `(citySeed,
+domain, constraints)`, and every tile that overlaps the domain clips its bbox
+from that one artifact. Tile A and tile B don't need to *agree* — they read
+the same bytes. In halo terms: the halo became the whole city. Inside the
+pipeline, sequential still can't mean sloppy: all topology lives on a 1 cm
+integer lattice (exact orientation/intersection tests, no FP epsilons), the
+priority queue is totally ordered (`(priority, candidateId)` with hash
+tiebreaks — no tie ever resolved by insertion order), and every stage runs on
+budgets, never "until it looks done."
+
 The enforcement is the mandatory **2×2 adjacent-tile seam test** (CLAUDE.md):
 generate four tiles around a shared corner and assert the edge-touching
 geometry matches — including, since plan 019, with sketched water and roads
-deliberately crossing the seams.
+deliberately crossing the seams, and, since v3, with a domain straddling the
+corner.
 
 ## 5. The generators themselves, briefly
 
-- **Streets** (`city/index.ts` → `streamlines.ts` + `tensorField.ts`): a
-  tensor field (one global grid basis + seeded radial singularities — the
-  classic Wonka 2008 look of grids that curve into squares) is traced with RK4
-  streamlines from hashed grid seeds. Angles are mod-π "line field" tensors,
-  summed as `{cos 2θ, sin 2θ}` so direction has no polarity discontinuity.
-- **Districts** (`districts.ts` → `voronoiCells.ts`): d3-delaunay Voronoi over
-  hashed sites, halo-stabilized, clipped per tile.
-- **Blocks** (`blocks.ts`): each district ring is recursively bisected
-  (split ratio hashed to the recursion path) down to ~400 m² blocks, each with
-  an inset building footprint. No halo needed — it never looks past the
-  district boundary it was handed, and that boundary already matches across
-  tiles.
+**The city pipeline** (`src/gen/citynet/`, procgen v3) runs once per domain,
+in stages, each stage feeding the next:
+
+- **Skeleton** (`skeleton.ts` + `costField.ts`): radial arterials A*-routed
+  from the center to hashed-bearing (or route-hinted) boundary points over a
+  10 m cost lattice — slope from `heightAt`, open water impassable, river
+  cells expensive (so crossings concentrate into shared **bridges**), canon
+  pins penalized. Plus waterfront quays offset from sketched rivers, a
+  jittered plaza with landmark footprints (church/market/temple/keep), and —
+  profile-gated — the **wall**: a closed ring road through gate points placed
+  on each arterial at ring network-distance, with a wall band and gate
+  markers.
+- **Growth** (`growth.ts` + `graph.ts`): Parish & Müller priority-queue
+  street growth on the integer-lattice planar graph, seeded along the
+  skeleton. The classic local constraints: snap to nearby node, cut crossings
+  into T-junctions, trim to edge interiors, reject slivers. Cityness (§ below)
+  modulates branch priority/probability, snap radius, and the growth extent.
+  Sketched roads are pre-seeded into the graph as immutable edges — generated
+  streets snap *to* them. Profiles flip the signature: euro-medieval grows a
+  T-dominated warren with alleys; na-grid snaps directions to hashed
+  per-quadrant azimuth pairs and runs *through* crossings (4-way-dominated,
+  jogging where quadrants meet, mid-block alleys); na-suburb curves its
+  branches and lowers snap probability so unsnapped ends *are* the
+  cul-de-sacs, capped with court bulbs.
+- **Faces → parcels → footprints** (`faces.ts`, `parcels.ts`): the graph is
+  planar by construction, so its bounded faces (half-edge, smallest-left-turn
+  traversal, exact integer shoelace) *are* the blocks. Each block is OBB-sliced
+  into lots (recursion keyed `hash(citySeed, blockId, path)`); each lot with
+  street frontage gets a footprint inset toward — and aligned to — its
+  frontage edge. Interior lots stay open as courtyards. Degenerate faces and
+  slices are counted and skipped, never thrown (the anti-Watabou rule).
+- **Cityness** (`cityness.ts`): radial falloff × seeded noise + hashed bumps
+  around the GM's settlement pins — the scalar field the whole pipeline reads
+  for density ("the city grows around your pins").
+- **Outskirts + wards** (`outskirts.ts`, `wards.ts`): beyond the growth
+  extent, cottages ribbon along the arterials and farm-field quads align to
+  the road beyond them, then nothing toward the rim (Watabou's rule). Wards
+  are a handful of Voronoi cells over plaza/arterial sites, tagged
+  market/gate/craft/temple/slum by adjacency and hash.
+
+**The world tier** is untouched by v3:
+
 - **World regions** (`world/regions.ts`): Voronoi cells tagged with a biome
   from `heightAt` (fractal noise + radial falloff toward the campaign center,
   so a campaign defaults to an island/landmass — Azgaar lineage) and
@@ -169,6 +223,14 @@ deliberately crossing the seams.
   drawn polyline into the tensor field as an alignment basis with exponential
   falloff. Plan 019 generalized this blend to *every* sketched road (§7) and
   retired the separate build-from-corridor flow.
+
+**What v3 deleted, what survived (§5.5 of the v3 design):** the per-tile
+streamline street "fur", the tile-Voronoi districts, and the bisection blocks
+are gone (`city/districts.ts`, `city/blocks.ts`, `generateCityStreets`).
+`tensorField.ts` survives as the growth loop's orientation prior,
+`streamlines.ts` survives for corridor elaboration, `corridor.ts`,
+`fabricConstraints.ts`, `voronoiCells.ts` (wards use it), and the whole
+cache/worker/manifest machinery survive whole.
 
 ## 6. Explicit-only generation and the manifest (plan 019)
 
@@ -179,11 +241,16 @@ and assert the count stays at zero. Generation happens only through **Generate
 fabric here** (right-click menu, control modal, command palette), which:
 
 1. picks the tier from your current zoom,
-2. runs that tier's generators for the tile under the point — through the
+2. at world tier, runs that tier's generators for the tile under the point;
+   at city tier (v3), resolves the domain — clicking inside an existing
+   domain generates its remaining tiles, clicking outside founds a new one
+   (profile modal, defaulted from the campaign theme) — all through the
    cache, in a Web Worker when available,
 3. paints the result, and
-4. records the *request* in `<campaign>/Generated.json`:
-   `{ id: "city:0:0", tier, tileX, tileY, createdAt }`.
+4. records the *request* in `<campaign>/Generated.json`: tile entries
+   `{ id: "city:0:0", tier, tileX, tileY, domainId?, createdAt }` plus, since
+   v3, the `domains` array (`{ id: "dom:<cellX>:<cellY>", cx, cy, radius,
+   profile, createdAt }`). Old manifests parse unchanged (zod defaults).
 
 That manifest is the durable artifact. It's tiny, human-readable, synced, and
 merge-friendly — because it stores what the GM *asked for*, not the thousands
@@ -192,6 +259,19 @@ entry is satisfied from cache, or regenerated deterministically on a miss.
 This is the resolution of an apparent conflict between two requirements —
 "generated content must persist across sessions" and "deleting `.mapcache/`
 must be harmless." The request persists; the output is always reconstructible.
+
+The cache holds **two kinds of city record** since v3 (same file, same
+schema): a **domain network record** (`generatorId: "city-network"`, keyed to
+the domain's anchor cell — the whole unclipped network) and the **per-tile
+records** that clip from it (exactly the shape the painter always read).
+Replay groups entries by `domainId` and computes-or-reads each network *once*,
+then clips per entry — never recompute-per-tile, and never more than one read
+of the cache file. One migration note: manifest tile entries from *before* v3
+(no `domainId`, produced by the deleted per-tile city generators) still render
+from their cached records — the cache is honored — but on a cache miss there
+is no legacy generator to rerun, so they repaint empty until the GM
+regenerates the area as a domain. Deleting `.mapcache/` remains harmless for
+everything v3 generates.
 
 *Regenerate here* re-runs a tile's entries against current constraints (same
 manifest entry, new output). *Clear here / Clear all* removes manifest entries
@@ -221,10 +301,10 @@ The per-kind wiring (`src/gen/fabricConstraints.ts`, pure):
 
 | You sketch… | Generators respond… |
 |---|---|
-| **water** (polygon) / **river** (line, 15 m half-width) | street seeds inside are dropped; traced streets are cut where they enter; district sites inside are dropped; blocks centered in water are dropped |
-| **road** | the street field blends a nearest-road alignment basis (strength 3, 60 m falloff — the plan-014 corridor math, now applied to every road), so generated streets connect to and align with your arterial |
-| **wall** | streets are cut where a segment would cross it |
-| **district** (polygon) | generated district sites inside are dropped — you've claimed that ground |
+| **water** (polygon) / **river** (line, 15 m half-width) | open water is impassable to arterials (rivers cost enough that crossings concentrate into bridges); growth never builds into water; quays offset from rivers; blocks spanning water are dropped; wall bands segment at water |
+| **road** | pre-seeded into the street graph as immutable edges before growth — generated streets snap *to* your sketch and T into it (the strongest form of "the generator adapts around your hand"); the direction field also blends a nearest-road alignment basis (the plan-014 corridor math) |
+| **wall** | growth never crosses it (sketched walls have no gates; the *generated* wall has them) |
+| **district** (polygon) | claimed ground for the *legacy* tile districts; the v3 ward Voronoi does not yet honor it (open item — wards are subtle tint, not structure) |
 | **park** | nothing — streets through a park are fine |
 
 Two implementation subtleties worth knowing:
@@ -238,10 +318,12 @@ Two implementation subtleties worth knowing:
 
 Finally, the feedback loop is automatic: committing, deleting, or undoing a
 sketch queues a debounced regenerate of the already-generated tiles within its
-influence radius (~200 m: alignment falloff + streamline travel). "Sketch a
-river across your city, streets re-adapt to the shoreline" is one gesture.
-Crucially, this only ever *re*-generates tiles in the manifest — sketching
-never triggers first-time generation, so the explicit-only rule survives.
+influence radius (~200 m for world-tier output; for a city domain the
+influence radius is the whole disc, because growth is globally coupled within
+it — touch the river, the whole city re-adapts). "Sketch a river across your
+city, streets re-adapt to the shoreline" is one gesture. Crucially, this only
+ever *re*-generates what's in the manifest — sketching never triggers
+first-time generation, so the explicit-only rule survives.
 
 ## 8. The cache and the log
 
@@ -308,7 +390,7 @@ The full life of a generated street:
 GM right-clicks → "Generate fabric here"            (explicit ask — the ONLY entry)
   └─ tier = bandForZoom(zoom)   tile = tileXYForPoint(point → meters)
   └─ constraints = worldBounds + locations + ALL sketched fabric (→ meters)
-  └─ for each generator in tier:
+  └─ WORLD tier: for each generator in tier:
        key = hash(seed, tileX, tileY, zoom, generatorId)
        cache hit? ──yes──► return cached features (bytes identical, forever)
             │no
@@ -319,8 +401,14 @@ GM right-clicks → "Generate fabric here"            (explicit ask — the ONLY
          · cut/steered/filtered by sketched water, walls, roads, districts
          · clipped bit-identically to the tile, sorted canonically
        append to .mapcache/generated.jsonl
+  └─ CITY tier (v3): resolve-or-found the domain (profile modal on found)
+       network record cached? ──no──► worker runs
+         generateCityNetwork(citySeed, domain, constraints)
+         · skeleton → growth → faces → parcels → outskirts/walls, one artifact
+       clipNetworkToTile(network, tileBBox) → per-generatorId tile records
+       append all records to .mapcache/generated.jsonl
   └─ paint into the "generated" source (below sketches, below Locations)
-  └─ upsert Generated.json entry + log "generate-area"
+  └─ upsert Generated.json entry (+ domain on found) + log "generate-area"
 
 …later, GM sketches a river through the area
   └─ Fabric.geojson updated; debounced auto-regen of affected manifest tiles
@@ -338,9 +426,12 @@ always yields to them and can always be reconstructed.**
 
 ---
 
-*Code map: `src/gen/` (pure generators, constraints, tiles, worker) ·
+*Code map: `src/gen/citynet/` (the v3 city pipeline: domain, profiles,
+costField, skeleton, graph, growth, cityness, faces, parcels, outskirts,
+wards) · `src/gen/` (world generators, constraints, tiles, worker; `city/`
+holds the §5.5 survivors: corridor, tensorField, streamlines) ·
 `src/map/generation/` (cache glue + worker client) · `src/model/`
 (tileCache, generatedManifest, fabric, mutationLog schemas) · `src/vault/`
 (stores) · `src/view/MapView.ts` (triggers, replay, auto-regen, painting) ·
 `src/map/themes/` (paint + z-order invariant). Deeper background: docs/02
-§5, docs/04 (quality bar), plans/019.*
+§5, docs/04 (quality bar), plans/019, procgen_v3_design.md.*

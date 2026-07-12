@@ -1,15 +1,40 @@
 #!/usr/bin/env tsx
-// Phase 4 Tier A gate — continuous LOD (docs/03 Phase 4, docs/06 §2).
-// Covers what unit tests can't: the live viewport dispatcher (tile-keyed
-// store, eviction, worker wiring, zoom-band transitions), and the two
-// perf assertions docs/06 §2 calls out (frame-time sampler, index rebuild
-// time). See scripts/gates/phase3.ts for the evalJs double-encoding note —
-// same rule applies here.
+// Phase 4 Tier A gate — modernized 2026-07-11 for plan 019 + procgen v3.
+// The original subject (the viewport dispatcher) was DELETED by plan 019:
+// generation is explicit-only, tiers coexist (no band eviction), and the
+// tile store tracks the GM's requests, not the viewport. This gate asserts
+// that post-019 contract plus the two enduring perf assertions docs/06 §2
+// calls out (frame-time sampler, index rebuild time). See phase3.ts for the
+// evalJs double-encoding note — same rule applies here.
 import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { Gate, obsidian, obsidianRaw, evalJs, clearErrors, devErrors, screenshot } from "../lib/cli.js";
 
 function resetLeaves() {
   evalJs("app.workspace.detachLeavesOfType('campaign-map-view'); 'reset'");
+}
+
+const ashfallViewExpr =
+  "app.workspace.getLeavesOfType('campaign-map-view').map(function(l){return l.view;}).find(function(v){return v&&v.campaign&&v.campaign.id==='ashfall'})";
+
+/** Runs an async MapView method against the open Ashfall view (same pattern
+ * as phase3.ts — evalJs can't await, so the result parks on a window global). */
+async function runOnAshfall(body: string, timeoutMs = 120000): Promise<unknown> {
+  evalJs(`window.__p4r = undefined; (function(){ var v=${ashfallViewExpr};
+    if (!v) { window.__p4r = { error: 'no ashfall view' }; return 'no-view'; }
+    (${body})(v).then(function(r){ window.__p4r = { ok: r === undefined ? true : r }; }, function(e){ window.__p4r = { error: String(e && e.message || e) }; });
+    return 'started'; })()`);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const out = evalJs("JSON.stringify(window.__p4r === undefined ? null : window.__p4r)");
+    const parsed = typeof out === "string" ? JSON.parse(out) : out;
+    if (parsed !== null) {
+      if (parsed.error) throw new Error(parsed.error);
+      return parsed.ok;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("in-app async timed out");
 }
 
 /**
@@ -80,66 +105,80 @@ async function main() {
     if (!errs.includes("No errors")) throw new Error(errs);
   });
 
-  await gate.try("open Ashfall, viewport dispatcher auto-populates world tier without a manual command", async () => {
+  // ——— Plan 019 inverted this phase's original subject: the viewport
+  // dispatcher is DELETED (generation is explicit-only), zoom-band eviction
+  // is gone (both tiers coexist — Jonah: LOD only hides location names),
+  // and the tile store is bounded by the GM's explicit requests, not by
+  // viewport windows. The checks below assert the post-019 contract; the
+  // perf assertions further down are the enduring Phase-4 Tier A items.
+  await gate.try("bare pan/zoom generates NOTHING (plan 019 explicit-only)", async () => {
     clearErrors();
     resetLeaves();
     obsidian("command id=campaign-map:open-map-ashfall");
-    await new Promise((r) => setTimeout(r, 500));
-    // Below CITY_BAND_MIN_ZOOM (8) — world tier. No generate-world-here
-    // command issued: moveend from jumpTo alone must trigger the dispatcher.
+    await new Promise((r) => setTimeout(r, 2000));
+    await runOnAshfall("function(v){ return v.clearAllGenerated(); }");
+    const before = evalJs(`(function(){ var v=${ashfallViewExpr}; return v.generatorRunCount; })()`) as number;
     await jumpAndSettle([0, 0], 5);
+    await jumpAndSettle([3, 3], 10);
+    await jumpAndSettle([-5, -4], 7);
+    await jumpAndSettle([0, 0], 12);
+    const after = evalJs(`(function(){ var v=${ashfallViewExpr}; return v.generatorRunCount; })()`) as number;
+    if (after !== before) throw new Error(`pan/zoom ran ${after - before} generators — explicit-only violated`);
+    const counts = generatedCounts();
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    if (total !== 0) throw new Error(`bare pan/zoom produced features: ${JSON.stringify(counts)}`);
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
-    const counts = generatedCounts();
-    if (!counts["world-region"]) throw new Error(`no world-region features after a bare pan: ${JSON.stringify(counts)}`);
   });
 
-  await gate.try("crossing the zoom band evicts world tiles and loads city tiles", async () => {
+  await gate.try("explicit generates: both tiers coexist on screen (no band eviction)", async () => {
     clearErrors();
     await jumpAndSettle([0, 0], 5);
-    const worldCounts = generatedCounts();
-    if (!worldCounts["world-region"]) throw new Error(`expected world tier at zoom 5: ${JSON.stringify(worldCounts)}`);
-
-    await jumpAndSettle([0, 0], 10);
-    const cityCounts = generatedCounts();
-    if (cityCounts["world-region"]) throw new Error(`world-region survived the band crossing: ${JSON.stringify(cityCounts)}`);
-    if (!cityCounts["city-street"] && !cityCounts["city-district"]) {
-      throw new Error(`no city tier after crossing into it: ${JSON.stringify(cityCounts)}`);
-    }
+    await runOnAshfall("function(v){ return v.generateFabricHere([0,0], {}); }"); // world tier
+    await jumpAndSettle([0, 0], 9);
+    await runOnAshfall(
+      "function(v){ return v.generateFabricHere([0,0], { domainChoice: { profile: 'euro-medieval', radius: 400 } }); }"
+    );
+    await jumpAndSettle([0, 0], 5); // back to world zoom — city fabric must survive
+    const counts = generatedCounts();
+    if (!counts["world-region"]) throw new Error(`world tier missing: ${JSON.stringify(counts)}`);
+    if (!counts["city-street"]) throw new Error(`city tier evicted at world zoom: ${JSON.stringify(counts)}`);
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
   });
 
-  await gate.try("eviction bounds the tile store — panning far away drops out-of-view tiles", async () => {
+  await gate.try("tile store is bounded by explicit requests, immune to panning", async () => {
+    const before = evalJs("app.plugins.plugins['campaign-map'].loadedTileCount") as number;
+    if (before < 2) throw new Error(`expected the two explicit generates above in the store: ${before}`);
+    await jumpAndSettle([150, 70], 10); // far outside campaign bounds
+    await jumpAndSettle([-150, -70], 5);
     await jumpAndSettle([0, 0], 10);
-    const nearCount = evalJs("app.plugins.plugins['campaign-map'].loadedTileCount") as number;
-    if (nearCount < 1) throw new Error(`expected loaded tiles near [0,0]: ${nearCount}`);
-
-    // Far outside Ashfall's own bounds ([-8,-6,8,6]) but still a valid city-band tile.
-    await jumpAndSettle([150, 70], 10);
-    const farCount = evalJs("app.plugins.plugins['campaign-map'].loadedTileCount") as number;
-    // Bounded, not "near + far accumulated": the near tiles must have been evicted,
-    // not just added to — this is the load-bearing property (advisor review),
-    // distinguishing a viewport window from the old flat merge-by-id array.
-    if (farCount > nearCount * 2) {
-      throw new Error(`tile store grew rather than replaced on a far pan: near=${nearCount} far=${farCount}`);
+    const after = evalJs("app.plugins.plugins['campaign-map'].loadedTileCount") as number;
+    if (after !== before) {
+      throw new Error(`tile store changed under pan (${before} -> ${after}) — it must track requests, not the viewport`);
     }
   });
 
-  await gate.try("determinism: revisiting a tile after eviction reproduces identical output", async () => {
-    await jumpAndSettle([150, 70], 10); // pan away — evicts the [0,0] tiles from Phase 3's determinism gate
-    await jumpAndSettle([0, 0], 10);
+  await gate.try("revisit determinism: a fresh view reproduces the identical id set from replay", async () => {
     const before = generatedIdFingerprint("city-street");
-    if (!before) throw new Error("no city-street features loaded at [0,0] to fingerprint");
-
-    await jumpAndSettle([150, 70], 10);
-    await jumpAndSettle([0, 0], 10);
-    const after = generatedIdFingerprint("city-street");
-
-    if (before !== after) throw new Error("revisiting the same tile after eviction produced a different id set");
+    if (!before) throw new Error("no city-street features loaded to fingerprint");
+    resetLeaves();
+    obsidian("command id=campaign-map:open-map-ashfall");
+    let after = "";
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 800));
+      after = generatedIdFingerprint("city-street");
+      if (after === before) break;
+    }
+    if (before !== after) throw new Error("manifest replay on a fresh view produced a different city-street id set");
   });
 
-  await gate.try("dispatcher renders through to MapLibre (not just the source)", async () => {
+  await gate.try("explicitly generated fabric renders through to MapLibre (not just the source)", async () => {
+    try {
+      execFileSync("osascript", ["-e", 'tell application "Obsidian" to activate'], { timeout: 5000 });
+    } catch {
+      /* best-effort — occluded windows stop painting on macOS */
+    }
     await waitForStyleLoaded();
     await jumpAndSettle([0, 0], 10);
     await waitForStyleLoaded();
@@ -234,7 +273,7 @@ async function main() {
     if (!errs.includes("No errors")) throw new Error(errs);
   });
 
-  await gate.try("screenshot: city fabric via the automatic dispatcher (no generate-*-here command)", async () => {
+  await gate.try("screenshot: explicitly generated fabric (plan 019 model)", async () => {
     resetLeaves();
     obsidian("command id=campaign-map:open-map-ashfall");
     await new Promise((r) => setTimeout(r, 800));

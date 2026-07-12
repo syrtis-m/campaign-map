@@ -24,7 +24,7 @@ import type { CityDomain } from "./domain";
 import { PROFILES } from "./profiles";
 import { makeCostField } from "./costField";
 import { buildSkeleton } from "./skeleton";
-import { growNetwork, collectGrownChains } from "./growth";
+import { growNetwork, collectGrownChains, collectCourtTips, COURT_RADIUS_M } from "./growth";
 import { extractBlocks } from "./faces";
 import { subdivideBlocks } from "./parcels";
 import { buildWards } from "./wards";
@@ -222,8 +222,9 @@ export function generateCityNetwork(
     });
   }
 
-  // Stage B (v3.1): grow the street web off the skeleton, emit merged chains.
-  // Chain keys are position-derived (endpoint node keys), never order-derived.
+  // Stage B (v3.1): grow the street web off the skeleton, emit merged chains
+  // (roadClass "street" or "alley" — chains never mix classes, v3.4). Chain
+  // keys are position-derived (endpoint node keys), never order-derived.
   const { graph } = growNetwork(citySeed, domain, profile, constraints, skel);
   for (const chain of collectGrownChains(graph)) {
     if (chain.coords.length < 2) continue;
@@ -235,10 +236,34 @@ export function generateCityNetwork(
         generated: true,
         generatorId: "city-street",
         type: "street",
-        roadClass: "street",
+        roadClass: chain.roadClass,
         domainId: domain.id,
       },
     });
+  }
+
+  // Court bulbs (§5.2 na-suburb, v3.4): cul-de-sac profiles cap their
+  // unsnapped street tips with small octagons — the suburb signature.
+  if (profile.culdesacs) {
+    for (const tip of collectCourtTips(graph)) {
+      const ring: Pt[] = [];
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * 2 * Math.PI;
+        ring.push([tip.x + COURT_RADIUS_M * Math.cos(a), tip.y + COURT_RADIUS_M * Math.sin(a)]);
+      }
+      ring.push(ring[0]);
+      features.push({
+        type: "Feature",
+        id: hashSeed(citySeed, "court", tip.key),
+        geometry: { type: "Polygon", coordinates: [qLine(ring)] },
+        properties: {
+          generated: true,
+          generatorId: "city-landmark",
+          type: "court",
+          domainId: domain.id,
+        },
+      });
+    }
   }
 
   // Stage C (v3.2): faces → blocks → parcels → footprints, plus wards.
@@ -302,7 +327,7 @@ export function generateCityNetwork(
     });
   }
 
-  for (const ward of buildWards(citySeed, domain, skel)) {
+  for (const ward of buildWards(citySeed, domain, skel, constraints)) {
     features.push({
       type: "Feature",
       id: hashSeed(citySeed, "ward", ward.siteKey),

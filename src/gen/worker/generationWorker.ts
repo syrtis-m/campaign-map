@@ -5,24 +5,18 @@
  * that isn't itself host-agnostic (it uses postMessage/self), which is why
  * it lives in its own worker/ subfolder rather than alongside the generators.
  */
-import { generateCityStreets, generateDistricts, generateCityBlocks } from "../city";
 import { generateWorldRegions, generateSettlements, generateRoutes } from "../world";
 import { generateCityNetwork, citySeedFor, type CityDomain } from "../citynet";
 import type { GenerationConstraints } from "../types";
 import type { BBox } from "../spatialHash";
 
-export type GeneratorId =
-  | "city-street"
-  | "city-district"
-  | "city-block"
-  | "world-region"
-  | "world-settlement"
-  | "world-route";
+/** City-tier generation is domain-scoped since procgen v3.4 — the legacy
+ * per-tile city generators (streamline fur, Voronoi districts, bisection
+ * blocks) are deleted; `city-network` is the only city job. World tier is
+ * untouched by the v3 rewrite. */
+export type GeneratorId = "world-region" | "world-settlement" | "world-route";
 
 const GENERATORS: Record<GeneratorId, (seed: number, bbox: BBox, c: GenerationConstraints) => GeoJSON.Feature[]> = {
-  "city-street": generateCityStreets,
-  "city-district": generateDistricts,
-  "city-block": generateCityBlocks,
   "world-region": generateWorldRegions,
   "world-settlement": generateSettlements,
   "world-route": generateRoutes,

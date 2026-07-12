@@ -103,7 +103,32 @@ design doc's phases; state here + DECISIONS.md 2026-07-11.
       city wall; questions queued for Jonah (double-wall rule, gate presence, field wash).
 - [x] committed
 
-### Next: v3.4 remaining profiles (na-grid/na-suburb/euro-continental) + v2 deletion + docs
+### v3.4 — remaining profiles + cleanup + docs (DONE, gate green: `npx tsx scripts/gates/procgen34.ts` → 12/12)
+- [x] Profile signatures: na-grid quadrant grids w/ jogs (4-way ≥ T: 338 vs 255), na-suburb
+      cul-de-sacs + 185 court bulbs + loops, alleys (euro-medieval 63 / na-grid 26,
+      connect-or-discard), euro-continental verified. All ≤ ~200 ms per city; 4-profile fuzz
+      (200 domains) zero-throw ~25 s; quad share 61.7%.
+- [x] Dead v2 code DELETED (districts/blocks/streamline streets + tests); survivors per §5.5
+      (tensorField prior, corridor elaboration, fabricConstraints, voronoiCells). City tier is
+      domain-only; pre-v3 city entries render from cache with a migration Notice on miss.
+- [x] `procgen_explainer.md` rewritten for the v3 reality (subagent, in-voice).
+- [x] Ward sketched-district exclusion restored ("you've claimed that ground").
+- [x] TWO REAL BUGS found by the final sweep and fixed (see DECISIONS 2026-07-11 v3.4):
+      generateTierAt render-store array aliasing (domain features double-painted into the
+      legacy tile entry) and a latent-since-019 appendCachedTile write race that clobbered
+      records on a freshly deleted cache file (the delete-.mapcache determinism scenario).
+- [x] phase3 + phase4 gates modernized (they tested pre-019 canonize/dispatcher machinery).
+- [x] **Final board all green (fresh process per gate)**: 276/276 unit · phase0 10/10 ·
+      phase1 16/16 · phase2 15/15 · phase3 13/13 · phase4 11/11 · phase5 8/8 · styleLoad 5/5 ·
+      procgen30–34 13/13 · 11/11 · 12/12 · 11/11 · 12/12 · test:app 8/8. Four-profile
+      screenshots reviewed (review/v3.4-*.png): four visibly distinct genres side by side.
+- [x] committed
+
+**Procgen v3 rewrite COMPLETE.** The streamline "fur" is deleted; city fabric is a
+city-scoped deterministic growth pipeline (domains → cost-field skeleton → int-lattice
+P&M growth → faces → OBB parcels → frontage footprints → wards/walls/gates/outskirts),
+clipped through the unchanged tile cache, explicit-only, byte-deterministic under cache
+deletion, seam-safe by construction, ~200 ms per city in the worker.
 
 ## Environment (done)
 - [x] `scripts/preflight.sh` written and green (Obsidian 1.12.7 running, `dev-vault` registered + CLI-reachable, restricted mode off, Node v22.14.0 installed locally, git repo initialized, GitHub remote `syrtis-m/campaign-map` created)

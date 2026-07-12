@@ -218,16 +218,31 @@ function grownGraph(
   cx: number,
   cy: number,
   radius = 900,
-  constraints: Partial<GenerationConstraints> = {}
+  constraints: Partial<GenerationConstraints> = {},
+  profileId: ProfileId = "euro-medieval"
 ): { graph: StreetGraph; seed: number; domain: ReturnType<typeof makeDomain> } {
-  const domain = domainAt(cx, cy, "euro-medieval", radius);
+  const domain = domainAt(cx, cy, profileId, radius);
   const seed = citySeedFor(CAMPAIGN_SEED, domain);
   const cons: GenerationConstraints = { worldBounds: WORLD_BOUNDS, ...constraints };
-  const profile = PROFILES["euro-medieval"];
+  const profile = PROFILES[profileId];
   const cost = makeCostField(seed, domain, cons);
   const skel = buildSkeleton(seed, domain, profile, cons, cost);
   const { graph } = growNetwork(seed, domain, profile, cons, skel);
   return { graph, seed, domain };
+}
+
+/** Degree histogram of a grown graph: [degree-1, degree-3, degree-4+]. */
+function degreeHistogram(graph: StreetGraph): { d1: number; d3: number; d4: number } {
+  let d1 = 0;
+  let d3 = 0;
+  let d4 = 0;
+  for (const key of graph.sortedNodeKeys()) {
+    const d = graph.degree(key);
+    if (d === 1) d1++;
+    else if (d === 3) d3++;
+    else if (d >= 4) d4++;
+  }
+  return { d1, d3, d4 };
 }
 
 describe("v3.1 junction histogram (gate c)", () => {
@@ -268,8 +283,9 @@ describe("v3.1 connectivity (gate d)", () => {
   });
 });
 
-describe("v3.1 200-domain fuzz (gate e, anti-Watabou)", () => {
-  it("200 hashed domains generate without throwing, each within budget", () => {
+describe("v3.1/v3.4 200-domain fuzz (gate e, anti-Watabou — all four profiles)", () => {
+  it("200 hashed domains (50 per profile) generate without throwing, each within budget", () => {
+    const fuzzProfiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb"];
     const t0 = Date.now();
     for (let i = 0; i < 200; i++) {
       const rng = mulberry32(hashSeed(4242, "fuzz", i));
@@ -293,7 +309,7 @@ describe("v3.1 200-domain fuzz (gate e, anti-Watabou)", () => {
         });
       }
       const runStart = Date.now();
-      const network = net(cx, cy, "euro-medieval", { fabricFeatures: fabric }, radius);
+      const network = net(cx, cy, fuzzProfiles[i % 4], { fabricFeatures: fabric }, radius);
       expect(network.length).toBeGreaterThan(0);
       expect(Date.now() - runStart).toBeLessThan(5000); // per-run wall clock sane
     }
@@ -609,6 +625,54 @@ describe("v3.3 cityness canon bumps (§5.4)", () => {
     expect(town).toBeGreaterThan(bare + 0.1);
     expect(misc).toBeGreaterThan(bare);
     expect(misc).toBeLessThan(town);
+  });
+});
+
+// ── v3.4 gates: profile signatures ──────────────────────────────────────────
+
+describe("v3.4 profile signatures (§9 v3.4)", () => {
+  it("na-grid: 4-way junctions ≥ T-junctions (histogram flips)", () => {
+    const { graph } = grownGraph(600, 600, 900, {}, "na-grid");
+    const { d3, d4 } = degreeHistogram(graph);
+    expect(d4).toBeGreaterThan(0);
+    expect(d4).toBeGreaterThanOrEqual(d3);
+  });
+
+  it("na-suburb: court bulbs exist and loops are present (interior faces above floor)", () => {
+    const network = net(600, 600, "na-suburb");
+    const courts = network.filter((f) => f.properties?.type === "court");
+    expect(courts.length).toBeGreaterThan(0);
+    const { graph, domain } = grownGraph(600, 600, 900, {}, "na-suburb");
+    const { blocks } = extractBlocks(graph, domain);
+    expect(blocks.length).toBeGreaterThan(20); // loops close faces
+  });
+
+  it("alleys present for euro-medieval and na-grid; absent otherwise", () => {
+    const hasAlley = (p: ProfileId) =>
+      net(600, 600, p).some((f) => f.properties?.roadClass === "alley");
+    expect(hasAlley("euro-medieval")).toBe(true);
+    expect(hasAlley("na-grid")).toBe(true);
+    expect(hasAlley("euro-continental")).toBe(false);
+    expect(hasAlley("na-suburb")).toBe(false);
+  });
+
+  it("euro-continental: byte-deterministic, T-dominated, no wall unless the hashed roll says so", () => {
+    const a = net(600, 600, "euro-continental");
+    const b = net(600, 600, "euro-continental");
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    const { graph } = grownGraph(600, 600, 900, {}, "euro-continental");
+    const { d3, d4 } = degreeHistogram(graph);
+    expect(d3).toBeGreaterThan(d4);
+    expect(a.some((f) => f.properties?.type === "court")).toBe(false);
+  });
+
+  it("per-profile budget: full pipeline ≤ 2 s at the default radius", () => {
+    for (const p of ["euro-medieval", "euro-continental", "na-grid", "na-suburb"] as ProfileId[]) {
+      const t0 = Date.now();
+      const network = net(-1500, 900, p);
+      expect(network.length).toBeGreaterThan(50);
+      expect(Date.now() - t0).toBeLessThanOrEqual(2000);
+    }
   });
 });
 

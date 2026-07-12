@@ -296,8 +296,10 @@ export default class CampaignMapPlugin extends Plugin {
         try {
           const worker = await this.getGenerationWorker();
           if (!worker) throw new Error("worker unavailable");
+          // World tier: the last per-tile generators (city tier went
+          // domain-scoped in procgen v3.4) — still a real worker round-trip.
           const features = await worker.generate(
-            "city-street",
+            "world-region",
             4181,
             { minX: 0, minY: 0, maxX: 600, maxY: 600 },
             { worldBounds: { minX: -2000, minY: -2000, maxX: 2000, maxY: 2000 } }

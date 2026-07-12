@@ -26,18 +26,35 @@ function cachePath(campaignFolder: string): string {
   return `${campaignFolder}/.mapcache/generated.jsonl`;
 }
 
-export async function appendCachedTile(app: App, campaignFolder: string, tile: CachedTile): Promise<void> {
+/** Per-file write chain: concurrent appends (e.g. replay's Promise.all over
+ * a tile's generators) must serialize, because the exists→append-or-write
+ * decision below is not atomic — two writers racing on a FRESHLY DELETED
+ * file both see exists=false and both take the truncating `write` branch,
+ * silently clobbering the first record. Latent since the file rarely didn't
+ * exist; exposed by the delete-`.mapcache/`-then-replay determinism gate. */
+const writeChains = new Map<string, Promise<void>>();
+
+export function appendCachedTile(app: App, campaignFolder: string, tile: CachedTile): Promise<void> {
   const path = cachePath(campaignFolder);
-  const dir = `${campaignFolder}/.mapcache`;
-  if (!(await app.vault.adapter.exists(dir))) {
-    await app.vault.adapter.mkdir(dir);
-  }
-  const line = JSON.stringify(tile) + "\n";
-  if (await app.vault.adapter.exists(path)) {
-    await app.vault.adapter.append(path, line);
-  } else {
-    await app.vault.adapter.write(path, line);
-  }
+  const prev = writeChains.get(path) ?? Promise.resolve();
+  const next = prev.then(async () => {
+    const dir = `${campaignFolder}/.mapcache`;
+    if (!(await app.vault.adapter.exists(dir))) {
+      await app.vault.adapter.mkdir(dir);
+    }
+    const line = JSON.stringify(tile) + "\n";
+    if (await app.vault.adapter.exists(path)) {
+      await app.vault.adapter.append(path, line);
+    } else {
+      await app.vault.adapter.write(path, line);
+    }
+  });
+  // Keep the chain alive past a failed write; the caller still sees the error.
+  writeChains.set(
+    path,
+    next.catch(() => {})
+  );
+  return next;
 }
 
 /** Replays the log, keeping only the latest record per key. */

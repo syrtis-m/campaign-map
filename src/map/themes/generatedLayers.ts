@@ -88,9 +88,11 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
           "plaza", t.fabricRoad,
           "wall", t.fabricWall,
           "field", t.fabricPark,
+          // cul-de-sac court bulbs (na-suburb, v3.4) read as pavement
+          "court", t.fabricRoad,
           t.roadMinor,
         ],
-        "fill-opacity": ["match", ["get", "type"], "plaza", 0.25, "wall", 0.85, "field", 0.12, 0.5],
+        "fill-opacity": ["match", ["get", "type"], "plaza", 0.25, "wall", 0.85, "field", 0.12, "court", 0.3, 0.5],
       },
     } as unknown as LayerSpecification,
     {

@@ -80,8 +80,14 @@ export interface CityProfile {
   /** Leave unsnapped street ends as cul-de-sac bulbs — the NA-suburb
    * signature (§6 "cul-de-sacs"). */
   culdesacs: boolean;
-  /** Grid azimuths (radians) seeded per quadrant for `na-grid` jogs; empty
-   * for organic profiles (§5.2). */
+  /** Probability a candidate end may snap/trim to nearby fabric at all —
+   * <1 lowers snap odds so unsnapped ends ARE the cul-de-sacs (§5.2
+   * na-suburb, v3.4). Crossing cuts always apply (planarity). */
+  snapProb: number;
+  /** Grid-mode azimuth offsets (radians) added to each quadrant's hashed
+   * base azimuth; non-empty switches the direction prior from the tensor
+   * field to quadrant grids that jog where they meet (§5.2 na-grid, v3.4).
+   * Empty for organic profiles. */
   gridAzimuths: number[];
 
   // ── Stage C: blocks / parcels / footprints (v3.2 — typed now, unread) ──
@@ -131,6 +137,7 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     maxSegments: 4000,
     alleys: true,
     culdesacs: false,
+    snapProb: 1,
     gridAzimuths: [],
     blockAreaMin: 1000,
     blockAreaMax: 3000,
@@ -163,6 +170,7 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     maxSegments: 3000,
     alleys: false,
     culdesacs: false,
+    snapProb: 1,
     gridAzimuths: [],
     blockAreaMin: 3000,
     blockAreaMax: 8000,
@@ -195,6 +203,7 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     maxSegments: 2500,
     alleys: true,
     culdesacs: false,
+    snapProb: 1,
     gridAzimuths: [0, Math.PI / 2],
     blockAreaMin: 6000,
     blockAreaMax: 12000,
@@ -227,6 +236,7 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     maxSegments: 2000,
     alleys: false,
     culdesacs: true,
+    snapProb: 0.55,
     gridAzimuths: [],
     blockAreaMin: 12000,
     blockAreaMax: 30000,

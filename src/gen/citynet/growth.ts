@@ -70,6 +70,12 @@ export const GATE_PASS_M = 25;
  * endpoint) and a canon Point — never pave the GM's pins (I4). Endpoints get
  * the stricter `CANON_RADIUS_M`; interiors this. */
 export const CANON_SEGMENT_CLEARANCE_M = 20;
+/** Alley sub-branches (§6, v3.4) spawn where cityness exceeds this. */
+export const ALLEY_MIN_CITYNESS = 0.45;
+/** Chance an eligible committed street spawns an alley per side. */
+export const ALLEY_P = 0.25;
+/** Court-bulb radius, meters — caps na-suburb cul-de-sac tips (§5.2). */
+export const COURT_RADIUS_M = 3.5;
 
 interface Candidate {
   /** hashSeed(citySeed, parentEdgeId, branchIndex) — the D2 tiebreaker and
@@ -81,6 +87,9 @@ interface Candidate {
   /** Proposed direction, radians (world frame). */
   dir: number;
   priority: number;
+  /** Alley sub-branch (§6): must terminate at existing fabric or be
+   * discarded — a mid-block connector, never a dangling spur. */
+  alley?: boolean;
 }
 
 /** Total order for the heap: priority desc, then id asc, then parentEdgeId,
@@ -361,6 +370,32 @@ export function growNetwork(
   const segLenCm = toLattice(profile.segmentLen);
   const maxPops = profile.maxSegments * MAX_POPS_PER_SEGMENT;
 
+  /** Quadrant grid prior (§5.2 na-grid, v3.4): two hashed azimuths per
+   * quadrant of the domain — a candidate direction snaps to the nearest
+   * representative of the local quadrant's azimuth pair, so quadrant
+   * boundaries jog the way real NA grids do. Replaces the tensor prior for
+   * grid profiles (gridAzimuths non-empty). Deterministic: azimuth hashes on
+   * (citySeed, quadrant); ties resolved by fixed iteration order. */
+  const gridMode = profile.gridAzimuths.length > 0;
+  const gridSnapDir = (theta: number, xM: number, yM: number): number => {
+    let ang = Math.atan2(yM - domain.cy, xM - domain.cx);
+    if (ang < 0) ang += 2 * Math.PI;
+    const quadrant = Math.min(3, Math.floor(ang / (Math.PI / 2)));
+    const base = mulberry32(hashSeed(citySeed, "gridaz", quadrant))() * (Math.PI / 2);
+    let best = theta;
+    let bestD = Infinity;
+    for (const off of profile.gridAzimuths) {
+      for (const rep of [base + off, base + off + Math.PI]) {
+        const d = angDiff(theta, rep);
+        if (d < bestD) {
+          bestD = d;
+          best = rep;
+        }
+      }
+    }
+    return best;
+  };
+
   /** Generated-wall barrier (§5.1.5 growth interaction): does the candidate
    * segment cross the ring contour farther than GATE_PASS_M from every gate?
    * Checked on the RAW proposed segment (before snap/trim), so legitimate
@@ -433,11 +468,15 @@ export function growNetwork(
 
     // Snap to an existing node within snapDist of the proposed end. Snap
     // radius shrinks with cityness (§5.4): tighter warrens in the core,
-    // looser joins toward the rim.
+    // looser joins toward the rim. na-suburb lowers the snap PROBABILITY
+    // (§5.2, v3.4): unsnapped ends ARE the cul-de-sacs, so a hashed roll can
+    // veto the snap/trim attempts entirely (real crossings still cut).
+    const allowSnap =
+      profile.snapProb >= 1 || mulberry32(hashSeed(cand.id, "snap"))() < profile.snapProb;
     const snapEff = Math.max(1, Math.round(snapCm * (1.25 - 0.5 * Math.min(1, cEnd))));
     let terminal = false;
     let splitEdgeId: string | null = null;
-    const snapNode = graph.nearestNodeWithin(ex, ey, snapEff, from.key);
+    const snapNode = allowSnap ? graph.nearestNodeWithin(ex, ey, snapEff, from.key) : null;
     if (snapNode) {
       ex = snapNode.x;
       ey = snapNode.y;
@@ -458,7 +497,7 @@ export function growNetwork(
       ey = crossing.y;
       splitEdgeId = ce.id;
       terminal = true;
-    } else if (!snapNode) {
+    } else if (!snapNode && allowSnap) {
       // Extend/trim to a nearby edge interior (T-junction).
       const near = graph.nearestEdgeWithin(ex, ey, snapEff, from.key);
       if (near) {
@@ -502,6 +541,10 @@ export function growNetwork(
       if (graph.degree(snapNode.key) >= 4) continue;
     }
 
+    // Alleys are mid-block connectors: they must REACH something (snap, trim,
+    // or crossing cut) or they don't exist — never a dangling spur (§6, v3.4).
+    if (cand.alley && !terminal) continue;
+
     // Commit (mutations only from here).
     let endKey: string;
     if (splitEdgeId) {
@@ -514,19 +557,43 @@ export function growNetwork(
     } else {
       endKey = graph.addNode(ex, ey).key;
     }
-    const edge = graph.addEdge(from.key, endKey, { roadClass: "street", grown: true, sketch: false });
+    const edge = graph.addEdge(from.key, endKey, {
+      roadClass: cand.alley ? "alley" : "street",
+      grown: true,
+      sketch: false,
+    });
     if (!edge) continue;
     committed++;
-    if (terminal) continue; // ended at a junction — no children
+    if (terminal) {
+      // na-grid pass-through (§5.2, v3.4): grid streets run THROUGH cut
+      // junctions instead of T-ing out, which is where 4-ways come from.
+      if (gridMode && splitEdgeId && !cand.alley) {
+        heap.push({
+          id: hashSeed(citySeed, edge.id, 5),
+          parentEdgeId: edge.id,
+          branchIndex: 5,
+          fromKey: endKey,
+          dir: gridSnapDir(theta, toMeters(ex), toMeters(ey)),
+          priority: cityness(toMeters(ex), toMeters(ey)) + CONTINUE_BIAS,
+        });
+      }
+      continue; // ended at a junction — no other children
+    }
 
     // Spawn children (D2: ids from (citySeed, parentEdgeId, branchIndex)).
     const rng = mulberry32(hashSeed(citySeed, edge.id, "children"));
     const endCityness = cityness(toMeters(ex), toMeters(ey));
 
-    // 0: straight continuation — hashed per-segment curvature + tensor prior.
+    // 0: straight continuation. Grid profiles snap to the quadrant azimuth
+    // pair; organic profiles get hashed curvature + the tensor prior.
     const curv = (rng() * 2 - 1) * profile.curvature;
-    let contDir = theta + curv;
-    contDir += TENSOR_BLEND * lineAngleDelta(sampler(toMeters(ex), toMeters(ey)), contDir);
+    let contDir: number;
+    if (gridMode) {
+      contDir = gridSnapDir(theta, toMeters(ex), toMeters(ey));
+    } else {
+      contDir = theta + curv;
+      contDir += TENSOR_BLEND * lineAngleDelta(sampler(toMeters(ex), toMeters(ey)), contDir);
+    }
     heap.push({
       id: hashSeed(citySeed, edge.id, 0),
       parentEdgeId: edge.id,
@@ -536,7 +603,9 @@ export function growNetwork(
       priority: endCityness + CONTINUE_BIAS,
     });
 
-    // 1/2: side branches, probability modulated by cityness (§5.4).
+    // 1/2: side branches, probability modulated by cityness (§5.4). Grid
+    // profiles snap the branch heading to the local azimuth pair, then apply
+    // the small ±jitter (§6 na-grid: 90°±2° — jogs, not fans).
     const pBranch = Math.min(0.9, profile.branchProb * (0.5 + endCityness));
     for (const [branchIndex, sign] of [
       [1, 1],
@@ -545,14 +614,36 @@ export function growNetwork(
       const roll = rng();
       if (roll >= pBranch) continue;
       const jitter = (rng() * 2 - 1) * profile.branchAngleJitter;
+      const raw = theta + sign * (profile.branchAngle + jitter);
       heap.push({
         id: hashSeed(citySeed, edge.id, branchIndex),
         parentEdgeId: edge.id,
         branchIndex,
         fromKey: endKey,
-        dir: theta + sign * (profile.branchAngle + jitter),
+        dir: gridMode ? gridSnapDir(raw, toMeters(ex), toMeters(ey)) + jitter : raw,
         priority: endCityness,
       });
+    }
+
+    // 3/4: alley sub-branches in high cityness (§6, v3.4) — short-lived
+    // candidates that only commit if they terminate at existing fabric.
+    if (profile.alleys && endCityness > ALLEY_MIN_CITYNESS) {
+      for (const [branchIndex, sign] of [
+        [3, 1],
+        [4, -1],
+      ] as const) {
+        const roll = rng();
+        if (roll >= ALLEY_P) continue;
+        heap.push({
+          id: hashSeed(citySeed, edge.id, branchIndex),
+          parentEdgeId: edge.id,
+          branchIndex,
+          fromKey: endKey,
+          dir: theta + (sign * Math.PI) / 2,
+          priority: endCityness - 0.1,
+          alley: true,
+        });
+      }
     }
   }
 
@@ -597,21 +688,23 @@ export function pruneDeadEnds(graph: StreetGraph, profile: CityProfile): number 
  * are visited in sorted-id order and chains extend by the unique continuation
  * at each degree-2 node. Coordinates return in float meters (exact mm).
  */
-export function collectGrownChains(graph: StreetGraph): { key: string; coords: Pt[] }[] {
+export function collectGrownChains(graph: StreetGraph): { key: string; coords: Pt[]; roadClass: string }[] {
   const grown = graph.sortedEdges().filter((e) => e.props.grown);
   const visited = new Set<string>();
 
-  /** The unique grown continuation of `edgeId` through `nodeKey`, if the node
-   * joins exactly two grown edges and nothing else. */
+  /** The unique grown SAME-CLASS continuation of `edgeId` through `nodeKey`,
+   * if the node joins exactly two grown edges of one road class (an alley
+   * never merges into a street feature — themes paint them differently). */
   const continuation = (edgeId: string, nodeKey: string): string | null => {
     const incident = graph.incidentEdges(nodeKey);
     if (incident.length !== 2) return null;
     const other = incident[0] === edgeId ? incident[1] : incident[0];
     const e = graph.getEdge(other);
-    return e && e.props.grown ? other : null;
+    const self = graph.getEdge(edgeId);
+    return e && self && e.props.grown && e.props.roadClass === self.props.roadClass ? other : null;
   };
 
-  const chains: { key: string; coords: Pt[] }[] = [];
+  const chains: { key: string; coords: Pt[]; roadClass: string }[] = [];
   for (const start of grown) {
     if (visited.has(start.id)) continue;
     // Walk both directions from the start edge to the chain's ends.
@@ -649,7 +742,30 @@ export function collectGrownChains(graph: StreetGraph): { key: string; coords: P
       const n = graph.getNode(cursor)!;
       coords.push([toMeters(n.x), toMeters(n.y)]);
     }
-    chains.push({ key: `${headNode}>${tailNode}#${chainEdges.length}`, coords });
+    chains.push({
+      key: `${headNode}>${tailNode}#${chainEdges.length}`,
+      coords,
+      roadClass: start.props.roadClass,
+    });
   }
   return chains;
+}
+
+/**
+ * Cul-de-sac tips for court bulbs (§5.2 na-suburb, v3.4): degree-1 endpoints
+ * of grown street edges, in sorted node-key order (D2). The caller emits an
+ * octagon of COURT_RADIUS_M at each. Only meaningful for `culdesacs`
+ * profiles (others prune their short stubs).
+ */
+export function collectCourtTips(graph: StreetGraph): { x: number; y: number; key: string }[] {
+  const tips: { x: number; y: number; key: string }[] = [];
+  for (const key of graph.sortedNodeKeys()) {
+    if (graph.degree(key) !== 1) continue;
+    const [edgeId] = graph.incidentEdges(key);
+    const e = graph.getEdge(edgeId);
+    if (!e || !e.props.grown || e.props.roadClass !== "street") continue;
+    const n = graph.getNode(key)!;
+    tips.push({ x: toMeters(n.x), y: toMeters(n.y), key });
+  }
+  return tips;
 }

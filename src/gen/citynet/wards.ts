@@ -14,8 +14,9 @@
  */
 import { Delaunay } from "d3-delaunay";
 import { hashSeed, mulberry32, pick } from "../rng";
-import { pointInRing } from "../fabricConstraints";
+import { indexFabricConstraints, insideSketchedDistrict, pointInRing } from "../fabricConstraints";
 import { ensureClosedRing } from "../voronoiCells";
+import type { GenerationConstraints } from "../types";
 import type { CityDomain } from "./domain";
 import { domainBBox } from "./domain";
 import type { SkeletonOutput } from "./skeleton";
@@ -109,9 +110,21 @@ function discPolygon(domain: CityDomain): Pt[] {
 
 /**
  * Build the ward polygons for a domain. Pure function of
- * (citySeed, domain, skeleton).
+ * (citySeed, domain, skeleton, constraints).
+ *
+ * Sketched-district contract (plan 019, preserved through the v3 rewrite):
+ * a GM-drawn district polygon means "you've claimed that ground" — generated
+ * ward SITES inside it are dropped, exactly as the deleted legacy district
+ * generator dropped its Voronoi sites there. Pure predicate over world
+ * coordinates + the whole fabric collection, so it is seam-safe.
  */
-export function buildWards(citySeed: number, domain: CityDomain, skeleton: SkeletonOutput): Ward[] {
+export function buildWards(
+  citySeed: number,
+  domain: CityDomain,
+  skeleton: SkeletonOutput,
+  constraints?: GenerationConstraints
+): Ward[] {
+  const fabric = indexFabricConstraints(constraints?.fabricFeatures);
   // Sites: plaza center + arc-length points along each arterial.
   const raw: Pt[] = [[domain.cx, domain.cy]];
   for (const art of skeleton.arterials) {
@@ -124,6 +137,7 @@ export function buildWards(citySeed: number, domain: CityDomain, skeleton: Skele
   raw.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   const sites: Pt[] = [];
   for (const p of raw) {
+    if (insideSketchedDistrict(fabric, p[0], p[1])) continue;
     if (sites.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < WARD_SITE_MIN_SPACING_M)) continue;
     sites.push(p);
   }

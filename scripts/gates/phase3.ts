@@ -1,15 +1,21 @@
 #!/usr/bin/env tsx
 // Phase 3 Tier A gate — procedural generation (docs/03 Phase 3, docs/06 §2).
-// Pure-function determinism/seam guarantees are exhaustively unit-tested
-// (npm test: 17 dedicated tests in src/gen/{city,world}/*.test.ts) — this
-// gate covers the integration surface unit tests can't: live cache
-// persistence, the generate/canonize/regenerate UI flow, and screenshots.
+// Pure-function determinism/seam guarantees are exhaustively unit-tested —
+// this gate covers the integration surface unit tests can't: live cache
+// persistence, the generate/regenerate flow, and screenshots.
+//
+// Modernized 2026-07-11 for plan 019 + procgen v3: generation is
+// explicit-only via generate-fabric-here (tier from zoom; city tier is
+// domain-scoped), canonization is deleted (fabric never promotes — asserted
+// below), and the plan-018 toolbar holds 5 core buttons with generate living
+// in the control modal. Every stateful check clears generated state first so
+// the gate is idempotent across reruns.
 //
 // Note on evalJs: it already JSON.parses whatever the CLI prints after
 // "=> ". Returning `JSON.stringify(x)` from eval code round-trips back into
 // a parsed object anyway (double-encode, single-decode) — always return
 // plain values from eval code and let evalJs do the one parse.
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, rmSync } from "node:fs";
 import { Gate, obsidian, obsidianRaw, evalJs, clearErrors, devErrors, screenshot } from "../lib/cli.js";
 
 function resetLeaves() {
@@ -43,6 +49,28 @@ async function settleIndexSize(): Promise<number> {
     }
   }
   return size;
+}
+
+/** Runs an async MapView method against the open Ashfall view (evalJs can't
+ * await, so the promise parks its result on a window global we poll). */
+async function runOnAshfall(body: string, timeoutMs = 120000): Promise<unknown> {
+  const viewExpr =
+    "app.workspace.getLeavesOfType('campaign-map-view').map(function(l){return l.view;}).find(function(v){return v&&v.campaign&&v.campaign.id==='ashfall'})";
+  evalJs(`window.__p3r = undefined; (function(){ var v=${viewExpr};
+    if (!v) { window.__p3r = { error: 'no ashfall view' }; return 'no-view'; }
+    (${body})(v).then(function(r){ window.__p3r = { ok: r === undefined ? true : r }; }, function(e){ window.__p3r = { error: String(e && e.message || e) }; });
+    return 'started'; })()`);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const out = evalJs("JSON.stringify(window.__p3r === undefined ? null : window.__p3r)");
+    const parsed = typeof out === "string" ? JSON.parse(out) : out;
+    if (parsed !== null) {
+      if (parsed.error) throw new Error(parsed.error);
+      return parsed.ok;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("in-app async timed out");
 }
 
 function countsByGenerator(features: GeneratedFeature[]): Record<string, number> {
@@ -103,78 +131,45 @@ async function main() {
       return { hasToolbar: !!bar, buttonCount: buttons };
     })()`) as { hasToolbar: boolean; buttonCount: number };
     if (!result.hasToolbar) throw new Error("no .campaign-map-toolbar found in view.contentEl");
-    // >= 6: plan 003 shipped 6 core buttons; later plans append more (e.g. 007's
-    // poster-export button). Assert the core set is present, not an exact count.
-    if (result.buttonCount < 6) throw new Error(`expected >= 6 toolbar buttons, found ${result.buttonCount}`);
+    // Plan 018 decluttered the toolbar to 5 core buttons (add / pencil /
+    // search / theme / settings) — generate & export live in the settings
+    // modal. Assert the core set, not an exact count.
+    if (result.buttonCount < 5) throw new Error(`expected >= 5 toolbar buttons, found ${result.buttonCount}`);
   });
 
-  await gate.try("on-map toolbar's generate button is wired to real generation (plan 003)", async () => {
+  await gate.try("generate-fabric-here (world tier) generates from a clean slate", async () => {
     clearErrors();
-    // Zoom to world band so "Generate fabric here" produces world fabric.
-    evalJs("app.plugins.plugins['campaign-map'].map.setZoom(5); 'ok'");
-
-    // setZoom fires zoomend, which also triggers the view's own debounced
-    // viewport dispatcher — so `generated.length` can grow from that
-    // automatic dispatch, not from the button click. Poll until the count
-    // stops changing (the dispatch has settled) before capturing `before`,
-    // so a subsequent increase can only be attributed to the click.
-    let before = generatedFeatures().length;
-    for (let i = 0; i < 15; i++) {
-      await new Promise((r) => setTimeout(r, 300));
-      const now = generatedFeatures().length;
-      if (now === before) break;
-      before = now;
-    }
-
-    evalJs(
-      "app.workspace.getLeavesOfType('campaign-map-view')[0].view.contentEl.querySelectorAll('.campaign-map-toolbar-btn')[1].click(); 'clicked'"
-    );
-
+    await runOnAshfall("function(v){ return v.clearAllGenerated(); }");
+    evalJs("app.plugins.plugins['campaign-map'].map.jumpTo({center:[0,0], zoom:5}); 'ok'");
+    const before = generatedFeatures().length;
+    obsidian("command id=campaign-map:generate-fabric-here");
     let after = before;
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 20; i++) {
       await new Promise((r) => setTimeout(r, 300));
       after = generatedFeatures().length;
       if (after > before) break;
     }
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
-    if (after <= before) throw new Error(`toolbar generate click didn't increase generated features (before ${before}, after ${after})`);
+    if (after <= before) throw new Error(`generate-fabric-here didn't increase generated features (before ${before}, after ${after})`);
+    const counts = countsByGenerator(generatedFeatures());
+    if (!counts["world-region"]) throw new Error(`no world-region features: ${JSON.stringify(counts)}`);
   });
 
-  await gate.try("generate-city-here produces streets/districts/blocks/footprints", async () => {
+  await gate.try("city tier: founding a domain produces streets/blocks/parcels/footprints/wards", async () => {
     clearErrors();
-    evalJs("app.plugins.plugins['campaign-map'].map.jumpTo({center:[2,-4], zoom:6}); 'ok'");
-    obsidian("command id=campaign-map:generate-city-here");
-    // Poll rather than a fixed wait: Phase 4's viewport dispatcher now also
-    // fires on this same jumpTo (moveend) and competes for cache I/O with
-    // the manual command's own generateTile() calls — a fixed 900ms budget
-    // that was comfortable in Phase 3 can legitimately not be enough now.
-    let counts: Record<string, number> = {};
-    for (let i = 0; i < 15; i++) {
-      await new Promise((r) => setTimeout(r, 300));
-      counts = countsByGenerator(generatedFeatures());
-      if (["city-street", "city-district", "city-block", "city-footprint"].every((id) => counts[id] > 0)) break;
-    }
-    const errs = devErrors();
-    if (!errs.includes("No errors")) throw new Error(errs);
-    for (const id of ["city-street", "city-district", "city-block", "city-footprint"]) {
+    evalJs("app.plugins.plugins['campaign-map'].map.jumpTo({center:[0,0], zoom:9}); 'ok'");
+    const counts = (await runOnAshfall(
+      `function(v){ return v.generateFabricHere([0,0], { domainChoice: { profile: 'euro-medieval', radius: 400 } }).then(function(f){
+        var c = {};
+        f.forEach(function(x){ var g=(x.properties||{}).generatorId; c[g]=(c[g]||0)+1; });
+        return c; }); }`
+    )) as Record<string, number>;
+    for (const id of ["city-street", "city-block", "city-parcel", "city-footprint", "city-district"]) {
       if (!counts[id] || counts[id] < 1) throw new Error(`missing/empty ${id}: ${JSON.stringify(counts)}`);
     }
-  });
-
-  await gate.try("generate-world-here produces regions/settlements/routes", async () => {
-    clearErrors();
-    evalJs("app.plugins.plugins['campaign-map'].map.jumpTo({center:[-6,5], zoom:4}); 'ok'");
-    obsidian("command id=campaign-map:generate-world-here");
-    let counts: Record<string, number> = {};
-    for (let i = 0; i < 15; i++) {
-      await new Promise((r) => setTimeout(r, 300));
-      counts = countsByGenerator(generatedFeatures());
-      if (counts["world-region"] > 0) break;
-    }
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
-    if (!counts["world-region"]) throw new Error(`no world-region features: ${JSON.stringify(counts)}`);
   });
 
   await gate.try("world background is biome-driven, not a flat fill (plans/002)", () => {
@@ -221,159 +216,114 @@ async function main() {
   });
 
   await gate.try(
-    "determinism: cache-delete + regenerate produces hash-identical output (docs/06 §2)",
+    "determinism: cache-delete + replay produces hash-identical output (docs/06 §2)",
     async () => {
-      // A fresh view both times (`generatedFeatures()` accumulates across a
-      // view's lifetime, merged by feature id — comparing it against itself
-      // mid-session would just be comparing "everything so far" against
-      // "everything so far plus a bit more", not this one tile in isolation).
-      const centerExpr = "[3.5,-2.5]";
+      // The world tile + city domain generated above are in the manifest;
+      // their bytes must survive a full .mapcache delete (regenerated on
+      // replay by a fresh view). rmSync, not the CLI delete command — the
+      // command can't resolve dot-folder files, and deleting out from under
+      // Obsidian is the truest "GM deletes .mapcache" simulation anyway.
+      const cachePath = "dev-vault/Campaigns/Ashfall/.mapcache/generated.jsonl";
+      if (!existsSync(cachePath)) throw new Error("expected a populated cache before the delete");
+      const readRecords = (): Map<string, string> => {
+        const out = new Map<string, string>();
+        for (const line of readFileSync(cachePath, "utf8").split("\n")) {
+          if (!line.trim()) continue;
+          const rec = JSON.parse(line) as { key: string; features: unknown };
+          out.set(rec.key, JSON.stringify(rec.features));
+        }
+        return out;
+      };
+      const before = readRecords();
+      if (before.size === 0) throw new Error("no cache records before delete");
+      rmSync(cachePath);
 
       resetLeaves();
       obsidian("command id=campaign-map:open-map-ashfall");
-      evalJs(`app.plugins.plugins['campaign-map'].map.jumpTo({center:${centerExpr}, zoom:6}); 'ok'`);
-      obsidian("command id=campaign-map:generate-city-here");
-      await new Promise((r) => setTimeout(r, 900));
-      const before = JSON.stringify(generatedFeatures());
-
-      // Delete the on-disk cache entirely (CLAUDE.md: "Deleting .mapcache/ must
-      // be harmless — regenerates identically"). Vault content is written/removed
-      // via the CLI's own file commands, not eval (docs/05 §"Rules for agents").
-      if (existsSync("dev-vault/Campaigns/Ashfall/.mapcache/generated.jsonl")) {
-        obsidianRaw(["delete", "path=Campaigns/Ashfall/.mapcache/generated.jsonl", "permanent"]);
+      const deadline = Date.now() + 120000;
+      while (Date.now() < deadline) {
+        if (existsSync(cachePath)) {
+          const now = readRecords();
+          if ([...before.keys()].every((k) => now.has(k))) break;
+        }
+        await new Promise((r) => setTimeout(r, 800));
       }
-
-      resetLeaves();
-      obsidian("command id=campaign-map:open-map-ashfall");
-      evalJs(`app.plugins.plugins['campaign-map'].map.jumpTo({center:${centerExpr}, zoom:6}); 'ok'`);
-      obsidian("command id=campaign-map:generate-city-here");
-      await new Promise((r) => setTimeout(r, 900));
-      const after = JSON.stringify(generatedFeatures());
-
-      if (before !== after) {
-        throw new Error(`regenerated output differs after cache delete (before ${before.length}, after ${after.length} chars)`);
+      const after = readRecords();
+      for (const [key, features] of before) {
+        if (after.get(key) !== features) {
+          throw new Error(`record ${key} differs after cache delete + replay — determinism broke (release blocker)`);
+        }
       }
     }
   );
 
-  await gate.try("canonize-nearest-generated: creates note, strips from cache+view, joins canon index", async () => {
-    clearErrors();
-    resetLeaves();
-    obsidian("command id=campaign-map:open-map-ashfall");
-
-    // Settlement placement is an independent per-region-site suitability roll
-    // (world/settlements.ts) — deliberately not spacing-aware/guaranteed
-    // (order-dependence would break seams), so a given tile may legitimately
-    // roll zero. Sweep several spread-out centers within campaign bounds.
-    const candidateCenters: [number, number][] = [
-      [3, 3], [-6, 5], [-2, -4], [6, -5], [-6, -4], [4, 4], [0, -5], [-4, 1], [5, 1],
-    ];
-    let settlement: GeneratedFeature | undefined;
-    for (const [cx, cy] of candidateCenters) {
-      settlement = generatedFeatures().find((f) => f.properties.generatorId === "world-settlement");
-      if (settlement) break;
-      evalJs(`app.plugins.plugins['campaign-map'].map.jumpTo({center:[${cx},${cy}], zoom:4}); 'ok'`);
-      obsidian("command id=campaign-map:regenerate-world-here"); // force: a prior run may have left a stale/stripped cache entry
-      // Poll rather than a fixed wait: the command's async generateWorldHere
-      // isn't awaited by the checkCallback, so a fixed delay can race it.
-      for (let i = 0; i < 6; i++) {
-        await new Promise((r) => setTimeout(r, 300));
-        if (generatedFeatures().find((f) => f.properties.generatorId === "world-settlement")) break;
-      }
+  // Plan 019 deleted canonization outright (fabric never promotes) and the
+  // per-tier generate commands were unified into generate-fabric-here; the
+  // old canonize/regenerate-city-here checks tested commands that no longer
+  // exist. The replacement checks assert the CURRENT contract.
+  await gate.try("canonization is gone (plan 019: fabric never promotes)", () => {
+    // evalJs already JSON.parses the CLI payload — return the plain object.
+    const c = evalJs(
+      `(function(){ return {
+        canonize: !!app.commands.commands['campaign-map:canonize-nearest-generated'],
+        oldCity: !!app.commands.commands['campaign-map:generate-city-here'],
+        oldWorld: !!app.commands.commands['campaign-map:generate-world-here'],
+        fabricHere: !!app.commands.commands['campaign-map:generate-fabric-here'],
+        regenHere: !!app.commands.commands['campaign-map:regenerate-fabric-here'],
+        clearHere: !!app.commands.commands['campaign-map:clear-generated-here'],
+      }; })()`
+    ) as Record<string, boolean>;
+    const cmds = JSON.stringify(c);
+    if (c.canonize || c.oldCity || c.oldWorld) {
+      throw new Error(`pre-019 commands still registered: ${cmds}`);
     }
-    settlement = settlement ?? generatedFeatures().find((f) => f.properties.generatorId === "world-settlement");
-    if (!settlement) throw new Error(`no generated settlement found after sweeping ${candidateCenters.length} tiles`);
-
-    const [x, y] = settlement.geometry.coordinates as [number, number];
-    const featureId = settlement.id;
-    const name = String(settlement.properties.name);
-
-    // Settle the canon-index baseline first: a prior check's async note
-    // creation may still be landing, which would otherwise inflate the +1
-    // assertion below.
-    const beforeIndexSize = await settleIndexSize();
-
-    // Canonize at the settlement's OWN zoom band (world tier, zoom < 8). The
-    // earlier version jumped to zoom 8 — the *city* band — which makes the
-    // viewport dispatcher evict the world settlement before the canonize
-    // command runs, so it either canonized the wrong feature or nothing.
-    evalJs(`app.plugins.plugins['campaign-map'].map.jumpTo({center:[${x},${y}], zoom:5}); 'ok'`);
-    await new Promise((r) => setTimeout(r, 500));
-    obsidian("command id=campaign-map:canonize-nearest-generated");
-
-    // Poll for the index to actually pick up the new note (async vault-change
-    // -> debounced rescan -> index-update chain, competing with dispatcher I/O).
-    let afterIndexSize = beforeIndexSize;
-    for (let i = 0; i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 300));
-      afterIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
-      if (afterIndexSize > beforeIndexSize) break;
-    }
-
-    const errs = devErrors();
-    if (!errs.includes("No errors")) throw new Error(errs);
-
-    // Assert the SPECIFIC canonized feature is stripped, by id — not by name.
-    // Generation is deterministic and the dispatcher continuously loads other
-    // tiles' settlements (which can legitimately share a name) into the global
-    // `generated` getter during the async window, so a name-based "still
-    // present" check is unsound; an id-based one tests exactly the strip.
-    const stillGenerated = generatedFeatures().filter((f) => f.id === featureId).length;
-    if (stillGenerated !== 0) {
-      throw new Error(`canonized settlement (id ${featureId}, "${name}") still in generated fabric after canonizing`);
-    }
-
-    if (afterIndexSize !== beforeIndexSize + 1) {
-      throw new Error(`index size ${beforeIndexSize} -> ${afterIndexSize}, expected +1 (a note should have joined canon)`);
+    if (!c.fabricHere || !c.regenHere || !c.clearHere) {
+      throw new Error(`plan-019 generate/regenerate/clear commands missing: ${cmds}`);
     }
   });
 
-  await gate.try("regenerate-city-here after canonize: canon survives, fabric actually regenerates", async () => {
+  await gate.try("regenerate adapts to canon changes; canon itself never touched (plan 019 + procgen v3)", async () => {
     clearErrors();
-    // Settle the baseline: the previous check's canonize note-creation lands
-    // asynchronously and, if still in flight, would show up as an index delta
-    // here and be misattributed to regenerate (which creates no canon at all).
+    // Snapshot the domain generated by the city-tier check above (this check
+    // depends on it — the domain covers Ashfall's center).
+    const before = (await runOnAshfall(
+      `function(v){ return v.generateFabricHere([0,0], {}).then(function(f){
+        return JSON.stringify(f.filter(function(x){return x.properties && x.properties.generatorId === 'city-street';})); }); }`
+    )) as string;
+
     const beforeIndexSize = await settleIndexSize();
+    // A new canon Location inside the domain is a CONSTRAINT change: cityness
+    // bumps ("the city grows around the GM's pins") + canon clearance.
+    evalJs(
+      `app.plugins.plugins['campaign-map'].createLocation('ashfall', [1, 0.5], 'Gate3 Regen Probe', 'village', 'mid'); 'ok'`
+    );
+    let afterIndexSize = beforeIndexSize;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 400));
+      afterIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
+      if (afterIndexSize > beforeIndexSize) break;
+    }
+    if (afterIndexSize !== beforeIndexSize + 1) {
+      throw new Error(`probe note never joined the index (${beforeIndexSize} -> ${afterIndexSize})`);
+    }
 
-    // Phase 4's viewport dispatcher now runs continuously alongside this
-    // check, independently fetching/evicting tiles across the whole
-    // viewport — comparing the *global* `generated` getter before/after
-    // (the original approach) started spuriously passing/failing on
-    // whether unrelated dispatcher churn happened to touch city-street
-    // features in that window, not on whether *this* regenerate call did
-    // its job. Call generateCityHere() directly and diff its own return
-    // value instead — scoped to exactly the one tile under test, immune
-    // to what else the dispatcher is doing. Full geometry, not just ids:
-    // a street's id is `hashSeed(seed, cellX, cellY, "street", partIndex)`
-    // (src/gen/city/index.ts) — a function of cell position only, so a
-    // canon-avoidance path change can alter geometry while keeping the same
-    // id. An id-only fingerprint would miss exactly the change this check
-    // exists to catch.
-    const snapshot = (force: boolean) =>
-      evalJs(`(async () => {
-        const view = app.workspace.getLeavesOfType('campaign-map-view')[0].view;
-        const c = view.map.getCenter();
-        const result = await view.generateCityHere([c.lng, c.lat], ${force});
-        return JSON.stringify(result.filter(f => f.properties.generatorId === 'city-street'));
-      })()`) as string;
+    const after = (await runOnAshfall(
+      `function(v){ return v.regenerateFabricHere([0,0]).then(function(f){
+        return JSON.stringify(f.filter(function(x){return x.properties && x.properties.generatorId === 'city-street';})); }); }`
+    )) as string;
+    if (before === after) {
+      throw new Error("regenerate with a new canon Location inside the domain left streets byte-identical — constraints aren't reshaping fabric");
+    }
+    const finalIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
+    if (finalIndexSize !== afterIndexSize) {
+      throw new Error(`regenerate touched canon: index ${afterIndexSize} -> ${finalIndexSize}`);
+    }
 
-    const before = snapshot(false);
-    const after = snapshot(true);
+    // Leave the fixture clean: clear generated state, delete the probe note.
+    await runOnAshfall("function(v){ return v.clearAllGenerated(); }");
+    obsidianRaw(["delete", "path=Campaigns/Ashfall/Locations/Gate3 Regen Probe.md", "permanent"]);
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
-
-    const afterIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
-    if (afterIndexSize !== beforeIndexSize) {
-      throw new Error(`regenerate touched canon: index ${beforeIndexSize} -> ${afterIndexSize}`);
-    }
-
-    // "Surroundings adapt" isn't just a claim: force-regenerating the same
-    // tile with fresh canon constraints (the just-canonized settlement is
-    // now in `canonFeatures`) must actually re-run the generator, not
-    // silently return the prior cached/in-memory streets untouched.
-    if (before === after) {
-      throw new Error("regenerate-city-here left city-street fabric byte-identical — it didn't actually re-run");
-    }
   });
 
   await gate.try("survives full app reload", async () => {

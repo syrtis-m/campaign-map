@@ -10,7 +10,6 @@ import {
 } from "./generationService";
 import { removeCachedTiles } from "../../model/tileCache";
 import { GENERATION_ZOOM, tileKey } from "../../gen/cache/tileGrid";
-import { generateCityStreets } from "../../gen/city";
 import { generateSettlements } from "../../gen/world";
 import { citySeedFor, generateCityNetwork, makeDomain } from "../../gen/citynet";
 import type { ParsedCampaign } from "../../model/campaignConfig";
@@ -52,6 +51,23 @@ function fakeApp(): { app: App; files: Map<string, string> } {
 
 const WORLD_BOUNDS: BBox = { minX: -2000, minY: -2000, maxX: 2000, maxY: 2000 };
 
+/** Tiny stand-in tile generator (the legacy city generators are deleted in
+ * v3.4): deterministic, constraint-sensitive enough for the cache tests. */
+function fakeStreets(seed: number, bbox: BBox, constraints: { canonFeatures?: GeoJSON.Feature[] }): GeoJSON.Feature[] {
+  const canonCount = constraints.canonFeatures?.length ?? 0;
+  const n = 4 - Math.min(canonCount, 2);
+  const out: GeoJSON.Feature[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push({
+      type: "Feature",
+      id: seed + i,
+      geometry: { type: "LineString", coordinates: [[bbox.minX + i, bbox.minY], [bbox.minX + i, bbox.maxY]] },
+      properties: { generated: true, generatorId: "fake-street" },
+    });
+  }
+  return out;
+}
+
 function campaign(): ParsedCampaign {
   return {
     id: "ashfall",
@@ -65,7 +81,7 @@ describe("generateTile", () => {
   it("caches on first call and returns the cached result on the second, without re-running the generator", async () => {
     const { app } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
-    const generator = vi.fn(generateCityStreets);
+    const generator = vi.fn(fakeStreets);
 
     const a = await generateTile(ctx, 0, 0, "city-street", generator);
     const b = await generateTile(ctx, 0, 0, "city-street", generator);
@@ -77,7 +93,7 @@ describe("generateTile", () => {
   it("regenerateTile bypasses the cache and re-runs the generator", async () => {
     const { app } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
-    const generator = vi.fn(generateCityStreets);
+    const generator = vi.fn(fakeStreets);
 
     await generateTile(ctx, 0, 0, "city-street", generator);
     await regenerateTile(ctx, 0, 0, "city-street", generator);
@@ -89,9 +105,9 @@ describe("generateTile", () => {
     const { app, files } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
 
-    const first = await generateTile(ctx, 1, 1, "city-street", generateCityStreets);
+    const first = await generateTile(ctx, 1, 1, "city-street", fakeStreets as never);
     files.delete("Campaigns/Ashfall/.mapcache/generated.jsonl");
-    const second = await generateTile(ctx, 1, 1, "city-street", generateCityStreets);
+    const second = await generateTile(ctx, 1, 1, "city-street", fakeStreets as never);
 
     expect(second).toEqual(first);
   });
@@ -105,8 +121,8 @@ describe("generateTile", () => {
       properties: {},
     };
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [canonPoint] };
-    const withoutCanon = generateCityStreets(4181, { minX: 0, minY: 0, maxX: 600, maxY: 600 }, { worldBounds: WORLD_BOUNDS });
-    const withCanon = await generateTile(ctx, 0, 0, "city-street", generateCityStreets);
+    const withoutCanon = fakeStreets(4181, { minX: 0, minY: 0, maxX: 600, maxY: 600 }, { worldBounds: WORLD_BOUNDS } as never);
+    const withCanon = await generateTile(ctx, 0, 0, "city-street", fakeStreets as never);
     expect(withCanon.length).toBeLessThanOrEqual(withoutCanon.length);
   });
 });
@@ -195,7 +211,7 @@ describe("removeCachedTiles (plan 019 'clear generated fabric')", () => {
   it("a cleared tile is a true cache MISS: the next generate re-runs the generator (not a blank tombstone)", async () => {
     const { app } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
-    const generator = vi.fn(generateCityStreets);
+    const generator = vi.fn(fakeStreets);
 
     const first = await generateTile(ctx, 0, 0, "city-street", generator);
     const key = tileKey(campaign().config.seed, 0, 0, GENERATION_ZOOM, "city-street");
@@ -209,7 +225,7 @@ describe("removeCachedTiles (plan 019 'clear generated fabric')", () => {
   it("only removes the given keys — other tiles' records survive the rewrite", async () => {
     const { app } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
-    const generator = vi.fn(generateCityStreets);
+    const generator = vi.fn(fakeStreets);
 
     await generateTile(ctx, 0, 0, "city-street", generator);
     await generateTile(ctx, 1, 0, "city-street", generator);
