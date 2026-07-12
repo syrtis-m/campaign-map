@@ -7,6 +7,90 @@ types — i like the dropdown when creating a city here, similar templates are
 good throughout"). Builds on plan 020's registry; consumes plan 022 fields
 where noted; regen interactions are plan 023's contract.
 
+## 0. Context for a cold-start implementer (read even if you skip everything else)
+
+**The product in one line:** an Obsidian plugin giving a solo GM a
+Google-Maps-style tab for tabletop campaigns; locations invented mid-session
+become notes + pins in ≤5 s, and background world detail is procedurally
+generated *only on explicit GM request*, deterministically, forever.
+
+**Read before writing code:** `CLAUDE.md` (locked decisions — binding),
+`plans/020-sketch-driven-procgen-regions.md` (the architecture you're
+extending), `procgen_v3_design.md` §4 (determinism rules D1–D6 — binding),
+`docs/05-dev-workflow.md` + `docs/06-autonomous-build.md` (build/gate
+protocol), and skim `scripts/gates/procgen40.ts`/`procgen41.ts` (the live-gate
+patterns to clone).
+
+**State you inherit (plan 020, shipped):** the three-layer model — layer 1
+procgen fabric (regenerable `.mapcache/` JSONL, disposable by design), layer 2
+sketches (`Fabric.geojson`, GM-owned, selectable/editable via the Select tool),
+layer 3 note-backed Locations (always on top; `layerOrder.ts` asserts it). A
+sketched **district** polygon carrying a `procgen` block
+(`{algorithm, seed, version, params}`) IS the request for city generation:
+`src/gen/procgen/registry.ts` maps sketch-kind → algorithm; `src/gen/region.ts`
+is the polygon geometry core; `src/gen/citynet/` computes a whole city network
+per region which tiles then CLIP — that is the seam story (adjacent tiles agree
+because they cut the same bytes), and every algorithm in this plan inherits it.
+The seed is persisted at creation and survives vertex edits (the identity
+property: edits ADAPT output, only explicit re-roll REPLACES it). MapView owns
+the lifecycle (sketch-finish → RegionProcgenModal → generate whole artifact;
+edit → debounced regen; `sketch-procgen-set/clear`/`sketch-edit` log types with
+undo).
+
+**Why things are the way they are (don't re-derive, don't violate):**
+- *Explicit-only generation*: pan/zoom never generates (`generatorRunCount`
+  stays flat in every gate). Sketching/confirming IS the request; the modal's
+  cancel path leaves an inert shape — a sketch must never silently run a
+  generator the GM didn't confirm.
+- *Determinism is sacred*: same durable inputs → byte-identical output,
+  forever. Deleting `.mapcache/` must be harmless; if a byte-diff appears on
+  replay, that's a release blocker, not a flaky test. This is WHY presets are
+  sugar over params (§1), WHY seeds are persisted rather than derived at run
+  time, WHY feature ids hash on position/path and never on emission order, and
+  WHY loops use budgets, not convergence.
+- *Generators are pure headless* `src/gen/` functions — no DOM/map/Obsidian
+  imports; they read only their arguments. Zod at every IO boundary (bad data →
+  warning badge, never a silent drop, never a crash).
+- *Generators emit typed features only; themes own ALL paint.* Put `type`/
+  preset properties on features; never styling.
+- *The GM's hand always wins*: generated output stays strictly within the
+  sketched shape (or spine corridor); sketch/location geometry is never
+  overwritten by a generator.
+- *Cartographic discipline is the plugin's job, not the GM's*: sensible
+  defaults per preset; never push styling decisions onto the GM. The
+  acceptance bar is docs/04's screenshot test (genre identifiable in 3 s, no
+  collisions/seams/voids).
+
+**Infra pitfalls that cost previous agents real hours (all still live):**
+- Obsidian CLI loop: `plugin:reload id=campaign-map`, NEVER `plugin:enable`
+  (a no-op when already enabled — you will test stale code). Async evals park
+  results on `window` globals and poll. Front the window before
+  `dev:screenshot` (macOS) and actually LOOK at the screenshot. `dev:errors`
+  must be clean. Run from `dev-vault/`, never a real vault.
+- Long Obsidian sessions degrade the renderer (`isStyleLoaded` false
+  everywhere, render checks time out): only a full process quit+relaunch
+  clears it. Run final gate boards one-gate-per-fresh-process.
+- Modals hang CLI automation — every GM flow needs a headless test-API twin on
+  `app.plugins.plugins['campaign-map']` (precedents: `createRegionForTest`,
+  `moveVertex`, `setRegionParams`) that runs the FULL commit path (validation,
+  log, persist, regen), not a shortcut.
+- Fictional campaigns sit at overview zoom ~z4.5 — never bake absolute zoom
+  thresholds (z14 is unreachable). Jonah's standing ruling: zoom LOD affects
+  location-name visibility ONLY; generated/sketched fabric always renders.
+- `dev-vault/Campaigns/Vespergate` holds Jonah's REAL campaign data (migrated
+  district `fabric-mri7r4bj-ll0bd5`, 5 hand-sketched districts). Gates use
+  name-tagged fixtures and self-clean; his files must be byte-intact after
+  every run (`git diff` on them = empty or frontmatter-formatting-only).
+- Cache appends serialize through a per-file promise chain in
+  `src/model/tileCache.ts` (a fixed write race) — never bypass
+  `appendCachedTile`.
+
+**Protocol:** work the numbered phases of §4, one gate per phase (unit + live),
+update PROGRESS.md, log every judgment call/deviation in DECISIONS.md, commit
+per green gate with the `[gate: …]` message convention. §5's open questions
+need a ruling — if you can't get one, decide, log the decision AND rationale in
+DECISIONS.md, and flag it prominently in your report; never guess silently.
+
 ## 1. The preset pattern (do this first — it's the UX Jonah endorsed)
 
 Registry entries (plan 020 §5) gain first-class presets:

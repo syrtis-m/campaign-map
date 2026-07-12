@@ -9,6 +9,90 @@ driven procgen regions). Build order: plan 021 (algorithm suite) starts first wi
 fallbacks; its field-coupled variants and 023 (cross-layer cascade) depend on
 the field architecture in §2.
 
+
+## 0. Context for a cold-start implementer (read even if you skip everything else)
+
+**The product in one line:** an Obsidian plugin giving a solo GM a
+Google-Maps-style tab for tabletop campaigns; locations invented mid-session
+become notes + pins in ≤5 s, and background world detail is procedurally
+generated *only on explicit GM request*, deterministically, forever.
+
+**Read before writing code:** `CLAUDE.md` (locked decisions — binding),
+`plans/020-sketch-driven-procgen-regions.md` (the architecture you're
+extending), `procgen_v3_design.md` §4 (determinism rules D1–D6 — binding),
+`docs/05-dev-workflow.md` + `docs/06-autonomous-build.md` (build/gate
+protocol), and skim `scripts/gates/procgen40.ts`/`procgen41.ts` (the live-gate
+patterns to clone).
+
+**State you inherit (plan 020, shipped):** the three-layer model — layer 1
+procgen fabric (regenerable `.mapcache/` JSONL, disposable by design), layer 2
+sketches (`Fabric.geojson`, GM-owned, selectable/editable via the Select tool),
+layer 3 note-backed Locations (always on top; `layerOrder.ts` asserts it). A
+sketched shape carrying a `procgen` block (`{algorithm, seed, version,
+params}`) IS the generation request: `src/gen/procgen/registry.ts` maps
+sketch-kind → algorithm; `src/gen/region.ts` is the polygon geometry core;
+`src/gen/citynet/` computes a whole artifact per region which tiles then CLIP —
+that is the seam story (adjacent tiles agree because they cut the same bytes).
+The seed is persisted at creation and survives vertex edits (the identity
+property: edits ADAPT output, only explicit re-roll REPLACES it). MapView owns
+the lifecycle (sketch-finish → modal → generate; edit → debounced regen;
+`sketch-procgen-set/clear`/`sketch-edit` log types with undo).
+
+**Non-negotiable invariants (don't re-derive, don't violate):**
+- *Explicit-only generation*: pan/zoom never generates (`generatorRunCount`
+  stays flat in every gate); sketching/confirming IS the request.
+- *Determinism is sacred*: same durable inputs → byte-identical output,
+  forever; deleting `.mapcache/` must be harmless — a replay byte-diff is a
+  release blocker, not a flaky test. Hence: params/seeds persisted, ids hashed
+  on position/path never emission order, budgets not convergence, trig only
+  for sampling, mm quantization + canonical sort on emit.
+- *Generators are pure headless* `src/gen/` functions (no DOM/map/Obsidian
+  imports, read only their arguments); zod at every IO boundary (bad data →
+  warning, never silent drop, never crash).
+- *Generators emit typed features only; themes own ALL paint.*
+- *The GM's hand always wins*: output stays inside the sketched shape/corridor;
+  sketch/location geometry is never overwritten.
+
+**Infra pitfalls that cost previous agents real hours (all still live):**
+- Obsidian CLI: `plugin:reload id=campaign-map`, NEVER `plugin:enable` (no-op
+  when already enabled → you test stale code); async evals park results on
+  `window` globals and poll; front the window before `dev:screenshot` and
+  actually LOOK at it; `dev:errors` clean; run from `dev-vault/` only.
+- Long Obsidian sessions degrade the renderer (`isStyleLoaded` false
+  everywhere) — only a full process quit+relaunch clears it; run final boards
+  one-gate-per-fresh-process.
+- Modals hang CLI automation — every GM flow needs a headless test-API twin on
+  `app.plugins.plugins['campaign-map']` running the FULL commit path
+  (precedents: `createRegionForTest`, `moveVertex`, `setRegionParams`).
+- Fictional campaigns sit at overview zoom ~z4.5 — never bake absolute zoom
+  thresholds; Jonah's standing ruling: zoom LOD affects location-name
+  visibility ONLY (fabric always renders).
+- `dev-vault/Campaigns/Vespergate` holds Jonah's REAL campaign data (migrated
+  district `fabric-mri7r4bj-ll0bd5`, 5 hand-sketched districts): gates use
+  name-tagged fixtures, self-clean, and must leave his files byte-intact.
+- Never bypass `appendCachedTile` (`src/model/tileCache.ts`) — cache appends
+  serialize through a per-file promise chain (a fixed write race).
+
+**Protocol:** phase-by-phase with one gate per phase (unit + live), PROGRESS.md
+updated, every judgment call logged in DECISIONS.md, commit per green gate with
+the `[gate: …]` message convention. Open questions need a ruling from Jonah or
+the orchestrator — if unavailable, decide, log decision AND rationale in
+DECISIONS.md, and flag it prominently in your report; never guess silently.
+
+**Plan-022-specific intent:** everything here exists to serve ONE property —
+*point-evaluability*. A field must answer `f(x, y)` from durable inputs alone,
+with no neighborhood, no iteration over the map, no global pass. That is what
+makes tiles seam-free (identical samples on shared edges) and determinism
+cheap. It is why real erosion simulation is rejected (§1.1) and the gradient
+trick chosen; if an implementation choice ever requires "generate the whole
+map first", it is wrong for this codebase — region-scoped whole-artifact
+generation (the DLA appendix) is the only sanctioned exception, because
+plan 020 already caches and clips whole artifacts per sketched region.
+Performance context: the budget is 60 fps pan on a Surface Pro inside
+Obsidian; the citynet cost field's lazy memoized 10 m lattice (16× speedup)
+is the precedent for making field sampling affordable — build the lattice
+memoization in from the start, don't retrofit it.
+
 ## 1. Research findings
 
 ### 1.1 Elevation techniques (iq morenoise + the "gradient trick")
