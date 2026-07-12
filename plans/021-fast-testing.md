@@ -78,6 +78,26 @@ LOGIC, not MapLibre. Two steps:
    interaction wiring. Target: ≥70% of current live-gate assertions move
    headless.
 
+### 2.4b Fixture hygiene — gates must leave dev-vault byte-intact, enforced
+The board rule (plan 020 §10) says gates self-clean and leave committed
+dev-vault Campaign files byte-intact — today that's convention, not a check,
+and there is at least one KNOWN offender: **`scripts/gates/phase1.ts` passes
+16/16 but strips the `connections:` frontmatter list from
+`dev-vault/Campaigns/Ashfall/Locations/Ashfall City.md` and `Gatetown.md`**
+(observed 2026-07-12 during the v4.3 board run; restored via `git checkout`
+afterwards — likely a reconcile/`property:set` flow that rewrites frontmatter).
+Two deliverables:
+1. **Fix phase1**: find the mutating check and either restore the exact prior
+   frontmatter at the end of the gate or run the check against a temp note it
+   deletes. Verify: `npx tsx scripts/gates/phase1.ts` → 16/16 AND
+   `git status --short dev-vault/` empty afterwards.
+2. **Enforce globally in the board runner (§2.3)**: after EVERY gate, the
+   runner asserts `git status --short dev-vault/` is empty (frontmatter-
+   formatting-only diffs on `*.map.md` excepted) and fails the gate loudly if
+   not — a gate that passes its own assertions while dirtying fixtures is a
+   red gate. This turns the docs/05 pitfall ("git diff his files after a run")
+   from agent discipline into machinery.
+
 ### 2.5 ⚡ Change-scoped gating (stop re-proving the world)
 A small manifest maps each gate to the source globs it covers
 (`scripts/gates/coverage.json`). `npm run board -- --changed` runs unit fast
@@ -98,8 +118,8 @@ test is untouched — this plan makes room for it by removing everything else
 from its critical path).
 
 ## 3. Sequencing
-1. ⚡ 2.1 fuzz split + 2.5 change-scoped gating + 2.6 tier docs (one small
-   phase, immediate relief, no risk).
+1. ⚡ 2.1 fuzz split + 2.5 change-scoped gating + 2.6 tier docs + the 2.4b
+   phase1 fixture fix (one small phase, immediate relief, no risk).
 2. 2.2 renderer investigation (timeboxed: if no root cause in a bounded
    effort, ship the evidence + keep the workaround) and 2.3 board runner
    (build it during the investigation — it's also the investigation's
@@ -122,6 +142,9 @@ from its critical path).
   for this plan itself.
 - No reduction in what is asserted: every assertion deleted from a live gate
   must reappear in a headless test (map the migration in the phase report).
+- Fixture hygiene: the full board ends with `git status --short dev-vault/`
+  empty, enforced per-gate by the runner (2.4b); phase1 specifically no longer
+  strips `connections:` from the Ashfall notes.
 
 ## 5. Open questions
 1. Parallel headless gates across cloned temp vaults (post-2.4 the FakeHost

@@ -61,9 +61,11 @@ exists to make that true.
 
 **Plan 021 — fast testing** (`plans/021-fast-testing.md`)
 - [ ] 21-A ⚡ fuzz-tier split (`test` <30 s, `test:fuzz`) + change-scoped
-      gating (`coverage.json`, `board --changed`) + T0–T3 tier docs (021 §2.1,
-      §2.5, §2.6)
-- [ ] 21-B board runner w/ health-probed restarts + renderer-degradation
+      gating (`coverage.json`, `board --changed`) + T0–T3 tier docs + phase1
+      fixture fix (stops stripping `connections:` from Ashfall notes) (021
+      §2.1, §2.4b, §2.5, §2.6)
+- [ ] 21-B board runner w/ health-probed restarts (incl. per-gate
+      dev-vault-clean assertion, 021 §2.4b) + renderer-degradation
       investigation, TIMEBOXED to one session — no root cause by then: document
       evidence, keep probe-restarts, move on (021 §2.2–2.3)
 - [ ] 21-C MapController extraction + FakeHost harness, ZERO behavior change,
