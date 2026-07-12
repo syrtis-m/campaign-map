@@ -1,6 +1,11 @@
 # Plan 020 — Sketch-driven procgen regions (the three-layer model)
 
-**Status:** approved by Jonah 2026-07-12 ("i want to be able to sketch an area within
+**Status: v4.0–v4.2 SHIPPED 2026-07-12** (commits 430710c / 55db381 / be4f0c1;
+gates procgen40 10/10, procgen41 16/16; two mid-build Jonah rulings folded in:
+always-visible building detail, GM-draggable persisted city center —
+`params.center`). **v4.3 (consolidation + full board) in flight.** Current
+status lives in `plans/README.md`; deviations and judgment calls in
+DECISIONS.md. Originally: approved by Jonah 2026-07-12 ("i want to be able to sketch an area within
 which procgen occurs — the district sketch tool should do this"). This plan
 supersedes parts of plan 019's two-layer model and the procgen-v3 disc-domain
 trigger; Jonah's message is the authorization to amend those locked decisions.
