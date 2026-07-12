@@ -6,14 +6,18 @@ Dishonored-esque cities. It's built for the solo GM running "yes-and": you inven
 a location mid-session and it becomes a vault note **and** a searchable map pin in
 under five seconds.
 
-**The one idea that explains everything else:** the map has exactly two layers.
-**Locations** are plain markdown notes with a bit of `map:` frontmatter — the vault
-is the source of truth; the map is a live view of it. Rename the note, the pin
-renames. Delete the note, the pin vanishes. **Things on the map** ("fabric" —
-roads, walls, rivers, water, districts, parks) are background geometry, the way
-shapes in PowerPoint work: sketched by hand or painted by the generator **only
-when you ask**. Locations always render above fabric, and fabric never turns into
-a Location — the two layers never trade members.
+**The one idea that explains everything else:** the map has three layers, stacked.
+On top, **Locations** — plain markdown notes with a bit of `map:` frontmatter; the
+vault is the source of truth and the map is a live view of it. Rename the note, the
+pin renames; delete the note, the pin vanishes. In the middle, **sketch** — shapes
+you draw by hand (roads, walls, rivers, water, districts, parks), the way shapes in
+PowerPoint work: selectable and editable any time. At the bottom, **procgen fabric**
+— background geometry the generator paints **only when you ask**. Locations always
+render above sketch, sketch above procgen, and fabric never turns into a Location —
+the layers never trade members. The payoff (plan 020, in progress): **you sketch a
+district and the generator fills that exact polygon with a city** — the wall traces
+your boundary, nothing spills past your line, and editing the shape reshapes the
+city.
 
 ---
 
@@ -22,15 +26,17 @@ a Location — the two layers never trade members.
 1. Open a campaign's map (ribbon icon, or **Open map** command).
 2. Click empty ground → a dropped pin appears → **+ Add location here** → name it,
    pick a type, done. It's now a note in your vault and a pin on the map.
-3. Need the surrounding city to *look* like a city? **Generate fabric here** paints
-   procedural streets/districts/coastline around your locations — **only when
-   asked**, never on its own, and reactive to anything you've already drawn.
+3. Need the surrounding city to *look* like a city? **Sketch a district** and the
+   generator fills that polygon with streets/blocks/walls — **only when asked**,
+   never on its own, and reactive to anything you've already drawn. (Plan 020, in
+   progress; the world tier still generates via **Generate fabric here**.)
 4. Want a specific road or river *exactly there*, or to steer what generation does
    somewhere? **Sketch** it by hand — the generator treats your strokes as
    constraints and adapts around them.
 
 That's the whole builder: **Locations** (note-backed, linkable places) on top of
-**things on the map** (sketched or generated background fabric).
+**sketch** (your editable shapes) on top of **procgen fabric** (generated
+background).
 
 ---
 
@@ -132,7 +138,7 @@ Generate & export**, so they don't clutter the map:
 
 | Action (in ⚙️ settings) | Does |
 |---|---|
-| 🪄 **Generate fabric here** | Paints procedural fabric around the map center. Picks *world* (regions/routes) or *city* (streets/districts/blocks) automatically from your zoom. Durable: the area repaints on every open until cleared. |
+| 🪄 **Generate fabric here** | Paints *world-tier* procedural fabric (regions/routes/coastline) around the map center. Durable: the area repaints on every open until cleared. (City-tier generation is sketch-driven — sketch a district; plan 020.) |
 | 🔁 **Regenerate fabric here** | Re-runs generation at the map center against current constraints (locations + sketched fabric). |
 | 🧹 **Clear generated fabric** | Removes generated fabric at the map center, or all of it. Sketches and locations are never touched. |
 | 🖼️ **Export map poster** | High-res PNG of the current view. |
@@ -159,15 +165,25 @@ The pins you add. These are the notes: linkable, searchable, always rendered abo
 everything else. Everything below is background around them.
 
 ### 2. Generated fabric — explicit, deterministic, reactive
-**Generate fabric here** grows a plausible world/city around your locations using
-the campaign seed — **only when you ask** (no generation ever runs from panning or
-zooming). It's a pure function of `(seed, position, constraints)`: the same input
-always produces the same output, so it never drifts, and deleting the `.mapcache/`
-folder regenerates it identically. What's durable is the *request*: each generated
-area is recorded in `Generated.json`, and on every open those areas repaint from
-cache or regenerate deterministically. Generated streets avoid your locations and
-respect your sketches — sketch a river through a generated district and the
-streets re-adapt to stop at the shoreline, on their own.
+Generation grows a plausible world/city using the campaign seed — **only when you
+ask** (no generation ever runs from panning or zooming). It's a pure function of the
+seed, the area, and your constraints: the same input always produces the same output,
+so it never drifts, and deleting the `.mapcache/` folder regenerates it identically.
+What's durable is the *request*, and there are two kinds:
+
+- **World tier** (regions, routes, coastline): **Generate fabric here** records the
+  area in `Generated.json`; on every open those areas repaint from cache or
+  regenerate deterministically.
+- **City tier** (plan 020, in progress): **the request is the sketch.** You sketch a
+  district polygon, confirm a profile, and the whole city fills that polygon — the
+  wall traces your boundary and nothing spills past your line. The request lives on
+  the shape itself (a `procgen` block in `Fabric.geojson`), so editing the shape
+  reshapes the city and deleting it removes the city. This replaces the older
+  click-to-found "city domain" flow.
+
+Either way, generated streets avoid your locations and respect your sketches —
+sketch a river through a city and the streets re-adapt to stop at the shoreline, on
+their own.
 
 ### 3. Sketched fabric — hand-drawn texture
 When you want a specific road, wall, river, coastline, or district *exactly* where
@@ -177,12 +193,19 @@ you draw it. Click the pencil to enter **sketch mode**, then a sub-bar appears:
   polygons chosen automatically per kind.)
 - **Draw:** click to drop vertices, double-click or **Enter** to finish, **Esc** to
   cancel, **Del** to delete a selected feature.
-Every sketched feature is also a **generator constraint** — no toggle, no build
-button: roads steer generated street networks to align with them, water and
-rivers block streets and districts, walls stop streets, sketched districts keep
-generated districts out. If you sketch inside an area you've already generated,
-the affected tiles regenerate on their own a moment later ("sketch a river,
-streets adapt"). Sketching never *starts* generation — that stays explicit.
+- **Select & edit** (plan 020, in progress): a **Select** tool lets you pick any
+  sketch shape and drag its vertices, insert/delete points, or rename it — the
+  PowerPoint-style editing the map has been missing. For a district, its editor also
+  holds the city's procgen settings (profile, re-roll, remove).
+
+Most sketched features are also a **generator constraint** — no toggle, no build
+button: roads steer generated street networks to align with them, water and rivers
+block streets, walls stop streets. If you sketch a constraint inside an area you've
+already generated, the affected output regenerates on its own a moment later
+("sketch a river, streets adapt"). A **district** shape is different — it's the
+*request* that generates a city inside it (see Generated fabric above). Sketching a
+constraint never *starts* generation; sketching a district is itself the explicit
+ask.
 
 Sketched fabric lives in **one file** per campaign (`Fabric.geojson`). It's
 **always visible at every zoom** — roads, walls, rivers, water, districts, and
@@ -288,7 +311,13 @@ These are real and shipped-around, not hidden:
   generate/eval cycles; only a full Obsidian restart clears it (`plugin:reload`
   doesn't). Under investigation.
 - **Sketch v1 is draw/delete only** — no vertex re-editing, snapping, or
-  freehand brush yet.
+  freehand brush yet. (Plan 020 adds a Select tool with vertex/property editing;
+  in progress.)
+- **City generation is moving to sketch-driven regions (plan 020, in progress)** —
+  today's shipped city tier still founds a disc "city domain" from a click at city
+  zoom; plan 020 replaces that with sketching a district polygon that the city fills
+  exactly (wall traces your boundary). Until it lands, the click-to-found flow is
+  what runs.
 - **Fabric constraints are city-tier only** — world-tier regions/routes ignore
   sketches (a route can still cross a sketched lake); coastline *snapping* (vs
   avoidance) is likewise a follow-up.
@@ -310,7 +339,8 @@ These are real and shipped-around, not hidden:
 - **Detail band z16+** — building/POI-level fabric.
 - **Multi-step undo/redo** — today undo reverses only the single last edit.
 - **Obsidian Bases integration** — locations as a Bases view (API-gated spike).
-- **Sketch polish** — vertex editing, snapping, curve smoothing, freehand.
+- **Sketch polish** — vertex editing (plan 020, in progress), snapping, curve
+  smoothing, freehand.
 - **Richer connections** — curves, waypoints, arrowheads, travel-time labels.
 
 ---
@@ -339,9 +369,10 @@ Then, the traps and invariants that bite hardest:
   process, styles stop loading and `idle` stops firing. Only a full process restart
   clears it (window reload and `plugin:reload` do not). When "the fix broke it,"
   suspect this before assuming your change is wrong; A/B across restarts.
-- **Generators are pure** — `(seed, bbox, constraints) => Feature[]` in `src/gen/`,
-  no DOM/map/Obsidian imports. Determinism is sacred; **2×2 adjacent-tile seam
-  snapshot tests are mandatory** for anything touching `gen/`.
+- **Generators are pure** in `src/gen/`, no DOM/map/Obsidian imports — world-tier
+  `(seed, bbox, constraints) => Feature[]`; region generators (plan 020)
+  `(seed, region, params, constraints) => Feature[]`. Determinism is sacred; **2×2
+  adjacent-tile seam snapshot tests are mandatory** for anything touching `gen/`.
 - **Canon is never overwritten by generators.** Canon geometry feeds generators as
   constraints (streets repel pins); it's an input, never an output.
 - **Themes own all paint; generators emit typed features only, never styles.**

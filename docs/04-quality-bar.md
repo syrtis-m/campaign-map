@@ -13,7 +13,7 @@ Thirty sessions of quick-adds = 200 pins of equal size, colliding labels, a tave
 - Density governor: past N visible POIs in a viewport, lower-importance labels decay to dots. Google Maps feels calm because it *hides* things; so must we.
 
 ### F2. Provenance seams
-Sketched fabric and generated fabric of the same kind read as two different tools: a hand-drawn road in one hue and weight, a generated street in another; a sketched lake and a generated ocean in clashing blues. The eye instantly reads "layers of software," not "a map." (The old clause about canon-vs-generated *pins* is obsolete — plan 019's two-layer model means locations are always notes; there is no generated pin to disguise.)
+Sketched fabric and generated fabric of the same kind read as two different tools: a hand-drawn road in one hue and weight, a generated street in another; a sketched lake and a generated ocean in clashing blues. The eye instantly reads "layers of software," not "a map." (The old clause about canon-vs-generated *pins* is obsolete — the three-layer model, plans 019→020, keeps locations as notes; there is no generated pin to disguise. And in that model the two lower layers share a legend by design: a sketched district is *also the request that generated* the city inside it, so sketch and procgen of the same kind must read as one map.)
 
 **Countermeasure — one legend per kind, provenance invisible:**
 - Sketched and generated fabric of the same kind share the same per-kind theme tokens (`fabricRoad`, `fabricWater`, `fabricDistrict`, …) — a generated road and a sketched road differ in provenance, not legend. Enforced in `generatedLayers.ts`/`fabricLayers.ts` sharing `tokens.ts`.

@@ -12,7 +12,7 @@
 | Locations as rows in a private DB | **Locations are notes.** Wikilinks, backlinks, Dataview/Bases queries, session notes link to places |
 | Distribution/updates | Community plugin or BRAT; esbuild bundle |
 
-The deep win: **a place = a note.** Locations are born as markdown notes (quick-add, import, populate-area) — GM prep, session logs, and the map share one knowledge graph. Background geometry ("things on the map"/fabric — sketched or generated) is a separate layer below them and never becomes a note (plan 019's two-layer model).
+The deep win: **a place = a note.** Locations are born as markdown notes (quick-add, import, populate-area) — GM prep, session logs, and the map share one knowledge graph. Background geometry ("things on the map"/fabric) sits below them and never becomes a note. Plan 019 established a two-layer model (Locations over fabric); **plan 020 (Jonah, 2026-07-12) refined the fabric layer into two** — GM-drawn **sketch** above **procgen fabric** — giving the **three-layer model** (§5): procgen fabric < sketch < Locations.
 
 ## 2. Stack
 
@@ -86,18 +86,67 @@ The map speaks Google Maps' input language — zero learning curve:
 - Canon notes → GeoJSON source "canon"; cache chunks → source "generated"; identical styling per type (provenance must be invisible — quality-bar F2).
 - Location art tiers unchanged: custom PNG (now just **vault images**, referenced from frontmatter — artists drop files in a folder) → procedural sigils → theme template icons (game-icons.net pool).
 
-## 5. Procedural generation: explicit-only, manifest-backed (plan 019)
+## 5. Procedural generation: the three-layer model, sketch-driven (plan 019 → 020)
 
 The deterministic core holds: tile seeds `hash(campaignSeed, tileX, tileY, zoom, generatorId)`; two generation tiers (world regions/routes; city streets/districts/blocks); persist to cache; halo overlap + hierarchical seeding against seams; regeneration never touches locations or sketches.
 
-What changed in plan 019:
-- **No automatic generation.** Nothing generates from pan/zoom — the old viewport dispatcher is gone. Generation runs only on an explicit request (*Generate fabric here*, right-click, command palette), at the tier matching the current zoom.
-- **The request is durable, the output is not.** Each generated area is one entry in `<campaign>/Generated.json` (tiny, synced, merge-friendly). On map open the manifest replays: cache hit or deterministic regenerate. Deleting `.mapcache/` stays harmless.
-- **Sketched fabric is a constraint.** Every generator run receives the whole fabric collection: streets stop at sketched water and walls, align to sketched roads; generated districts stay out of sketched water and GM-drawn district polygons. A sketch edit inside a generated area auto-regenerates the affected tiles (never first-time generates).
+Established in plan 019, still true:
+- **No automatic generation.** Nothing generates from pan/zoom — the old viewport dispatcher is gone (a test-API `generatorRunCount` stays flat under aggressive panning). Generation runs only on an explicit GM request.
+- **The request is durable, the output is not.** On map open the durable request replays: cache hit or deterministic regenerate. Deleting `.mapcache/` stays harmless.
+- **Sketched fabric is a constraint.** Every generator run receives the whole fabric collection: streets stop at sketched water and walls, align to sketched roads; a sketch edit inside a generated area auto-regenerates the affected output (never first-time generates).
 - **No named generated POIs.** Settlements are Locations the GM places; the settlement generator survives only to serve populate-area's naming.
 - **No canonization.** Fabric never becomes a note; there is nothing to promote.
 
-Generation runs in a Web Worker (works inside Electron renderer) so the map tab never stutters.
+### 5.1 The three layers (plan 020, in progress)
+
+Plan 019's fabric layer splits into two, giving a **three-layer model** with strictly different lifetimes and one z-order (`layerOrder.ts` already encodes this; plan 020 names it):
+
+| layer | contents | source of truth | editability |
+|---|---|---|---|
+| 3 (top) | **Locations** — note-backed pins | `Locations/*.md` frontmatter | notes |
+| 2 | **Sketch** — GM-drawn shapes (roads, walls, rivers, water, districts, parks) | `Fabric.geojson` | select/edit any time (vertices + properties) |
+| 1 (bottom) | **Procgen fabric** — generated output | regenerable `.mapcache/` only | never directly; only via the sketch shape or params that drive it |
+
+The key inversion: **a sketched district polygon IS the request for city procgen.** Sketch a district → the city generator runs inside that polygon; the wall traces the sketched boundary (inset); all output stays strictly inside the line. The v3 disc-domain flow (click at z≥8 → DomainProfileModal → disc) is **retired by plan 020**. Sketch shapes become the durable, selectable handles on generated content: move a vertex → the city adapts (identity preserved); open the shape's procgen settings → change profile/re-roll → regenerate; delete the shape → the city is gone.
+
+### 5.2 The procgen block on the fabric feature (plan 020, in progress)
+
+`FabricFeatureSchema.properties` gains an optional `procgen` block:
+
+```ts
+procgen: { algorithm: string,  // registry id, e.g. "city"
+           seed: number,       // hashSeed(campaignSeed, featureId), persisted at creation
+           version: number,    // schema version of params
+           params: Record<string, unknown> }  // validated by the algorithm's own zod schema
+```
+
+- A district feature **with** a procgen block is a **procgen region**; without one it is an inert overlay shape (modal-cancel keeps it inert — sketching never silently runs a generator the GM didn't confirm).
+- The seed is computed **once at creation** and persisted. Vertex edits do NOT change it — the city keeps its identity while its boundary adapts. "Re-roll" replaces it with `hashSeed(seed, "reroll")` (logged). Determinism holds because the seed is durable data in `Fabric.geojson`, not derived at run time.
+- City params v1: `{ profile: ProfileId }` (room to grow — density, wall override).
+
+### 5.3 Algorithm registry + region geometry (plan 020, in progress)
+
+`src/gen/procgen/registry.ts` maps a **sketch kind → procgen algorithm**: `{ id, label, appliesTo, paramsSchema, defaultParams(themeId), tileGeneratorIds, generate(seed, region, params, constraints) }`. v1 registers only `city` (wrapping `generateCityNetwork`). Future bindings (park→park-gen, forest/mountain polygons, river enrichment) slot in by adding a registry entry + params schema + pure generator — **zero new host lifecycle code** (host consults the registry, never `if (kind === "district")`).
+
+`src/gen/region.ts` is the new pure geometry core built once per run from the fabric polygon (converted to gen-space meters, vertices mm-quantized on ingest — D5): `ProcgenRegion { id, ring, bbox, centroid, area, effectiveRadius }` with `regionContains` (even-odd), `distanceToBoundary` (signed, +inside), `interiorT` (0 deep-inside → 1 at boundary; deterministic 10 m lattice, robust for concave polygons), `boundaryPointAt` (centroid ray crossing — gate/arterial azimuths), and `insetRing` (miter-clamped — the wall/ring-road path). `effectiveRadius = sqrt(area/π)` replaces the disc `radius` in all size-scaled params. Ingest validates: simple-enough ring (reject with Notice, never crash), area within `[π·150m², π·2500m²]`.
+
+The v3 `CityDomain {cx, cy, radius}` is replaced by `ProcgenRegion` throughout `src/gen/citynet/`: cityness falloff uses `interiorT` instead of `|p−c|/radius`; the wall + ring road follow `insetRing` instead of a circle; outskirts bands are gated by `interiorT` so nothing spills past the GM's line. The plan-019 "sketched district excludes ward sites" constraint is **retired** (a district now IS the city container); same-algorithm regions may not overlap (reject at creation, like the old `domainsOverlap`).
+
+### 5.4 Requests, cache keying, replay, migration (plan 020, in progress)
+
+- **World tier** requests are unchanged: one entry per generated area in `<campaign>/Generated.json` (tiny, synced, merge-friendly), replayed on open.
+- **City tier** requests are no longer in the manifest — they live on the sketch feature's `procgen` block. On campaign load, every fabric feature with a procgen block is regenerated/re-clipped (cache hit or recompute, single shared cache read). The manifest's city-tier entries and `domains` array are **retired**.
+- **Cache keying carries the region id** (fixes a latent v3 same-tile two-domain clobber): whole network `region:<regionId>:network`; per-tile clip `region:<regionId>:<tileX>:<tileY>:<generatorId>`; render-store `region:<regionId>:<x>:<y>`. `CachedTileSchema.key` is free-form — no schema change.
+- **Migration (one-way, on campaign load):** if `manifest.domains` is non-empty, each disc converts to a district fabric feature — 32-gon polygon at `(cx, cy, radius)` with a `city` procgen block (`citySeedFor(campaignSeed, domain)`) — appended to `Fabric.geojson` (`sketch-add` log entries so undo works); the domain + its city-tier entries removed from the manifest; old city cache records dropped; one Notice. Old schemas stay parseable (zod fields optional). The city regenerates under the new polygon math — output differs from the v3 disc build (accepted pre-release: the request, not the bytes, is durable).
+
+### 5.5 Lifecycle (host, `MapView`) (plan 020, in progress)
+
+- **Create.** Finish a district sketch (`sketch-add`) → open **RegionProcgenModal** (schema-driven form from the registry entry) → "Generate city" attaches the procgen block (`sketch-procgen-set`) and generates the whole region (one network compute, clip to every overlapping tile, paint). Cancel keeps the shape inert. No zoom gate — city procgen is polygon-scoped. "Generate fabric here" outside any region at city zoom → Notice pointing at the district tool.
+- **Edit → regenerate.** Any geometry or params edit to a region (vertex drag/insert/delete, profile change, re-roll) → debounce → drop that region's cache records → recompute + repaint. Edits to constraint-kind sketches (river/road/wall/water) regenerate every region whose bbox intersects the edited feature.
+- **Clear / delete / undo.** "Remove generated city" strips the procgen block (`sketch-procgen-clear`) + drops cache + unpaints, shape stays inert. Deleting the shape (`sketch-remove`) also drops cache. New log types `sketch-edit` (before+after feature) and `sketch-procgen-set`/`sketch-procgen-clear` (before+after block) make edits and procgen toggles undoable; existing `sketch-add`/`sketch-remove` undo unchanged.
+- **Edit UX (PowerPoint-style, all sketch kinds).** A **Select** tool: click a sketch feature → draggable vertex + midpoint handles; `Del` on a grabbed vertex removes it (min-vertex floor), `Del` with none grabbed deletes the shape (Notice-with-undo). A selected-feature panel shows name/kind and, for registry-backed kinds, the procgen section (enable/params/re-roll/regenerate/remove). Right-click a sketch feature at any time → "Edit shape" / "City settings…". The existing pin/place-card/dropped-pin click grammar (§3b) is untouched — sketch features participate via right-click outside sketch mode.
+
+Generation runs in a Web Worker (works inside Electron renderer) so the map tab never stutters; the region job is `{ kind: "procgen-region", algorithmId, seed, ring, params, constraints }` (main-thread fallback preserved).
 
 ## 6. Obsidian-specific risks
 

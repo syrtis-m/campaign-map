@@ -36,9 +36,15 @@ written-but-unrun.
 | 016 | Sketch mode UX — reliable exit, live feedback, undo, instant result | P1 | M | — | DONE — merged to `main` (Opus). Live-verified: pencil active-state, draw→renders immediately, undo removes stroke, exit via re-toggle. Root cause was discoverability + silent mid-draw Escape |
 | 017 | Distinct per-kind fabric colors + cartographic polish (VISUALS) | P0 | M | — | DONE — merged to `main` (**Fable**). Live-verified 6 distinct kinds across obsidian-native/neon-sprawl/modern-clean; parchment+ink-soot unit-covered |
 | 018 | Declutter toolbar — move generate/export into settings | P2 | S–M | — | DONE — merged to `main` (Opus). Live-verified: toolbar = Add/Sketch/Search/Theme/Settings; generate/canonize/poster/atlas in settings modal |
-| 019 | Two-layer model: background things vs. Locations — delete canonization, explicit-only generation | P0 | L | 013–018 ✓ | **DONE** — all 5 phases merged + live-verified (explicit-only generation, Generated.json manifest, fabric constraints w/ auto-adapt, z-order invariant, docs/fixtures migrated) |
+| 019 | Two-layer model: background things vs. Locations — delete canonization, explicit-only generation | P0 | L | 013–018 ✓ | **DONE** — all 5 phases merged + live-verified (explicit-only generation, Generated.json manifest, fabric constraints w/ auto-adapt, z-order invariant, docs/fixtures migrated). *Refined by 020: two-layer → three-layer; city-tier request moves off the manifest onto the sketch* |
+| 020 | Sketch-driven procgen regions — the three-layer model (procgen fabric < sketch < locations); a sketched district polygon IS the city request | P0 | L | 013, 014, 019 ✓; procgen v3 | **IN PROGRESS** — phases v4.0–v4.3 (pure core → host lifecycle → edit UX → 3-layer consolidation). Retires disc domains / DomainProfileModal / zoom-gated founding / manifest `domains` array. See `plans/020-sketch-driven-procgen-regions.md` |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason).
+
+**Plan 020 supersedes (one-line pointers):**
+- **013** (sketch mode — draw/delete tools): extended, not replaced — 020 adds a **Select** tool with PowerPoint-style vertex/property editing on any sketch kind, and makes district shapes carry a `procgen` block.
+- **014** (sketch → procedural inference): the district-elaboration follow-up is **superseded** — a sketched district is no longer a *constraint on* generated districts; it is the **container/request** the whole city fills. Road/river/wall constraint inference from 014 survives.
+- **019** (two-layer model): the **two-layer** framing → **three-layer** (sketch splits from procgen fabric); city-tier requests move from the `Generated.json` `domains` array onto the sketch feature. Explicit-only, no-canonize, and the z-order invariant all survive.
 
 **Corrections batch (015–018), 2026-07-10:** five live-use corrections from
 Jonah, batched into four plans + one already-shipped LOD change. 017 (visuals) is

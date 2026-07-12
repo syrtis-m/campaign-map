@@ -1,5 +1,13 @@
 # Procgen v3 — design & execution doc for the rewrite
 
+> **Superseded in part by plans/020 (Jonah, 2026-07-12) — disc domains →
+> sketch-driven regions.** The city-tier trigger and geometry here (click at
+> z≥8 → DomainProfileModal → disc `CityDomain {cx, cy, radius}`) are replaced by
+> a GM-sketched district polygon (`ProcgenRegion`); §3–§5 are historical on that
+> point. **Determinism rules D1–D6 (§4) remain binding** and are restated for
+> regions in plans/020 §7. This file is kept as the historical record of the v3
+> pipeline; do not edit it to match plan 020.
+
 *Handoff document for the coding agent executing the city-procgen rewrite,
 July 2026. Self-contained: everything you need is here or in the files this
 doc points at. Background reasoning lives in `procgen_v2_ideas.md` (§5–6:

@@ -52,6 +52,29 @@
 - LLM hook: agent-in-vault reads campaign markdown, emits valid location notes ("populate this district with 5 shops").
 - Azgaar/Watabou import; Obsidian Bases integration (locations as a base view) if Bases API allows.
 
+## Current procgen phase — Plan 020: sketch-driven regions (v4.0–v4.3)
+
+*Phases 0–5 above are the product build axis (all shipped). Procgen has its own
+version axis; **v4** is the current work. Plan 020 (Jonah, 2026-07-12) moves city
+generation from disc domains (click at z≥8 → DomainProfileModal → disc) to the
+**three-layer model**: a sketched district polygon IS the request for city procgen,
+and the city fills that polygon (wall traces the sketched boundary; all output
+strictly inside). See `plans/020-sketch-driven-procgen-regions.md`. Commit per green
+gate.*
+
+- **v4.0 — pure core.** `src/gen/region.ts` (region geometry), `src/gen/procgen/registry.ts` (sketch-kind → algorithm), fabric-schema `procgen` block, citynet generalized disc→polygon, `districtRings` ward-exclusion retired. No host changes; unit gates: determinism (byte-identical twice), 2×2 seam via clip, concave-polygon smoke (L-shaped region, all output inside, no throw), disc-equivalent sanity (32-gon ≈ old disc within tolerance), 4-profile fuzz on random polygons.
+- **v4.1 — host lifecycle.** RegionProcgenModal, sketch-finish trigger, region cache keys, replay-from-sketch-layer, one-way manifest.domains→district migration, clear/delete flows, worker job, new log types. Gate `scripts/gates/procgen40.ts` (live Vespergate): sketch a district headlessly → city appears; byte-diff cache after `rm`+replay; pan generates nothing; migrate a seeded pre-v4 manifest.
+- **v4.2 — edit UX.** Select tool, vertex/midpoint handles, `sketch-edit` log + undo, schema-driven params panel, edit→regen loop. Gate `procgen41.ts`: move a vertex → city adapts + determinism holds; re-roll changes the city; remove-procgen leaves an inert shape; screenshot review.
+- **v4.3 — three-layer consolidation.** layerOrder comments/tests renamed to the three-layer model, gates procgen30–34 + phase3/4 modernized to sketch-driven flows, DomainProfileModal deleted, CLAUDE.md + docs updated, DECISIONS/PROGRESS entries, full board green one-gate-per-fresh-process.
+
+**Exit test (plan 020 §10):** sketch a district polygon → params modal → a city fills
+exactly that polygon with the wall tracing the sketched boundary; drag a boundary
+vertex → the city re-adapts and stays inside, determinism intact; re-roll → a
+different city, same polygon; delete the shape → the city vanishes; delete
+`.mapcache/` and reopen → the city repaints byte-identically; pan/zoom anywhere →
+zero generator runs; a pre-v4 campaign with disc domains migrates to district
+sketches on load.
+
 ## Standing risks
 | Risk | Mitigation |
 |---|---|
