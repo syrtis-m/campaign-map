@@ -111,6 +111,12 @@ interface ProcgenAlgorithm {
   (determinism: params are the whole truth).
 - City retrofits onto this: the four profiles become presets of the city
   algorithm (params gain room for future knobs: density, wall override).
+- **Additive-params rule (adversarial review 2026-07-12):** adding a new param
+  to an algorithm's schema MUST default to the prior behavior — a plugin
+  update must never visibly re-roll a GM's existing regions (the identity
+  property applies across versions, not just across edits). If prior behavior
+  cannot be expressed as a default, bump the procgen block's `version` and
+  keep the old code path for old versions.
 
 ## 2. Line-kind procgen (extends plan 020, which was polygon-only)
 
@@ -121,7 +127,13 @@ lifecycle (finish-sketch → modal, edit → regen, select → panel) generalize
 `makeRegion`. Generated output belongs to the spine feature exactly like region
 output (cache keys `region:<featureId>:…` unchanged — the id is the contract,
 not the geometry type). Output containment rule becomes a corridor: all output
-within `maxOffset` of the spine (gate-asserted per algorithm).
+within `maxOffset` of the spine (gate-asserted per algorithm). **`maxOffset` is
+a pure function of the params** (for a river: f(windiness amplitude, width,
+braiding lens width)) — computed by the algorithm, exposed to the host, and
+reused as the feature's cascade influence margin (plan 023 `inputBBox`/
+`outputBBox`); a windiness increase must widen the corridor, not violate the
+containment gate. RegionProcgenModal already generalizes (it is param-schema
+driven); line kinds reuse it unchanged.
 
 ## 3. The algorithms
 
@@ -131,13 +143,29 @@ within `maxOffset` of the spine (gate-asserted per algorithm).
   (downstream widening), preset dropdown: `lazy-lowland` (wide, windy, braided),
   `mountain-torrent` (narrow, straight, rocky), `canal` (dead straight, uniform),
   `delta` (heavy braiding near the end).
-- **Generation:** deterministic meander = seeded harmonic offsets sampled along
-  arc-length (position-keyed phases — D2-safe), displacing the sketched spine;
-  braids = seeded arc-length intervals splitting into 2 channels offset by a
-  lens shape, rejoining (islands emerge as the lens interior). Emit
-  `river-channel` polygons (+ `river-island`), banks as the channel SDF's zero
-  set. When plan 022 lands: meander amplitude modulated by local slope
-  (flat → windy, steep → straight) and flow direction sanity-checked downhill.
+- **Generation:** deterministic meander = seeded harmonic offsets displacing
+  the sketched spine. **Phase keying is POSITION-derived per segment, not
+  arc-length-derived (adversarial review 2026-07-12):** naive arc-length
+  parameterization breaks the identity property — moving ONE vertex near the
+  source shifts the arc-length of every downstream point and re-meanders the
+  whole river, making an edit indistinguishable from a re-roll. Instead each
+  spine segment's meander phase hashes on the segment's quantized endpoint
+  positions (`spatialHash.ts` pattern), with C1 blending at segment joins — so
+  a vertex edit re-meanders only the adjacent segments (measure this in the
+  gate: id/coordinate-bucket overlap away from the edit must be ≫ overlap
+  under re-roll, the plan-020 §gate-b lesson). Meander amplitude is clamped by
+  local spine curvature (offset > curvature radius self-intersects); resample
+  the spine at a fixed step BEFORE offsetting, mm-quantized. Braids = seeded
+  intervals splitting into 2 channels offset by a lens shape, rejoining
+  (islands emerge as the lens interior). Emit `river-channel` polygons
+  (+ `river-island`), banks as the channel SDF's zero set. When plan 022
+  lands: meander amplitude modulated by local slope (flat → windy, steep →
+  straight) and flow direction sanity-checked downhill.
+- **Tributaries:** river spines MAY cross/touch (same-stage, so neither sees
+  the other's output — plan 023): channels simply union where they overlap.
+  Junction hydrology (width growth after a confluence, smooth bank merge) is
+  explicitly out of scope v1 — log it as a known limitation; do not reject
+  crossing spines like polygons reject overlap.
 - **Constraint face:** the GENERATED channel polygons (not the sketched spine)
   become the water constraint downstream — that is plan 023's cascade; until
   then the spine keeps feeding constraints as today (RIVER_HALF_WIDTH).
@@ -152,9 +180,16 @@ within `maxOffset` of the spine (gate-asserted per algorithm).
   as contours), `forest-clearing` holes, and sparse `forest-tree` point symbols
   near the boundary at high zoom (position-hashed jitter grid = deterministic
   Poisson-ish). Themes own paint per preset type property.
-- Cities and forests overlap legitimately (a town in the woods): forest is
-  stage-2 vegetation, city is stage-3 — the city's footprint area *subtracts*
-  from canopy via cascade (plan 023), not via overlap rejection.
+- Cities and forests overlap legitimately (a town in the woods). **One
+  dependency direction only (adversarial review 2026-07-12 — the earlier
+  draft contradicted plan 023 here):** forest is stage 2, city is stage 3, so
+  the CITY sees vegetation (growth cost bump, sparser outskirts under canopy)
+  and the forest NEVER sees the city — canopy is not clipped by footprints.
+  Visually the town reads as a clearing anyway because city fabric paints
+  above canopy within layer 1 (theme layer order: canopy below streets/
+  footprints). A true generated clearing would need a reverse (stage-3→2)
+  dependency, which is REJECTED — it breaks the cascade's cycle-freedom; if
+  Jonah wants it later it needs its own plan and a new mechanism.
 
 ### 3.3 Park (`park` polygon kind — currently inert)
 - **Params:** preset `formal-garden` (axial paths, symmetric beds),
@@ -175,8 +210,11 @@ within `maxOffset` of the spine (gate-asserted per algorithm).
   specimen trees placed individually at path viewpoints rather than in rows;
   optional raked-gravel court (`karesansui`) as one rectangular clearing near
   the entrance when the region is large enough. Emits the same feature types as
-  other presets plus `park-rock` (Point) and reuses `river-island`/bridge
-  emitters from §3.1 at pond scale — themes decide the aesthetic per preset
+  other presets plus `park-rock` (Point) and reuses the island/bridge
+  emitters from §3.1 at pond scale (extract them to a shared module rather
+  than importing the river generator). Pre-022 pond fallback: a seeded
+  harmonic-radius blob (same closed-form trick as the meander) instead of
+  smooth-min SDFs — themes decide the aesthetic per preset
   property (ink-soot should render these beautifully). Good preset-fuzz target:
   small regions must degrade gracefully (drop court → drop island → pond only).
 
@@ -184,13 +222,19 @@ within `maxOffset` of the spine (gate-asserted per algorithm).
 - **Params:** preset `curtain-wall` (stone, towers), `palisade` (wood, no
   towers), `bastioned` (angular trace, star-fort-ish); `towerSpacing`,
   `moat` (bool), `gatehouseScale`.
-- **Generation:** towers at deterministic arc-length intervals (position-keyed),
-  gates where sketched/generated roads cross the spine (reusing the plan-020
-  gate-at-crossing logic), moat = offset channel polygon. Emit `wall-tower`,
-  `wall-gate`, `wall-moat` + the wall quads. Interaction with city-generated
-  walls (the double-wall question from review/008) resolves here: a sketched
-  wall WITH a procgen block suppresses the city's own generated wall inside its
-  corridor (cascade constraint, plan 023).
+- **Generation:** towers at deterministic intervals along the spine —
+  position-keyed per segment (same identity-preserving keying as the river
+  meander, §3.1), NOT global arc-length — gates where roads cross the spine
+  (reusing the plan-020 gate-at-crossing logic), moat = offset channel
+  polygon. Emit `wall-tower`, `wall-gate`, `wall-moat` + the wall quads.
+- **Double-wall resolution (corrected in adversarial review 2026-07-12):** the
+  earlier draft routed this through the cascade, but wall elaboration is
+  stage 4 — AFTER the city — so its output cannot legally constrain city
+  generation. The suppression signal is the RAW SKETCH, which every stage may
+  read: a wall-kind sketch feature (procgen block or not) near the city
+  region's rim sets the city profile's own `wall` off within that corridor.
+  The stage-4 elaboration then decorates the GM's wall with towers/gates that
+  align to the stage-3 streets. Two mechanisms, one line on the map.
 
 ## 4. Sequencing (each algorithm = one subagent-sized phase, own gate)
 1. Preset pattern + city retrofit (pure UX/registry; no new generator).
@@ -203,6 +247,14 @@ within `maxOffset` of the spine (gate-asserted per algorithm).
 Each: pure generator + unit gates (determinism, containment-corridor, 2×2 seam
 via whole-artifact clip, preset fuzz), live gate (sketch → generate → edit
 params → regen; screenshots), zod at every boundary.
+
+**New-feature-type checklist (easy to forget, invisible when missed):** every
+new emitted feature `type` needs paint in ALL themes (the obsidian-native
+runtime builder AND the four handcrafted genre themes) — a missing entry means
+invisible output that passes every non-visual gate. New layer ids must start
+with `generated-` (or another prefix `layerOrder.ts#layerGroupOf` already
+claims) or every style build throws. New fabric KINDS (forest) additionally
+need fabric-layer paint + a sketch sub-bar button + a legend/panel label.
 
 ## 5. Open questions
 1. Does a plain sketched river (no procgen block) ever auto-upgrade? No —

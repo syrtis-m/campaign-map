@@ -141,13 +141,21 @@ interface ProcgenAlgorithm {
   features intersecting the target's bbox (+margin), build SDFs once, memoize
   per run. Generators keep reading only their arguments (D6) — the fields are
   arguments.
+- **Worker boundary (adversarial review 2026-07-12):** `Field` closures do not
+  survive structured clone. What crosses to the worker is DATA — the upstream
+  feature lists (or compact quantized lattices for stage-0 elevation) — and
+  the worker rebuilds the SDF closures on its side from that data. The
+  registry's `generate()` therefore takes upstream as declarative inputs, and
+  the field construction is a pure function both sides share.
 - citynet consumes `upstream.water` exactly where it consumes sketched water
   today (blockedByWater/BRIDGE_COST paths) — bridges over the *meandered*
   channel, quays along its real bank. Forest consumes `upstream.water`
-  (no canopy in the river) and cities subtract from canopy at stage-2→3? No —
-  subtraction the other way: forest is stage 2, city is stage 3, so the CITY
-  sees vegetation (cost bump, clearings around footprints handled by forest
-  re-clip in §4). Keep one direction only; document it.
+  (no canopy in the river). **One direction only:** the CITY (stage 3) sees
+  vegetation (growth cost bump); the forest (stage 2) NEVER sees the city —
+  canopy is not clipped by footprints; the town reads as a clearing because
+  city fabric paints above canopy within layer 1 (see plan 021 §3.2, corrected
+  2026-07-12 — an earlier draft implied a reverse dependency; reverse
+  dependencies are rejected outright, they break cycle-freedom).
 
 ## 4. The cascade (Jonah's windiness scenario, made precise)
 
@@ -172,7 +180,9 @@ Cost control: cascade regen is per-affected-feature, worker-executed, serial in
 stage order (upstream must land before downstream reads it). Vespergate-scale
 (1 river + 1 city + a forest) is ~2–3 network computes ≈ interactive. A
 100-region campaign turning a continental river's knob is the pathological
-case — cap with a confirm Notice above N downstream regenerations (N≈10).
+case — cap with a confirm above N downstream regenerations (N≈10). The
+confirm must be Notice-with-action or command-palette based, NOT a modal, and
+needs a headless test-API bypass (modals hang CLI automation — docs/05).
 
 ## 5. Replay
 Campaign load ordering becomes: world tier (unchanged) → stage 0 fields →
@@ -182,6 +192,23 @@ guarantees they match what a recompute would produce); only misses compute
 fields. Deleting `.mapcache/` therefore still regenerates the whole world
 byte-identically — the release-blocker invariant extends across the cascade,
 and the gate must prove it with a multi-stage fixture (river+city+forest).
+
+### 5.1 Staleness fingerprints (adversarial review 2026-07-12 — required)
+"A cache hit needs no upstream fields" assumes the cache is FRESH — but
+`Fabric.geojson` can change without any in-app commit path running (vault sync
+from another device, external edits, a crash mid-cascade). A blind key-match
+replay would then paint stale downstream output and silently violate "the map
+is a pure function of the durable data". Fix: every whole-artifact cache
+record stores an **input fingerprint** — a canonical hash of
+`(seed, procgen version+params, quantized ring/spine, sorted upstream artifact
+fingerprints, relevant raw-sketch constraint hashes)`. Replay treats a key hit
+with a fingerprint mismatch as a MISS and recomputes (in stage order, so a
+stale stage-1 recompute automatically invalidates its dependents' fingerprints
+too). Deterministic, cheap (hashing durable data we already read), and it
+hardens plan 020's single-region replay against external sketch edits as a
+side effect. Gate: edit Fabric.geojson on disk (simulating sync), reopen —
+downstream regenerates without any manual action; byte-diff gates unaffected
+(fingerprints are themselves deterministic).
 
 ## 6. Gates (acceptance = Jonah's sentence)
 - **Windiness gate:** river+city fixture; bump `windiness`; assert river
@@ -195,9 +222,11 @@ and the gate must prove it with a multi-stage fixture (river+city+forest).
 - Explicit-only: cascade never generates an un-requested feature; pan Δ0.
 
 ## 7. Open questions
-1. Stage of `wall`: sketched-wall-as-constraint is stage-agnostic today
-   (feeds city growth); procgen wall elaboration is stage 4 consuming city
-   streets (gates where streets cross). Ruling needed when 021 §3.4 lands.
+1. ~~Stage of `wall`~~ RESOLVED (2026-07-12, with 021 §3.4's correction):
+   the raw wall SKETCH is a stage-agnostic constraint every stage may read
+   (suppresses the city's own wall near the rim, as today it stops streets);
+   the procgen wall ELABORATION (towers/gates/moat) is stage 4, consuming
+   stage-3 streets. The cascade never carries stage-4 output downward.
 2. Elevation edits (stage 0) potentially cascade EVERYTHING — is a mountain-
    params drag too hot? Mitigation: elevation-consuming algorithms sample
    coarsely; consider a "apply on release" (no live preview) commit mode for

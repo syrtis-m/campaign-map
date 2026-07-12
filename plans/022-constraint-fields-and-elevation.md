@@ -158,9 +158,15 @@ Spatial acceleration: SDF builders over many features use the existing
 flatbush/spatial-hash pattern; everything stays a pure function of (inputs,
 position) — never of tile identity (seam rule).
 
-**Retrofit (mechanical, low-risk):** `interiorT` becomes a thin wrapper over
-`sdfPolygon`; fabricConstraints' water/river predicates become SDF masks. No
-behavior change; one distance implementation to test.
+**Retrofit — bit-exactness is mandatory (adversarial review 2026-07-12):**
+`interiorT` becomes a thin wrapper over the fields module — but the wrapping
+direction matters: the fields module must CALL the existing `region.ts`
+distance code (or move it verbatim), never reimplement it. A float-level
+difference in `distanceToBoundary` changes `interiorT`, which changes cityness,
+which re-rolls every existing city on upgrade — violating the cross-version
+identity property (plan 021 §1). Gate: after the retrofit, a fixture region's
+`generateCityNetwork` output must be byte-identical to the pre-retrofit
+snapshot. Same rule for fabricConstraints' water/river predicates.
 
 ## 3. Elevation model
 
@@ -184,6 +190,15 @@ elevation(x,y) = base(x,y)                          // gentle continental fBm (e
 - Determinism: elevation is `f(campaignSeed, sketch layer, position)` only.
   Editing a mountain region's params/ring dirties elevation under its bbox →
   cascade per plan 023.
+- **Compatibility (adversarial review 2026-07-12):** the existing
+  `world/heightmap.ts#heightAt` feeds world-tier regions/biomes TODAY —
+  swapping its guts would silently reshape every existing campaign's world
+  tier. The new elevation field is a NEW function consumed only by NEW
+  features (contours, DEM, plan-021 river slope, plan-023 stage 0); world-tier
+  generators keep the old `heightAt` untouched until a deliberate, flagged
+  migration with its own plan. Expose `elevationWithGrad(x,y)` (value + analytic
+  gradient) — rivers/routes need slope queries, and the derivative is already
+  computed inside the fBm loop.
 
 ## 4. Rendering
 
@@ -195,9 +210,12 @@ elevation(x,y) = base(x,y)                          // gentle continental fBm (e
 - Seam safety: lattice is world-aligned (like costField) and marching squares
   on shared edges sees identical samples → identical crossings; 2×2 seam gate
   mandatory. Contour generation is a *tier/field* output, not a region output —
-  generated for the tiles of regions/areas the GM has requested (explicit-only
-  survives; a "Terrain" toggle in map settings controls visibility, not
-  generation).
+  generated for tiles the GM has ALREADY requested — precisely: every
+  world-tier manifest entry's tile and every procgen region's overlapping
+  tiles get contour records the next time they (re)generate. There is no new
+  request surface and no contour-only trigger; a "Terrain" toggle in map
+  settings controls layer VISIBILITY only, never generation (explicit-only
+  survives untouched).
 
 ### 4.2 Hillshade + 3D
 - Generate **raster-DEM tiles** (terrarium RGB encoding) on demand from the same
@@ -208,6 +226,13 @@ elevation(x,y) = base(x,y)                          // gentle continental fBm (e
   ≥ v3 native; desktop-first, toggle button next to the theme switcher;
   verify perf on the Surface Pro budget before default-on).
 - DEM tiles are regenerable cache (never synced); deleting them is harmless.
+- **DEM determinism trap (adversarial review 2026-07-12):** PNG bytes are NOT
+  a determinism surface — zlib/canvas encoders vary across platforms and
+  versions. Cache the raw height lattice (quantized ints) as the durable
+  record and encode to terrarium PNG at SERVE time in the protocol handler;
+  byte-diff gates compare the height lattices, never the PNGs. Heights encode
+  via the campaign's `scaleMetersPerUnit` (fictional CRS) so exaggeration
+  reads in real meters.
 
 ## 5. Open questions (for implementation-time rulings)
 1. Contour density/labeling defaults per theme (parchment wants hachure-adjacent
