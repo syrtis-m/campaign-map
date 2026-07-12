@@ -40,6 +40,7 @@ import {
   clipPolylineToRegion,
   generationCenter,
   insetRing,
+  regionContains,
   type ProcgenRegion,
 } from "../region";
 import type { CityProfile } from "./profiles";
@@ -412,6 +413,23 @@ function qmm(v: number): number {
   return Math.round(v * 1000) / 1000;
 }
 
+/**
+ * The point plaza + arterials anchor to (plan 020 Addendum 2). A GM-placed
+ * `centerOverride` wins when it lies inside the ring — mm-quantized so it's
+ * byte-clean (D5). If it's absent OR a later boundary edit moved it outside the
+ * ring, fall back to the computed `generationCenter(region)` deterministically
+ * (the host surfaces the "using automatic center" Notice; the generator just
+ * stays correct + deterministic). Cityness falloff is unaffected — it reads
+ * boundary distance (interiorT), never this center.
+ */
+function resolveGenerationCenter(region: ProcgenRegion, override?: [number, number]): Pt {
+  if (override) {
+    const c: Pt = [qmm(override[0]), qmm(override[1])];
+    if (regionContains(region, c[0], c[1])) return c;
+  }
+  return generationCenter(region);
+}
+
 interface GateHit {
   p: Pt; // mm-quantized crossing point
   ringEdge: number; // index into the inset ring's edges
@@ -551,9 +569,10 @@ export function buildSkeleton(
   region: ProcgenRegion,
   profile: CityProfile,
   constraints: GenerationConstraints,
-  cost: CostField
+  cost: CostField,
+  centerOverride?: [number, number]
 ): SkeletonOutput {
-  const center = generationCenter(region);
+  const center = resolveGenerationCenter(region, centerOverride);
   const centerCell: Cell = { cx: cellOf(center[0]), cy: cellOf(center[1]) };
 
   // 1) Arterials + their bridge sub-spans. Endpoints are the first boundary

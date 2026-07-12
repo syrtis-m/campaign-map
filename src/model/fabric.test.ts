@@ -13,7 +13,15 @@ import {
   withoutFeature,
   withProcgen,
   withoutProcgen,
+  canDeleteVertex,
+  editableVertices,
+  edgeMidpoints,
+  minVerticesFor,
+  withVertexMoved,
+  withVertexInserted,
+  withVertexDeleted,
   type FabricFeature,
+  type FabricGeometry,
   type ProcgenBlock,
   type SketchLogEntryLike,
 } from "./fabric";
@@ -238,5 +246,69 @@ describe("makeFabricId", () => {
     const b = makeFabricId();
     expect(a).not.toBe("");
     expect(a).not.toBe(b);
+  });
+});
+
+describe("vertex-edit geometry ops (plan 020 §9)", () => {
+  const line: FabricGeometry = { type: "LineString", coordinates: [[0, 0], [10, 0], [20, 0]] };
+  // Square, closed (first === last).
+  const poly: FabricGeometry = {
+    type: "Polygon",
+    coordinates: [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]],
+  };
+
+  it("editableVertices strips a polygon's closing duplicate; passes a line through", () => {
+    expect(editableVertices(poly)).toEqual([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    expect(editableVertices(line)).toEqual([[0, 0], [10, 0], [20, 0]]);
+  });
+
+  it("minVerticesFor: 2 line / 3 polygon", () => {
+    expect(minVerticesFor(line)).toBe(2);
+    expect(minVerticesFor(poly)).toBe(3);
+  });
+
+  it("withVertexMoved moves one vertex and keeps the polygon closed", () => {
+    const moved = withVertexMoved(poly, 1, [15, -5]);
+    expect(moved.type).toBe("Polygon");
+    const ring = (moved as { coordinates: [number, number][][] }).coordinates[0];
+    expect(ring[1]).toEqual([15, -5]);
+    expect(ring[0]).toEqual(ring[ring.length - 1]); // still closed
+    expect(ring[0]).toEqual([0, 0]); // moving index 1 doesn't disturb the closure
+    // Out-of-range → unchanged.
+    expect(withVertexMoved(line, 9, [1, 1])).toEqual(line);
+  });
+
+  it("withVertexMoved on line vertex 0 updates just that coordinate", () => {
+    const moved = withVertexMoved(line, 0, [-5, -5]);
+    expect((moved as { coordinates: [number, number][] }).coordinates).toEqual([[-5, -5], [10, 0], [20, 0]]);
+  });
+
+  it("withVertexInserted places the new vertex after the edge index; polygon closing edge is edgeIndex n-1", () => {
+    const ins = withVertexInserted(line, 1, [15, 0]);
+    expect((ins as { coordinates: [number, number][] }).coordinates).toEqual([[0, 0], [10, 0], [15, 0], [20, 0]]);
+    // Polygon closing edge (index 3: [0,10]→[0,0]) inserts before the closure.
+    const insP = withVertexInserted(poly, 3, [-5, 5]);
+    const ringP = (insP as { coordinates: [number, number][][] }).coordinates[0];
+    expect(ringP).toEqual([[0, 0], [10, 0], [10, 10], [0, 10], [-5, 5], [0, 0]]);
+  });
+
+  it("edgeMidpoints: a polygon has n edges (incl. closing), a line n-1", () => {
+    expect(edgeMidpoints(poly).map((m) => m.edgeIndex)).toEqual([0, 1, 2, 3]);
+    expect(edgeMidpoints(poly)[3].point).toEqual([0, 5]); // closing edge [0,10]→[0,0]
+    expect(edgeMidpoints(line).map((m) => m.edgeIndex)).toEqual([0, 1]);
+  });
+
+  it("canDeleteVertex / withVertexDeleted enforce the min-vertex floor", () => {
+    expect(canDeleteVertex(poly)).toBe(true); // 4 > 3
+    const deleted = withVertexDeleted(poly, 2);
+    const ring = (deleted as { coordinates: [number, number][][] }).coordinates[0];
+    expect(ring).toEqual([[0, 0], [10, 0], [0, 10], [0, 0]]); // triangle, still closed
+    // A triangle is at the floor — deleting refuses (returns unchanged).
+    expect(canDeleteVertex(deleted)).toBe(false);
+    expect(withVertexDeleted(deleted, 0)).toEqual(deleted);
+    // A 2-point line is at its floor.
+    const seg: FabricGeometry = { type: "LineString", coordinates: [[0, 0], [1, 1]] };
+    expect(canDeleteVertex(seg)).toBe(false);
+    expect(withVertexDeleted(seg, 0)).toEqual(seg);
   });
 });

@@ -105,11 +105,12 @@ export function generateCityNetwork(
   citySeed: number,
   region: ProcgenRegion,
   profileId: ProfileId,
-  constraints: GenerationConstraints
+  constraints: GenerationConstraints,
+  centerOverride?: [number, number]
 ): GeoJSON.Feature[] {
   const profile = PROFILES[profileId];
   const cost = makeCostField(citySeed, region, constraints);
-  const skel = buildSkeleton(citySeed, region, profile, constraints, cost);
+  const skel = buildSkeleton(citySeed, region, profile, constraints, cost, centerOverride);
   const features: GeoJSON.Feature[] = [];
 
   /** Plan-020 containment guard for center-built decorative rings. */

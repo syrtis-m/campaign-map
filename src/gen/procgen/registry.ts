@@ -53,6 +53,14 @@ export const CITY_PROFILE_IDS = [
 
 const cityParamsSchema = z.object({
   profile: z.enum(CITY_PROFILE_IDS),
+  /** Optional GM-placed generation center (plan 020 Addendum 2), gen-space
+   * meters, mm-quantized by the host. Present ⇒ the plaza + arterial star
+   * anchor here instead of the computed `generationCenter(region)`, so a
+   * boundary vertex edit leaves the skeleton in place and only the rim adapts.
+   * Absent ⇒ automatic center (keeps migrated regions byte-stable). If a later
+   * edit moves the boundary so this point falls outside the ring, generation
+   * falls back to the automatic center deterministically. */
+  center: z.tuple([z.number().finite(), z.number().finite()]).optional(),
 });
 
 const cityAlgorithm: ProcgenAlgorithm = {
@@ -65,8 +73,8 @@ const cityAlgorithm: ProcgenAlgorithm = {
   },
   tileGeneratorIds: DOMAIN_TILE_GENERATOR_IDS,
   generate(seed, region, params, constraints): GeoJSON.Feature[] {
-    const { profile } = cityParamsSchema.parse(params);
-    return generateCityNetwork(seed, region, profile, constraints);
+    const { profile, center } = cityParamsSchema.parse(params);
+    return generateCityNetwork(seed, region, profile, constraints, center);
   },
 };
 

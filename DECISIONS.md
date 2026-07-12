@@ -292,3 +292,31 @@
   byte-identical replay after rm .mapcache, pan Δ0, remove-city persistence,
   dev:errors clean). Gate lesson: `plugin:reload`, never `plugin:enable`
   (enable is a no-op when already enabled → stale code).
+
+## 2026-07-12 — Plan 020 v4.2 (edit UX) + two Jonah rulings — deviations & judgment calls
+- **Jonah ruling (LOD)**: "small buildings pop in and out at different zooms —
+  i'd rather they always show." Zoom gating removed from `generated-footprint`
+  and `generated-parcel` (baked minzoom + the applyFocusReveal relative-reveal
+  overrides). Generalizes the Kanto-test ruling to generated fabric: zoom LOD
+  affects location names only. Overview readability checked (fine urban
+  texture, not noise). Perf on Surface Pro at 12k+ always-on polygons is
+  unmeasured — if 60fps breaks, fix is paint treatment (opacity ramp in
+  themes), NOT re-adding zoom gates.
+- **Jonah ruling (city center)**: plaza/arterial anchor is now a persisted,
+  GM-draggable point (optional `params.center` on the city procgen block;
+  absent = automatic). Measured stability win: boundary-vertex-edit street
+  overlap 45–49% without a stored center vs 60–69% with one. Distinct circular
+  handle (not a glyph — font/zoom-scaling robustness); Reset center returns to
+  automatic byte-identically.
+- **Plan-020 gate (b) reframed**: ">50% id-overlap after a vertex edit" is
+  unattainable with a centroid-anchored skeleton (edit ≈ re-roll spatially,
+  ~46% vs ~47%) and clip-ids are re-minted per ring — comparison is
+  coordinate-bucketing, and the asserted invariants are seed preservation,
+  byte-determinism, containment, and with-center > without-center stability.
+  Fuller fix (geometry-stable growth anchoring so only the rim re-flows) is
+  generator work — queued as an open question.
+- **Undo is single-level on sketch-edit/procgen-block entries** and dead-ends
+  the chain (matches pre-existing undoLastEdit single-shot; true multi-level
+  needs an undo cursor — out of scope, noted as regression on what is now the
+  primary gesture). No-op-edit guard prevents a bare vertex click from wedging
+  Cmd-Z.

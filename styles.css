@@ -367,3 +367,132 @@
   background: var(--interactive-accent-hover, var(--interactive-accent, #7c3aed));
   color: var(--text-on-accent, #fff);
 }
+
+/* Select tool (plan 020 §9): the arrow, first in the sub-bar. Icon-only, so a
+   little wider/centred than the text kind chips. */
+.campaign-map-sketch-select-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+  margin-right: 2px;
+}
+.campaign-map-sketch-select-btn .svg-icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* Selected-feature panel (plan 020 §9): a small overlay under the sketch bar
+   showing the shape's kind, editable name, and — for a procgen region — the
+   city controls. Native-Obsidian tokens so it reads like the sub-bar. */
+.campaign-map-sketch-selection {
+  position: absolute;
+  top: 92px;
+  left: 12px;
+  z-index: 6;
+  width: 232px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--background-secondary, #222);
+  border: 1px solid var(--background-modifier-border, #3a3a3a);
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.campaign-map-sketch-selection-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.campaign-map-sketch-selection-kind {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #aaa);
+}
+
+.campaign-map-sketch-selection-close {
+  border: none;
+  background: transparent;
+  color: var(--text-faint, #888);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.campaign-map-sketch-selection-close:hover {
+  color: var(--text-normal, #ddd);
+}
+
+.campaign-map-sketch-selection-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.campaign-map-sketch-selection-label {
+  flex: 0 0 46px;
+  font-size: 12px;
+  color: var(--text-muted, #aaa);
+}
+
+.campaign-map-sketch-selection-name,
+.campaign-map-sketch-procgen-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border, #3a3a3a);
+  background: var(--background-primary, #1e1e1e);
+  color: var(--text-normal, #ddd);
+}
+
+.campaign-map-sketch-procgen {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--background-modifier-border, #3a3a3a);
+}
+
+.campaign-map-sketch-procgen-label {
+  font-size: 11px;
+  color: var(--text-faint, #888);
+}
+
+.campaign-map-sketch-procgen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.campaign-map-sketch-procgen-btn {
+  padding: 3px 8px;
+  border: 1px solid var(--background-modifier-border, #3a3a3a);
+  border-radius: 4px;
+  background: var(--background-primary, #1e1e1e);
+  color: var(--text-normal, #ddd);
+  font-size: 11px;
+  cursor: pointer;
+}
+.campaign-map-sketch-procgen-btn:hover {
+  background: var(--background-modifier-hover, #333);
+}
+.campaign-map-sketch-procgen-btn.mod-cta {
+  border-color: var(--interactive-accent, #7c3aed);
+  background: var(--interactive-accent, #7c3aed);
+  color: var(--text-on-accent, #fff);
+}
+.campaign-map-sketch-procgen-btn-warning {
+  border-color: var(--text-error, #e05252);
+  color: var(--text-error, #e05252);
+  background: transparent;
+}
+.campaign-map-sketch-procgen-btn-warning:hover {
+  background: var(--background-modifier-error-hover, rgba(224, 82, 82, 0.15));
+}

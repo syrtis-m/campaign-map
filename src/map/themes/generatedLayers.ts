@@ -49,22 +49,27 @@ export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricDistrict, "fill-opacity": 0.09 },
     } as unknown as LayerSpecification,
     {
+      // NO zoom LOD (Jonah 2026-07-12): generated building detail follows the
+      // same standing Kanto-test ruling as all fabric — "LOD should only
+      // impact visibility of location names; fabric always visible" (see
+      // src/model/fabric.ts). The former minzoom:14 made footprints pop in/out
+      // across zooms; they now render at every zoom like every other fabric
+      // layer. (Paint-level treatment — e.g. an opacity ramp for far-out
+      // readability — stays a theme decision, deliberately not re-added here.)
       id: "generated-footprint",
       type: "fill",
       source: "generated",
       filter: ["==", ["get", "generatorId"], "city-footprint"],
-      minzoom: 14,
       paint: { "fill-color": t.roadMinor, "fill-opacity": 0.3 },
     } as unknown as LayerSpecification,
     {
-      // Procgen v3.2 parcels: hairline lot boundaries, street-level only
-      // (minzoom 15 keeps the per-tile feature count off the mid-zoom paint
-      // path — §8's "gate parcels in themes, not in the generator").
+      // Procgen v3.2 parcels: hairline lot boundaries. NO zoom LOD (Jonah
+      // 2026-07-12, same ruling as generated-footprint above) — parcels
+      // render at every zoom now instead of the former minzoom:15.
       id: "generated-parcel",
       type: "line",
       source: "generated",
       filter: ["==", ["get", "generatorId"], "city-parcel"],
-      minzoom: 15,
       paint: { "line-color": t.roadMinor, "line-width": 0.5, "line-opacity": 0.35 },
     } as unknown as LayerSpecification,
     {

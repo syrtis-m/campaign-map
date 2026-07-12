@@ -407,3 +407,14 @@ asserts `map.isStyleLoaded()` after opening each campaign.**
   procgen40 10/10 · 306/306 · tsc + build green ·
   review/v4.1-vespergate-sketch-city.png (square wall traces the sketched box).
 - Next: v4.2 edit UX (select tool, vertex handles, params panel, edit→regen).
+
+- **v4.2 edit UX (2026-07-12, committed)**: PowerPoint-style sketch editing —
+  Select tool, vertex/midpoint drag-edit, Backspace vertex delete, selected-
+  feature panel (name, profile, Re-roll, Regenerate, Reset center, Remove
+  city), right-click "Edit shape"/"City settings…", `sketch-edit` log + undo,
+  edit→regen loop (region self-edit + constraint-kind neighbors). Jonah addenda:
+  building footprints/parcels always visible (zoom LOD removed); GM-draggable
+  persisted city center (stability 60–69% vs 45–49% street overlap on boundary
+  edits). Gates procgen41 16/16 + procgen40 rerun 10/10 · 316/316 · tsc+build
+  green · review/v4.2-*.png (5 screenshots).
+- Next: v4.3 consolidation (gate modernization, three-layer naming, full board).

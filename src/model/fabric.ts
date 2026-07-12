@@ -123,6 +123,97 @@ export function isProcgenRegion(feature: FabricFeature): boolean {
   return feature.properties.procgen !== undefined;
 }
 
+// ─── Pure vertex-edit geometry ops (plan 020 §9) ──────────────────────────
+// The single source of truth for how the PowerPoint-style edit tool and the
+// gate's programmatic test API move/insert/delete vertices — so an interactive
+// drag and `moveVertex(id, i, pt)` produce byte-identical geometry. All pure:
+// polygon closure (first === last) is preserved; line geometry is edited in
+// place. `editableVertices` returns the OPEN list (no closing duplicate) that
+// both the handles and these ops index into.
+
+type Pt = [number, number];
+
+/** Minimum vertices a kind's geometry may hold (line 2 / polygon 3), counting
+ * the OPEN ring (the closing duplicate is not a distinct vertex). */
+export function minVerticesFor(geom: FabricGeometry): number {
+  return geom.type === "Polygon" ? 3 : 2;
+}
+
+/** The editable (open) vertex list: a polygon's ring minus its closing
+ * duplicate, or a line's coordinates as-is. Indices returned here are the
+ * `vertexIndex` the edit ops and handles use. */
+export function editableVertices(geom: FabricGeometry): Pt[] {
+  if (geom.type === "Polygon") {
+    const ring = geom.coordinates[0];
+    if (ring.length >= 2) {
+      const a = ring[0];
+      const b = ring[ring.length - 1];
+      if (a[0] === b[0] && a[1] === b[1]) return ring.slice(0, -1) as Pt[];
+    }
+    return [...ring] as Pt[];
+  }
+  return [...geom.coordinates] as Pt[];
+}
+
+/** Rebuild a FabricGeometry of the same type from an open vertex list
+ * (re-closing a polygon ring). */
+function geometryFromVertices(type: FabricGeometry["type"], open: Pt[]): FabricGeometry {
+  if (type === "Polygon") {
+    return { type: "Polygon", coordinates: [[...open, open[0]]] };
+  }
+  return { type: "LineString", coordinates: [...open] };
+}
+
+/** Move vertex `index` (open-list index) to `pt`. Out-of-range index → geom
+ * returned unchanged (defensive; the caller validated the handle). */
+export function withVertexMoved(geom: FabricGeometry, index: number, pt: Pt): FabricGeometry {
+  const open = editableVertices(geom);
+  if (index < 0 || index >= open.length) return geom;
+  open[index] = [pt[0], pt[1]];
+  return geometryFromVertices(geom.type, open);
+}
+
+/** Insert `pt` after open-list index `edgeIndex` (i.e. on the edge from
+ * `edgeIndex` to its successor — the closing edge for a polygon when
+ * `edgeIndex === n-1`). The new vertex's open-list index is `edgeIndex + 1`. */
+export function withVertexInserted(geom: FabricGeometry, edgeIndex: number, pt: Pt): FabricGeometry {
+  const open = editableVertices(geom);
+  const at = Math.max(0, Math.min(open.length, edgeIndex + 1));
+  open.splice(at, 0, [pt[0], pt[1]]);
+  return geometryFromVertices(geom.type, open);
+}
+
+/** True iff deleting one vertex keeps the geometry at/above its min-vertex
+ * floor (line ≥2, polygon ≥3). */
+export function canDeleteVertex(geom: FabricGeometry): boolean {
+  return editableVertices(geom).length > minVerticesFor(geom);
+}
+
+/** Delete vertex `index` (open-list index). Returns the geometry unchanged if
+ * that would drop below the min-vertex floor or the index is out of range. */
+export function withVertexDeleted(geom: FabricGeometry, index: number): FabricGeometry {
+  const open = editableVertices(geom);
+  if (index < 0 || index >= open.length || open.length <= minVerticesFor(geom)) return geom;
+  open.splice(index, 1);
+  return geometryFromVertices(geom.type, open);
+}
+
+/** Midpoints of every editable edge, for rendering insert handles. Edge `i`
+ * runs from open vertex `i` to its successor (the closing edge for a polygon
+ * is edge `n-1`, from the last open vertex back to the first). A line has
+ * `n-1` edges; a polygon has `n`. */
+export function edgeMidpoints(geom: FabricGeometry): { edgeIndex: number; point: Pt }[] {
+  const open = editableVertices(geom);
+  const out: { edgeIndex: number; point: Pt }[] = [];
+  const edgeCount = geom.type === "Polygon" ? open.length : open.length - 1;
+  for (let i = 0; i < edgeCount; i++) {
+    const a = open[i];
+    const b = open[(i + 1) % open.length];
+    out.push({ edgeIndex: i, point: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] });
+  }
+  return out;
+}
+
 /**
  * IO-boundary parse (CLAUDE.md: validate at every IO boundary; bad data →
  * warning, never silent drop). Salvages per-feature: a single malformed

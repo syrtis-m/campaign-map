@@ -14,6 +14,7 @@ export const LogEntrySchema = z.object({
     "move",
     "sketch-add",
     "sketch-remove",
+    "sketch-edit",
     "generate-area",
     "clear-area",
     "sketch-procgen-set",
@@ -24,6 +25,9 @@ export const LogEntrySchema = z.object({
   // create: the full frontmatter written. move: {from:[x,y], to:[x,y]}.
   // sketch-add/sketch-remove (plan 013): the full FabricFeature, so undo can
   // remove a just-drawn feature or restore a just-deleted one.
+  // sketch-edit (plan 020 §9): { featureId, before, after } — the full
+  // FabricFeature before and after a geometry/property edit, so undo restores
+  // the prior shape (and, for a procgen region, regenerates the old ring).
   // generate-area (plan 019): the ManifestEntry the GM requested.
   // clear-area (plan 019): { entries: ManifestEntry[] } that were removed,
   // so undo can restore them (output regenerates deterministically).

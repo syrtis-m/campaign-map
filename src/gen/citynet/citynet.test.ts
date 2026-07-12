@@ -861,3 +861,51 @@ describe("v4.0 4-profile polygon fuzz (plan 020 gate f)", () => {
     }
   }, 300000);
 });
+
+describe("generation center override (plan 020 Addendum 2)", () => {
+  function plazaCentroid(network: GeoJSON.Feature[]): [number, number] | null {
+    const plaza = network.find((f) => (f.properties as { type?: string } | null)?.type === "plaza");
+    if (!plaza) return null;
+    const ring = (plaza.geometry as GeoJSON.Polygon).coordinates[0] as [number, number][];
+    let x = 0;
+    let y = 0;
+    const open = ring.slice(0, -1);
+    for (const [px, py] of open) {
+      x += px;
+      y += py;
+    }
+    return [x / open.length, y / open.length];
+  }
+  const dist = (p: [number, number], q: [number, number]): number => Math.hypot(p[0] - q[0], p[1] - q[1]);
+
+  it("anchors the plaza at a GM-placed center inside the ring; determinism holds; output stays inside", () => {
+    const { seed, region } = fixtureAt(600, 600, "euro-medieval", 900);
+    const auto = generateCityNetwork(seed, region, "euro-medieval", { worldBounds: WORLD_BOUNDS });
+    const off: [number, number] = [region.centroid[0] + 300, region.centroid[1] + 200]; // ~360 m, inside r900
+    const a = generateCityNetwork(seed, region, "euro-medieval", { worldBounds: WORLD_BOUNDS }, off);
+    const b = generateCityNetwork(seed, region, "euro-medieval", { worldBounds: WORLD_BOUNDS }, off);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b)); // determinism with a center
+    const ca = plazaCentroid(auto);
+    const cc = plazaCentroid(a);
+    expect(ca).not.toBeNull();
+    expect(cc).not.toBeNull();
+    // The override plaza sits closer to `off` than the automatic plaza does.
+    expect(dist(cc!, off)).toBeLessThan(dist(ca!, off));
+    expect(allCoordsInside(a, region)).toBe(true);
+  });
+
+  it("falls back to the automatic center (byte-identical) when the override is outside the ring", () => {
+    const { seed, region } = fixtureAt(600, 600, "euro-medieval", 900);
+    const auto = generateCityNetwork(seed, region, "euro-medieval", { worldBounds: WORLD_BOUNDS });
+    const outside: [number, number] = [region.bbox.maxX + 5000, region.bbox.maxY + 5000];
+    const fallback = generateCityNetwork(seed, region, "euro-medieval", { worldBounds: WORLD_BOUNDS }, outside);
+    expect(JSON.stringify(fallback)).toBe(JSON.stringify(auto));
+  });
+
+  it("no override is byte-identical to an explicit undefined (migration byte-stability)", () => {
+    const { seed, region } = fixtureAt(600, 600, "na-grid", 900);
+    const noArg = generateCityNetwork(seed, region, "na-grid", { worldBounds: WORLD_BOUNDS });
+    const undef = generateCityNetwork(seed, region, "na-grid", { worldBounds: WORLD_BOUNDS }, undefined);
+    expect(JSON.stringify(noArg)).toBe(JSON.stringify(undef));
+  });
+});

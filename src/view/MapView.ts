@@ -9,6 +9,7 @@ import {
   FABRIC_KINDS,
   FabricFeatureSchema,
   ProcgenBlockSchema,
+  canDeleteVertex,
   emptyFabric,
   isPolygonKind,
   isProcgenRegion,
@@ -18,8 +19,12 @@ import {
   withoutFeature,
   withProcgen,
   withoutProcgen,
+  withVertexMoved,
+  withVertexInserted,
+  withVertexDeleted,
   type FabricCollection,
   type FabricFeature,
+  type FabricGeometry,
   type FabricKind,
   type ProcgenBlock,
 } from "../model/fabric";
@@ -83,12 +88,13 @@ import {
 import {
   makeRegion,
   regionContains,
+  generationCenter,
   segmentCrossesBoundary,
   validateRegionRing,
   distanceToBoundary,
   type ProcgenRegion,
 } from "../gen/region";
-import { algorithmById, algorithmForKind, type ProcgenAlgorithm } from "../gen/procgen/registry";
+import { algorithmById, algorithmForKind, CITY_PROFILE_IDS, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import { RegionProcgenModal } from "./RegionProcgenModal";
 import type { GeneratorId } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
@@ -120,6 +126,24 @@ const ProcgenLogDataSchema = z.object({
   after: ProcgenBlockSchema.nullable(),
   feature: FabricFeatureSchema,
 });
+
+/** Data shape of a `sketch-edit` log entry (plan 020 §9): the full
+ * FabricFeature before and after a geometry/property edit. Zod-validated at
+ * the undo IO boundary (bad entry → Notice, never a crash). */
+const SketchEditDataSchema = z.object({
+  featureId: z.string(),
+  before: FabricFeatureSchema,
+  after: FabricFeatureSchema,
+});
+
+/** Human-readable profile labels for the selected-region panel dropdown —
+ * kept in sync with RegionProcgenModal (the two are the only city-param UIs). */
+const CITY_PROFILE_LABELS: Record<(typeof CITY_PROFILE_IDS)[number], string> = {
+  "euro-medieval": "European medieval",
+  "euro-continental": "European continental",
+  "na-grid": "North American grid",
+  "na-suburb": "North American suburb",
+};
 
 /** Picks a session note (`<campaign>/Sessions/*.md`) whose body's `[[wikilinks]]`
  * become a travel path (plan 009) — same FuzzySuggestModal pattern as
@@ -260,7 +284,17 @@ export class MapView extends ItemView {
   private sketchKind: FabricKind = "road";
   private sketchController: SketchController | null = null;
   private sketchBarEl: HTMLDivElement | null = null;
+  /** Select-tool panel (plan 020 §9): name field + procgen section for the
+   * currently-selected fabric feature. Anchored under the sketch sub-bar. */
+  private selectionPanelEl: HTMLDivElement | null = null;
   private selectedFabricId: string | null = null;
+  /** Which sketch tool is armed (plan 020 §9): the Select arrow (edit an
+   * existing shape) or the draw palette (add a new one). */
+  private sketchTool: "draw" | "select" = "draw";
+  /** Re-syncs the sub-bar tool highlights to `sketchTool`/`sketchKind` — set by
+   * buildSketchBar, called when the tool changes programmatically (e.g. the
+   * "Edit shape" context-menu path arms Select without a button click). */
+  private syncSketchToolButtons: (() => void) | null = null;
   private sketchKeyHandler: ((ev: KeyboardEvent) => void) | null = null;
   /** Toolbar pencil button — kept so sketch mode can show a pressed/active
    * state on it (plan 016: re-click to exit is only discoverable if the button
@@ -272,6 +306,9 @@ export class MapView extends ItemView {
   private sketchAutoBuildTimer: number | null = null;
   /** Sketch edits accumulated while the regen debounce is pending. */
   private pendingConstraintFeatures: FabricFeature[] = [];
+  /** Region ids whose OWN geometry changed and need a force-regen on the next
+   * debounce flush (plan 020 §8.3 — one regen per drag-commit storm). */
+  private pendingRegionRegen = new Set<string>();
 
   /**
    * Render store for generated fabric, keyed `${tier}:${tileX}:${tileY}` —
@@ -746,6 +783,13 @@ export class MapView extends ItemView {
         ...tiles.flatMap((t) => algorithm.tileGeneratorIds.map((gid) => regionTileKey(region.id, t.tileX, t.tileY, gid))),
       ];
       await removeCachedTiles(this.app, folder, keys);
+      // Prune EVERY render-store tile under this region before repaint — a
+      // shrinking edit (inward vertex move / vertex delete) has a smaller tile
+      // range than before, so tiles that dropped out of range would otherwise
+      // linger as streets painted OUTSIDE the new boundary ("spills past the
+      // GM's line"). The prefix prune covers any range change.
+      const renderPrefix = `region:${region.id}:`;
+      for (const k of [...this.loadedTiles.keys()]) if (k.startsWith(renderPrefix)) this.loadedTiles.delete(k);
       preloaded = preloaded ?? new Map();
     } else if (!preloaded) {
       preloaded = await readCachedTiles(this.app, folder);
@@ -1194,10 +1238,7 @@ export class MapView extends ItemView {
       } else {
         this.fabricCollection = withFeature(this.fabricCollection, parsed.data);
       }
-      if (this.selectedFabricId === parsed.data.id) {
-        this.selectedFabricId = null;
-        this.sketchController?.clearSelection();
-      }
+      if (this.selectedFabricId === parsed.data.id) this.deselectFabric();
       await saveFabric(this.app, this.campaign, this.fabricCollection);
       this.refreshFabric();
       new Notice(
@@ -1212,8 +1253,12 @@ export class MapView extends ItemView {
       }
       this.queueConstraintRegen(parsed.data);
     } else if (last.type === "sketch-procgen-set") {
-      // Undo attaching a procgen block = strip it (drop records + unpaint),
-      // appending a `sketch-procgen-clear` so the log stays faithful.
+      // A `sketch-procgen-set` is either an ATTACH (before=null) or a
+      // param/re-roll CHANGE (before=oldBlock). Undo must reverse the actual
+      // change: attach → strip the block; change → restore the old block. Both
+      // force-regen (the region-id-keyed cache carries no seed/params, so a
+      // restored block must drop the stale records). No new log entry on the
+      // restore branch (same asymmetry as clear-area / procgen-clear undo).
       const parsed = ProcgenLogDataSchema.safeParse(last.data);
       if (!parsed.success) {
         new Notice("Campaign Map: can't undo — malformed log entry");
@@ -1221,8 +1266,14 @@ export class MapView extends ItemView {
       }
       await this.loadFabricForCampaign();
       const feature = this.fabricCollection.features.find((f) => f.id === parsed.data.featureId) ?? parsed.data.feature;
-      await this.stripRegionProcgen(feature, true);
-      new Notice("Campaign Map: removed the generated city");
+      if (parsed.data.before === null) {
+        await this.stripRegionProcgen(feature, true);
+        new Notice("Campaign Map: removed the generated city");
+      } else {
+        await this.setRegionProcgen(withoutProcgen(feature), parsed.data.before, null, false, true);
+        new Notice("Campaign Map: reverted the city settings");
+      }
+      if (this.selectedFabricId === parsed.data.featureId) this.refreshSelectionPanel();
     } else if (last.type === "sketch-procgen-clear") {
       // Undo removing a procgen block = re-attach the carried block +
       // regenerate. Restore WITHOUT appending a new log entry (same
@@ -1236,8 +1287,29 @@ export class MapView extends ItemView {
       }
       await this.loadFabricForCampaign();
       const base = this.fabricCollection.features.find((f) => f.id === parsed.data.featureId) ?? parsed.data.feature;
-      await this.setRegionProcgen(withoutProcgen(base), parsed.data.before, null, false);
+      await this.setRegionProcgen(withoutProcgen(base), parsed.data.before, null, false, true);
+      if (this.selectedFabricId === parsed.data.featureId) this.refreshSelectionPanel();
       new Notice("Campaign Map: restored the generated city");
+    } else if (last.type === "sketch-edit") {
+      // Undo a geometry/property edit = restore the `before` feature. No new
+      // log entry (repeated undo is idempotent — restores `before` again;
+      // replay reads fabric, not the log tail). A region regenerates its OLD
+      // ring (seed unchanged, id unchanged → the id-keyed cache is force-
+      // rebuilt); a constraint-kind edit re-adapts neighbouring regions.
+      const parsed = SketchEditDataSchema.safeParse(last.data);
+      if (!parsed.success) {
+        new Notice("Campaign Map: can't undo edit — malformed log entry");
+        return;
+      }
+      await this.loadFabricForCampaign();
+      const before = parsed.data.before;
+      this.fabricCollection = withFeature(this.fabricCollection, before);
+      await saveFabric(this.app, this.campaign, this.fabricCollection);
+      this.refreshFabric();
+      if (this.selectedFabricId === before.id) this.selectFabricFeature(before.id);
+      if (isProcgenRegion(before)) await this.generateRegion(before, { force: true });
+      else this.queueConstraintRegen(before);
+      new Notice(`Campaign Map: undid ${before.properties.kind} edit`);
     } else if (last.type === "generate-area") {
       // Undo a generate request = clear that area (appends its own
       // `clear-area`, keeping the log a faithful history — same pattern as
@@ -1461,7 +1533,8 @@ export class MapView extends ItemView {
     feature: FabricFeature,
     block: ProcgenBlock,
     before: ProcgenBlock | null,
-    log: boolean
+    log: boolean,
+    force = false
   ): Promise<GeoJSON.Feature[]> {
     if (!this.campaign) return [];
     const campaign = this.campaign;
@@ -1479,7 +1552,10 @@ export class MapView extends ItemView {
         data: { featureId: feature.id, before, after: block, feature: updated } as unknown as Record<string, unknown>,
       });
     }
-    return this.generateRegion(updated);
+    // A block change (profile/seed) keeps the region id, so the id-keyed cache
+    // (`region:<id>:network`, no seed/params in the key) would otherwise hit
+    // stale bytes — `force` drops the records so the new params/seed rebuild.
+    return this.generateRegion(updated, { force });
   }
 
   /** Strip a region's procgen block (drop its cache records + unpaint), the
@@ -1580,7 +1656,9 @@ export class MapView extends ItemView {
     }
     new RegionProcgenModal(this.app, algorithm, this.campaign.config.theme, (choice) => {
       if (!choice) return; // "Keep as plain shape" — inert district
-      void this.attachProcgenAndGenerate(feature, algorithm, choice.params);
+      void this.attachProcgenAndGenerate(feature, algorithm, choice.params).then(() => {
+        if (this.selectedFabricId === feature.id) this.refreshSelectionPanel();
+      });
     }).open();
   }
 
@@ -1873,22 +1951,14 @@ export class MapView extends ItemView {
       const id = `canon-label-${depth}`;
       if (this.map.getLayer(id)) this.map.setLayerZoomRange(id, reveal[depth], 24);
     }
-    // Procgen v3.2 perf gating (design §8: "gate parcels to a higher minzoom
-    // in themes, not in the generator") made RELATIVE to the campaign
-    // overview — the baked z14/z15 floors are real-city calibrations that a
-    // fictional campaign (overview ~z4.5) never reaches, the same
-    // absolute-vs-relative trap as the retired fabric reveal (DECISIONS
-    // 2026-07-10). Footprints arrive between Mid and Close; parcel hairlines
-    // one step deeper. NOTE: this is zoom-gating generated BUILDING DETAIL
-    // for paint perf (12k+ tiny polygons per domain), not fabric-kind
-    // hiding — the Kanto ruling ("LOD only hides location names") left the
-    // footprint minzoom question explicitly open (PROGRESS open threads).
-    if (this.map.getLayer("generated-footprint")) {
-      this.map.setLayerZoomRange("generated-footprint", base + 4, 24);
-    }
-    if (this.map.getLayer("generated-parcel")) {
-      this.map.setLayerZoomRange("generated-parcel", base + 5, 24);
-    }
+    // Generated building detail (footprints/parcels) is NO LONGER zoom-gated
+    // (Jonah 2026-07-12: "the small buildings pop in and out at different
+    // zooms — i'd rather they always show"). The former relative reveal
+    // floors (overview+4 / overview+5) are gone; these layers now render at
+    // every zoom like all other fabric, matching the standing Kanto-test
+    // ruling ("LOD should only impact visibility of location names"). Any
+    // far-out readability treatment is a paint-level theme decision, not a
+    // zoom gate — see generatedLayers.ts.
   }
 
   /** Snap the camera to the previous/next focus level (the +/- buttons). Free
@@ -2034,7 +2104,11 @@ export class MapView extends ItemView {
       this.sketchController = null;
       this.sketchBarEl?.remove();
       this.sketchBarEl = null;
+      this.selectionPanelEl?.remove();
+      this.selectionPanelEl = null;
+      this.syncSketchToolButtons = null;
       this.selectedFabricId = null;
+      this.sketchTool = "draw";
       if (this.sketchKeyHandler) {
         window.removeEventListener("keydown", this.sketchKeyHandler, true);
         this.sketchKeyHandler = null;
@@ -2048,7 +2122,10 @@ export class MapView extends ItemView {
     this.droppedPinPopup?.remove();
     this.placeCardPopup?.remove();
     this.map.doubleClickZoom.disable();
-    this.sketchController = new SketchController(this.map, this.sketchAccent());
+    this.sketchController = new SketchController(this.map, this.sketchAccent(), {
+      onGeometryEdit: (featureId, geometry) => void this.commitGeometryEdit(featureId, geometry, { debounce: true }),
+      onCenterEdit: (featureId, center) => void this.setRegionCenter(featureId, center),
+    });
     this.sketchController.activate(this.sketchKind);
     this.buildSketchBar();
     // Capture phase so Escape / Cmd-Z reach us before MapLibre's canvas
@@ -2070,32 +2147,53 @@ export class MapView extends ItemView {
     this.sketchBarEl?.remove();
     this.sketchBarEl = this.contentEl.createDiv({ cls: "campaign-map-sketch-bar" });
     const kindButtons = new Map<FabricKind, HTMLButtonElement>();
-    const setActiveKind = (kind: FabricKind): void => {
-      this.sketchKind = kind;
-      this.sketchController?.setKind(kind);
-      for (const [k, b] of kindButtons) b.toggleClass("is-active", k === kind);
+
+    // Select tool (plan 020 §9): first position, arrow icon. Arming it lets a
+    // click pick an existing shape to edit (vertices + properties); arming a
+    // kind returns to drawing new shapes.
+    const selectBtn = this.sketchBarEl.createEl("button", {
+      cls: "campaign-map-sketch-kind-btn campaign-map-sketch-select-btn",
+      attr: { title: "Select & edit an existing shape (move/insert/delete vertices)" },
+    });
+    setIcon(selectBtn, "mouse-pointer-2");
+
+    const syncToolButtons = (): void => {
+      selectBtn.toggleClass("is-active", this.sketchTool === "select");
+      for (const [k, b] of kindButtons) b.toggleClass("is-active", this.sketchTool === "draw" && k === this.sketchKind);
     };
+    this.syncSketchToolButtons = syncToolButtons;
+
     for (const kind of FABRIC_KINDS) {
       const b = this.sketchBarEl.createEl("button", {
         text: kind,
         cls: "campaign-map-sketch-kind-btn",
         attr: { title: `Sketch a ${kind} (${isPolygonKind(kind) ? "polygon" : "line"})` },
       });
-      b.onclick = () => setActiveKind(kind);
+      b.onclick = () => {
+        this.sketchKind = kind;
+        this.setSketchTool("draw");
+        this.sketchController?.setKind(kind);
+        syncToolButtons();
+      };
       kindButtons.set(kind, b);
     }
+    selectBtn.onclick = () => {
+      this.setSketchTool("select");
+      syncToolButtons();
+    };
+
     // Plan 019: no feed-mode toggle, no "build" button — EVERY sketched
     // feature is a generator constraint, and tiles the GM already generated
     // regenerate on their own after a sketch edit (queueConstraintRegen).
     const undoBtn = this.sketchBarEl.createEl("button", {
       text: "↶ undo",
       cls: "campaign-map-sketch-kind-btn",
-      attr: { title: "Undo the last sketched feature (Cmd/Ctrl-Z)" },
+      attr: { title: "Undo the last sketch action (Cmd/Ctrl-Z)" },
     });
-    undoBtn.onclick = () => void this.undoLastSketch();
+    undoBtn.onclick = () => void this.undoInSketchMode();
     this.sketchBarEl.createDiv({
       cls: "campaign-map-sketch-hint",
-      text: "click: vertex · dbl-click/Enter: finish · Esc: cancel/exit · ⌘Z: undo · Del: delete selected",
+      text: "draw: click vertex · dbl-click/Enter finish · select: drag handle to move · midpoint to add · Del removes vertex/shape · Esc/⌘Z",
     });
     const exit = this.sketchBarEl.createEl("button", {
       text: "✕ done",
@@ -2103,7 +2201,16 @@ export class MapView extends ItemView {
       attr: { title: "Exit sketch mode (or press Escape)" },
     });
     exit.onclick = () => this.toggleSketchMode();
-    setActiveKind(this.sketchKind);
+    syncToolButtons();
+  }
+
+  /** Arm a sketch tool (draw palette vs. Select arrow). Leaving Select tears
+   * down the selection + its panel; entering it cancels any draft. */
+  private setSketchTool(tool: "draw" | "select"): void {
+    this.sketchTool = tool;
+    this.sketchController?.setTool(tool);
+    if (tool === "draw") this.deselectFabric();
+    this.syncSketchToolButtons?.();
   }
 
   private sketchKeydown(ev: KeyboardEvent): void {
@@ -2113,21 +2220,31 @@ export class MapView extends ItemView {
       // last sketch" while landscaping (plan 016).
       ev.preventDefault();
       ev.stopPropagation();
-      void this.undoLastSketch();
+      void this.undoInSketchMode();
     } else if (ev.key === "Enter") {
       if (this.sketchController?.isDrawing) {
         ev.preventDefault();
         this.finalizeSketchDraft();
       }
     } else if (ev.key === "Escape") {
-      // Two-stage: a first Escape cancels an in-progress draft; with no draft
-      // (or on the next press) it exits the mode. The prominent ✕ done button
-      // and the toggled pencil are the always-reachable mouse exits.
+      // Two-stage: a first Escape cancels an in-progress draft or clears the
+      // current selection; with neither it exits the mode. The prominent ✕
+      // done button and the toggled pencil are the always-reachable mouse exits.
       ev.preventDefault();
       if (this.sketchController?.isDrawing) this.sketchController.cancel();
+      else if (this.selectedFabricId) this.deselectFabric();
       else this.toggleSketchMode();
     } else if (ev.key === "Delete" || ev.key === "Backspace") {
-      if (this.selectedFabricId) {
+      const c = this.sketchController;
+      // Grabbed/hovered vertex → delete just that vertex (min-vertex floored);
+      // otherwise the whole selected shape (plan 020 §9).
+      if (c?.hasActiveVertex) {
+        ev.preventDefault();
+        const result = c.deleteActiveVertex();
+        if (result === "min") {
+          new Notice("Campaign Map: can't remove — a shape needs its minimum vertices (2 line / 3 polygon)");
+        }
+      } else if (this.selectedFabricId) {
         ev.preventDefault();
         this.deleteSelectedFabric();
       }
@@ -2140,30 +2257,99 @@ export class MapView extends ItemView {
   private handleSketchClick(e: MapMouseEvent): void {
     const c = this.sketchController;
     if (!c || !this.map) return;
-    if (!c.isDrawing) {
-      const layers = FABRIC_LAYER_IDS.filter((l) => this.map!.getLayer(l));
-      const hits = layers.length
-        ? this.map.queryRenderedFeatures(
-            [
-              [e.point.x - 6, e.point.y - 6],
-              [e.point.x + 6, e.point.y + 6],
-            ],
-            { layers }
-          )
-        : [];
-      const hitId = hits[0]?.properties?.id as string | undefined;
-      if (hitId) {
-        const feature = this.fabricCollection.features.find((f) => f.id === hitId);
-        if (feature) {
-          this.selectedFabricId = hitId;
-          c.showSelection(feature.geometry as GeoJSON.Geometry);
-          return;
-        }
-      }
-      this.selectedFabricId = null;
-      c.clearSelection();
+    // Mid-draft (draw tool): every click is a vertex.
+    if (c.isDrawing) {
+      c.addVertex([e.lngLat.lng, e.lngLat.lat]);
+      return;
     }
+    // A vertex/midpoint grab consumed this click (drag or insert) — don't let
+    // it also reselect/deselect (advisor #4: the flag is cleared on the next
+    // mousedown, so it can never go stale and eat a legit click).
+    if (c.consumeInteraction()) return;
+
+    if (this.sketchTool === "select") {
+      // Select tool: click a shape to edit it; click empty ground to deselect.
+      const hitId = this.fabricFeatureIdAt(e.point);
+      if (hitId) this.selectFabricFeature(hitId);
+      else this.deselectFabric();
+      return;
+    }
+    // Draw tool, no draft yet: a click starts a new shape.
+    this.deselectFabric();
     c.addVertex([e.lngLat.lng, e.lngLat.lat]);
+  }
+
+  /** Hit-test the rendered fabric layers near a screen point, resolving to the
+   * FabricFeature id via the mirrored `properties.id` (refreshFabric mirrors
+   * the feature id there because queryRenderedFeatures doesn't reliably
+   * surface string feature ids from a geojson source). */
+  private fabricFeatureIdAt(point: maplibregl.Point): string | null {
+    if (!this.map) return null;
+    const layers = FABRIC_LAYER_IDS.filter((l) => this.map!.getLayer(l));
+    if (layers.length === 0) return null;
+    const hits = this.map.queryRenderedFeatures(
+      [
+        [point.x - 6, point.y - 6],
+        [point.x + 6, point.y + 6],
+      ],
+      { layers }
+    );
+    const hitId = hits[0]?.properties?.id as string | undefined;
+    if (!hitId) return null;
+    return this.fabricCollection.features.some((f) => f.id === hitId) ? hitId : null;
+  }
+
+  /** Select a fabric feature for editing (Select tool): arm the controller's
+   * edit state (handles) and open the selected-feature panel. Re-selecting the
+   * same id after a commit resets the controller baseline to persisted geom. */
+  private selectFabricFeature(id: string): void {
+    const feature = this.fabricCollection.features.find((f) => f.id === id);
+    if (!feature) return;
+    this.selectedFabricId = id;
+    this.reselectController(feature);
+    this.buildSelectionPanel(feature);
+  }
+
+  /** (Re)arm the controller's edit state for a feature — includes the effective
+   * generation-center handle (Addendum 2) for a procgen region, so a vertex
+   * drag or center change re-syncs both the handles and the plaza handle. */
+  private reselectController(feature: FabricFeature): void {
+    const center = isProcgenRegion(feature) ? this.effectiveRegionCenterDisplay(feature) : null;
+    this.sketchController?.select({
+      id: feature.id,
+      geometry: feature.geometry,
+      kind: feature.properties.kind,
+      center,
+    });
+  }
+
+  /** The effective generation center of a procgen region in DISPLAY units: the
+   * persisted `params.center` (meters) when it's inside the ring, else the
+   * computed `generationCenter`. Null for non-regions / no algorithm. */
+  private effectiveRegionCenterDisplay(feature: FabricFeature): [number, number] | null {
+    const block = feature.properties.procgen;
+    if (!block || !this.campaign || !algorithmById(block.algorithm)) return null;
+    const region = this.buildRegionFromFeature(feature);
+    if (!region) return null;
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const stored = block.params.center as [number, number] | undefined;
+    const centerMeters =
+      Array.isArray(stored) &&
+      stored.length === 2 &&
+      typeof stored[0] === "number" &&
+      typeof stored[1] === "number" &&
+      regionContains(region, stored[0], stored[1])
+        ? (stored as [number, number])
+        : generationCenter(region);
+    return [metersToUnits(centerMeters[0], scale), metersToUnits(centerMeters[1], scale)];
+  }
+
+  /** Clear any Select-tool selection + its panel. */
+  private deselectFabric(): void {
+    this.selectedFabricId = null;
+    this.sketchController?.clearSelection();
+    this.selectionPanelEl?.remove();
+    this.selectionPanelEl = null;
   }
 
   private handleSketchDblClick(e: MapMouseEvent): void {
@@ -2215,10 +2401,23 @@ export class MapView extends ItemView {
   private queueConstraintRegen(feature: FabricFeature): void {
     if (!this.campaign || this.campaign.config.crs !== "fictional") return;
     this.pendingConstraintFeatures.push(feature);
+    this.armSketchRegen();
+  }
+
+  /** Queue a procgen region's OWN geometry edit for a force-regen (plan 020
+   * §8.3): the city keeps its seed and adapts to the new ring. Debounced with
+   * the same timer as constraint regen so a drag-commit storm coalesces. */
+  private queueRegionRegen(featureId: string): void {
+    if (!this.campaign || this.campaign.config.crs !== "fictional") return;
+    this.pendingRegionRegen.add(featureId);
+    this.armSketchRegen();
+  }
+
+  private armSketchRegen(): void {
     if (this.sketchAutoBuildTimer !== null) window.clearTimeout(this.sketchAutoBuildTimer);
     this.sketchAutoBuildTimer = window.setTimeout(() => {
       this.sketchAutoBuildTimer = null;
-      void this.regenerateAffectedTiles();
+      void this.flushSketchRegen();
     }, 400);
   }
 
@@ -2228,12 +2427,34 @@ export class MapView extends ItemView {
    * add the alignment reach on top and round up. */
   private static readonly CONSTRAINT_REACH = 200;
 
-  private async regenerateAffectedTiles(): Promise<void> {
+  /** One debounce flush (plan 020 §8.3): first force-regen every region whose
+   * OWN geometry changed (city adapts, seed unchanged), then regen every
+   * region a constraint-kind edit (river/road/wall/water) can influence —
+   * skipping any already done this flush so a single mouseup never regenerates
+   * a region twice. */
+  private async flushSketchRegen(): Promise<void> {
+    const regionIds = [...this.pendingRegionRegen];
+    this.pendingRegionRegen.clear();
     const edited = this.pendingConstraintFeatures;
     this.pendingConstraintFeatures = [];
-    if (!this.campaign || edited.length === 0) return;
+    if (!this.campaign) return;
     const campaign = this.campaign;
     await this.loadFabricForCampaign();
+    if (this.campaign?.id !== campaign.id) return;
+    const done = new Set<string>();
+    for (const id of regionIds) {
+      const feature = this.regionFeatures().find((f) => f.id === id);
+      if (!feature) continue;
+      await this.generateRegion(feature, { force: true });
+      done.add(id);
+      if (this.campaign?.id !== campaign.id) return;
+    }
+    if (edited.length > 0) await this.regenerateAffectedTiles(edited, done);
+  }
+
+  private async regenerateAffectedTiles(edited: FabricFeature[], done: Set<string>): Promise<void> {
+    if (!this.campaign || edited.length === 0) return;
+    const campaign = this.campaign;
     if (this.campaign?.id !== campaign.id) return;
     const scale = campaign.config.scaleMetersPerUnit;
 
@@ -2276,6 +2497,7 @@ export class MapView extends ItemView {
       }
     }
     for (const feature of affected.values()) {
+      if (done.has(feature.id)) continue; // already force-regenerated this flush
       if (this.campaign?.id !== campaign.id) return;
       await this.generateRegion(feature, { force: true });
     }
@@ -2307,13 +2529,12 @@ export class MapView extends ItemView {
       return;
     }
     this.fabricCollection = withoutFeature(this.fabricCollection, feature.id);
-    this.selectedFabricId = null;
-    this.sketchController?.clearSelection();
+    this.deselectFabric();
     this.refreshFabric();
     // A deleted region takes its generated city with it (plan 020 §8.4).
     if (isProcgenRegion(feature)) void this.dropRegionCacheAndUnpaint(feature);
     void this.persistFabric("sketch-remove", feature);
-    new Notice(`Campaign Map: deleted sketched ${feature.properties.kind}`);
+    new Notice(`Campaign Map: deleted sketched ${feature.properties.kind} (⌘Z / ↶ undo to restore)`);
     // Removing a constraint reshapes generated output too (plan 019 Phase 3).
     this.queueConstraintRegen(feature);
   }
@@ -2347,6 +2568,438 @@ export class MapView extends ItemView {
     new Notice(`Campaign Map: undid sketched ${target.properties.kind}`);
     // The undone sketch was a generator constraint — re-adapt generated tiles.
     this.queueConstraintRegen(target);
+  }
+
+  /**
+   * Sketch-mode undo dispatcher (Cmd/Ctrl-Z and the ↶ button). `undoLastSketch`
+   * nets sketch-add/sketch-remove pairs, but a geometry/property edit or a
+   * procgen change is a different tail shape — for those we reverse the actual
+   * last log entry through the full `undoLastEdit` switch. Peeking the tail
+   * keeps the two undo mechanisms from fighting (an in-mode edit undoes the
+   * edit, not the older shape it sits on top of).
+   */
+  private async undoInSketchMode(): Promise<void> {
+    if (!this.campaign) return;
+    const entries = await this.plugin.log.read(this.campaign.id);
+    const tail = entries[entries.length - 1];
+    if (tail && (tail.type === "sketch-edit" || tail.type === "sketch-procgen-set" || tail.type === "sketch-procgen-clear")) {
+      await this.undoLastEdit();
+      return;
+    }
+    await this.undoLastSketch();
+  }
+
+  // ─── Sketch edit commit + selected-feature panel (plan 020 §9) ─────────
+
+  /** Build the after-feature from a geometry replacement and run the full
+   * commit path (validate region ring/overlap, log `sketch-edit`, persist,
+   * regen). The controller calls this on every drag-commit/insert/delete;
+   * the test API calls it with `debounce: false` to await the regen. */
+  private async commitGeometryEdit(
+    featureId: string,
+    geometry: FabricGeometry,
+    opts: { debounce: boolean }
+  ): Promise<boolean> {
+    if (!this.campaign) return false;
+    const campaign = this.campaign;
+    await this.loadFabricForCampaign();
+    if (this.campaign?.id !== campaign.id) return false;
+    const before = this.fabricCollection.features.find((f) => f.id === featureId);
+    if (!before) return false;
+    const after: FabricFeature = { ...before, geometry };
+    return this.commitSketchEdit(before, after, opts);
+  }
+
+  /**
+   * The one commit path for a whole-feature sketch edit (geometry OR name).
+   * Region geometry edits validate the new ring + same-algorithm overlap
+   * BEFORE writing anything — a failure reverts the optimistic controller
+   * state and logs nothing (plan 020 §9 item 3a). On success: persist, append
+   * `sketch-edit` {before, after}, reset the controller baseline + panel, and
+   * regenerate (the region adapts on its persisted seed, or a constraint-kind
+   * edit re-adapts neighbouring regions). Returns false if reverted.
+   */
+  private async commitSketchEdit(
+    before: FabricFeature,
+    after: FabricFeature,
+    opts: { debounce: boolean }
+  ): Promise<boolean> {
+    if (!this.campaign) return false;
+    const campaign = this.campaign;
+    await this.loadFabricForCampaign();
+    if (this.campaign?.id !== campaign.id) return false;
+    const geomChanged = JSON.stringify(before.geometry) !== JSON.stringify(after.geometry);
+    const propsChanged = JSON.stringify(before.properties) !== JSON.stringify(after.properties);
+    // No-op edit (a bare vertex click — grab + release with no drag — produces
+    // an identical geometry): write nothing. Otherwise it would spam the log
+    // and, since undo dispatches on the tail type, wedge Cmd/Ctrl-Z on a
+    // before==after entry.
+    if (!geomChanged && !propsChanged) return true;
+
+    if (geomChanged && isProcgenRegion(after)) {
+      const algoId = after.properties.procgen!.algorithm;
+      const region = this.buildRegionFromFeature(after);
+      const validation = region ? validateRegionRing(region.ring) : ({ ok: false, reason: "not a polygon" } as const);
+      if (!validation.ok) {
+        new Notice(`Campaign Map: can't reshape the city — ${validation.reason}. Reverted.`, 7000);
+        this.revertSketchEdit(before);
+        return false;
+      }
+      if (this.overlappingRegion(after, algoId)) {
+        new Notice("Campaign Map: that edit would overlap another city — they can't overlap. Reverted.", 7000);
+        this.revertSketchEdit(before);
+        return false;
+      }
+    }
+
+    this.fabricCollection = withFeature(this.fabricCollection, after);
+    this.refreshFabric();
+    await saveFabric(this.app, campaign, this.fabricCollection);
+    await appendLogEntry(this.app, campaignFolderFromConfigPath(campaign.path), {
+      ts: Date.now(),
+      type: "sketch-edit",
+      campaignId: campaign.id,
+      path: fabricPath(campaign),
+      data: { featureId: before.id, before, after } as unknown as Record<string, unknown>,
+    });
+    // Reset the controller's edit baseline + the panel to the persisted state.
+    if (this.selectedFabricId === after.id) {
+      this.reselectController(after);
+      this.refreshSelectionPanel();
+    }
+    if (!geomChanged) return true; // property-only (name) — no regen
+
+    if (isProcgenRegion(after)) {
+      // A boundary edit may have moved the ring off a persisted center; the
+      // generator falls back deterministically, but tell the GM (Addendum 2).
+      const stored = after.properties.procgen!.params.center as [number, number] | undefined;
+      const region = this.buildRegionFromFeature(after);
+      if (Array.isArray(stored) && region && !regionContains(region, stored[0], stored[1])) {
+        new Notice("Campaign Map: city center is outside the district — using automatic center", 6000);
+      }
+      if (opts.debounce) this.queueRegionRegen(after.id);
+      else await this.generateRegion(after, { force: true });
+    } else {
+      if (opts.debounce) this.queueConstraintRegen(after);
+      else await this.regenerateAffectedTiles([after], new Set());
+    }
+    return true;
+  }
+
+  /** Undo an optimistic (uncommitted) geometry edit: the fabric collection
+   * still holds `before`, so this just re-selects to snap the handles back. */
+  private revertSketchEdit(before: FabricFeature): void {
+    this.fabricCollection = withFeature(this.fabricCollection, before);
+    this.refreshFabric();
+    if (this.selectedFabricId === before.id) {
+      this.reselectController(before);
+      this.refreshSelectionPanel();
+    }
+  }
+
+  /** Rebuild the selected-feature panel from the current fabric state (after a
+   * geometry/name/procgen change). No-op when nothing is selected. */
+  private refreshSelectionPanel(): void {
+    if (!this.selectedFabricId) return;
+    const feature = this.fabricCollection.features.find((f) => f.id === this.selectedFabricId);
+    if (feature) this.buildSelectionPanel(feature);
+    else {
+      this.selectionPanelEl?.remove();
+      this.selectionPanelEl = null;
+    }
+  }
+
+  /** The small overlay under the sketch bar: kind label, editable name, and —
+   * for a kind with a registry algorithm — the procgen section (generate /
+   * profile / re-roll / regenerate / remove). Native-Obsidian createEl. */
+  private buildSelectionPanel(feature: FabricFeature): void {
+    if (!this.sketchBarEl) return;
+    this.selectionPanelEl?.remove();
+    const panel = this.contentEl.createDiv({ cls: "campaign-map-sketch-selection" });
+    this.selectionPanelEl = panel;
+
+    const header = panel.createDiv({ cls: "campaign-map-sketch-selection-header" });
+    header.createSpan({ cls: "campaign-map-sketch-selection-kind", text: feature.properties.kind });
+    const close = header.createEl("button", {
+      cls: "campaign-map-sketch-selection-close",
+      text: "✕",
+      attr: { title: "Deselect (Esc)" },
+    });
+    close.onclick = () => this.deselectFabric();
+
+    const nameRow = panel.createDiv({ cls: "campaign-map-sketch-selection-row" });
+    nameRow.createSpan({ cls: "campaign-map-sketch-selection-label", text: "Name" });
+    const nameInput = nameRow.createEl("input", {
+      cls: "campaign-map-sketch-selection-name",
+      attr: { type: "text", placeholder: "(unnamed)" },
+    });
+    nameInput.value = feature.properties.name ?? "";
+    const commitName = (): void => {
+      const current = this.fabricCollection.features.find((f) => f.id === feature.id);
+      if (!current) return;
+      const v = nameInput.value.trim();
+      const newName = v.length ? v : undefined;
+      if ((current.properties.name ?? undefined) === newName) return;
+      const after: FabricFeature = { ...current, properties: { ...current.properties, name: newName } };
+      void this.commitSketchEdit(current, after, { debounce: false });
+    };
+    nameInput.onblur = commitName;
+    nameInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        nameInput.blur();
+      }
+    });
+
+    const algorithm = algorithmForKind(feature.properties.kind);
+    if (algorithm && this.campaign?.config.crs === "fictional") {
+      this.buildProcgenSection(panel, feature, algorithm);
+    }
+  }
+
+  private buildProcgenSection(panel: HTMLElement, feature: FabricFeature, algorithm: ProcgenAlgorithm): void {
+    const section = panel.createDiv({ cls: "campaign-map-sketch-procgen" });
+    const block = feature.properties.procgen;
+    if (!block) {
+      section.createDiv({
+        cls: "campaign-map-sketch-procgen-label",
+        text: `${algorithm.label}: not generated`,
+      });
+      const gen = section.createEl("button", {
+        cls: "campaign-map-sketch-procgen-btn mod-cta",
+        text: `Generate ${algorithm.label.toLowerCase()}…`,
+      });
+      gen.onclick = () => this.maybeOfferProcgen(feature);
+      return;
+    }
+    // Profile dropdown (v1 city param) — schema-driven enough for v1.
+    if (typeof block.params.profile === "string") {
+      const row = section.createDiv({ cls: "campaign-map-sketch-selection-row" });
+      row.createSpan({ cls: "campaign-map-sketch-selection-label", text: "Profile" });
+      const dd = row.createEl("select", { cls: "campaign-map-sketch-procgen-select" });
+      for (const id of CITY_PROFILE_IDS) {
+        const o = dd.createEl("option", { text: CITY_PROFILE_LABELS[id], value: id });
+        if (id === block.params.profile) o.selected = true;
+      }
+      dd.onchange = () => void this.setRegionParams(feature.id, { ...block.params, profile: dd.value });
+    }
+    // Center hint (Addendum 2): drag the diamond handle to place the plaza.
+    const hasCenter = "center" in block.params;
+    section.createDiv({
+      cls: "campaign-map-sketch-procgen-label",
+      text: hasCenter ? "Center: custom (drag the ◆ handle)" : "Center: automatic (drag the ◆ handle to place)",
+    });
+
+    const actions = section.createDiv({ cls: "campaign-map-sketch-procgen-actions" });
+    const reroll = actions.createEl("button", { cls: "campaign-map-sketch-procgen-btn", text: "Re-roll" });
+    reroll.onclick = () => void this.rerollRegion(feature.id);
+    const regen = actions.createEl("button", { cls: "campaign-map-sketch-procgen-btn", text: "Regenerate" });
+    regen.onclick = () => void this.regenerateRegionById(feature.id);
+    if (hasCenter) {
+      const resetCenter = actions.createEl("button", { cls: "campaign-map-sketch-procgen-btn", text: "Reset center" });
+      resetCenter.onclick = () => void this.setRegionCenter(feature.id, null);
+    }
+    const remove = actions.createEl("button", {
+      cls: "campaign-map-sketch-procgen-btn campaign-map-sketch-procgen-btn-warning",
+      text: "Remove city",
+    });
+    remove.onclick = () => void this.removeRegionById(feature.id);
+  }
+
+  // ─── Region param actions (panel + test API, plan 020 §9 item 4/7) ─────
+
+  /** Change a region's procgen params (v1: profile) — logs a
+   * `sketch-procgen-set` {before: oldBlock, after: newBlock} and force-regens
+   * (the id-keyed cache carries no params). Seed unchanged. */
+  async setRegionParams(featureId: string, params: Record<string, unknown>): Promise<void> {
+    if (!this.campaign) return;
+    await this.loadFabricForCampaign();
+    const feature = this.fabricCollection.features.find((f) => f.id === featureId);
+    const block = feature?.properties.procgen;
+    if (!feature || !block) return;
+    const algorithm = algorithmById(block.algorithm);
+    if (!algorithm) return;
+    const parsedParams = algorithm.paramsSchema.parse(params);
+    const newBlock: ProcgenBlock = { ...block, params: parsedParams };
+    await this.setRegionProcgen(feature, newBlock, block, true, true);
+    if (this.selectedFabricId === featureId) this.refreshSelectionPanel();
+  }
+
+  /** Re-roll a region: a NEW seed (`hashSeed(seed, "reroll")`) — the city
+   * re-rolls rather than adapting. Logged as `sketch-procgen-set`, force-regen. */
+  async rerollRegion(featureId: string): Promise<void> {
+    if (!this.campaign) return;
+    await this.loadFabricForCampaign();
+    const feature = this.fabricCollection.features.find((f) => f.id === featureId);
+    const block = feature?.properties.procgen;
+    if (!feature || !block) return;
+    const newBlock: ProcgenBlock = { ...block, seed: hashSeed(block.seed, "reroll") };
+    await this.setRegionProcgen(feature, newBlock, block, true, true);
+    if (this.selectedFabricId === featureId) this.refreshSelectionPanel();
+  }
+
+  /** Regenerate a region against CURRENT constraints (drop records + recompute,
+   * no block change, no log — idempotent). */
+  async regenerateRegionById(featureId: string): Promise<GeoJSON.Feature[]> {
+    if (!this.campaign) return [];
+    await this.loadFabricForCampaign();
+    const feature = this.fabricCollection.features.find((f) => f.id === featureId);
+    if (!feature || !isProcgenRegion(feature)) return [];
+    return this.generateRegion(feature, { force: true });
+  }
+
+  /** Remove a region's generated city (strip the block; shape stays inert). */
+  async removeRegionById(featureId: string): Promise<void> {
+    if (!this.campaign) return;
+    await this.loadFabricForCampaign();
+    const feature = this.fabricCollection.features.find((f) => f.id === featureId);
+    if (!feature) return;
+    await this.stripRegionProcgen(feature, true);
+    if (this.selectedFabricId === featureId) this.refreshSelectionPanel();
+  }
+
+  // ─── Programmatic edit test API (plan 020 §9 item 7, gate procgen41) ────
+  // Each runs the FULL commit path (validation, sketch-edit log, persist,
+  // regen) synchronously-awaitable, so a gate can assert on the settled state.
+
+  /** Create a plain (non-procgen) fabric feature headlessly (gate path — the
+   * constraint-loop test needs a river/road/wall/water shape to edit). Runs the
+   * sketch-add persist + constraint-regen path a finished draft would. */
+  async createFabricForTest(kind: FabricKind, coordsUnits: [number, number][], name?: string): Promise<string> {
+    if (!this.campaign) throw new Error("no campaign");
+    await this.loadFabricForCampaign();
+    const geometry: FabricGeometry = isPolygonKind(kind)
+      ? { type: "Polygon", coordinates: [[...coordsUnits, coordsUnits[0]]] }
+      : { type: "LineString", coordinates: coordsUnits };
+    const feature: FabricFeature = {
+      type: "Feature",
+      id: makeFabricId(),
+      geometry,
+      properties: name ? { kind, name } : { kind },
+    };
+    this.fabricCollection = withFeature(this.fabricCollection, feature);
+    this.refreshFabric();
+    await this.persistFabric("sketch-add", feature);
+    return feature.id;
+  }
+
+  /** Enter sketch mode + Select tool and select a fabric feature by id. */
+  async selectFeature(id: string): Promise<void> {
+    if (!this.sketchMode) this.toggleSketchMode();
+    this.setSketchTool("select");
+    this.selectFabricFeature(id);
+  }
+
+  /** Move open-list vertex `index` to `pt` (display units). */
+  async moveVertex(id: string, index: number, pt: [number, number]): Promise<boolean> {
+    await this.loadFabricForCampaign();
+    const feature = this.fabricCollection.features.find((f) => f.id === id);
+    if (!feature) return false;
+    return this.commitGeometryEdit(id, withVertexMoved(feature.geometry, index, pt), { debounce: false });
+  }
+
+  /** Insert a vertex on edge `edgeIndex` at `pt` (display units). */
+  async insertVertex(id: string, edgeIndex: number, pt: [number, number]): Promise<boolean> {
+    await this.loadFabricForCampaign();
+    const feature = this.fabricCollection.features.find((f) => f.id === id);
+    if (!feature) return false;
+    return this.commitGeometryEdit(id, withVertexInserted(feature.geometry, edgeIndex, pt), { debounce: false });
+  }
+
+  /** Delete open-list vertex `index` (min-vertex floored — false if refused). */
+  async deleteVertex(id: string, index: number): Promise<boolean> {
+    await this.loadFabricForCampaign();
+    const feature = this.fabricCollection.features.find((f) => f.id === id);
+    if (!feature || !canDeleteVertex(feature.geometry)) return false;
+    return this.commitGeometryEdit(id, withVertexDeleted(feature.geometry, index), { debounce: false });
+  }
+
+  /** Snapshot the generated feature ids currently painted for a region — the
+   * gate's adapt-vs-reroll id-overlap measurement. Optional `generatorId`
+   * filter (e.g. "city-street"). */
+  regionFeatureIds(regionId: string, generatorId?: string): string[] {
+    const prefix = `region:${regionId}:`;
+    const ids: string[] = [];
+    for (const [k, feats] of this.loadedTiles) {
+      if (!k.startsWith(prefix)) continue;
+      for (const f of feats) {
+        if (f.id === undefined || f.id === null) continue;
+        if (generatorId && (f.properties as Record<string, unknown> | null)?.generatorId !== generatorId) continue;
+        ids.push(String(f.id));
+      }
+    }
+    return ids;
+  }
+
+  /** Containment report for a region's currently-painted output (gate a/b):
+   * scans the render-store tiles against the feature's CURRENT ring and counts
+   * how many emitted coordinates fall outside it (distanceToBoundary < −1 m).
+   * `outside === 0` proves "nothing spills past the GM's line" after an edit. */
+  regionContainmentReport(regionId: string): { count: number; outside: number } {
+    const feature = this.fabricCollection.features.find((f) => f.id === regionId);
+    const region = feature ? this.buildRegionFromFeature(feature) : null;
+    if (!region) return { count: 0, outside: 0 };
+    const prefix = `region:${regionId}:`;
+    let count = 0;
+    let outside = 0;
+    const scan = (coords: unknown): void => {
+      if (!Array.isArray(coords)) return;
+      if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+        if (distanceToBoundary(region, coords[0] as number, coords[1] as number) < -1.0) outside++;
+        return;
+      }
+      for (const c of coords) scan(c);
+    };
+    for (const [k, feats] of this.loadedTiles) {
+      if (!k.startsWith(prefix)) continue;
+      for (const f of feats) {
+        count++;
+        scan((f.geometry as unknown as { coordinates: unknown }).coordinates);
+      }
+    }
+    return { count, outside };
+  }
+
+  /** Set (or clear, with `null`) a region's persisted generation center
+   * (params.center, gen-space meters) via the full commit path — the
+   * draggable-plaza feature (Addendum 2). Rejects a center outside the ring
+   * (Notice, no change). Logged as `sketch-procgen-set`, force-regen, seed
+   * unchanged. `centerDisplay` is in DISPLAY units (converted here). */
+  async setRegionCenter(featureId: string, centerDisplay: [number, number] | null): Promise<boolean> {
+    if (!this.campaign) return false;
+    await this.loadFabricForCampaign();
+    const feature = this.fabricCollection.features.find((f) => f.id === featureId);
+    const block = feature?.properties.procgen;
+    if (!feature || !block) return false;
+    const algorithm = algorithmById(block.algorithm);
+    if (!algorithm) return false;
+    const nextParams = { ...block.params };
+    if (centerDisplay === null) {
+      if (!("center" in nextParams)) return false; // already automatic — no-op
+      delete nextParams.center;
+    } else {
+      const scale = this.campaign.config.scaleMetersPerUnit;
+      const centerMeters: [number, number] = [
+        unitsToMeters(centerDisplay[0], scale),
+        unitsToMeters(centerDisplay[1], scale),
+      ];
+      const region = this.buildRegionFromFeature(feature);
+      if (region && !regionContains(region, centerMeters[0], centerMeters[1])) {
+        new Notice("Campaign Map: city center must be inside the district — ignored");
+        if (this.selectedFabricId === featureId) this.reselectController(feature); // snap the handle back
+        return false;
+      }
+      nextParams.center = centerMeters;
+    }
+    const parsedParams = algorithm.paramsSchema.parse(nextParams);
+    const newBlock: ProcgenBlock = { ...block, params: parsedParams };
+    await this.setRegionProcgen(feature, newBlock, block, true, true);
+    if (this.selectedFabricId === featureId) {
+      const updated = this.fabricCollection.features.find((f) => f.id === featureId);
+      if (updated) this.reselectController(updated);
+      this.refreshSelectionPanel();
+    }
+    return true;
   }
 
   private updateWarningBadge(): void {
@@ -2437,6 +3090,32 @@ export class MapView extends ItemView {
     const lngLat = e.lngLat;
     const point: [number, number] = [lngLat.lng, lngLat.lat];
     const menu = new Menu();
+
+    // Right-click a sketch feature (works OUTSIDE sketch mode too, plan 020
+    // §9): "Edit shape" enters sketch mode with it selected; a region also
+    // gets "City settings…" (its procgen section in the same panel). The pin/
+    // place-card/dropped-pin grammar below is untouched.
+    const fabricId = this.fabricFeatureIdAt(e.point);
+    const fabricFeature = fabricId
+      ? this.fabricCollection.features.find((f) => f.id === fabricId)
+      : undefined;
+    if (fabricFeature) {
+      menu.addItem((item) =>
+        item
+          .setTitle(`Edit ${fabricFeature.properties.kind} shape`)
+          .setIcon("pencil")
+          .onClick(() => void this.selectFeature(fabricFeature.id))
+      );
+      if (algorithmForKind(fabricFeature.properties.kind) && this.campaign.config.crs === "fictional") {
+        menu.addItem((item) =>
+          item
+            .setTitle("City settings…")
+            .setIcon("building-2")
+            .onClick(() => void this.selectFeature(fabricFeature.id))
+        );
+      }
+      menu.addSeparator();
+    }
     menu.addItem((item) =>
       item
         .setTitle("Add location here")
