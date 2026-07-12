@@ -247,3 +247,27 @@
 - **Gate modernization**: phase3 + phase4 still tested pre-plan-019 machinery (canonize commands, per-tier generate commands, the viewport dispatcher, band eviction) — stale since 019, passing only by state-dependent luck. Rewritten to assert the CURRENT contracts (canonize-gone, explicit-only pan, tier coexistence, request-bounded tile store, replay determinism on file records, regenerate-adapts-to-canon). procgen34's live na-grid domain moved to sketch-free ground (sketched pre-seeded roads legitimately jog a grid — the clean-flip assertion wants open land).
 - **Final board (fresh Obsidian process per gate — the documented long-session renderer degradation makes back-to-back gate runs in one process fail spuriously on render checks; restart clears it, unchanged since Phase 4):** unit suite 276/276 · phase0 10/10 · phase1 16/16 · phase2 15/15 · phase3 13/13 · phase4 11/11 · phase5 8/8 · styleLoad 5/5 · procgen30 13/13 · procgen31 11/11 · procgen32 12/12 · procgen33 11/11 · procgen34 12/12 · test:app 8/8.
 - Fixture care: gate runs drift dev-vault location notes (a connection-removal check ate Ashfall City's demo connections; a visibility write stamped Gatetown) — reverted; gates could use a fixture-restore epilogue someday.
+
+## 2026-07-12 — Plan 020 v4.0 (sketch-driven procgen regions: pure core) — deviations & judgment calls
+- **`generateCityNetwork` signature gained an explicit `profileId`** — the profile
+  used to ride on CityDomain; with regions it lives in registry params, so the
+  citynet entry takes it as an argument. The registry's `generate()` matches
+  plan 020 §5 exactly.
+- **Wall/ring wobble removed**: the ring road + wall now trace
+  `insetRing(region, …)` — the inset of the GM's sketched outline. Polar wobble
+  is meaningless on a hand-drawn boundary. Wall-quad count halves on the disc
+  fixture (fewer, longer segments); flag for aesthetic review at v4.2 screenshots.
+- **Real (latent) v3 bug fixed in growth**: the wall-crossing check ran on the
+  raw proposed segment only; snap/trim could then move an endpoint across the
+  ring. Exposed by inset-ring corners; now rechecked on the final segment with
+  the endpoint interval excluded (ring T-junctions survive). "No street crosses
+  the wall away from a gate" is now actually enforced.
+- **Wards on concave regions**: convex regions clip ward cells to the ring;
+  concave regions drop cells with any vertex outside (deterministic, may leave
+  coverage gaps near notches — known v1 limitation, screenshot check at v4.2).
+- **`interiorT` may dip slightly below 0 near the true pole** (10 m lattice
+  underestimates maxInteriorDistance); all consumers tolerate it; don't surface
+  raw values in UI without clamping.
+- Ruling trail: extra derived region fields, gate-as-ring-vertex representation,
+  `clipPolylineToRegion` multi-part arterials, concave ward strategy — all
+  orchestrator-approved before implementation.

@@ -5,12 +5,16 @@ import {
   FabricCollectionSchema,
   emptyFabric,
   isPolygonKind,
+  isProcgenRegion,
   makeFabricId,
   parseFabric,
   sketchUndoTarget,
   withFeature,
   withoutFeature,
+  withProcgen,
+  withoutProcgen,
   type FabricFeature,
+  type ProcgenBlock,
   type SketchLogEntryLike,
 } from "./fabric";
 
@@ -165,6 +169,66 @@ describe("sketchUndoTarget (plan 016 log-driven undo)", () => {
       add(roadFeature("a")),
     ];
     expect(sketchUndoTarget(log)?.id).toBe("a");
+  });
+});
+
+describe("procgen block (plan 020 §3.1)", () => {
+  const block: ProcgenBlock = {
+    algorithm: "city",
+    seed: 123456,
+    version: 1,
+    params: { profile: "euro-medieval" },
+  };
+
+  it("accepts a district with a procgen block; pre-020 features parse unchanged", () => {
+    const region = withProcgen(districtFeature(), block);
+    expect(FabricFeatureSchema.safeParse(region).success).toBe(true);
+    // A pre-020 feature (no procgen field) still parses.
+    expect(FabricFeatureSchema.safeParse(districtFeature()).success).toBe(true);
+  });
+
+  it("defaults version to 1 and rejects malformed blocks", () => {
+    const noVersion = {
+      ...districtFeature(),
+      properties: {
+        kind: "district",
+        procgen: { algorithm: "city", seed: 7, params: {} },
+      },
+    };
+    const parsed = FabricFeatureSchema.safeParse(noVersion);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.properties.procgen?.version).toBe(1);
+
+    const badSeed = {
+      ...districtFeature(),
+      properties: {
+        kind: "district",
+        procgen: { algorithm: "city", seed: 1.5, params: {} },
+      },
+    };
+    expect(FabricFeatureSchema.safeParse(badSeed).success).toBe(false);
+    const emptyAlgorithm = {
+      ...districtFeature(),
+      properties: {
+        kind: "district",
+        procgen: { algorithm: "", seed: 7, params: {} },
+      },
+    };
+    expect(FabricFeatureSchema.safeParse(emptyAlgorithm).success).toBe(false);
+  });
+
+  it("withProcgen / withoutProcgen are pure and invertible; isProcgenRegion tracks the block", () => {
+    const inert = districtFeature();
+    expect(isProcgenRegion(inert)).toBe(false);
+    const region = withProcgen(inert, block);
+    expect(isProcgenRegion(region)).toBe(true);
+    expect(region.properties.procgen).toEqual(block);
+    expect(inert.properties.procgen).toBeUndefined(); // input not mutated
+    const cleared = withoutProcgen(region);
+    expect(isProcgenRegion(cleared)).toBe(false);
+    expect(cleared.properties.procgen).toBeUndefined();
+    expect(region.properties.procgen).toEqual(block); // input not mutated
+    expect(cleared.properties.name).toBe("Old Town"); // rest of properties intact
   });
 });
 

@@ -1,25 +1,47 @@
 /**
- * Stage A skeleton (procgen v3 §5.1): the deterministic bones of a city —
- * radial arterials A*-routed from the center to the domain boundary, the
- * bridges where they cross sketched rivers, waterfront quay streets offset
- * from those rivers, a central plaza with landmark footprints facing it, and
- * (v3.3, profile-gated) the wall: a closed ring road through gate points
- * placed on each arterial at ring network-distance, with a wall band and gate
- * markers. Growth (v3.1) treats the wall as a barrier passable only at gates.
+ * Stage A skeleton (procgen v3 §5.1, generalized to regions in plan 020 §6):
+ * the deterministic bones of a city — radial arterials A*-routed from the
+ * generation center to the region boundary, the bridges where they cross
+ * sketched rivers, waterfront quay streets offset from those rivers, a
+ * central plaza with landmark footprints facing it, and (profile-gated) the
+ * wall: a ring road that TRACES the sketched region outline via
+ * `insetRing` (the plan-020 payoff feature), with gates where the arterials
+ * cross it and a wall band along it. Growth (v3.1) treats the wall as a
+ * barrier passable only at gates.
  *
- * Determinism/seam argument: every decision lives on the integer cost lattice
- * (D1). Destinations come from `routeHints` or from `hashSeed`-seeded compass
- * bearings — never insertion order (D2). The A* open set is popped by a *total*
- * comparator ending in raw cell coordinates, so a 32-bit hash collision at
- * equal `(f,g)` still resolves identically (D2). A* is bounded by
- * `MAX_ASTAR_EXPANSIONS` with a straight-line `degraded` fallback rather than a
- * throw (D3). This module returns raw world-coordinate geometry; `index.ts`
- * quantizes, ids, and canonically sorts it (D5). Because the whole skeleton is
- * a pure function of `(citySeed, domain, constraints)`, every tile that clips
- * it sees the identical bytes — that is the seam story for the city tier.
+ * Region mapping (plan 020 §6): the center is `generationCenter` — the area
+ * centroid, or the interior pole when a concave ring puts the centroid
+ * outside (deterministic fallback, documented in region.ts). Arterial
+ * endpoints come from `boundaryPointFrom(center, bearing)`. Every emitted
+ * polyline is clipped to the region (`clipPolylineToRegion`) so no skeleton
+ * geometry ever crosses the GM's line — a concave region can split an
+ * arterial into several parts, each carrying a stable `key` for its feature
+ * id. The wall is `insetRing(region, (1 − ringRadiusFrac) × effectiveRadius)`
+ * with the arterial crossings inserted as ring VERTICES in ring-parameter
+ * order (position-keyed, per plan-020 rulings), so every gate lies exactly
+ * on both the emitted ring and its arterial.
+ *
+ * Determinism/seam argument: every routing decision lives on the integer
+ * cost lattice (D1). Destinations come from `routeHints` or from
+ * `hashSeed`-seeded compass bearings — never insertion order (D2). The A*
+ * open set is popped by a *total* comparator ending in raw cell coordinates
+ * (D2). A* is bounded by `MAX_ASTAR_EXPANSIONS` with a straight-line
+ * `degraded` fallback rather than a throw (D3). Gate/clip intersections are
+ * closed-form segment solves on deterministic inputs (D4); this module
+ * returns raw world-coordinate geometry and `index.ts` quantizes, ids, and
+ * canonically sorts it (D5) — except gate points and the inset ring, which
+ * arrive pre-quantized so "gate === ring vertex" holds bit-exactly. Because
+ * the whole skeleton is a pure function of `(citySeed, region, constraints)`,
+ * every tile that clips it sees identical bytes — the city-tier seam story.
  */
 import { hashSeed, mulberry32 } from "../rng";
-import type { CityDomain } from "./domain";
+import {
+  boundaryPointFrom,
+  clipPolylineToRegion,
+  generationCenter,
+  insetRing,
+  type ProcgenRegion,
+} from "../region";
 import type { CityProfile } from "./profiles";
 import type { CostField } from "./costField";
 import { COST_CELL_M } from "./costField";
@@ -28,7 +50,6 @@ import { chaikinSmooth } from "../city/corridor";
 import {
   blockedByWater,
   indexFabricConstraints,
-  nearestOnLine,
   RIVER_HALF_WIDTH,
 } from "../fabricConstraints";
 
@@ -47,25 +68,26 @@ export const BRIDGE_SHARE_DIST_M = 40;
 export const WALL_HALF_WIDTH_M = 3;
 /** Wall-band gap either side of a gate point, meters (the door opening). */
 export const GATE_GAP_M = 10;
-/** Ring polar sampling resolution (samples per full circle before gates). */
-export const RING_SAMPLES = 64;
-/** Radial wobble amplitude as a fraction of the ring radius. */
-export const RING_WOBBLE_FRAC = 0.03;
 /** Hashed chance a landmark beyond the first two places at all (v3.3 pass). */
 export const EXTRA_LANDMARK_P = 0.7;
 
 export interface ArterialPath {
   coords: Pt[];
   degraded: boolean;
+  /** Stable position-derived identity: `<bearingIndex>:<clipPartIndex>` — a
+   * concave region can clip one routed arterial into several parts. */
+  key: string;
 }
 export interface LandmarkFootprint {
   kind: import("./profiles").LandmarkKind;
   ring: Pt[];
 }
 export interface WallOutput {
-  /** Closed ring-road polyline (first === last), passing through every gate. */
+  /** Closed ring-road polyline (first === last): the inset ring with every
+   * gate crossing inserted as a vertex. mm-quantized. */
   ring: Pt[];
-  /** Gate points — exactly the ring×arterial crossings (§5.1.5). */
+  /** Gate points — exactly the ring×arterial crossings, and exactly ring
+   * vertices (§5.1.5, plan 020). mm-quantized. */
   gates: Pt[];
   /** Wall band as per-segment quads (closed rings): clean tile clipping, no
    * polygon holes, and water/gate gaps fall out as omitted segments. */
@@ -77,8 +99,12 @@ export interface SkeletonOutput {
   waterfront: { coords: Pt[] }[];
   plaza: Pt[];
   landmarks: LandmarkFootprint[];
-  /** null when the profile (or its hashed wall roll) grows no wall. */
+  /** null when the profile (or its hashed wall roll, or a degenerate inset)
+   * grows no wall. */
   wall: WallOutput | null;
+  /** The generation center the skeleton was built around (centroid or
+   * interior pole) — consumed by growth's grid prior and wards' market tag. */
+  center: Pt;
 }
 
 // Fixed neighbor order N, E, S, W, NE, SE, SW, NW (y up) — §5.1.3.
@@ -107,8 +133,8 @@ interface OpenNode {
 }
 
 /** Total order: f, then g, then hash, then raw cellX, cellY. The trailing raw
- * coordinates make the comparator total — a 32-bit hash collision cannot leave
- * two nodes unordered (D2). */
+ * coordinates make the comparator total — a 32-bit hash collision at equal
+ * `(f,g)` still resolves identically (D2). */
 function lessThan(a: OpenNode, b: OpenNode): boolean {
   if (a.f !== b.f) return a.f < b.f;
   if (a.g !== b.g) return a.g < b.g;
@@ -238,13 +264,19 @@ function straightLine(start: Cell, goal: Cell): Cell[] {
 
 // ── Destinations ───────────────────────────────────────────────────────────
 
-/** Arterial endpoint bearings (radians). From `routeHints` if present, else
- * `profile.arterialCount` compass bearings spread evenly with ≤30% jitter,
- * each seeded by `hashSeed(citySeed,"bearing",i)` (D2). */
-function destinationBearings(citySeed: number, domain: CityDomain, profile: CityProfile, constraints: GenerationConstraints): number[] {
+/** Arterial endpoint bearings (radians) from the generation center. From
+ * `routeHints` if present, else `profile.arterialCount` compass bearings
+ * spread evenly with ≤30% jitter, each seeded by
+ * `hashSeed(citySeed,"bearing",i)` (D2). */
+function destinationBearings(
+  citySeed: number,
+  center: Pt,
+  profile: CityProfile,
+  constraints: GenerationConstraints
+): number[] {
   const hints = constraints.routeHints;
   if (hints && hints.length > 0) {
-    return hints.map((h) => Math.atan2(h.y - domain.cy, h.x - domain.cx));
+    return hints.map((h) => Math.atan2(h.y - center[1], h.x - center[0]));
   }
   const n = Math.max(1, profile.arterialCount);
   const spacing = (2 * Math.PI) / n;
@@ -315,75 +347,18 @@ function offsetPolyline(line: Pt[], dist: number, side: number): Pt[] | null {
   return out;
 }
 
-/** The parameter interval [lo,hi] ⊂ [0,1] of segment a→b that lies inside the
- * disc, or null if none. Handles the both-endpoints-outside chord case (a river
- * spanning the world crosses the disc with both ends far outside it). */
-function insideInterval(a: Pt, b: Pt, cx: number, cy: number, r: number): [number, number] | null {
-  const inside = (p: Pt): boolean => (p[0] - cx) ** 2 + (p[1] - cy) ** 2 <= r * r;
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const fx = a[0] - cx;
-  const fy = a[1] - cy;
-  const A = dx * dx + dy * dy;
-  const B = 2 * (fx * dx + fy * dy);
-  const C = fx * fx + fy * fy - r * r;
-  const disc = B * B - 4 * A * C;
-  if (A === 0 || disc < 0) return inside(a) ? [0, 1] : null; // line misses circle
-  const sq = Math.sqrt(disc);
-  const t1 = (-B - sq) / (2 * A);
-  const t2 = (-B + sq) / (2 * A);
-  const lo = Math.max(0, t1);
-  const hi = Math.min(1, t2);
-  return lo < hi ? [lo, hi] : null;
-}
-
-/** Clip a polyline to the domain disc, returning the contiguous runs inside.
- * Mirrors `clipPolylineToBBox`'s run-splitting so a quay that leaves and
- * re-enters the disc yields separate parts. Exported for `growth.ts`, which
- * pre-seeds sketched roads into the street graph clipped the same way. */
-export function clipToDisc(line: Pt[], cx: number, cy: number, r: number): Pt[][] {
-  const at = (a: Pt, b: Pt, t: number): Pt => [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
-  const runs: Pt[][] = [];
-  let run: Pt[] = [];
-  for (let i = 0; i < line.length - 1; i++) {
-    const a = line[i];
-    const b = line[i + 1];
-    const interval = insideInterval(a, b, cx, cy, r);
-    if (!interval) {
-      if (run.length >= 2) runs.push(run);
-      run = [];
-      continue;
-    }
-    const [lo, hi] = interval;
-    const pLo = at(a, b, lo);
-    const pHi = at(a, b, hi);
-    if (run.length === 0) {
-      run.push(pLo);
-    } else {
-      const last = run[run.length - 1];
-      if (Math.hypot(last[0] - pLo[0], last[1] - pLo[1]) > 1e-9) {
-        if (run.length >= 2) runs.push(run);
-        run = [pLo];
-      }
-    }
-    run.push(pHi);
-  }
-  if (run.length >= 2) runs.push(run);
-  return runs;
-}
-
 // ── Plaza + landmarks ────────────────────────────────────────────────────
 
-/** Central plaza: an 8-gon around the domain center, radius `plazaRadius` with
- * per-vertex hash jitter (§5.1.6). Closed ring. */
-function buildPlaza(citySeed: number, domain: CityDomain, profile: CityProfile): Pt[] {
+/** Central plaza: an 8-gon around the generation center, radius `plazaRadius`
+ * with per-vertex hash jitter (§5.1.6). Closed ring. */
+function buildPlaza(citySeed: number, center: Pt, profile: CityProfile): Pt[] {
   const ring: Pt[] = [];
   const sides = 8;
   for (let i = 0; i < sides; i++) {
     const rng = mulberry32(hashSeed(citySeed, "plaza", i));
     const ang = (i / sides) * 2 * Math.PI;
     const rad = profile.plazaRadius * (0.85 + 0.3 * rng());
-    ring.push([domain.cx + rad * Math.cos(ang), domain.cy + rad * Math.sin(ang)]);
+    ring.push([center[0] + rad * Math.cos(ang), center[1] + rad * Math.sin(ang)]);
   }
   ring.push(ring[0]);
   return ring;
@@ -399,9 +374,9 @@ const LANDMARK_HALVES: Record<import("./profiles").LandmarkKind, { w: number; d:
 
 /** Landmark footprints adjacent to the plaza, each a rectangle offset outward
  * at a hashed bearing and oriented to face the plaza (§5.1.6). The first two
- * of `profile.landmarks` always place; extras (v3.3 landmark pass) place with
- * a hashed chance, one ring farther out, for per-domain variety. */
-function buildLandmarks(citySeed: number, domain: CityDomain, profile: CityProfile): LandmarkFootprint[] {
+ * of `profile.landmarks` always place; extras (index ≥ 2, v3.3 landmark pass)
+ * place with a hashed chance, one ring farther out, for per-domain variety. */
+function buildLandmarks(citySeed: number, center: Pt, profile: CityProfile): LandmarkFootprint[] {
   const out: LandmarkFootprint[] = [];
   const kinds = profile.landmarks;
   for (let i = 0; i < kinds.length; i++) {
@@ -412,8 +387,8 @@ function buildLandmarks(citySeed: number, domain: CityDomain, profile: CityProfi
     const half = LANDMARK_HALVES[kind];
     const gap = 6 + (i >= 2 ? 14 : 0); // extras sit one ring out from the plaza
     const dist = profile.plazaRadius + gap + half.d;
-    const bcx = domain.cx + dist * Math.cos(bearing);
-    const bcy = domain.cy + dist * Math.sin(bearing);
+    const bcx = center[0] + dist * Math.cos(bearing);
+    const bcy = center[1] + dist * Math.sin(bearing);
     // Local axes: `along` faces the plaza (toward center), `across` is tangent.
     const ax = -Math.cos(bearing);
     const ay = -Math.sin(bearing);
@@ -430,37 +405,68 @@ function buildLandmarks(citySeed: number, domain: CityDomain, profile: CityProfi
   return out;
 }
 
-// ── Wall / ring / gates (§5.1.5, v3.3) ─────────────────────────────────────
+// ── Wall / ring / gates (§5.1.5, region form per plan 020 §6) ──────────────
 
-/** Point at arc-length `dist` along a polyline, or null if the line is shorter. */
-function pointAtArcLength(coords: Pt[], dist: number): Pt | null {
-  let remaining = dist;
-  for (let i = 1; i < coords.length; i++) {
-    const [ax, ay] = coords[i - 1];
-    const [bx, by] = coords[i];
-    const seg = Math.hypot(bx - ax, by - ay);
-    if (remaining <= seg) {
-      const t = seg === 0 ? 0 : remaining / seg;
-      return [ax + t * (bx - ax), ay + t * (by - ay)];
+/** mm quantization for gate points (matches index.ts's emission q). */
+function qmm(v: number): number {
+  return Math.round(v * 1000) / 1000;
+}
+
+interface GateHit {
+  p: Pt; // mm-quantized crossing point
+  ringEdge: number; // index into the inset ring's edges
+  u: number; // parameter along that ring edge
+}
+
+/** First crossing of an arterial polyline with the inset ring, walking the
+ * arterial from its start (the center end): the gate where the road leaves
+ * the walled core. Deterministic: segments in order, min arterial-parameter,
+ * ties by ring-edge index. */
+function firstRingCrossing(arterial: Pt[], ring: Pt[]): GateHit | null {
+  for (let i = 0; i < arterial.length - 1; i++) {
+    const [ax, ay] = arterial[i];
+    const [bx, by] = arterial[i + 1];
+    let best: { t: number; hit: GateHit } | null = null;
+    for (let j = 0; j < ring.length - 1; j++) {
+      const [px, py] = ring[j];
+      const [qx, qy] = ring[j + 1];
+      const d = (bx - ax) * (qy - py) - (by - ay) * (qx - px);
+      if (d === 0) continue;
+      const t = ((px - ax) * (qy - py) - (py - ay) * (qx - px)) / d;
+      const u = ((px - ax) * (by - ay) - (py - ay) * (bx - ax)) / d;
+      if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+      if (best === null || t < best.t || (t === best.t && j < best.hit.ringEdge)) {
+        best = {
+          t,
+          hit: {
+            p: [qmm(ax + t * (bx - ax)), qmm(ay + t * (by - ay))],
+            ringEdge: j,
+            u,
+          },
+        };
+      }
     }
-    remaining -= seg;
+    if (best) return best.hit;
   }
   return null;
 }
 
 /**
- * Build the ring road, gates, and wall band. Gates sit on each arterial at
- * NETWORK distance `ringRadiusFrac × radius` from the center (arc length along
- * the arterial IS the §5.1.5 network-distance field restricted to the
- * skeleton); the closed ring interpolates radially between consecutive gates
- * (sorted by bearing — D2) with hashed wobble that is zero AT the gates, so
- * every gate lies exactly on both the ring and its arterial. The wall band is
- * per-segment quads, omitted inside sketched water and around gates — the
- * ring POLYLINE stays topologically closed regardless (§ v3.3 brief).
+ * Build the ring road, gates, and wall band (plan 020 §6): the ring is
+ * `insetRing(region, (1 − ringRadiusFrac) × effectiveRadius)` — it traces
+ * the sketched outline; the profile's old center-distance fraction becomes a
+ * boundary inset scaled off effectiveRadius. Gates are the first crossing of
+ * each (clipped) arterial with that ring, INSERTED AS RING VERTICES in
+ * ring-parameter order — position-keyed insertion (plan-020 ruling), so
+ * every gate lies bit-exactly on the emitted ring polyline and exactly on
+ * its arterial. The wall band is per-segment quads, omitted inside sketched
+ * water and around gates — the ring POLYLINE stays topologically closed.
+ * Degenerate insets (concave rings, oversized insets) come back [] from
+ * insetRing and mean "no wall" — never a throw.
  */
 function buildWall(
   citySeed: number,
-  domain: CityDomain,
+  region: ProcgenRegion,
   profile: CityProfile,
   arterials: ArterialPath[],
   blockedAt: (x: number, y: number) => boolean
@@ -469,47 +475,43 @@ function buildWall(
     profile.hasWall || (profile.wallChance > 0 && mulberry32(hashSeed(citySeed, "wall"))() < profile.wallChance);
   if (!wantWall) return null;
 
-  const targetDist = profile.ringRadiusFrac * domain.radius;
-  if (targetDist <= 0) return null;
+  const inset = (1 - profile.ringRadiusFrac) * region.effectiveRadius;
+  if (inset <= 0 || profile.ringRadiusFrac <= 0) return null;
+  const base = insetRing(region, inset);
+  if (base.length < 4) return null; // degenerate inset — no wall
 
-  // Gates: one per arterial that reaches ring distance, sorted by bearing.
-  const gates: { p: Pt; bearing: number; r: number }[] = [];
+  // Gates: first ring crossing per arterial part. Dedupe identical points
+  // (two parts of one clipped arterial can cross at the same spot).
+  const hits: GateHit[] = [];
+  const seen = new Set<string>();
   for (const art of arterials) {
-    const p = pointAtArcLength(art.coords, targetDist);
-    if (!p) continue;
-    gates.push({
-      p,
-      bearing: Math.atan2(p[1] - domain.cy, p[0] - domain.cx),
-      r: Math.hypot(p[0] - domain.cx, p[1] - domain.cy),
-    });
+    const hit = firstRingCrossing(art.coords, base);
+    if (!hit) continue;
+    const key = `${hit.p[0]},${hit.p[1]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    hits.push(hit);
   }
-  if (gates.length < 3) return null; // no closed ring worth building
-  gates.sort((a, b) => a.bearing - b.bearing || a.p[0] - b.p[0] || a.p[1] - b.p[1]);
+  if (hits.length < 3) return null; // no closed ring worth building
 
-  // Ring polyline: polar interpolation gate→gate with smooth radial blend and
-  // hashed wobble vanishing at both gates (sin envelope).
+  // Insert gates as ring vertices in ring-parameter order (edge index, then
+  // parameter along the edge, then coordinates — total order, D2).
+  hits.sort((a, b) => a.ringEdge - b.ringEdge || a.u - b.u || a.p[0] - b.p[0] || a.p[1] - b.p[1]);
   const ring: Pt[] = [];
-  const n = gates.length;
-  for (let i = 0; i < n; i++) {
-    const g0 = gates[i];
-    const g1 = gates[(i + 1) % n];
-    let dTheta = g1.bearing - g0.bearing;
-    if (dTheta <= 0) dTheta += 2 * Math.PI;
-    const steps = Math.max(2, Math.round((dTheta / (2 * Math.PI)) * RING_SAMPLES));
-    for (let k = 0; k < steps; k++) {
-      const f = k / steps;
-      const theta = g0.bearing + dTheta * f;
-      const smooth = f * f * (3 - 2 * f);
-      const wobbleRng = mulberry32(hashSeed(citySeed, "ringwob", i, k));
-      const wobble = k === 0 ? 0 : (wobbleRng() - 0.5) * 2 * RING_WOBBLE_FRAC * targetDist * Math.sin(Math.PI * f);
-      const r = g0.r + (g1.r - g0.r) * smooth + wobble;
-      ring.push([domain.cx + r * Math.cos(theta), domain.cy + r * Math.sin(theta)]);
+  let hi = 0;
+  for (let j = 0; j < base.length - 1; j++) {
+    ring.push(base[j]);
+    while (hi < hits.length && hits[hi].ringEdge === j) {
+      const p = hits[hi].p;
+      const last = ring[ring.length - 1];
+      if (last[0] !== p[0] || last[1] !== p[1]) ring.push(p);
+      hi++;
     }
   }
   ring.push(ring[0]); // closed
 
   // Wall band quads per ring segment; gaps at gates and over sketched water.
-  const gatePts = gates.map((g) => g.p);
+  const gatePts = hits.map((h) => h.p);
   const wallSegments: Pt[][] = [];
   for (let i = 0; i < ring.length - 1; i++) {
     const a = ring[i];
@@ -539,31 +541,40 @@ function buildWall(
 // ── Orchestration ──────────────────────────────────────────────────────────
 
 /**
- * Build the whole Stage-A skeleton for a domain. Pure — reads only its
- * arguments and the cost field derived from them. Returns raw world geometry;
- * `index.ts` handles quantization, ids, and canonical ordering.
+ * Build the whole Stage-A skeleton for a region. Pure — reads only its
+ * arguments and the cost field derived from them. Returns raw world geometry
+ * (except the pre-quantized wall ring/gates); `index.ts` handles
+ * quantization, ids, and canonical ordering.
  */
 export function buildSkeleton(
   citySeed: number,
-  domain: CityDomain,
+  region: ProcgenRegion,
   profile: CityProfile,
   constraints: GenerationConstraints,
   cost: CostField
 ): SkeletonOutput {
-  const centerCell: Cell = { cx: cellOf(domain.cx), cy: cellOf(domain.cy) };
+  const center = generationCenter(region);
+  const centerCell: Cell = { cx: cellOf(center[0]), cy: cellOf(center[1]) };
 
-  // 1) Arterials + their bridge sub-spans.
-  const bearings = destinationBearings(citySeed, domain, profile, constraints);
+  // 1) Arterials + their bridge sub-spans. Endpoints are the first boundary
+  // crossing of each bearing ray from the center; the routed+smoothed path
+  // is clipped to the region so no part escapes the sketch (a concave region
+  // can split one arterial into several keyed parts).
+  const bearings = destinationBearings(citySeed, center, profile, constraints);
   const arterials: ArterialPath[] = [];
   const rawBridgeSpans: { cells: Cell[]; crossing: Pt }[] = [];
-  bearings.forEach((theta) => {
-    const ex = domain.cx + domain.radius * Math.cos(theta);
-    const ey = domain.cy + domain.radius * Math.sin(theta);
-    const goalCell: Cell = { cx: cellOf(ex), cy: cellOf(ey) };
+  bearings.forEach((theta, i) => {
+    const endpoint = boundaryPointFrom(region, center[0], center[1], theta);
+    if (!endpoint) return; // cannot happen for a contained center; defensive
+    const goalCell: Cell = { cx: cellOf(endpoint[0]), cy: cellOf(endpoint[1]) };
     const { path, degraded } = astar(citySeed, centerCell, goalCell, cost);
     if (path.length < 2) return;
     const world: Pt[] = path.map((c) => [worldOf(c.cx), worldOf(c.cy)]);
-    arterials.push({ coords: chaikinSmooth(world, ARTERIAL_SMOOTH_ITERATIONS), degraded });
+    const smooth = chaikinSmooth(world, ARTERIAL_SMOOTH_ITERATIONS);
+    clipPolylineToRegion(region, smooth).forEach((part, partIndex) => {
+      if (part.length < 2) return;
+      arterials.push({ coords: part, degraded, key: `${i}:${partIndex}` });
+    });
     for (const span of bridgeSpans(path, cost)) {
       const mid = span[Math.floor(span.length / 2)];
       rawBridgeSpans.push({ cells: span, crossing: [worldOf(mid.cx), worldOf(mid.cy)] });
@@ -572,27 +583,31 @@ export function buildSkeleton(
 
   // Share bridges: crossings within BRIDGE_SHARE_DIST keep one span. Process in
   // a canonical order (crossing x, then y) so the survivor is deterministic.
+  // Bridge polylines are clipped to the region like everything else.
   rawBridgeSpans.sort((a, b) => a.crossing[0] - b.crossing[0] || a.crossing[1] - b.crossing[1]);
   const bridges: { coords: Pt[] }[] = [];
   const kept: Pt[] = [];
   for (const cand of rawBridgeSpans) {
     if (kept.some((k) => Math.hypot(k[0] - cand.crossing[0], k[1] - cand.crossing[1]) < BRIDGE_SHARE_DIST_M)) continue;
     kept.push(cand.crossing);
-    bridges.push({ coords: cand.cells.map((c) => [worldOf(c.cx), worldOf(c.cy)]) });
+    const world: Pt[] = cand.cells.map((c) => [worldOf(c.cx), worldOf(c.cy)]);
+    for (const run of clipPolylineToRegion(region, world)) {
+      if (run.length >= 2) bridges.push({ coords: run });
+    }
   }
 
   // 2) Waterfront quay streets (euro profiles only, via non-empty offsets).
+  // No distance pre-filter: a river that never enters the region clips to
+  // nothing, which is the same answer the old disc pre-filter gave.
   const waterfront: { coords: Pt[] }[] = [];
   if (profile.waterfrontOffsets.length > 0) {
     const idx = indexFabricConstraints(constraints.fabricFeatures);
     for (const river of idx.riverLines) {
-      // Only rivers that actually reach the domain get quays.
-      if (nearestOnLine(river, domain.cx, domain.cy).dist > domain.radius) continue;
       for (const off of profile.waterfrontOffsets) {
         for (const side of [1, -1]) {
           const offsetLine = offsetPolyline(river, off, side);
           if (!offsetLine) continue;
-          for (const run of clipToDisc(offsetLine, domain.cx, domain.cy, domain.radius)) {
+          for (const run of clipPolylineToRegion(region, offsetLine)) {
             if (run.length >= 2) waterfront.push({ coords: run });
           }
         }
@@ -600,16 +615,16 @@ export function buildSkeleton(
     }
   }
 
-  // 3) Plaza + landmarks.
-  const plaza = buildPlaza(citySeed, domain, profile);
-  const landmarks = buildLandmarks(citySeed, domain, profile);
+  // 3) Plaza + landmarks around the generation center.
+  const plaza = buildPlaza(citySeed, center, profile);
+  const landmarks = buildLandmarks(citySeed, center, profile);
 
-  // 4) Wall / ring / gates (v3.3, profile-gated). Water test reuses the
-  // fabric index so the wall band is segmented at rivers/lakes.
+  // 4) Wall / ring / gates (plan 020 §6: the wall traces the sketch). Water
+  // test reuses the fabric index so the wall band is segmented at rivers.
   const wallIdx = indexFabricConstraints(constraints.fabricFeatures);
-  const wall = buildWall(citySeed, domain, profile, arterials, (x, y) =>
+  const wall = buildWall(citySeed, region, profile, arterials, (x, y) =>
     blockedByWater(wallIdx, x, y)
   );
 
-  return { arterials, bridges, waterfront, plaza, landmarks, wall };
+  return { arterials, bridges, waterfront, plaza, landmarks, wall, center };
 }

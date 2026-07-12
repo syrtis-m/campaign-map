@@ -1,41 +1,51 @@
 /**
- * Wards (procgen v3 §5.3.4): the district-Voronoi concept survives at ward
- * scale only — a handful of cells over Stage-A sites (plaza center + points
- * along each arterial), tagged market/craft/temple/slum by hash and
- * waterfront adjacency, clipped to the domain disc. Themes may tint them
- * subtly; blocks do NOT derive from wards (they come from faces.ts).
+ * Wards (procgen v3 §5.3.4, regions since plan 020 §6): the district-Voronoi
+ * concept survives at ward scale only — a handful of cells over Stage-A
+ * sites (plaza center + points along each arterial), tagged
+ * market/craft/temple/slum by hash and waterfront adjacency, clipped to the
+ * sketched region. Themes may tint them subtly; blocks do NOT derive from
+ * wards (they come from faces.ts).
+ *
+ * Region clipping (plan-020 approved v1 tradeoff): a CONVEX region ring is
+ * an exact Sutherland-Hodgman clip target, so cells are clipped to it (the
+ * disc-parity path — the migrated 32-gon is convex). A CONCAVE ring is not,
+ * so cells with ANY vertex outside the region are dropped whole —
+ * deterministic but conservative; wards near concave notches are simply
+ * absent. KNOWN v1 LIMITATION: candidate for a later polygon-boolean pass.
+ * Determinism over completeness.
+ *
+ * RETIRED (plan 020 §6): the plan-019 "sketched district excludes ward
+ * sites" contract. A district polygon now IS the city container — it cannot
+ * simultaneously be a hole in its own city; `districtRings` left
+ * FabricConstraintIndex with it.
  *
  * Determinism argument: sites are position-derived from the skeleton
- * (arc-length points on arterial polylines + the domain center), canonically
- * sorted and deduplicated before Delaunay (d3-delaunay is deterministic for
- * identical input arrays — same discipline as `voronoiCells.ts`, which this
- * mirrors for explicit site lists instead of jittered-grid sites). Tags hash
- * on the site's position key, never its index in any incidental order (D2).
+ * (arc-length points on arterial polylines + the generation center),
+ * canonically sorted and deduplicated before Delaunay (d3-delaunay is
+ * deterministic for identical input arrays — same discipline as
+ * `voronoiCells.ts`). Tags hash on the site's position key, never its index
+ * in any incidental order (D2).
  */
 import { Delaunay } from "d3-delaunay";
 import { hashSeed, mulberry32, pick } from "../rng";
-import { indexFabricConstraints, insideSketchedDistrict, pointInRing } from "../fabricConstraints";
+import { pointInRing } from "../fabricConstraints";
 import { ensureClosedRing } from "../voronoiCells";
-import type { GenerationConstraints } from "../types";
-import type { CityDomain } from "./domain";
-import { domainBBox } from "./domain";
+import { regionContains, ringIsConvex, type ProcgenRegion } from "../region";
 import type { SkeletonOutput } from "./skeleton";
 
 type Pt = [number, number];
 
-/** Fractions of each arterial's arc length where ward sites sit. */
+/** Fractions of each arterial part's arc length where ward sites sit. */
 export const WARD_SITE_FRACTIONS = [0.45, 0.8] as const;
 /** Two sites closer than this merge (first in canonical order wins). */
 export const WARD_SITE_MIN_SPACING_M = 60;
-/** Sides of the polygon approximating the domain disc for ward clipping. */
-export const DISC_CLIP_SIDES = 48;
 /** Hashed-pick ward tags; "gate" and "market" also arrive via adjacency
  * overrides (gate wards contain a wall gate; the market ward holds the plaza). */
 export const WARD_TAGS = ["craft", "temple", "slum", "market"] as const;
 export type WardTag = (typeof WARD_TAGS)[number] | "gate";
 
 export interface Ward {
-  /** Closed ring, world meters, clipped to the domain disc. */
+  /** Closed ring, world meters, inside the region. */
   ring: Pt[];
   tag: WardTag;
   /** Position-derived site identity (feature-id hash input). */
@@ -98,69 +108,59 @@ function clipToConvex(ring: Pt[], clip: Pt[]): Pt[] {
   return poly;
 }
 
-/** Regular CCW polygon approximating the domain disc. */
-function discPolygon(domain: CityDomain): Pt[] {
-  const ring: Pt[] = [];
-  for (let i = 0; i < DISC_CLIP_SIDES; i++) {
-    const a = (i / DISC_CLIP_SIDES) * 2 * Math.PI;
-    ring.push([domain.cx + domain.radius * Math.cos(a), domain.cy + domain.radius * Math.sin(a)]);
-  }
-  return ring;
-}
-
 /**
- * Build the ward polygons for a domain. Pure function of
- * (citySeed, domain, skeleton, constraints).
- *
- * Sketched-district contract (plan 019, preserved through the v3 rewrite):
- * a GM-drawn district polygon means "you've claimed that ground" — generated
- * ward SITES inside it are dropped, exactly as the deleted legacy district
- * generator dropped its Voronoi sites there. Pure predicate over world
- * coordinates + the whole fabric collection, so it is seam-safe.
+ * Build the ward polygons for a region. Pure function of
+ * (citySeed, region, skeleton).
  */
-export function buildWards(
-  citySeed: number,
-  domain: CityDomain,
-  skeleton: SkeletonOutput,
-  constraints?: GenerationConstraints
-): Ward[] {
-  const fabric = indexFabricConstraints(constraints?.fabricFeatures);
-  // Sites: plaza center + arc-length points along each arterial.
-  const raw: Pt[] = [[domain.cx, domain.cy]];
+export function buildWards(citySeed: number, region: ProcgenRegion, skeleton: SkeletonOutput): Ward[] {
+  // Sites: generation center + arc-length points along each arterial part.
+  const raw: Pt[] = [skeleton.center];
   for (const art of skeleton.arterials) {
     for (const frac of WARD_SITE_FRACTIONS) {
       const p = pointAtFraction(art.coords, frac);
       if (p) raw.push(p);
     }
   }
-  // Canonical order, then dedupe by min spacing (first of a cluster wins).
+  // Canonical order, then keep in-region sites, deduped by min spacing
+  // (first of a cluster wins).
   raw.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   const sites: Pt[] = [];
   for (const p of raw) {
-    if (insideSketchedDistrict(fabric, p[0], p[1])) continue;
+    if (!regionContains(region, p[0], p[1])) continue;
     if (sites.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < WARD_SITE_MIN_SPACING_M)) continue;
     sites.push(p);
   }
   if (sites.length < 3) return [];
 
-  const bbox = domainBBox(domain);
+  const bbox = region.bbox;
   const delaunay = Delaunay.from(sites);
   const voronoi = delaunay.voronoi([bbox.minX, bbox.minY, bbox.maxX, bbox.maxY]);
-  const disc = discPolygon(domain);
+  const convex = ringIsConvex(region.ring);
+  const clipRing = region.ring.slice(0, -1); // open CCW ring for the convex clip
 
   const wards: Ward[] = [];
   sites.forEach((site, i) => {
     const cell = voronoi.cellPolygon(i) as Pt[] | null;
     if (!cell) return;
-    const clipped = clipToConvex(cell, disc);
+    let clipped: Pt[];
+    if (convex) {
+      clipped = clipToConvex(cell, clipRing);
+    } else {
+      // Concave v1 rule (module JSDoc): keep the cell only if every vertex is
+      // inside the region — drop it whole otherwise.
+      const open = cell.length >= 2 && cell[0][0] === cell[cell.length - 1][0] && cell[0][1] === cell[cell.length - 1][1]
+        ? cell.slice(0, -1)
+        : cell;
+      clipped = open.every(([x, y]) => regionContains(region, x, y)) ? open : [];
+    }
     if (clipped.length < 3) return;
     const siteKey = `${Math.round(site[0] * 100)},${Math.round(site[1] * 100)}`;
 
-    // Tag priority: plaza cell = market; a cell containing a wall gate =
-    // gate ward (v3.3); waterfront-adjacent cells lean craft (quays mean
-    // trade); the rest hash on the site position.
+    // Tag priority: the generation-center cell = market; a cell containing a
+    // wall gate = gate ward (v3.3); waterfront-adjacent cells lean craft
+    // (quays mean trade); the rest hash on the site position.
     let tag: WardTag;
-    if (pointInRing(clipped, domain.cx, domain.cy)) {
+    if (pointInRing(clipped, skeleton.center[0], skeleton.center[1])) {
       tag = "market";
     } else if (skeleton.wall && skeleton.wall.gates.some(([x, y]) => pointInRing(clipped, x, y))) {
       tag = "gate";

@@ -20,9 +20,11 @@ export interface GenerationConstraints {
    * worldBounds, passed WHOLE to every tile (never pre-clipped, like a
    * corridor in plan 014) or adjacent tiles would derive different fields
    * and break seams. Water/rivers block streets and district sites; roads
-   * steer the street field; walls stop streets; sketched districts exclude
-   * generated district sites. `fabric.ts` is a pure zod leaf, so this import
-   * keeps generators host-agnostic. */
+   * steer the street field; walls stop streets. Sketched districts are NOT
+   * constraints since plan 020 — a district polygon is a procgen REGION
+   * (the container generation runs inside), handled by the region/registry
+   * machinery, not by this list's constraint index. `fabric.ts` is a pure
+   * zod leaf, so this import keeps generators host-agnostic. */
   fabricFeatures?: FabricFeature[];
   /** Naming culture genre for any generator that pre-names its output (e.g.
    * settlements) — defaults per-generator if omitted. */

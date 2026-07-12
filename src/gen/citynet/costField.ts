@@ -1,21 +1,21 @@
 /**
- * Cost lattice for the arterial A* (procgen v3 §5.1.1): a world-anchored 10 m
- * grid over `domainBBox(d, 200)` whose per-cell cost encodes where roads want
- * to go — cheap on flat open ground, expensive across a river (so crossings
- * concentrate into bridges), impassable through a lake, and steering clear of
- * the GM's pinned Locations (never pave canon).
+ * Cost lattice for the arterial A* (procgen v3 §5.1.1, regions since plan
+ * 020 §6): a world-anchored 10 m grid over `region.bbox + 200 m` whose
+ * per-cell cost encodes where roads want to go — cheap on flat open ground,
+ * expensive across a river (so crossings concentrate into bridges),
+ * impassable through a lake, and steering clear of the GM's pinned Locations
+ * (never pave canon).
  *
  * Determinism/seam argument: `cellCost(cellX, cellY)` is a pure function of the
  * integer cell address and the closed-over constraints — height noise, sketched
  * water/river geometry, canon points. It is world-anchored (cell → world is
- * `cell × 10 m`, independent of any tile or domain offset), so the same cell
+ * `cell × 10 m`, independent of any tile or region offset), so the same cell
  * costs the same everywhere and A* over it is reproducible byte-for-byte after
  * a cache delete (D1 — decisions live on the integer lattice; D6 — no hidden
  * inputs). `heightAt` uses `citySeed` because the pure contract exposes no
  * campaignSeed; the field is still fully deterministic (see DECISIONS.md).
  */
-import type { CityDomain } from "./domain";
-import { domainBBox } from "./domain";
+import { bboxWithMargin, type ProcgenRegion } from "../region";
 import type { GenerationConstraints } from "../types";
 import {
   indexFabricConstraints,
@@ -28,7 +28,7 @@ import { heightAt } from "../world/heightmap";
 
 /** Cost-lattice spacing, meters. Cell `(cx,cy)` maps to world `(cx*10, cy*10)`. */
 export const COST_CELL_M = 10;
-/** Margin (meters) the cost field extends past the domain disc so A* can bend
+/** Margin (meters) the cost field extends past the region bbox so A* can bend
  * just outside it toward a boundary endpoint. */
 export const COST_FIELD_MARGIN_M = 200;
 /** Baseline traversal cost of an open, flat, dry, canon-free cell. */
@@ -92,20 +92,20 @@ function distToRiver(idx: FabricConstraintIndex, x: number, y: number): number {
 }
 
 /**
- * Build the cost field for a domain. Everything the closures need is captured
+ * Build the cost field for a region. Everything the closures need is captured
  * once; `cellCost` then samples height noise and the sketched-fabric index
  * purely by position. Coasts (water-polygon boundaries) are handled only as
  * impassable interiors in v3.0 — they get no bridge penalty band.
  */
 export function makeCostField(
   citySeed: number,
-  domain: CityDomain,
+  region: ProcgenRegion,
   constraints: GenerationConstraints
 ): CostField {
   const idx = indexFabricConstraints(constraints.fabricFeatures);
   const canon = canonPoints(constraints);
   const worldBounds = constraints.worldBounds;
-  const bbox = domainBBox(domain, COST_FIELD_MARGIN_M);
+  const bbox = bboxWithMargin(region.bbox, COST_FIELD_MARGIN_M);
   const cellBounds = {
     minX: Math.floor(bbox.minX / COST_CELL_M),
     minY: Math.floor(bbox.minY / COST_CELL_M),

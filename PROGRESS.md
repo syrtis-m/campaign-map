@@ -379,3 +379,20 @@ asserts `map.isStyleLoaded()` after opening each campaign.**
   for populate-area naming.
 - Suite: 240 tests green. Migration: old campaigns keep their notes; generated
   sprawl reappears only where the GM explicitly generates (README notes this).
+
+## Plan 020 — sketch-driven procgen regions (v4.0 done)
+- **v4.0 pure core (2026-07-12, committed)**: `src/gen/region.ts` (polygon
+  geometry: contains/distanceToBoundary/interiorT/insetRing/clipPolylineToRegion,
+  interior pole on a deterministic 10 m lattice), `src/gen/procgen/registry.ts`
+  (sketch-kind → algorithm; "city" registered for `district`), fabric `procgen`
+  block (algorithm/seed/version/params, pre-020 files parse unchanged), citynet
+  generalized disc→polygon (`regionId` replaces `domainId`; wall traces the
+  sketched boundary inset; all output strictly inside the polygon;
+  `districtRings` ward-exclusion retired). Hosts compile via
+  `generateCityNetworkForDomain` disc shim (v4.1 removes).
+- Gates: determinism byte-identical (hexagon + disc fixtures) · 2×2 seam
+  bit-identical · concave L-shape contained, no throw · disc-equivalence −1.2%
+  features vs v3, wall + 5 gates, density monotonic · 120-run 4-profile polygon
+  fuzz zero-throw · suite 306/306 · tsc + production build green.
+- Next: v4.1 host lifecycle (RegionProcgenModal, sketch-finish trigger, region
+  cache keys, replay from sketch layer, disc→district migration, gate procgen40).

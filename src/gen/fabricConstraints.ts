@@ -29,7 +29,6 @@ export interface FabricConstraintIndex {
   riverLines: Pt[][];
   roadLines: Pt[][];
   wallLines: Pt[][];
-  districtRings: Pt[][];
 }
 
 const EMPTY: FabricConstraintIndex = {
@@ -37,11 +36,13 @@ const EMPTY: FabricConstraintIndex = {
   riverLines: [],
   roadLines: [],
   wallLines: [],
-  districtRings: [],
 };
 
 /** Buckets fabric features by the constraint role their kind plays. Park
- * polygons impose nothing on generators (streets through a park are fine). */
+ * polygons impose nothing on generators (streets through a park are fine).
+ * District polygons impose nothing either since plan 020: a district is a
+ * PROCGEN REGION — the container city generation runs inside — not a
+ * constraint on it (the plan-019 ward-site exclusion is retired). */
 export function indexFabricConstraints(features: FabricFeature[] | undefined): FabricConstraintIndex {
   if (!features || features.length === 0) return EMPTY;
   const idx: FabricConstraintIndex = {
@@ -49,7 +50,6 @@ export function indexFabricConstraints(features: FabricFeature[] | undefined): F
     riverLines: [],
     roadLines: [],
     wallLines: [],
-    districtRings: [],
   };
   for (const f of features) {
     const g = f.geometry;
@@ -61,8 +61,6 @@ export function indexFabricConstraints(features: FabricFeature[] | undefined): F
       idx.roadLines.push(g.coordinates as Pt[]);
     } else if (f.properties.kind === "wall" && g.type === "LineString") {
       idx.wallLines.push(g.coordinates as Pt[]);
-    } else if (f.properties.kind === "district" && g.type === "Polygon") {
-      idx.districtRings.push(g.coordinates[0] as Pt[]);
     }
   }
   return idx;
@@ -108,10 +106,6 @@ export function blockedByWater(idx: FabricConstraintIndex, x: number, y: number)
     if (nearestOnLine(line, x, y).dist < RIVER_HALF_WIDTH) return true;
   }
   return false;
-}
-
-export function insideSketchedDistrict(idx: FabricConstraintIndex, x: number, y: number): boolean {
-  return idx.districtRings.some((ring) => pointInRing(ring, x, y));
 }
 
 function segmentsIntersect(p1: Pt, p2: Pt, p3: Pt, p4: Pt): boolean {

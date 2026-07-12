@@ -74,7 +74,7 @@ import {
   citySeedFor,
   domainBBox,
   domainsOverlap,
-  generateCityNetwork,
+  generateCityNetworkForDomain,
   makeDomain,
   DOMAIN_DEFAULT_RADIUS_M,
   DOMAIN_TILE_GENERATOR_IDS,
@@ -1385,7 +1385,7 @@ export class MapView extends ItemView {
     return (seed, dom, bbox, constraints) => {
       this.generatorRunCounter++;
       if (worker) return worker.generateNetwork(seed, dom, bbox, constraints);
-      return generateCityNetwork(citySeedFor(seed, dom), dom, constraints);
+      return generateCityNetworkForDomain(citySeedFor(seed, dom), dom, constraints);
     };
   }
 

@@ -1,9 +1,12 @@
 /**
- * Stage B growth loop (procgen v3 §5.2): Parish & Müller priority-queue street
- * growth with the classic local constraints — snap to node, cut crossings into
- * T-junctions, trim to edge interiors — seeded along the Stage-A skeleton and
- * run on the 1 cm integer lattice of `graph.ts`, inside the domain disc, until
- * `profile.maxSegments` or an empty queue (D3: budgets, not convergence).
+ * Stage B growth loop (procgen v3 §5.2, regions since plan 020 §6): Parish &
+ * Müller priority-queue street growth with the classic local constraints —
+ * snap to node, cut crossings into T-junctions, trim to edge interiors —
+ * seeded along the Stage-A skeleton and run on the 1 cm integer lattice of
+ * `graph.ts`, inside the sketched region polygon (endpoint containment PLUS
+ * a segment/boundary crossing test, so a street can never cut across a
+ * concave notch between two inside points), until `profile.maxSegments` or
+ * an empty queue (D3: budgets, not convergence).
  *
  * Determinism argument (§4, all six):
  *  - D1: every committed vertex is an int lattice point; all topology
@@ -22,7 +25,7 @@
  *  - D6: reads only its arguments — the per-candidate RNG streams derive from
  *    candidateId alone.
  *
- * Seam story unchanged: growth happens once per domain inside
+ * Seam story unchanged: growth happens once per region inside
  * `generateCityNetwork`; tiles clip the finished artifact.
  */
 import { hashSeed, mulberry32 } from "../rng";
@@ -32,16 +35,19 @@ import {
   crossesWall,
   fabricAngleSampler,
   indexFabricConstraints,
-  type FabricConstraintIndex,
 } from "../fabricConstraints";
+import {
+  clipPolylineToRegion,
+  regionContains,
+  segmentCrossesBoundary,
+  type ProcgenRegion,
+} from "../region";
 import { buildTensorField, sampleFieldAngle } from "../city/tensorField";
 import { chaikinSmooth } from "../city/corridor";
-import type { CityDomain } from "./domain";
 import type { CityProfile } from "./profiles";
 import { CANON_RADIUS_M } from "./costField";
 import { makeCityness, type CitynessFn } from "./cityness";
 import type { SkeletonOutput } from "./skeleton";
-import { clipToDisc } from "./skeleton";
 import { StreetGraph, toLattice, toMeters, type GraphNode } from "./graph";
 
 type Pt = [number, number];
@@ -295,7 +301,7 @@ export interface GrowthStats {
  */
 export function growNetwork(
   citySeed: number,
-  domain: CityDomain,
+  region: ProcgenRegion,
   profile: CityProfile,
   constraints: GenerationConstraints,
   skeleton: SkeletonOutput
@@ -304,7 +310,7 @@ export function growNetwork(
   const idx = indexFabricConstraints(constraints.fabricFeatures);
   // Canon-bumped cityness (§5.4 complete, v3.3): the GM's settlement pins
   // pull density toward themselves.
-  const cityness = makeCityness(citySeed, domain, constraints.canonFeatures ?? []);
+  const cityness = makeCityness(citySeed, region, constraints.canonFeatures ?? []);
   const heap = new CandidateHeap();
   const spacing = profile.segmentLen * SEED_SPACING_FACTOR;
 
@@ -346,12 +352,12 @@ export function growNetwork(
     });
     seedAlongPolyline(citySeed, graph, keys, "seed:ring", spacing, cityness, heap);
   }
-  // Sketched roads (I4): immutable edges, clipped to the disc and smoothed the
-  // same way corridors are. Generated streets snap TO them; they are never
+  // Sketched roads (I4): immutable edges, clipped to the region and smoothed
+  // the same way corridors are. Generated streets snap TO them; they are never
   // pruned and never re-emitted (the sketch already renders as fabric).
   idx.roadLines.forEach((road) => {
     const smoothed = chaikinSmooth(road, 2);
-    for (const run of clipToDisc(smoothed, domain.cx, domain.cy, domain.radius)) {
+    for (const run of clipPolylineToRegion(region, smoothed)) {
       insertPolyline(graph, resamplePolyline(run, GRAPH_RESAMPLE_M), {
         roadClass: "street",
         grown: false,
@@ -371,14 +377,15 @@ export function growNetwork(
   const maxPops = profile.maxSegments * MAX_POPS_PER_SEGMENT;
 
   /** Quadrant grid prior (§5.2 na-grid, v3.4): two hashed azimuths per
-   * quadrant of the domain — a candidate direction snaps to the nearest
-   * representative of the local quadrant's azimuth pair, so quadrant
-   * boundaries jog the way real NA grids do. Replaces the tensor prior for
-   * grid profiles (gridAzimuths non-empty). Deterministic: azimuth hashes on
-   * (citySeed, quadrant); ties resolved by fixed iteration order. */
+   * quadrant around the generation center — a candidate direction snaps to
+   * the nearest representative of the local quadrant's azimuth pair, so
+   * quadrant boundaries jog the way real NA grids do. Replaces the tensor
+   * prior for grid profiles (gridAzimuths non-empty). Deterministic: azimuth
+   * hashes on (citySeed, quadrant); ties resolved by fixed iteration order. */
   const gridMode = profile.gridAzimuths.length > 0;
+  const [centerX, centerY] = skeleton.center;
   const gridSnapDir = (theta: number, xM: number, yM: number): number => {
-    let ang = Math.atan2(yM - domain.cy, xM - domain.cx);
+    let ang = Math.atan2(yM - centerY, xM - centerX);
     if (ang < 0) ang += 2 * Math.PI;
     const quadrant = Math.min(3, Math.floor(ang / (Math.PI / 2)));
     const base = mulberry32(hashSeed(citySeed, "gridaz", quadrant))() * (Math.PI / 2);
@@ -398,10 +405,14 @@ export function growNetwork(
 
   /** Generated-wall barrier (§5.1.5 growth interaction): does the candidate
    * segment cross the ring contour farther than GATE_PASS_M from every gate?
-   * Checked on the RAW proposed segment (before snap/trim), so legitimate
-   * T-junctions INTO the ring road are not misread as crossings. */
+   * Checked on the RAW proposed segment (before snap/trim) with the full
+   * [0,1] parameter range, and RE-checked on the FINAL segment (after
+   * snap/trim can move the endpoint sideways by up to snapDist — enough to
+   * cross a ring corner the proposal missed) with the endpoint interval
+   * excluded (`tMax` < 1), so legitimate T-junctions INTO the ring road are
+   * not misread as crossings. */
   const wall = skeleton.wall;
-  const crossesGeneratedWall = (ax: number, ay: number, bx: number, by: number): boolean => {
+  const crossesGeneratedWall = (ax: number, ay: number, bx: number, by: number, tMax = 1): boolean => {
     if (!wall) return false;
     const ring = wall.ring;
     for (let i = 0; i < ring.length - 1; i++) {
@@ -411,13 +422,17 @@ export function growNetwork(
       if (d === 0) continue;
       const t = ((rx1 - ax) * (ry2 - ry1) - (ry1 - ay) * (rx2 - rx1)) / d;
       const u = ((rx1 - ax) * (by - ay) - (ry1 - ay) * (bx - ax)) / d;
-      if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+      if (t < 0 || t > tMax || u < 0 || u > 1) continue;
       const cx = ax + t * (bx - ax);
       const cy = ay + t * (by - ay);
       if (!wall.gates.some(([gx, gy]) => Math.hypot(gx - cx, gy - cy) <= GATE_PASS_M)) return true;
     }
     return false;
   };
+  /** Endpoint-exclusive t ceiling for the post-snap wall recheck: mirrors the
+   * gate test's "strict interior crossing" bound (a trimmed endpoint sits ON
+   * the ring within cm rounding — that is a junction, not a breach). */
+  const WALL_RECHECK_T_MAX = 0.995;
 
   /** Away-direction angle check at a junction node (§5.2 minAngle): the new
    * edge must not form a sliver with any incident edge. Directions point AWAY
@@ -457,7 +472,8 @@ export function growNetwork(
     const fyM = toMeters(from.y);
 
     // Local constraints — rejections first (cheapest to most structural).
-    if (Math.hypot(exM - domain.cx, eyM - domain.cy) > domain.radius) continue; // domain disc
+    if (!regionContains(region, exM, eyM)) continue; // the sketch is the limit
+    if (segmentCrossesBoundary(region, fxM, fyM, exM, eyM)) continue; // no cutting across concave notches
     const cEnd = cityness(exM, eyM);
     if (cEnd < profile.edge) continue; // growth extent (§5.4)
     if (canon.some(([px, py]) => Math.hypot(px - exM, py - eyM) < CANON_RADIUS_M)) continue; // canon clearance (end)
@@ -531,8 +547,12 @@ export function growNetwork(
     // Resulting-edge validity.
     const newLenCm = Math.hypot(ex - from.x, ey - from.y);
     if (newLenCm < minEdgeCm) continue;
-    // Re-check canon span clearance: snap/cut may have moved the endpoint.
+    // Re-check canon span clearance AND the region boundary: snap/cut may
+    // have moved the endpoint sideways (the moved segment could graze a
+    // concave notch the proposed one did not).
     if (canon.some(([px, py]) => pointSegDist(px, py, fxM, fyM, toMeters(ex), toMeters(ey)) < CANON_SEGMENT_CLEARANCE_M)) continue;
+    if (segmentCrossesBoundary(region, fxM, fyM, toMeters(ex), toMeters(ey))) continue;
+    if (crossesGeneratedWall(fxM, fyM, toMeters(ex), toMeters(ey), WALL_RECHECK_T_MAX)) continue;
     const theta = Math.atan2(ey - from.y, ex - from.x);
     if (!junctionAngleOk(from.key, theta)) continue;
     if (snapNode && !splitEdgeId) {

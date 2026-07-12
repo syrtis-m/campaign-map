@@ -11,7 +11,7 @@ import {
 import { removeCachedTiles } from "../../model/tileCache";
 import { GENERATION_ZOOM, tileKey } from "../../gen/cache/tileGrid";
 import { generateSettlements } from "../../gen/world";
-import { citySeedFor, generateCityNetwork, makeDomain } from "../../gen/citynet";
+import { citySeedFor, generateCityNetworkForDomain, makeDomain } from "../../gen/citynet";
 import type { ParsedCampaign } from "../../model/campaignConfig";
 import type { BBox } from "../../gen/spatialHash";
 
@@ -158,7 +158,7 @@ describe("generateTile naming constraints", () => {
 
 describe("generateDomainTile (procgen v3 §3.3)", () => {
   const directCompute: NetworkCompute = (seed, dom, _bbox, constraints) =>
-    generateCityNetwork(citySeedFor(seed, dom), dom, constraints);
+    generateCityNetworkForDomain(citySeedFor(seed, dom), dom, constraints);
   const domain = makeDomain(300, 300, 900, "euro-medieval", 1720000000000);
 
   it("computes the network ONCE for two tiles of the same domain, and per-tile records hit the cache after", async () => {

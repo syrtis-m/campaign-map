@@ -29,6 +29,25 @@ const PolygonGeom = z.object({
   coordinates: z.array(z.array(Position).min(4)).min(1),
 });
 
+/**
+ * Procgen block (plan 020 §3.1): a fabric feature WITH this block is a
+ * procgen region — its polygon is the container a registry algorithm
+ * generates inside (district → city). Without one it is an inert overlay
+ * shape. `seed` is computed once at creation and persisted — vertex edits
+ * never change it (the city keeps its identity while its boundary adapts);
+ * only an explicit re-roll replaces it. `params` is validated by the
+ * algorithm's own zod schema (src/gen/procgen/registry.ts), not here.
+ * The whole block is optional so pre-020 Fabric.geojson files parse
+ * unchanged.
+ */
+export const ProcgenBlockSchema = z.object({
+  algorithm: z.string().min(1), // registry id, e.g. "city"
+  seed: z.number().int(),
+  version: z.number().int().default(1), // schema version of `params`
+  params: z.record(z.string(), z.unknown()),
+});
+export type ProcgenBlock = z.infer<typeof ProcgenBlockSchema>;
+
 export const FabricFeatureSchema = z.object({
   type: z.literal("Feature"),
   id: z.string().min(1), // stable id for select/delete/undo
@@ -42,6 +61,8 @@ export const FabricFeatureSchema = z.object({
      * gone. Kept in the schema only so pre-019 Fabric.geojson files still
      * parse; nothing reads it. */
     mode: z.enum(["literal", "generate"]).optional(),
+    /** Plan 020 §3.1: present ⇔ this shape drives a procgen algorithm. */
+    procgen: ProcgenBlockSchema.optional(),
   }),
 });
 export type FabricFeature = z.infer<typeof FabricFeatureSchema>;
@@ -82,6 +103,24 @@ export function withFeature(fabric: FabricCollection, feature: FabricFeature): F
 /** Pure remove-by-id; a no-op collection copy if the id isn't present. */
 export function withoutFeature(fabric: FabricCollection, id: string): FabricCollection {
   return { type: "FeatureCollection", features: fabric.features.filter((f) => f.id !== id) };
+}
+
+/** Pure copy of `feature` with the procgen block attached (plan 020 §3.1 —
+ * the host's `sketch-procgen-set` path). Never mutates its input. */
+export function withProcgen(feature: FabricFeature, block: ProcgenBlock): FabricFeature {
+  return { ...feature, properties: { ...feature.properties, procgen: block } };
+}
+
+/** Pure copy of `feature` with the procgen block removed (the
+ * `sketch-procgen-clear` path) — the shape stays, inert. */
+export function withoutProcgen(feature: FabricFeature): FabricFeature {
+  const { procgen: _procgen, ...rest } = feature.properties;
+  return { ...feature, properties: rest };
+}
+
+/** A feature with a procgen block IS a procgen region (plan 020 §3.1). */
+export function isProcgenRegion(feature: FabricFeature): boolean {
+  return feature.properties.procgen !== undefined;
 }
 
 /**

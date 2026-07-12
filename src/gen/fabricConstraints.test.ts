@@ -4,7 +4,6 @@ import {
   crossesWall,
   fabricAngleSampler,
   indexFabricConstraints,
-  insideSketchedDistrict,
   nearestOnLine,
   pointInRing,
   truncateAtBarriers,
@@ -56,7 +55,9 @@ const LAKE: Pt[] = [
 ];
 
 describe("indexFabricConstraints", () => {
-  it("buckets features by constraint role and ignores parks", () => {
+  it("buckets features by constraint role; parks and districts impose nothing", () => {
+    // Districts left the constraint index in plan 020: a district polygon is
+    // a procgen REGION (the city container), not a constraint on generation.
     const park: FabricFeature = {
       type: "Feature",
       id: "fabric-test-park",
@@ -75,7 +76,7 @@ describe("indexFabricConstraints", () => {
     expect(idx.riverLines.length).toBe(1);
     expect(idx.roadLines.length).toBe(1);
     expect(idx.wallLines.length).toBe(1);
-    expect(idx.districtRings.length).toBe(1);
+    expect(Object.keys(idx)).not.toContain("districtRings");
   });
 
   it("returns the empty index for undefined/empty input", () => {
@@ -117,18 +118,12 @@ describe("nearestOnLine", () => {
   });
 });
 
-describe("walls and districts", () => {
+describe("walls", () => {
   it("crossesWall detects a segment crossing a sketched wall and only that", () => {
     const idx = indexFabricConstraints([line("wall", [[-100, 40], [100, 40]])]);
     expect(crossesWall(idx, [0, 0], [0, 80])).toBe(true);
     expect(crossesWall(idx, [0, 0], [0, 30])).toBe(false);
     expect(crossesWall(idx, [200, 0], [200, 80])).toBe(false); // beyond the wall's extent
-  });
-
-  it("insideSketchedDistrict answers per ring", () => {
-    const idx = indexFabricConstraints([district(LAKE)]);
-    expect(insideSketchedDistrict(idx, 0, 0)).toBe(true);
-    expect(insideSketchedDistrict(idx, 500, 500)).toBe(false);
   });
 });
 

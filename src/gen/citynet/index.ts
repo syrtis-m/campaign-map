@@ -1,16 +1,26 @@
 /**
- * City-network entry point (procgen v3 §3.4, §5): `generateCityNetwork`
- * computes the whole city network for a domain — Stage-A skeleton plus the
- * Stage-B grown street web — as a pure function of `(citySeed, domain,
- * constraints)`, and `clipNetworkToTile` cuts that one artifact into the
- * per-tile, per-generatorId buckets the cache stores and the map paints.
+ * City-network entry point (procgen v3 §3.4/§5, generalized to sketched
+ * regions in plan 020 §6): `generateCityNetwork` computes the whole city
+ * network for a ProcgenRegion — Stage-A skeleton plus the Stage-B grown
+ * street web plus Stage-C blocks/parcels/footprints, wards, and outskirts —
+ * as a pure function of `(citySeed, region, profile, constraints)`, and
+ * `clipNetworkToTile` cuts that one artifact into the per-tile,
+ * per-generatorId buckets the cache stores and the map paints.
  *
- * Determinism/seam argument: the network is computed once, not per tile, so two
- * tiles never need order-free math to agree — they clip the *same bytes*
+ * Plan 020 contract: EVERY emitted coordinate lies inside (or exactly on)
+ * the region polygon — the sketch is the outer limit of all output. Streets
+ * and quays are clipped to the region upstream (skeleton/growth); the small
+ * decorative rings built here from a center point (plaza, landmarks, court
+ * bulbs, wall-band quads) are containment-GUARDED at emission instead:
+ * a ring with any vertex outside the region is skipped whole (deterministic,
+ * counted implicitly by absence — never thrown).
+ *
+ * Determinism/seam argument: the network is computed once, not per tile, so
+ * two tiles never need order-free math to agree — they clip the *same bytes*
  * (§3.1). D5 is enforced here: every emitted coordinate is quantized to the
- * millimeter, and every feature list (whole network and every clip bucket) is
- * canonically sorted by first coordinate then id — the id tiebreak is
- * load-bearing because all arterials share the domain-center first coordinate.
+ * millimeter, and every feature list (whole network and every clip bucket)
+ * is canonically sorted by first coordinate then id — the id tiebreak is
+ * load-bearing because all arterials share the center first coordinate.
  * Clipping reuses `clip.ts` (Liang-Barsky / Sutherland-Hodgman): a segment
  * crossing a shared tile edge gets a bit-identical boundary point from both
  * neighbors, so the 2×2 seam gate passes.
@@ -20,8 +30,10 @@ import type { BBox } from "../spatialHash";
 import { clipPolylineToBBox, clipPolygonToBBox, type Vec2 } from "../clip";
 import type { GenerationConstraints } from "../types";
 import { blockedByWater, indexFabricConstraints } from "../fabricConstraints";
-import type { CityDomain } from "./domain";
+import { makeRegion, regionContains, type ProcgenRegion } from "../region";
+import { discToRing, type CityDomain } from "./domain";
 import { PROFILES } from "./profiles";
+import type { ProfileId } from "./domain";
 import { makeCostField } from "./costField";
 import { buildSkeleton } from "./skeleton";
 import { growNetwork, collectGrownChains, collectCourtTips, COURT_RADIUS_M } from "./growth";
@@ -39,7 +51,7 @@ export * from "./profiles";
 type Pt = [number, number];
 
 /**
- * Per-tile generator ids the domain network clips into — all live as of v3.2:
+ * Per-tile generator ids the region network clips into — all live as of v3.2:
  * streets (arterials/bridges/waterfront/grown), blocks (faces), parcels,
  * footprints, landmarks (plaza/church/market), and wards (`city-district` —
  * deliberately the legacy Voronoi district id so wards inherit its paint
@@ -72,7 +84,7 @@ function firstCoord(f: GeoJSON.Feature): Pt {
 }
 
 /** Canonical order: first coordinate x, then y, then id. The id compare is
- * mandatory — arterials all share the domain-center first coordinate, so a
+ * mandatory — arterials all share the center first coordinate, so a
  * coordinate-only comparator would leave them unordered (nondeterministic). */
 function sortCanonical(features: GeoJSON.Feature[]): void {
   features.sort((a, b) => {
@@ -83,22 +95,33 @@ function sortCanonical(features: GeoJSON.Feature[]): void {
 }
 
 /**
- * Compute the whole (unclipped) network for a domain: Stage-A skeleton, then
- * the Stage-B growth loop seeded from it (v3.1). Pure — reads only its
- * arguments (D6). Coordinates are quantized and the feature list is
+ * Compute the whole (unclipped) network for a region: Stage-A skeleton, then
+ * the Stage-B growth loop seeded from it (v3.1), then Stage-C. Pure — reads
+ * only its arguments (D6). `profileId` arrives separately because the region
+ * carries geometry only; the registry's params schema owns profile choice
+ * (plan 020 §5). Coordinates are quantized and the feature list is
  * canonically sorted before return.
  */
 export function generateCityNetwork(
   citySeed: number,
-  domain: CityDomain,
+  region: ProcgenRegion,
+  profileId: ProfileId,
   constraints: GenerationConstraints
 ): GeoJSON.Feature[] {
-  const profile = PROFILES[domain.profile];
-  const cost = makeCostField(citySeed, domain, constraints);
-  const skel = buildSkeleton(citySeed, domain, profile, constraints, cost);
+  const profile = PROFILES[profileId];
+  const cost = makeCostField(citySeed, region, constraints);
+  const skel = buildSkeleton(citySeed, region, profile, constraints, cost);
   const features: GeoJSON.Feature[] = [];
 
-  skel.arterials.forEach((art, i) => {
+  /** Plan-020 containment guard for center-built decorative rings. */
+  const ringInside = (ring: Pt[]): boolean => {
+    for (const [x, y] of ring) {
+      if (!regionContains(region, x, y)) return false;
+    }
+    return true;
+  };
+
+  skel.arterials.forEach((art) => {
     if (art.coords.length < 2) return;
     // Fixed key order for byte-stable cache; `degraded` appended last, only
     // when true (D5).
@@ -107,12 +130,12 @@ export function generateCityNetwork(
       generatorId: "city-street",
       type: "street",
       roadClass: "arterial",
-      domainId: domain.id,
+      regionId: region.id,
     };
     if (art.degraded) properties.degraded = true;
     features.push({
       type: "Feature",
-      id: hashSeed(citySeed, "arterial", i),
+      id: hashSeed(citySeed, "arterial", art.key),
       geometry: { type: "LineString", coordinates: qLine(art.coords) },
       properties,
     });
@@ -129,7 +152,7 @@ export function generateCityNetwork(
         generatorId: "city-street",
         type: "bridge",
         roadClass: "arterial",
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
   });
@@ -145,12 +168,12 @@ export function generateCityNetwork(
         generatorId: "city-street",
         type: "street",
         roadClass: "street",
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
   });
 
-  if (skel.plaza.length >= 4) {
+  if (skel.plaza.length >= 4 && ringInside(skel.plaza)) {
     features.push({
       type: "Feature",
       id: hashSeed(citySeed, "plaza"),
@@ -159,13 +182,13 @@ export function generateCityNetwork(
         generated: true,
         generatorId: "city-landmark",
         type: "plaza",
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
   }
 
   skel.landmarks.forEach((lm, i) => {
-    if (lm.ring.length < 4) return;
+    if (lm.ring.length < 4 || !ringInside(lm.ring)) return;
     features.push({
       type: "Feature",
       id: hashSeed(citySeed, "landmark", i),
@@ -175,12 +198,14 @@ export function generateCityNetwork(
         generatorId: "city-landmark",
         type: "landmark",
         landmark: lm.kind,
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
   });
 
-  // Wall / ring / gates (v3.3, §5.1.5 — profile-gated, may be null).
+  // Wall / ring / gates (v3.3, §5.1.5 — profile-gated, may be null). The
+  // ring traces the sketched outline via insetRing (plan 020 §6); gates are
+  // ring vertices by construction.
   if (skel.wall) {
     features.push({
       type: "Feature",
@@ -191,10 +216,11 @@ export function generateCityNetwork(
         generatorId: "city-street",
         type: "street",
         roadClass: "ring",
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
     skel.wall.wallSegments.forEach((quad, i) => {
+      if (!ringInside(quad)) return;
       features.push({
         type: "Feature",
         id: hashSeed(citySeed, "wallseg", i),
@@ -203,7 +229,7 @@ export function generateCityNetwork(
           generated: true,
           generatorId: "city-landmark",
           type: "wall",
-          domainId: domain.id,
+          regionId: region.id,
         },
       });
     });
@@ -216,7 +242,7 @@ export function generateCityNetwork(
           generated: true,
           generatorId: "city-landmark",
           type: "gate",
-          domainId: domain.id,
+          regionId: region.id,
         },
       });
     });
@@ -225,7 +251,7 @@ export function generateCityNetwork(
   // Stage B (v3.1): grow the street web off the skeleton, emit merged chains
   // (roadClass "street" or "alley" — chains never mix classes, v3.4). Chain
   // keys are position-derived (endpoint node keys), never order-derived.
-  const { graph } = growNetwork(citySeed, domain, profile, constraints, skel);
+  const { graph } = growNetwork(citySeed, region, profile, constraints, skel);
   for (const chain of collectGrownChains(graph)) {
     if (chain.coords.length < 2) continue;
     features.push({
@@ -237,13 +263,15 @@ export function generateCityNetwork(
         generatorId: "city-street",
         type: "street",
         roadClass: chain.roadClass,
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
   }
 
   // Court bulbs (§5.2 na-suburb, v3.4): cul-de-sac profiles cap their
-  // unsnapped street tips with small octagons — the suburb signature.
+  // unsnapped street tips with small octagons — the suburb signature. A tip
+  // close enough to the sketched boundary that its bulb would poke past it
+  // keeps its street but loses the bulb (containment guard).
   if (profile.culdesacs) {
     for (const tip of collectCourtTips(graph)) {
       const ring: Pt[] = [];
@@ -252,6 +280,7 @@ export function generateCityNetwork(
         ring.push([tip.x + COURT_RADIUS_M * Math.cos(a), tip.y + COURT_RADIUS_M * Math.sin(a)]);
       }
       ring.push(ring[0]);
+      if (!ringInside(ring)) continue;
       features.push({
         type: "Feature",
         id: hashSeed(citySeed, "court", tip.key),
@@ -260,7 +289,7 @@ export function generateCityNetwork(
           generated: true,
           generatorId: "city-landmark",
           type: "court",
-          domainId: domain.id,
+          regionId: region.id,
         },
       });
     }
@@ -270,7 +299,7 @@ export function generateCityNetwork(
   // Block identity is the face's sorted node keys (position-derived); parcel/
   // footprint identity is (blockKey, split path) — never emission order (D2).
   const fabricIdx = indexFabricConstraints(constraints.fabricFeatures);
-  const { blocks } = extractBlocks(graph, domain);
+  const { blocks } = extractBlocks(graph, region);
   const dryBlocks = blocks.filter((b) => {
     // A face bounded by two quays can span the river; buildings don't swim.
     let sx = 0;
@@ -291,12 +320,12 @@ export function generateCityNetwork(
         generated: true,
         generatorId: "city-block",
         type: "block",
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
   }
 
-  const cityness = makeCityness(citySeed, domain, constraints.canonFeatures ?? []);
+  const cityness = makeCityness(citySeed, region, constraints.canonFeatures ?? []);
   const { parcels, footprints } = subdivideBlocks(citySeed, dryBlocks, profile, cityness);
   for (const p of parcels) {
     const ring = [...p.ring, p.ring[0]];
@@ -308,7 +337,7 @@ export function generateCityNetwork(
         generated: true,
         generatorId: "city-parcel",
         type: "parcel",
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
   }
@@ -322,12 +351,12 @@ export function generateCityNetwork(
         generated: true,
         generatorId: "city-footprint",
         type: "footprint",
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
   }
 
-  for (const ward of buildWards(citySeed, domain, skel, constraints)) {
+  for (const ward of buildWards(citySeed, region, skel)) {
     features.push({
       type: "Feature",
       id: hashSeed(citySeed, "ward", ward.siteKey),
@@ -337,14 +366,15 @@ export function generateCityNetwork(
         generatorId: "city-district",
         type: "district",
         ward: ward.tag,
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
   }
 
   // Outskirts (v3.3, §5.3.3): ribbon houses along arterials beyond the growth
-  // extent, then fields, then nothing toward the rim.
-  const outskirts = buildOutskirts(citySeed, domain, profile, skel, cityness, fabricIdx);
+  // extent, then fields, then nothing toward the boundary. Containment is
+  // enforced inside buildOutskirts (all quad corners in-region).
+  const outskirts = buildOutskirts(citySeed, region, profile, skel, cityness, fabricIdx);
   for (const rf of outskirts.ribbonFootprints) {
     features.push({
       type: "Feature",
@@ -354,7 +384,7 @@ export function generateCityNetwork(
         generated: true,
         generatorId: "city-footprint",
         type: "footprint",
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
   }
@@ -367,7 +397,7 @@ export function generateCityNetwork(
         generated: true,
         generatorId: "city-landmark",
         type: "field",
-        domainId: domain.id,
+        regionId: region.id,
       },
     });
   }
@@ -376,12 +406,31 @@ export function generateCityNetwork(
   return features;
 }
 
+/**
+ * COMPILE SHIM (v4.0 → v4.1): the pre-migration host (MapView,
+ * generationService, workers) still requests generation per CityDomain.
+ * This wrapper converts the disc to its 32-gon region — the SAME conversion
+ * the v4.1 migration will persist — and delegates. Deterministic: the shim
+ * region id is `dom-shim:<domain.id>` and the ring is `discToRing(domain)`,
+ * both pure functions of the domain.
+ *
+ * @deprecated v4.1 replaces this call path with regions from the sketch layer.
+ */
+export function generateCityNetworkForDomain(
+  citySeed: number,
+  domain: CityDomain,
+  constraints: GenerationConstraints
+): GeoJSON.Feature[] {
+  const region = makeRegion(`dom-shim:${domain.id}`, discToRing(domain));
+  return generateCityNetwork(citySeed, region, domain.profile, constraints);
+}
+
 function toVec2(coords: Pt[]): Vec2[] {
   return coords.map(([x, y]) => ({ x, y }));
 }
 
 /**
- * Clip a whole-domain network to a tile bbox, bucketed by each feature's
+ * Clip a whole-region network to a tile bbox, bucketed by each feature's
  * per-tile `generatorId`. LineStrings split into one feature per clipped part;
  * polygons are Sutherland-Hodgman clipped and re-closed (empty/degenerate
  * results dropped); points use half-open containment so exactly one tile claims

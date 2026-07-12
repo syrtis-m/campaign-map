@@ -17,15 +17,15 @@
  * (repeated node: a face wrapping a dead-end spur), sub-40 m² slivers,
  * runaway walks — are counted and skipped, NEVER thrown.
  */
-import type { CityDomain } from "./domain";
+import { distanceToBoundary, type ProcgenRegion } from "../region";
 import { StreetGraph, toMeters } from "./graph";
 
 type Pt = [number, number];
 
 /** Faces smaller than this are slivers, not blocks (§5.3.1). */
 export const MIN_BLOCK_AREA_M2 = 40;
-/** Faces with a vertex within this margin of the domain rim count as
- * "touching the domain boundary" and are dropped (§5.3.1). */
+/** Faces with a vertex within this margin of the region boundary count as
+ * "touching the boundary" and are dropped (§5.3.1). */
 export const BOUNDARY_MARGIN_M = 0.5;
 
 export interface BlockFace {
@@ -53,9 +53,9 @@ interface HalfEdge {
 
 /**
  * Extract bounded faces of the graph as blocks. Pure function of the graph +
- * domain geometry; iteration order is fully canonical (D2).
+ * region geometry; iteration order is fully canonical (D2).
  */
-export function extractBlocks(graph: StreetGraph, domain: CityDomain): { blocks: BlockFace[]; stats: FaceStats } {
+export function extractBlocks(graph: StreetGraph, region: ProcgenRegion): { blocks: BlockFace[]; stats: FaceStats } {
   const stats: FaceStats = { faces: 0, degenerate: 0, slivers: 0, boundary: 0 };
 
   // Build directed half-edges from the sorted edge list.
@@ -153,11 +153,11 @@ export function extractBlocks(graph: StreetGraph, domain: CityDomain): { blocks:
       continue;
     }
 
-    // Faces touching the domain rim are not blocks (§5.3.1).
-    const rimLimit = domain.radius - BOUNDARY_MARGIN_M;
+    // Faces touching the region boundary are not blocks (§5.3.1): any vertex
+    // within the margin of — or outside — the sketched outline drops the face.
     let touchesRim = false;
     for (const p of pts) {
-      if (Math.hypot(toMeters(p.x) - domain.cx, toMeters(p.y) - domain.cy) > rimLimit) {
+      if (distanceToBoundary(region, toMeters(p.x), toMeters(p.y)) < BOUNDARY_MARGIN_M) {
         touchesRim = true;
         break;
       }

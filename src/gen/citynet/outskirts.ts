@@ -1,23 +1,28 @@
 /**
- * Outskirts (procgen v3 §5.3.3, Watabou's rule, v3.3): outside the growth
- * extent but inside the domain, buildings ribbon along the arterials only;
- * farther out, farm-field quads aligned to the road; then nothing toward the
- * rim. The outskirts zone is an arc-length band per arterial, anchored where
- * cityness first drops below the outskirts threshold along that arterial;
- * within it, development bands LATERALLY (Watabou's ribbon): houses hug the
- * road (≤ ~20 m), fields sit beyond them (≥ ~25 m off the road edge), and
- * nothing farther out — matching §9 v3.3 gate (d)'s "footprints only within
- * ~40 m of arterials there; fields exist beyond that".
+ * Outskirts (procgen v3 §5.3.3, Watabou's rule, v3.3; regions since plan
+ * 020 §6): outside the growth extent but inside the sketched region,
+ * buildings ribbon along the arterials only; farther out, farm-field quads
+ * aligned to the road; then nothing toward the boundary. The outskirts zone
+ * is an arc-length band per arterial, anchored where cityness (interiorT-
+ * driven since plan 020) first drops below the outskirts threshold along
+ * that arterial; within it, development bands LATERALLY (Watabou's ribbon):
+ * houses hug the road (≤ ~20 m), fields sit beyond them (≥ ~25 m off the
+ * road edge), and nothing farther out — matching §9 v3.3 gate (d)'s
+ * "footprints only within ~40 m of arterials there; fields exist beyond
+ * that". ALL output stays strictly inside the region polygon (plan 020:
+ * nothing spills past the GM's line) — every emitted quad's corners are
+ * containment-checked, not just its center.
  *
- * Determinism argument: zones derive from arc-length walks in arterial order;
- * every roll comes from `hashSeed(citySeed, salt, arterialIndex, slotIndex,
- * side)` — position/stage-keyed streams, no shared RNG cursor, no dependence
- * on other slots' outcomes (D2/D6). Pure function of its arguments.
+ * Determinism argument: zones derive from arc-length walks in arterial-part
+ * order (part keys are position-derived); every roll comes from
+ * `hashSeed(citySeed, salt, arterialIndex, slotIndex, side)` — position/
+ * stage-keyed streams, no shared RNG cursor, no dependence on other slots'
+ * outcomes (D2/D6). Pure function of its arguments.
  */
 import { hashSeed, mulberry32 } from "../rng";
 import type { FabricConstraintIndex } from "../fabricConstraints";
 import { blockedByWater } from "../fabricConstraints";
-import type { CityDomain } from "./domain";
+import { distanceToBoundary, regionContains, type ProcgenRegion } from "../region";
 import type { CityProfile } from "./profiles";
 import type { CitynessFn } from "./cityness";
 import type { SkeletonOutput } from "./skeleton";
@@ -47,7 +52,7 @@ export const FIELD_ALONG_MIN = 35;
 export const FIELD_ALONG_MAX = 70;
 export const FIELD_DEEP_MIN = 25;
 export const FIELD_DEEP_MAX = 45;
-/** Soft rim margin: a field's center stays this far inside the domain rim. */
+/** Soft margin: a field's center stays this far inside the region boundary. */
 export const FIELD_RIM_MARGIN_M = 10;
 /** A field must keep this clearance from every arterial polyline, meters. */
 export const FIELD_ROAD_CLEARANCE_M = 10;
@@ -133,7 +138,7 @@ function distToArterials(p: Pt, arterials: Pt[][]): number {
  */
 export function buildOutskirts(
   citySeed: number,
-  domain: CityDomain,
+  region: ProcgenRegion,
   profile: CityProfile,
   skeleton: SkeletonOutput,
   cityness: CitynessFn,
@@ -143,6 +148,16 @@ export function buildOutskirts(
   const fields: { ring: Pt[]; key: string }[] = [];
   const threshold = OUTSKIRTS_START_FRAC * profile.edge;
   const arterialLines = skeleton.arterials.map((a) => a.coords);
+
+  /** Every corner (and the center) inside the region — plan 020's "nothing
+   * spills past the GM's line", enforced per quad. */
+  const quadInside = (center: Pt, ring: Pt[]): boolean => {
+    if (!regionContains(region, center[0], center[1])) return false;
+    for (let i = 0; i < 4; i++) {
+      if (!regionContains(region, ring[i][0], ring[i][1])) return false;
+    }
+    return true;
+  };
 
   skeleton.arterials.forEach((art, ai) => {
     const start = outskirtsStart(art.coords, cityness, threshold);
@@ -158,14 +173,12 @@ export function buildOutskirts(
         const nx = -Math.sin(s.tangent) * side;
         const ny = Math.cos(s.tangent) * side;
         const center: Pt = [s.p[0] + nx * offset, s.p[1] + ny * offset];
-        if (Math.hypot(center[0] - domain.cx, center[1] - domain.cy) > domain.radius) continue;
         if (blockedByWater(waterIdx, center[0], center[1])) continue;
         const along = 6 + rng() * 6; // 6–12 m cottages
         const deep = 5 + rng() * 5;
-        ribbonFootprints.push({
-          ring: quadAt(center, s.tangent, along, deep),
-          key: `${ai}:${si}:${side}`,
-        });
+        const ring = quadAt(center, s.tangent, along, deep);
+        if (!quadInside(center, ring)) continue;
+        ribbonFootprints.push({ ring, key: `${ai}:${si}:${side}` });
       }
     });
 
@@ -181,11 +194,13 @@ export function buildOutskirts(
         const nx = -Math.sin(s.tangent) * side;
         const ny = Math.cos(s.tangent) * side;
         const center: Pt = [s.p[0] + nx * offset, s.p[1] + ny * offset];
-        if (Math.hypot(center[0] - domain.cx, center[1] - domain.cy) > domain.radius - FIELD_RIM_MARGIN_M) continue;
+        // Soft boundary margin (the disc's rim margin, region form).
+        if (distanceToBoundary(region, center[0], center[1]) < FIELD_RIM_MARGIN_M) continue;
         // The lateral offset can land in a noise pocket the growth loop would
         // still build in — no farm fields where cityness says "city".
         if (cityness(center[0], center[1]) >= profile.edge) continue;
         const ring = quadAt(center, s.tangent, along, deep);
+        if (!quadInside(center, ring)) continue;
         // No overlap with water or any street (arterials are the only streets
         // out here; blocks/parcels live inside the growth extent).
         let ok = !blockedByWater(waterIdx, center[0], center[1]);

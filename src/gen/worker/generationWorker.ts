@@ -6,7 +6,7 @@
  * it lives in its own worker/ subfolder rather than alongside the generators.
  */
 import { generateWorldRegions, generateSettlements, generateRoutes } from "../world";
-import { generateCityNetwork, citySeedFor, type CityDomain } from "../citynet";
+import { generateCityNetworkForDomain, citySeedFor, type CityDomain } from "../citynet";
 import type { GenerationConstraints } from "../types";
 import type { BBox } from "../spatialHash";
 
@@ -47,7 +47,7 @@ self.onmessage = (event: MessageEvent<GenerationRequest>) => {
     let features: GeoJSON.Feature[];
     if (generatorId === "city-network") {
       if (!domain) throw new Error("city-network job missing domain");
-      features = generateCityNetwork(citySeedFor(seed, domain), domain, constraints);
+      features = generateCityNetworkForDomain(citySeedFor(seed, domain), domain, constraints);
     } else {
       const generator = GENERATORS[generatorId];
       if (!generator) throw new Error(`unknown generatorId: ${generatorId}`);
