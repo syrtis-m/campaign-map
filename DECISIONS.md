@@ -345,3 +345,24 @@
 - shots/ goldens for not-re-run gates were restored to committed versions
   (rerun churn is not signal); phase1's connections-stripping remains open as
   plan 021 §2.4b.
+
+## 2026-07-12 — Plan 021 phase A (fast testing) — judgment calls
+- **Green-board ref storage**: committed `.lastgreenboard` file (currently
+  b8e6e04), overridable via `--ref=<sha>` on changed-gates. Alternatives: git
+  tag, CLI-only. Chosen for durability + greppability; reversible (delete
+  file → hardcoded fallback).
+- **"Slow test" boundary**: exactly the two fuzz describes (200-region
+  ~50 s, 30-polygon ~19 s) — nothing else exceeded ~1.2 s. Split via
+  `*.fuzz.test.ts` naming + separate vitest config. Reversible by moving
+  the describes back.
+- **changed-gates excludes `**/*.test.ts` from gate scoping** (unit tests are
+  the fast tier's domain; gates never exercise them) — deliberate deviation
+  from err-toward-over-inclusion; safe because unit-test edits can't change
+  gate-observed runtime. `.fixtures.ts` NOT excluded (still matches
+  `src/gen/**`) — accepted over-inclusion.
+- **Coverage globs err toward over-inclusion**: `src/main.ts` mapped into
+  phase3/phase4/procgen40–43 (it registers generation/procgen commands);
+  under-inclusion is the only unsafe direction.
+- **Determinism-break injection proof (plan 021 §4, partial for 21-D)**:
+  flipped the `hashSeed` FNV salt → fast tier RED (corridor golden
+  snapshots); reverted byte-clean. Full acceptance re-proof is 21-D.

@@ -2,7 +2,21 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
+## Status: plans 021–025 arc IN PROGRESS (HEARTBEAT.md is the run's source of truth — resume there). Plan 020 (procgen v4.3) complete.
+
+## Plans 021–025 arc (2026-07-12, reverse-chronological)
+- **21-A DONE** (`4adb2eb`): fast tier `npm test` = 314 tests / ~14 s (fuzz
+  describes split to `*.fuzz.test.ts`, `npm run test:fuzz` = 2/~73 s;
+  314+2=316 partition proven); `scripts/gates/coverage.json` +
+  `scripts/changed-gates.ts` (`npm run gates:changed`, escalates
+  rng/region/clip/tileCache → full board, ref in `.lastgreenboard`);
+  T0–T3 tier docs in docs/05+06; phase1 gate now uses `__GateConnectSource`/
+  `__GateQuickAdd` temp notes — 16/16 with dev-vault byte-clean; injected
+  hashSeed-salt break caught RED by fast tier.
+- Next: 21-B board runner + renderer-degradation investigation (timeboxed one
+  session); then 21-C MapController/FakeHost (⛳ full board), 21-D acceptance.
+
+## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 
 ### Recent work (2026-07-10) — reverse-chronological, all merged to `main`
 - **Fabric always visible; LOD only hides location names** (`3e084ea`, Jonah's decision after the Kanto test). Removed all per-kind fabric `minzoom` + `applyFabricReveal` + the dead `DEFAULT_FABRIC_MINZOOM`/`FABRIC_REVEAL_OFFSET`. The depth-of-field *label* system stays (names reveal by zoom); dots always on. Two non-fabric minzooms left in place + flagged: `generated-footprint` and basemap buildings (z14). See DECISIONS 2026-07-10.

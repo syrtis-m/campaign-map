@@ -60,7 +60,7 @@ exists to make that true.
 ## Checklist (flip `[ ]`→`[x] <commit>` only after gate-green + committed + pushed)
 
 **Plan 021 — fast testing** (`plans/021-fast-testing.md`)
-- [ ] 21-A ⚡ fuzz-tier split (`test` <30 s, `test:fuzz`) + change-scoped
+- [x] 4adb2eb 21-A ⚡ fuzz-tier split (`test` <30 s, `test:fuzz`) + change-scoped
       gating (`coverage.json`, `board --changed`) + T0–T3 tier docs + phase1
       fixture fix (stops stripping `connections:` from Ashfall notes) (021
       §2.1, §2.4b, §2.5, §2.6)
@@ -123,6 +123,11 @@ exists to make that true.
 (none yet)
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-12 (arc run, session 1): resumed on dirty tree (partial phase1
+  fixture fix) — finished it inside 21-A per wake protocol. 21-A green +
+  committed (4adb2eb): fast tier 314 tests ~14 s, fuzz 2/72 s, phase1 16/16
+  w/ dev-vault byte-clean, determinism-break injection caught by fast tier.
+  Green-board ref lives in `.lastgreenboard` (currently b8e6e04 = v4.3 board).
 - 2026-07-12 (later): v4.3 committed — plan 020 fully DONE; arc starts clean
   at 21-A. NOTE for 21-B/21-C: renderer degraded on the 4th gate-scale
   workload in one Obsidian process (3 ran clean) — a concrete repro anchor.
