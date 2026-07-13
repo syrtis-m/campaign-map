@@ -13,8 +13,18 @@
   T0–T3 tier docs in docs/05+06; phase1 gate now uses `__GateConnectSource`/
   `__GateQuickAdd` temp notes — 16/16 with dev-vault byte-clean; injected
   hashSeed-salt break caught RED by fast tier.
-- Next: 21-B board runner + renderer-degradation investigation (timeboxed one
-  session); then 21-C MapController/FakeHost (⛳ full board), 21-D acceptance.
+- **21-B DONE** (`5030d88`): `scripts/board.ts` — one-process board runner
+  (`npm run board`, `--changed`, `--gates=`, `--probe-fail-at=N`); post-gate
+  probe attribution (unhealthy post-probe → untrusted result → relaunch +
+  re-run capped 3; healthy + fail → genuine RED); per-gate dev-vault hygiene
+  assertion w/ auto-restore; report → `shots/board-report.md`.
+  `scripts/rendererSoak.ts` investigation harness: GL-leak REFUTED (50
+  reload/open/screenshot cycles, canvas count flat 1, styleLoaded true, idle
+  ~270 ms stable); catastrophic degradation not reproduced; best hypothesis =
+  GPU/driver memory pressure across heavy generation gates; evidence in
+  `review/021B-renderer-degradation.md`; fresh-process rule NOT retired.
+- Next: 21-C MapController extraction + FakeHost (⛳ full board before AND
+  after, zero behavior change), then 21-D acceptance gate.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

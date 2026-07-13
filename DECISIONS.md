@@ -366,3 +366,20 @@
 - **Determinism-break injection proof (plan 021 §4, partial for 21-D)**:
   flipped the `hashSeed` FNV salt → fast tier RED (corridor golden
   snapshots); reverted byte-clean. Full acceptance re-proof is 21-D.
+
+## 2026-07-12 — Plan 021 phase B (board runner + renderer investigation)
+- **Board report path = `shots/board-report.md`** (stable single file agents
+  paste into PROGRESS.md). Alternative: review/board-<date>.md (history, but
+  clutters Tier-B queue). Reversible: DEFAULT_REPORT in board.ts.
+- **`test:app` excluded from board** (single-gate wrapper subsumed by
+  coverage.json gates; including it double-runs). `--changed` prologue drops
+  fuzz tier (scoped run ≠ generator checkpoint) but keeps build. Reversible:
+  prologue arrays in board.ts.
+- **Renderer degradation: EVIDENCE DOCUMENTED, fresh-process-per-gate NOT
+  retired.** 50-cycle soak refutes GL/Map-instance leak (canvas count flat,
+  styleLoaded true throughout); catastrophic degradation not reproducible on
+  demand. Best hypothesis: cumulative GPU/driver memory pressure across heavy
+  generation gates (+ possible macOS compositor suspension), not reload
+  count. Probe-driven restarts shipped as mitigation; onunload
+  detachLeavesOfType hardening deferred as unprovable. Revisit on a
+  deterministic repro.

@@ -64,7 +64,7 @@ exists to make that true.
       gating (`coverage.json`, `board --changed`) + T0–T3 tier docs + phase1
       fixture fix (stops stripping `connections:` from Ashfall notes) (021
       §2.1, §2.4b, §2.5, §2.6)
-- [ ] 21-B board runner w/ health-probed restarts (incl. per-gate
+- [x] 5030d88 21-B board runner w/ health-probed restarts (incl. per-gate
       dev-vault-clean assertion, 021 §2.4b) + renderer-degradation
       investigation, TIMEBOXED to one session — no root cause by then: document
       evidence, keep probe-restarts, move on (021 §2.2–2.3)
@@ -123,6 +123,10 @@ exists to make that true.
 (none yet)
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-12 (arc run, session 1 cont.): 21-B green (5030d88) — board.ts one-
+  process runner w/ probe attribution + hygiene assertion; renderer GL-leak
+  hypothesis REFUTED by 50-cycle soak, root cause NOT reproduced, evidence in
+  review/021B-renderer-degradation.md, probe-restarts shipped as mitigation.
 - 2026-07-12 (arc run, session 1): resumed on dirty tree (partial phase1
   fixture fix) — finished it inside 21-A per wake protocol. 21-A green +
   committed (4adb2eb): fast tier 314 tests ~14 s, fuzz 2/72 s, phase1 16/16
