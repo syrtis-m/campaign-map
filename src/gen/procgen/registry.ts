@@ -17,6 +17,7 @@ import type { FabricKind } from "../../model/fabric";
 import type { GenerationConstraints } from "../types";
 import type { ProcgenRegion } from "../region";
 import { generateRiver, riverMaxOffset } from "../river";
+import { generateForest, FOREST_VARIETIES } from "../forest";
 import {
   DOMAIN_TILE_GENERATOR_IDS,
   generateCityNetwork,
@@ -196,9 +197,58 @@ const riverAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-/** v1 registers `city` (polygon) + `river` (line). Order matters for
+// ─── Forest (plan 022 §3.2) — masked-noise polygon canopy ────────────────────
+
+/** Forest params v1 (plan 022 §3.2). All knobs have sensible defaults so a bare
+ * `{}` validates to a reasonable mixed woodland (additive-params rule §1: a
+ * later knob must default to prior behavior; v1 ships all three at once). */
+const forestParamsSchema = z.object({
+  variety: z.enum(FOREST_VARIETIES).default("mixed"),
+  density: z.number().min(0).max(1).default(0.6),
+  clearings: z.number().min(0).max(1).default(0.15),
+  edgeRaggedness: z.number().min(0).max(1).default(0.5),
+});
+
+/** Forest presets (plan 022 §3.2) — the templates Jonah named. Params are the
+ * whole truth; `variety` is carried onto features for theme tinting, never a
+ * runtime branch in the generator. */
+const FOREST_PRESETS: readonly ProcgenPreset[] = [
+  { id: "broadleaf", label: "Broadleaf — dense deciduous wood", params: { variety: "broadleaf", density: 0.7, clearings: 0.12, edgeRaggedness: 0.45 } },
+  { id: "conifer", label: "Conifer — dark evergreen forest", params: { variety: "conifer", density: 0.8, clearings: 0.08, edgeRaggedness: 0.3 } },
+  { id: "mixed", label: "Mixed woodland — varied cover, glades", params: { variety: "mixed", density: 0.6, clearings: 0.18, edgeRaggedness: 0.5 } },
+  { id: "swamp", label: "Swamp — patchy wetland trees", params: { variety: "swamp", density: 0.5, clearings: 0.3, edgeRaggedness: 0.65 } },
+  { id: "dead-wood", label: "Dead-wood — sparse, ragged, many clearings", params: { variety: "dead-wood", density: 0.35, clearings: 0.35, edgeRaggedness: 0.7 } },
+];
+
+/** Forest tile-generator ids = the emitted feature buckets (plan 022 §3.2):
+ * canopy fill + clearing holes + tree stipple. Cache keys + paint layers key
+ * on these. */
+export const FOREST_TILE_GENERATOR_IDS: readonly string[] = ["forest-canopy", "forest-clearing", "forest-tree"];
+
+const forestAlgorithm: ProcgenAlgorithm = {
+  id: "forest",
+  label: "Forest",
+  appliesTo: ["forest"],
+  paramsSchema: forestParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
+  presets: FOREST_PRESETS,
+  defaultPresetId(themeId: string): string {
+    // Fantasy parchment/ink-soot read best as a broadleaf wood; the clean
+    // modern/neon themes default to mixed. Every returned id is a preset member.
+    return themeId === "modern-clean" || themeId === "neon-sprawl" ? "mixed" : "broadleaf";
+  },
+  defaultParams(themeId: string): Record<string, unknown> {
+    const preset = presetById(this, this.defaultPresetId(themeId));
+    return preset ? { ...preset.params } : { ...FOREST_PRESETS[2].params };
+  },
+  tileGeneratorIds: FOREST_TILE_GENERATOR_IDS,
+  generate(seed, region, params, constraints): GeoJSON.Feature[] {
+    return generateForest(seed, region, forestParamsSchema.parse(params), constraints);
+  },
+};
+
+/** v1 registers `city` + `forest` (polygon) + `river` (line). Order matters for
  * `algorithmForKind` (first match wins) — keep the list explicit and small. */
-const REGISTRY: readonly ProcgenAlgorithm[] = [cityAlgorithm, riverAlgorithm];
+const REGISTRY: readonly ProcgenAlgorithm[] = [cityAlgorithm, riverAlgorithm, forestAlgorithm];
 
 export function algorithmForKind(kind: FabricKind): ProcgenAlgorithm | undefined {
   return REGISTRY.find((a) => a.appliesTo.includes(kind));

@@ -934,9 +934,10 @@ export class MapView extends ItemView {
     ringUnits: [number, number][],
     algorithmId: string,
     params: Record<string, unknown>,
-    name?: string
+    name?: string,
+    kind: FabricKind = "district"
   ): Promise<{ featureId: string; count: number; outside: number }> {
-    return this.controller.createRegionForTest(ringUnits, algorithmId, params, name);
+    return this.controller.createRegionForTest(ringUnits, algorithmId, params, name, kind);
   }
 
   /** Headless spine (line-kind) creation — the gate/test twin for rivers (plan

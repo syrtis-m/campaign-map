@@ -899,12 +899,16 @@ export class MapController {
     return this.setRegionProcgen(feature, block, null, true);
   }
 
-  /** Headless region creation (gate/test path). */
+  /** Headless region creation (gate/test path). `kind` defaults to `district`
+   * (city) but a polygon algorithm on another kind (forest) passes its own —
+   * the overlap check keys on the ALGORITHM id, so a forest overlapping a city
+   * is legal (only same-algorithm regions clash). */
   async createRegionForTest(
     ringUnits: [number, number][],
     algorithmId: string,
     params: Record<string, unknown>,
-    name?: string
+    name?: string,
+    kind: FabricKind = "district"
   ): Promise<{ featureId: string; count: number; outside: number }> {
     if (!this.campaign || this.campaign.config.crs !== "fictional") throw new Error("fictional campaigns only");
     const algorithm = algorithmById(algorithmId);
@@ -920,7 +924,7 @@ export class MapController {
       type: "Feature",
       id: makeFabricId(),
       geometry: { type: "Polygon", coordinates: [closed] },
-      properties: name ? { kind: "district", name } : { kind: "district" },
+      properties: name ? { kind, name } : { kind },
     };
     this.fabricCollection = withFeature(this.fabricCollection, feature);
     this.host.render.repaintFabric();

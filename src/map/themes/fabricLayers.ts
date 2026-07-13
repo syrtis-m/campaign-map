@@ -79,6 +79,24 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
         "fill-outline-color": tokens.fabricPark,
       },
     },
+    forest: {
+      // Inert sketched forest (plan 022 §3.2, open question §5.2 — Jonah
+      // 2026-07-13 decision): a FAINT canopy-green wash so an un-generated
+      // forest outline reads as "woodland here" without competing with the
+      // dense generated canopy. Once a procgen block is attached the generated
+      // `forest-canopy` cells ARE the paint, so the raw polygon drops to
+      // opacity 0 — same mechanism as the river spine line (fill stays
+      // rendered so queryRenderedFeatures still hit-tests it for selection).
+      id: "fabric-forest",
+      type: "fill",
+      source: "fabric",
+      filter: kindFilter("forest"),
+      paint: {
+        "fill-color": tokens.fabricForest,
+        "fill-opacity": ["case", ["has", "procgen"], 0, 0.28],
+        "fill-outline-color": tokens.fabricForest,
+      },
+    },
     // Lines
     river: {
       id: "fabric-river",

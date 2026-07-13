@@ -460,3 +460,83 @@ describe("MapController — spine (river) line-kind procgen (plan 022 §2)", () 
     ).rejects.toThrow();
   });
 });
+
+describe("MapController — forest polygon-kind procgen (plan 022 §3.2)", () => {
+  // An 800 m square forest region in display units (1 unit = 50 m).
+  const FOREST_RING: [number, number][] = [
+    [10, -26],
+    [26, -26],
+    [26, -10],
+    [10, -10],
+  ];
+  const MIXED = { variety: "mixed", density: 0.6, clearings: 0.2, edgeRaggedness: 0.5 };
+
+  it("generates canopy strictly inside the sketched forest (containment holds)", async () => {
+    const host = cityHost();
+    const res = await host.controller.createRegionForTest(FOREST_RING, "forest", MIXED, "Wolfswood", "forest");
+    expect(res.count).toBeGreaterThan(0);
+    expect(res.outside).toBe(0);
+    const feature = (await host.fabric()).features.find((f) => f.id === res.featureId)!;
+    expect(feature.properties.kind).toBe("forest");
+    expect(feature.properties.procgen?.algorithm).toBe("forest");
+    expect(typeof feature.properties.procgen?.seed).toBe("number");
+    expect(host.controller.regionFeatureIds(res.featureId, "forest-canopy").length).toBeGreaterThan(0);
+  });
+
+  it("re-clips byte-identically after the cache is deleted (determinism)", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(FOREST_RING, "forest", MIXED, "Wood", "forest");
+    const keys = (recs: Map<string, { features: unknown }>) => {
+      const out = new Map<string, string>();
+      for (const [k, rec] of recs) if (k.startsWith(`region:${featureId}:`)) out.set(k, JSON.stringify(rec.features));
+      return out;
+    };
+    const before = keys(await host.cache());
+    expect(before.size).toBeGreaterThan(0);
+    await host.adapter.remove(host.cachePath());
+    await host.controller.regenerateRegionById(featureId);
+    const after = keys(await host.cache());
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [k, bytes] of before) expect(after.get(k)).toBe(bytes);
+  });
+
+  it("a vertex edit adapts the forest and keeps its seed and containment", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(FOREST_RING, "forest", MIXED, "Wood", "forest");
+    const seedBefore = (await host.fabric()).features.find((f) => f.id === featureId)!.properties.procgen!.seed;
+    const ok = await host.controller.moveVertex(featureId, 1, [30, -26]);
+    expect(ok).toBe(true);
+    const seedAfter = (await host.fabric()).features.find((f) => f.id === featureId)!.properties.procgen!.seed;
+    expect(seedAfter).toBe(seedBefore); // edit adapts, never re-rolls
+    const report = host.controller.regionContainmentReport(featureId);
+    expect(report.count).toBeGreaterThan(0);
+    expect(report.outside).toBe(0);
+  });
+
+  it("a forest may overlap a city (different algorithms don't clash)", async () => {
+    const host = cityHost();
+    await host.controller.createRegionForTest(FOREST_RING, "city", { profile: "euro-medieval" }, "Town", "district");
+    // The SAME footprint as a forest — legal, because overlap keys on algorithm.
+    const res = await host.controller.createRegionForTest(FOREST_RING, "forest", MIXED, "Wolfswood", "forest");
+    expect(res.count).toBeGreaterThan(0);
+    expect(res.outside).toBe(0);
+    expect((await host.fabric()).features.filter((f) => f.properties.procgen).length).toBe(2);
+  });
+
+  it("a plain sketched forest (no modal confirm) stays inert — no generation", async () => {
+    const host = cityHost();
+    const runsBefore = host.controller.generatorRunCount;
+    const id = await host.controller.createFabricForTest("forest", FOREST_RING, "__plain_forest__");
+    const feature = (await host.fabric()).features.find((f) => f.id === id)!;
+    expect(isProcgenRegion(feature)).toBe(false);
+    expect(host.controller.regionFeatureIds(id).length).toBe(0);
+    expect(host.controller.generatorRunCount).toBe(runsBefore);
+  });
+
+  it("rejects malformed forest params at the zod boundary", async () => {
+    const host = cityHost();
+    await expect(
+      host.controller.createRegionForTest(FOREST_RING, "forest", { variety: "mixed", density: 5, clearings: 0, edgeRaggedness: 0 }, "Bad", "forest")
+    ).rejects.toThrow();
+  });
+});

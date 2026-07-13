@@ -26,7 +26,8 @@ export interface ThemeTokens {
   fabricRiver: string; // river line — same family as water but clearly distinct in shade
   fabricRoad: string; // sketched road line
   fabricWall: string; // masonry/boundary line (dashed) — stony, never a label gray
-  fabricPark: string; // greenspace fill — the per-theme green
+  fabricPark: string; // greenspace fill — the per-theme green (manicured/lawn)
+  fabricForest: string; // woodland canopy fill — a DEEPER, less-manicured green than fabricPark (plan 022 §3.2)
   fabricDistrict: string; // neighborhood wash — rendered at low opacity, must not slab the base
   fontRegular: string; // glyph stack name (fontstack)
   fontRegion: string; // glyph stack name for region/accent labels
@@ -59,6 +60,7 @@ export const MODERN_CLEAN: ThemeTokens = {
   fabricRoad: "#f0c948",
   fabricWall: "#857a68",
   fabricPark: "#a8d5a2",
+  fabricForest: "#6fae72", // deeper than the pale park green — reads as woodland
   fabricDistrict: "#e07f4f",
   fontRegular: "Inter Regular",
   fontRegion: "Inter Bold",
@@ -84,6 +86,7 @@ export const PARCHMENT: ThemeTokens = {
   fabricRoad: "#8a6f4d",
   fabricWall: "#5e564a",
   fabricPark: "#9db87a",
+  fabricForest: "#6d8f4e", // muted olive-green woodland, sits on parchment
   fabricDistrict: "#8f4a3d",
   fontRegular: "Alegreya Regular",
   fontRegion: "Cormorant SC SemiBold",
@@ -109,6 +112,7 @@ export const INK_SOOT: ThemeTokens = {
   fabricRoad: "#4a4642",
   fabricWall: "#8a7a5f",
   fabricPark: "#5f7a4d",
+  fabricForest: "#43613a", // dark ink-soot canopy, deeper than the park green
   fabricDistrict: "#584a6b",
   fontRegular: "IBM Plex Serif Regular",
   fontRegion: "Oswald Regular",
@@ -136,6 +140,7 @@ export const NEON_SPRAWL: ThemeTokens = {
   fabricRoad: "#00e5ff",
   fabricWall: "#ff6a3d",
   fabricPark: "#30c85e",
+  fabricForest: "#1f9e6d", // neon teal-green canopy, distinct from the bright park green
   fabricDistrict: "#8034a8",
   fontRegular: "Saira Condensed Regular",
   fontRegion: "Rajdhani Bold",

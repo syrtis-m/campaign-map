@@ -10,6 +10,7 @@ import { assertLayerOrder } from "./layerOrder";
  * new-feature-type checklist). This is the coverage guard for the river types
  * added in plan 022-B. */
 const RIVER_LAYER_IDS = ["generated-river-channel", "generated-river-island"] as const;
+const FOREST_LAYER_IDS = ["generated-forest-canopy", "generated-forest-clearing", "generated-forest-tree"] as const;
 
 function fillColor(layer: LayerSpecification): string {
   const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
@@ -70,5 +71,69 @@ describe("generatedLayers — river channel/island paint coverage (plan 022 §4)
     const style = obsidianNativeStyle(css, "http://localhost/glyphs/{fontstack}/{range}.pbf");
     const ids = style.layers.map((l) => l.id);
     for (const id of RIVER_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
+  });
+});
+
+/** A generated color from either a fill or a circle layer. */
+function anyColor(layer: LayerSpecification): string {
+  const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
+  const c = paint["fill-color"] ?? paint["circle-color"];
+  expect(typeof c, `${layer.id} must paint a plain token color`).toBe("string");
+  return (c as string).toLowerCase();
+}
+
+describe("generatedLayers — forest canopy/clearing/tree paint coverage (plan 022 §4)", () => {
+  it("all three forest layers exist and filter on generatorId (no zoom LOD)", () => {
+    const layers = generatedLayers(PARCHMENT);
+    for (const id of FOREST_LAYER_IDS) {
+      const layer = layers.find((l) => l.id === id);
+      expect(layer, `${id} missing from generatedLayers`).toBeDefined();
+      expect((layer as { source?: string }).source).toBe("generated");
+      const filter = JSON.stringify((layer as { filter?: unknown }).filter);
+      expect(filter).toContain('"generatorId"');
+      expect(filter).not.toContain('"zoom"');
+    }
+  });
+
+  it("clearing paints ABOVE the canopy, trees ABOVE both (later in the array)", () => {
+    const ids = generatedLayers(PARCHMENT).map((l) => l.id);
+    const canopy = ids.indexOf("generated-forest-canopy");
+    const clearing = ids.indexOf("generated-forest-clearing");
+    const tree = ids.indexOf("generated-forest-tree");
+    expect(clearing).toBeGreaterThan(canopy);
+    expect(tree).toBeGreaterThan(clearing);
+  });
+
+  it("forest layers keep the generated- prefix so the z-order stack holds", () => {
+    expect(() => assertLayerOrder(generatedLayers(PARCHMENT))).not.toThrow();
+  });
+
+  for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
+    it(`${id}: canopy, clearing and tree all paint a color`, () => {
+      const layers = generatedLayers(tokens);
+      for (const layerId of FOREST_LAYER_IDS) {
+        const layer = layers.find((l) => l.id === layerId)!;
+        expect(anyColor(layer).length).toBeGreaterThan(0);
+      }
+      // Canopy woodland and a clearing (open ground) must read differently.
+      const canopy = anyColor(layers.find((l) => l.id === "generated-forest-canopy")!);
+      const clearing = anyColor(layers.find((l) => l.id === "generated-forest-clearing")!);
+      expect(canopy, `${id}: canopy and clearing share a color`).not.toBe(clearing);
+    });
+  }
+
+  it("obsidian-native runtime style paints all three forest layers", () => {
+    const css: ObsidianCssTokens = {
+      backgroundPrimary: "#1e1e1e",
+      backgroundSecondary: "#262626",
+      backgroundModifierBorder: "#4d4d4d",
+      textMuted: "#999999",
+      textNormal: "#dcddde",
+      interactiveAccent: "#7c3aed",
+      fontText: "sans-serif",
+    };
+    const style = obsidianNativeStyle(css, "http://localhost/glyphs/{fontstack}/{range}.pbf");
+    const ids = style.layers.map((l) => l.id);
+    for (const id of FOREST_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
   });
 });

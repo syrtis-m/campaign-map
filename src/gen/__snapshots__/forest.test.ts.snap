@@ -1,0 +1,13 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`forest generator — determinism > matches the seeded snapshot fixture (mixed woodland — golden drift tripwire) 1`] = `
+{
+  "sha256": "c3bbd2841e317dfeb274f06c50d6ac6ee716513096c2b5a647597580118baea2",
+  "summary": {
+    "forest-canopy": 373,
+    "forest-clearing": 77,
+    "forest-tree": 287,
+    "total": 737,
+  },
+}
+`;
