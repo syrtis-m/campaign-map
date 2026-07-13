@@ -123,6 +123,13 @@ exists to make that true.
 (none yet)
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-13 (arc run, session 2): resumed on dirty tree — prior session was
+  killed mid "board before 21-C" (its fuzz FAIL at 7s was the kill itself, not
+  a red; fuzz re-ran 2/2). Finished the interrupted work per wake protocol:
+  full board 15/15 in 341s, 0 relaunches, dev-vault clean → committed the
+  found hardening (SIGKILL timeout caps in board.ts/cli.ts, phase5 exports
+  hygiene) as 9548aec. That board is 21-C's required "before" board;
+  `.lastgreenboard` → 9548aec. Proceeding to 21-C.
 - 2026-07-12 (arc run, session 1 cont.): 21-B green (5030d88) — board.ts one-
   process runner w/ probe attribution + hygiene assertion; renderer GL-leak
   hypothesis REFUTED by 50-cycle soak, root cause NOT reproduced, evidence in

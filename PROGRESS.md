@@ -23,6 +23,13 @@
   ~270 ms stable); catastrophic degradation not reproduced; best hypothesis =
   GPU/driver memory pressure across heavy generation gates; evidence in
   `review/021B-renderer-degradation.md`; fresh-process rule NOT retired.
+- **Interlude (2026-07-13, `9548aec`)**: board/CLI hardening from the killed
+  session finished + committed — SIGKILL on timeout (gate cap 10 min in
+  board.ts, 30 s per CLI call in cli.ts; a lost-IPC-reply CLI call ignores
+  SIGTERM and wedged a board 20+ min) + phase5 Exports/ hygiene (snapshot
+  baseline, remove only gate-created files). Validated by a full board:
+  **15/15 in 341 s, 0 relaunches, dev-vault byte-clean** — this is 21-C's
+  "before" board; `.lastgreenboard` → 9548aec.
 - Next: 21-C MapController extraction + FakeHost (⛳ full board before AND
   after, zero behavior change), then 21-D acceptance gate.
 
