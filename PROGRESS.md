@@ -30,8 +30,19 @@
   baseline, remove only gate-created files). Validated by a full board:
   **15/15 in 341 s, 0 relaunches, dev-vault byte-clean** — this is 21-C's
   "before" board; `.lastgreenboard` → 9548aec.
-- Next: 21-C MapController extraction + FakeHost (⛳ full board before AND
-  after, zero behavior change), then 21-D acceptance gate.
+- **21-C DONE** (`62660d3`): host-agnostic `src/controller/MapController.ts`
+  (~1560 ln — generation/regen/clear/undo/replay orchestration behind narrow
+  host interfaces: vault adapter, notice sink, render sink; no Obsidian
+  imports) extracted from MapView (now wiring + paint, −1550 ln);
+  `FakeHost.ts` in-memory host double; `MapController.test.ts` 15 headless
+  integration tests in the fast tier (now 329/329, ~15 s). Gate test-API
+  methods stay exposed on the view as controller delegates. ZERO behavior
+  change proven: full board 15/15 (395.9 s, 0 relaunches) before AND after;
+  the interrupted session's 13/15 (procgen41/43) did NOT reproduce on the
+  unmodified tree — environment flakiness, zero fix-edits (see DECISIONS
+  2026-07-13). `.lastgreenboard` → 62660d3.
+- Next: 21-D plan-021 acceptance gate (injected determinism break caught;
+  assertion-migration map), then plan 022.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

@@ -383,3 +383,21 @@
   count. Probe-driven restarts shipped as mitigation; onunload
   detachLeavesOfType hardening deferred as unprovable. Revisit on a
   deterministic repro.
+
+## 2026-07-13 — Plan 021 phase C (MapController extraction)
+- **21-C closed with ZERO fix-edits**: the interrupted session's 13/15 board
+  (procgen41/43 "gate exited 1") did not reproduce — both gates pass
+  individually AND in a full 15/15 board on the unmodified extracted tree.
+  Failures attributed to environment flakiness in that session's long-lived
+  Obsidian process (wall-clock signatures: procgen41 110.7s fail vs ~80–92s
+  typical = late-timeout shape; procgen43 11.7s fail vs 16.2s pass = died
+  early). Precedent adopted: before root-causing a "gate exited 1" from a
+  long-lived process, re-run the gate individually on a fresh build first.
+- **Known probe gap (logged, not fixed)**: a gate can fail on session
+  degradation while pre/post health probes read "healthy" — the probe does
+  not discriminate every degradation mode. Relevant to plan 021 §2.2's open
+  investigation; revisit on a deterministic repro.
+- **Teardown parity audit** (extraction safety evidence): MapController owns
+  no disposable resources (no listeners/timers/workers/DOM; generation worker
+  stays plugin-owned, borrowed via `host.gen.getWorker()`); MapView `onClose`
+  still disposes map/timer/keydown.

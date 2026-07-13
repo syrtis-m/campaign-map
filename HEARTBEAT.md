@@ -68,8 +68,8 @@ exists to make that true.
       dev-vault-clean assertion, 021 §2.4b) + renderer-degradation
       investigation, TIMEBOXED to one session — no root cause by then: document
       evidence, keep probe-restarts, move on (021 §2.2–2.3)
-- [ ] 21-C MapController extraction + FakeHost harness, ZERO behavior change,
-      full board green before AND after (021 §2.4) ⛳ full board
+- [x] 62660d3 21-C MapController extraction + FakeHost harness, ZERO behavior
+      change, full board green before AND after (021 §2.4) ⛳ full board
 - [ ] 21-D plan-021 acceptance gate: injected determinism break caught;
       assertion-migration map written (021 §4)
 
@@ -123,6 +123,12 @@ exists to make that true.
 (none yet)
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-13 (arc run, session 3): resumed on dirty tree — session 2 died mid
+  21-C with the extraction complete and an after-board at 13/15 (procgen41/43).
+  Phase subagent re-verified on the UNMODIFIED tree: both gates pass
+  individually AND full board 15/15 (395.9s, 0 relaunches) — prior failures
+  were environment flakiness (long-lived process), zero fix-edits. 21-C
+  committed 62660d3; `.lastgreenboard` → 62660d3. Proceeding to 21-D.
 - 2026-07-13 (arc run, session 2): resumed on dirty tree — prior session was
   killed mid "board before 21-C" (its fuzz FAIL at 7s was the kill itself, not
   a red; fuzz re-ran 2/2). Finished the interrupted work per wake protocol:
