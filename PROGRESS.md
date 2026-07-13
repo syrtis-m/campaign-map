@@ -95,8 +95,27 @@
   procgen44 12/12 (locality 71.7% vs re-roll 34.3%) · live check (fallback,
   button, style expr, dev:errors) · screenshots re-eyeballed · dev-vault
   byte-clean. See DECISIONS "22-B follow-ups".
-- Next: 22-C FOREST (new kind, masked-noise canopy w/ interiorT fallback,
-  theme paint in ALL themes).
+- **22-C DONE** (`c012975`): FOREST — the first masked-noise polygon
+  algorithm + a new `forest` FabricKind. `src/gen/forest.ts`: canopy = a
+  GLOBAL-lattice CELL fill (not marching squares — that's plan 023 §4.1; logged
+  deviation), each cell emitted iff its position-hashed shared-vertex-jittered
+  quad passes a masked density field AND all corners sit inside the ring with a
+  jitter margin (containment WITHOUT clipping, advisor 2026-07-13); clearings
+  punched by a second noise; `forest-tree` stipple on a jitter grid weighted to
+  the edge (carries the read where canopy thins). Params density/clearings/
+  edgeRaggedness + `variety` (broadleaf/conifer/mixed/swamp/dead-wood) carried
+  onto features as `forestType`; 5 presets. New `fabricForest` token (deeper
+  than park) in ThemeTokens + all 4 handcrafted + obsidian-native; three
+  `generated-forest-*` layers + inert sketched-forest fill (§5.2 decision:
+  faint green, opacity 0 once generated, like the river spine). `forest` added
+  to FABRIC_KINDS/isPolygonKind (auto sketch sub-bar button + fabric layer);
+  `createRegionForTest` made kind-aware (forest-vs-city overlap legal — keys on
+  algorithm). Gate: fast 402/402 · forest fuzz 2/2 · tsc+build · procgen45
+  12/12 (containment, determinism, edit-locality 100% vs re-roll 56.5%, density
+  0→730 cells, undo) · both screenshots eyeballed (broadleaf woodland,
+  dead-wood stipple) · dev-vault byte-clean · Jonah confirmed the kind works
+  via the real sketch GUI. See DECISIONS "phase C".
+- Next: 22-D PARK incl. japanese-garden (022 §3.3).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

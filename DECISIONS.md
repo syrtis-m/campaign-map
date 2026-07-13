@@ -563,3 +563,53 @@
   fixture survived until git-restore). Interactive flows can't reach that
   state (toggleSketchMode keeps flag+bar together); scripted flows should
   reset leaves first (procgen44 already does).
+
+## 2026-07-13 — Plan 022 phase C (FOREST, done inline on Opus 4.8)
+- **Done inline, not by subagent** (Fable 5 credits exhausted mid-run killed the
+  22-C subagent; user switched the session to Opus 4.8). Advisor concurred:
+  respawning a cold subagent just re-burns the credits that already died — the
+  orchestrator had full context loaded.
+- **Canopy = global-lattice CELL fill, NOT marching squares** (deviation from
+  plan 022 §3.2's literal "marching squares", logged per HEARTBEAT rule).
+  Rationale: (1) the marching-squares module is what plan 023 §4.1 actually
+  builds — building bespoke iso-contouring here on spec is exactly the
+  speculative complexity the 2026-07-13 velocity ruling targets; (2) advisor
+  2026-07-13 — every candidate passes the same UNIT gates (determinism, seam,
+  containment); only the screenshot separates "forest" from "blocky", so build
+  the cheapest contained canopy, RENDER, escalate only if it looks wrong. It
+  looked like a forest (review/v4.6-forest-broadleaf.png), so it shipped.
+  **The canopy upgrades to real marching squares in plan 023.**
+- **Containment without clipping** (advisor): a cell is emitted only when all 4
+  corners are ≥ (jitter + 1 mm) inside the ring, so every position-hashed
+  jittered vertex stays strictly inside — no per-tile clip needed for
+  containment, and `density`/`clearings`/`edgeRaggedness` fall out for free.
+- **Watertight edges:** corner jitter hashes on the shared lattice VERTEX (not
+  the cell), so the four cells meeting at a vertex displace it identically — no
+  gaps/overlaps. Feature ids hash the cell's lattice indices (position, integer
+  for clipNetworkToTile's Number(id) sort).
+- **Trees carry the "forest" read** (advisor): a position-hashed jitter grid of
+  `forest-tree` points, weighted toward the ragged edge and scaled by density —
+  they sell the woodland even where the canopy thins (visible on the dead-wood
+  screenshot, which is mostly stipple by design at density 0.35).
+- **`variety` is a param, carried onto features as `forestType`** (broadleaf/
+  conifer/mixed/swamp/dead-wood): params stay the whole truth (determinism), and
+  themes get a discriminator to tint per variety later without a preset-id
+  branch. Paint keys on `generatorId` today; `forestType` is the future hook.
+- **Clearing threshold remapped into the noise's active band** (0.72 −
+  clearings·0.45): fractal noise concentrates near 0.5, so the naive
+  `1 − clearings·0.7` almost never cut a glade (caught by the unit test).
+- **§5.2 open question (inert un-generated forest paint) — DECIDED, flag to
+  Jonah:** a faint canopy-green fill (fabricForest at 0.28 opacity) for the
+  un-generated sketched forest, dropping to opacity 0 once a procgen block is
+  attached (same mechanism as the river spine line — fill stays rendered so
+  queryRenderedFeatures still hit-tests it for selection). Reasonable default;
+  Jonah may want a different inert treatment.
+- **New `fabricForest` token** (deeper than fabricPark) added to ThemeTokens +
+  all 4 handcrafted themes + obsidian-native FABRIC_ON_LIGHT/DARK. Forest reads
+  as a distinct kind from park (F2), verified by the all-themes coverage test.
+- **`createRegionForTest` made kind-aware** (optional `kind`, default district):
+  a forest overlapping a CITY is legal because `overlappingRegion` keys on the
+  ALGORITHM id — only same-algorithm regions clash (headless-tested).
+- **Real-GUI confirmation:** Jonah sketched + generated a forest through the
+  actual sketch UI mid-review (the manual stray he then deleted) — the new kind
+  works end-to-end interactively, not just via the headless twin.

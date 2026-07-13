@@ -119,8 +119,8 @@ exists to make that true.
       rule (022 §1)
 - [x] 4e6d981 22-B spine support + RIVER (windiness/braiding, position-keyed
       per-segment meander, corridor containment) (022 §2, §3.1)
-- [ ] 22-C FOREST (new kind, masked-noise canopy w/ interiorT fallback,
-      theme paint in ALL themes) (022 §3.2)
+- [x] c012975 22-C FOREST (new kind, masked-noise canopy — cell-fill fallback,
+      marching squares deferred to 023; theme paint in ALL themes) (022 §3.2)
 - [ ] 22-D PARK incl. japanese-garden (022 §3.3)
 - [ ] 22-E WALL elaboration + raw-sketch double-wall suppression (022 §3.4)
 - [ ] 22-F FARMLAND incl. outskirt-field suppression (022 §3.5) ⛳ full board
@@ -170,6 +170,14 @@ exists to make that true.
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-13 (arc run, session 5): 22-B river follow-ups (Jonah live: natural
+  bends via global centerline + fillets, no spine double-paint, "Remove"
+  button) committed 31e973d. Then 22-C FOREST: the phase subagent died on
+  Fable 5 credit exhaustion mid-brief; user switched to Opus 4.8 and had the
+  orchestrator do 22-C INLINE (advisor concurred — cold respawn re-burns dead
+  credits). Cell-fill canopy (marching squares deferred to 023, logged), all
+  T1 gates green (fast 402, forest fuzz 2/2, procgen45 12/12), committed
+  c012975. Jonah confirmed the forest kind via the real sketch GUI mid-review.
 - 2026-07-13 (arc run, session 4): resumed on dirty tree — session 3's run died
   mid "board for 22-B" (its 4.5 s fuzz FAIL was the kill; fuzz re-ran 4/4).
   22-B was code-complete; re-verified fast/fuzz/tsc/build + screenshots. Two
