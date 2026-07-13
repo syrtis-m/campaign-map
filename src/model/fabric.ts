@@ -45,6 +45,12 @@ export const ProcgenBlockSchema = z.object({
   seed: z.number().int(),
   version: z.number().int().default(1), // schema version of `params`
   params: z.record(z.string(), z.unknown()),
+  /** Plan 022 §1: the "template" the params were seeded from — DISPLAY ONLY.
+   * Optional so legacy blocks (and city blocks, whose params always match a
+   * preset) parse and persist unchanged; a generator NEVER reads it (params
+   * are the whole truth for determinism). Written solely on an explicit GM
+   * template-pick, never back-filled on load/render/regen. */
+  presetId: z.string().optional(),
 });
 export type ProcgenBlock = z.infer<typeof ProcgenBlockSchema>;
 

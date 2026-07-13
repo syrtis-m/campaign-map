@@ -1,28 +1,24 @@
 import { App, Modal, Setting } from "obsidian";
 import type { ProcgenAlgorithm } from "../gen/procgen/registry";
-import { CITY_PROFILE_IDS } from "../gen/procgen/registry";
-import type { ProfileId } from "../gen/citynet";
+import { matchingPresetId, presetById } from "../gen/procgen/registry";
 
 export interface RegionProcgenChoice {
   params: Record<string, unknown>;
 }
 
-const PROFILE_LABELS: Record<ProfileId, string> = {
-  "euro-medieval": "European medieval — organic warren, plaza, T-junctions",
-  "euro-continental": "European continental — regular blocks, wide angles",
-  "na-grid": "North American grid — right angles, jogged grids",
-  "na-suburb": "North American suburb — curving streets, cul-de-sacs",
-};
-
 /**
- * Region procgen picker (plan 020 §8.1): shown when a district sketch finishes
- * and the sketch-kind has a registry algorithm. The form is driven by the
- * algorithm entry — v1's `city` algorithm renders a profile dropdown seeded
- * from `defaultParams(theme)` (parchment/ink-soot → euro-medieval, modern/neon
- * → na-grid) so the common case is one Enter keypress. There is NO radius
- * control: the sketched polygon IS the size. "Generate" attaches the procgen
- * block and runs the generator; "Keep as plain shape" leaves the district
- * inert (procgen can be enabled later from the edit menu).
+ * Region procgen picker (plan 020 §8.1, plan 022 §1): shown when a district
+ * sketch finishes and the sketch-kind has a registry algorithm. The form is
+ * driven by the algorithm entry — a **Template** dropdown lists the
+ * algorithm's presets (city's four profiles), pre-selected via
+ * `defaultPresetId(theme)` (parchment/ink-soot → euro-medieval, modern/neon →
+ * na-grid) so the common case is one Enter keypress. Picking a template seeds
+ * `params` from that preset. (City has no further per-param controls yet —
+ * the template IS the profile; future algorithms render their zod-schema
+ * knobs below the dropdown.) There is NO radius control: the sketched polygon
+ * IS the size. "Generate" attaches the procgen block and runs the generator;
+ * "Keep as plain shape" leaves the district inert (procgen can be enabled
+ * later from the edit menu).
  */
 export class RegionProcgenModal extends Modal {
   private params: Record<string, unknown>;
@@ -45,13 +41,17 @@ export class RegionProcgenModal extends Modal {
       cls: "setting-item-description",
     });
 
-    // v1: the only city param is `profile`. Rendered from the pre-filled
-    // defaults so the theme-appropriate choice is already selected.
-    if ("profile" in this.params) {
-      new Setting(this.contentEl).setName(`${this.algorithm.label} profile`).addDropdown((dd) => {
-        for (const id of CITY_PROFILE_IDS) dd.addOption(id, PROFILE_LABELS[id]);
-        dd.setValue(String(this.params.profile));
-        dd.onChange((v) => (this.params.profile = v));
+    // Template (preset) dropdown — the primary control. Selecting a template
+    // seeds `params` from the preset. Pre-selected from the theme default.
+    if (this.algorithm.presets.length > 0) {
+      const selected = matchingPresetId(this.algorithm, this.params) ?? this.algorithm.presets[0].id;
+      new Setting(this.contentEl).setName("Template").addDropdown((dd) => {
+        for (const preset of this.algorithm.presets) dd.addOption(preset.id, preset.label);
+        dd.setValue(selected);
+        dd.onChange((id) => {
+          const preset = presetById(this.algorithm, id);
+          if (preset) this.params = { ...preset.params };
+        });
       });
     }
 

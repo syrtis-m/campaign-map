@@ -33,7 +33,7 @@ import { cultureAt } from "../gen/naming/regions";
 import type { BBox } from "../gen/spatialHash";
 import { generateRegionTile, generateTile, type GenerationContext } from "../map/generation/generationService";
 import { validateRegionRing } from "../gen/region";
-import { algorithmForKind, CITY_PROFILE_IDS, type ProcgenAlgorithm } from "../gen/procgen/registry";
+import { algorithmForKind, matchingPresetId, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import { RegionProcgenModal } from "./RegionProcgenModal";
 import { addConnection, removeConnection, setLocationVisibility } from "../vault/locationOps";
 import { importNotes } from "../vault/importOps";
@@ -51,15 +51,6 @@ import { buildAtlasPdf, type AtlasLocation } from "../map/atlasExport";
 import type CampaignMapPlugin from "../main";
 
 export const VIEW_TYPE_MAP = "campaign-map-view";
-
-/** Human-readable profile labels for the selected-region panel dropdown —
- * kept in sync with RegionProcgenModal (the two are the only city-param UIs). */
-const CITY_PROFILE_LABELS: Record<(typeof CITY_PROFILE_IDS)[number], string> = {
-  "euro-medieval": "European medieval",
-  "euro-continental": "European continental",
-  "na-grid": "North American grid",
-  "na-suburb": "North American suburb",
-};
 
 /** Picks a session note (`<campaign>/Sessions/*.md`) whose body's `[[wikilinks]]`
  * become a travel path (plan 009) — same FuzzySuggestModal pattern as
@@ -1542,16 +1533,31 @@ export class MapView extends ItemView {
       gen.onclick = () => this.maybeOfferProcgen(feature);
       return;
     }
-    // Profile dropdown (v1 city param) — schema-driven enough for v1.
-    if (typeof block.params.profile === "string") {
+    // Template (preset) dropdown (plan 022 §1) — the primary control. For city
+    // the four profiles ARE the presets, so this replaces the old profile
+    // dropdown: picking a template re-seeds params from that preset. When the
+    // params have been customised away from every preset the dropdown shows a
+    // synthetic "Custom (from …)" option (unreachable for city today, since its
+    // only knob IS the preset discriminator — the mechanism is here for the
+    // param-carrying algorithms of later 022 phases).
+    if (algorithm.presets.length > 0) {
       const row = section.createDiv({ cls: "campaign-map-sketch-selection-row" });
-      row.createSpan({ cls: "campaign-map-sketch-selection-label", text: "Profile" });
+      row.createSpan({ cls: "campaign-map-sketch-selection-label", text: "Template" });
       const dd = row.createEl("select", { cls: "campaign-map-sketch-procgen-select" });
-      for (const id of CITY_PROFILE_IDS) {
-        const o = dd.createEl("option", { text: CITY_PROFILE_LABELS[id], value: id });
-        if (id === block.params.profile) o.selected = true;
+      const currentPreset = matchingPresetId(algorithm, block.params);
+      for (const preset of algorithm.presets) {
+        const o = dd.createEl("option", { text: preset.label, value: preset.id });
+        if (preset.id === currentPreset) o.selected = true;
       }
-      dd.onchange = () => void this.setRegionParams(feature.id, { ...block.params, profile: dd.value });
+      if (!currentPreset) {
+        const fromLabel = block.presetId ? presetById(algorithm, block.presetId)?.label ?? block.presetId : "preset";
+        const custom = dd.createEl("option", { text: `Custom (from ${fromLabel})`, value: "__custom__" });
+        custom.selected = true;
+      }
+      dd.onchange = () => {
+        if (dd.value === "__custom__") return;
+        void this.setRegionPreset(feature.id, dd.value);
+      };
     }
     // Center hint (Addendum 2): drag the diamond handle to place the plaza.
     const hasCenter = "center" in block.params;
@@ -1583,6 +1589,16 @@ export class MapView extends ItemView {
    * (the id-keyed cache carries no params). Seed unchanged. */
   async setRegionParams(featureId: string, params: Record<string, unknown>): Promise<void> {
     return this.controller.setRegionParams(featureId, params);
+  }
+
+  /** Apply a template (preset) to a region — the headless twin of the panel's
+   * Template dropdown (plan 022 §1). Resolves the preset → params (keeping any
+   * orthogonal params like `center`) and runs the full setRegionParams commit
+   * path. City presets carry no `presetId` (params always match a preset), so
+   * the persisted block stays byte-identical to the pre-022 `{ profile }`
+   * shape. */
+  async setRegionPreset(featureId: string, presetId: string): Promise<void> {
+    return this.controller.setRegionPreset(featureId, presetId);
   }
 
   /** Re-roll a region: a NEW seed (`hashSeed(seed, "reroll")`) — the city

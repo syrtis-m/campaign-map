@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import { FakeHost } from "./FakeHost";
 import { generatedManifestPath } from "../vault/generatedManifestStore";
+import { fabricPath } from "../vault/fabricStore";
 import { discToRing, citySeedFor, type CityDomain } from "../gen/citynet";
 import { regionNetworkKey } from "../map/generation/generationService";
 import { isProcgenRegion } from "../model/fabric";
@@ -160,6 +161,66 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
     expect(feat.properties.procgen?.params.profile).toBe("na-grid");
     expect(host.controller.generatorRunCount).toBeGreaterThan(runsBefore); // recomputed
     expect((await host.log()).at(-1)?.type).toBe("sketch-procgen-set");
+  });
+
+  it("applies a template via setRegionPreset (plan 022 §1) — full commit path, no presetId persisted", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const runsBefore = host.controller.generatorRunCount;
+
+    // The headless twin of the panel's Template dropdown.
+    await host.controller.setRegionPreset(featureId, "na-grid");
+
+    const feat = (await host.fabric()).features[0];
+    expect(feat.properties.procgen?.params.profile).toBe("na-grid");
+    // City presets carry no presetId — block stays byte-identical to the
+    // pre-022 `{ profile }` shape (the Vespergate byte-intact guarantee).
+    expect(feat.properties.procgen?.presetId).toBeUndefined();
+    expect(host.controller.generatorRunCount).toBeGreaterThan(runsBefore); // recomputed
+    expect((await host.log()).at(-1)?.type).toBe("sketch-procgen-set");
+  });
+
+  it("setRegionPreset keeps an orthogonal center param across a template change", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(
+      RING,
+      "city",
+      { profile: "euro-medieval", center: [18, -18] }
+    );
+    await host.controller.setRegionPreset(featureId, "na-suburb");
+    const params = (await host.fabric()).features[0].properties.procgen?.params;
+    expect(params?.profile).toBe("na-suburb");
+    expect(params?.center).toEqual([18, -18]); // placement survives the template swap
+  });
+
+  it("a legacy block (no presetId) validates and regenerates byte-identically after a presetId is stamped on (plan 022 §1 additive)", async () => {
+    // presetId is DISPLAY ONLY — a generator never reads it. Prove it on the
+    // SAME region: generate → persist a display-only presetId onto the block →
+    // reopen (forces a fresh fabric load, which validates the now-presetId'd
+    // block) → force-regenerate. Same featureId ⇒ same seed; same params ⇒
+    // byte-identical output. The stamp must move NOTHING.
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const before = new Map<string, string>();
+    for (const [k, rec] of await host.cache()) before.set(k, JSON.stringify(rec.features));
+
+    // Stamp a display-only presetId onto the persisted block (as a future 022
+    // template-pick would) and persist it back to the vault fabric file.
+    const fabric = await host.fabric();
+    fabric.features.find((f) => f.id === featureId)!.properties.procgen!.presetId = "euro-medieval";
+    await host.adapter.write(fabricPath(host.campaign), JSON.stringify(fabric, null, 2));
+
+    // Reopen (shares the adapter → same cache) and regenerate the same region.
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    // The presetId'd block validated on load (no throw) and is visible.
+    expect((await reopened.fabric()).features[0].properties.procgen?.presetId).toBe("euro-medieval");
+    await reopened.controller.regenerateRegionById(featureId);
+
+    const after = new Map<string, string>();
+    for (const [k, rec] of await reopened.cache()) after.set(k, JSON.stringify(rec.features));
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [k, bytes] of before) expect(after.get(k)).toBe(bytes); // presetId is inert
   });
 
   it("deletes the shape and its generated city together (sketch-remove)", async () => {

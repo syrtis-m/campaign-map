@@ -195,6 +195,24 @@ describe("procgen block (plan 020 §3.1)", () => {
     expect(FabricFeatureSchema.safeParse(districtFeature()).success).toBe(true);
   });
 
+  it("legacy block (no presetId, plan 022 §1 additive) validates unchanged; presetId is optional", () => {
+    // A pre-022 block — exactly the shape Jonah's migrated Vespergate districts
+    // carry — has NO presetId. It must parse, and parsing must not inject one.
+    const legacy = withProcgen(districtFeature(), block);
+    const parsed = FabricFeatureSchema.safeParse(legacy);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.properties.procgen?.presetId).toBeUndefined();
+      // Round-trips byte-identically (no field materialised on parse).
+      expect(JSON.stringify(parsed.data.properties.procgen)).toBe(JSON.stringify(block));
+    }
+    // A block that DOES carry presetId (a future 022 template pick) also parses.
+    const withPreset: ProcgenBlock = { ...block, presetId: "euro-medieval" };
+    const parsedPreset = FabricFeatureSchema.safeParse(withProcgen(districtFeature(), withPreset));
+    expect(parsedPreset.success).toBe(true);
+    if (parsedPreset.success) expect(parsedPreset.data.properties.procgen?.presetId).toBe("euro-medieval");
+  });
+
   it("defaults version to 1 and rejects malformed blocks", () => {
     const noVersion = {
       ...districtFeature(),

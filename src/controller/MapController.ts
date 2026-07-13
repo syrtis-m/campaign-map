@@ -88,7 +88,7 @@ import {
   distanceToBoundary,
   type ProcgenRegion,
 } from "../gen/region";
-import { algorithmById, algorithmForKind, type ProcgenAlgorithm } from "../gen/procgen/registry";
+import { algorithmById, algorithmForKind, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import type { GeneratorId } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
 import { hashSeed } from "../gen/rng";
@@ -1269,6 +1269,23 @@ export class MapController {
     const newBlock: ProcgenBlock = { ...block, params: parsedParams };
     await this.setRegionProcgen(feature, newBlock, block, true, true);
     this.host.render.featureChanged(featureId);
+  }
+
+  /** Apply a template (preset) to a region (plan 022 §1): resolve the preset →
+   * params (merged over the existing params so orthogonal keys like `center`
+   * survive a template change) and run the setRegionParams commit path. City
+   * presets carry no `presetId`, so the block stays `{ profile }`-shaped. */
+  async setRegionPreset(featureId: string, presetId: string): Promise<void> {
+    if (!this.campaign) return;
+    await this.loadFabric();
+    const feature = this.fabricCollection.features.find((f) => f.id === featureId);
+    const block = feature?.properties.procgen;
+    if (!feature || !block) return;
+    const algorithm = algorithmById(block.algorithm);
+    if (!algorithm) return;
+    const preset = presetById(algorithm, presetId);
+    if (!preset) return;
+    await this.setRegionParams(featureId, { ...block.params, ...preset.params });
   }
 
   /** Re-roll a region: a NEW seed. */
