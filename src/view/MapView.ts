@@ -32,7 +32,6 @@ import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
 import type { BBox } from "../gen/spatialHash";
 import { generateRegionTile, generateTile, type GenerationContext } from "../map/generation/generationService";
-import { validateRegionRing } from "../gen/region";
 import { algorithmForKind, matchingPresetId, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import { RegionProcgenModal } from "./RegionProcgenModal";
 import { addConnection, removeConnection, setLocationVisibility } from "../vault/locationOps";
@@ -905,20 +904,16 @@ export class MapView extends ItemView {
     if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return;
     const algorithm = algorithmForKind(feature.properties.kind);
     if (!algorithm) return;
-    const region = this.controller.buildRegionFromFeature(feature);
-    if (!region) return;
-    const validation = validateRegionRing(region.ring);
+    // Kind-aware validation (plan 022 §2): polygon → ring + overlap; line →
+    // spine polyline (spines may cross, so no overlap rejection). Unit math
+    // stays on the controller.
+    const validation = this.controller.validateForProcgen(feature, algorithm.id);
     if (!validation.ok) {
+      const label = algorithm.label.toLowerCase();
       new Notice(
-        `Campaign Map: can't grow a ${algorithm.label.toLowerCase()} here — ${validation.reason}. Kept as a plain shape.`,
-        8000
-      );
-      return;
-    }
-    const clash = this.controller.overlappingRegion(feature, algorithm.id);
-    if (clash) {
-      new Notice(
-        `Campaign Map: overlaps an existing ${algorithm.label.toLowerCase()} — they can't overlap. Kept as a plain shape.`,
+        validation.overlap
+          ? `Campaign Map: overlaps an existing ${label} — they can't overlap. Kept as a plain shape.`
+          : `Campaign Map: can't grow a ${label} here — ${validation.reason}. Kept as a plain shape.`,
         8000
       );
       return;
@@ -942,6 +937,19 @@ export class MapView extends ItemView {
     name?: string
   ): Promise<{ featureId: string; count: number; outside: number }> {
     return this.controller.createRegionForTest(ringUnits, algorithmId, params, name);
+  }
+
+  /** Headless spine (line-kind) creation — the gate/test twin for rivers (plan
+   * 022 §2). Sketches a `kind` line, attaches a procgen block, generates, and
+   * returns the corridor containment summary. */
+  async createSpineForTest(
+    coordsUnits: [number, number][],
+    kind: FabricKind,
+    algorithmId: string,
+    params: Record<string, unknown>,
+    name?: string
+  ): Promise<{ featureId: string; count: number; outside: number }> {
+    return this.controller.createSpineForTest(coordsUnits, kind, algorithmId, params, name);
   }
 
   private applyCampaign(): void {

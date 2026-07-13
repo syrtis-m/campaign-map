@@ -99,8 +99,20 @@ async function main() {
 
   await gate.try("open Ashfall, style loads", async () => {
     await openAshfall();
-    const ok = evalJs(`(function(){var v=${ashfallView()};return !!(v&&v.map&&v.map.isStyleLoaded());})()`);
-    if (ok !== true) throw new Error("Ashfall map did not load");
+    // obsidian-native rebuilds its MapLibre style on Obsidian's `css-change`
+    // event, which can fire from CLI automation independently of our commands —
+    // `isStyleLoaded()` transiently reads false mid-rebuild (see phase3's
+    // waitForStyleLoaded note). openAshfall polls for readiness, but a rebuild
+    // can land in the sub-second gap before this assertion; POLL the recheck
+    // too rather than a single-shot read (a false window, not a load failure —
+    // every downstream export/replay check below proves the map is functional).
+    let ok = false;
+    for (let i = 0; i < 20; i++) {
+      ok = evalJs(`(function(){var v=${ashfallView()};return !!(v&&v.map&&v.map.isStyleLoaded());})()`) === true;
+      if (ok) break;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    if (!ok) throw new Error("Ashfall map did not load");
   });
 
   // snapshot committed Exports/ so the hygiene step can remove only what this

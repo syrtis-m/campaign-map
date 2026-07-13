@@ -1,0 +1,12 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`river generator — determinism > matches the seeded snapshot fixture (windy + braided — golden drift tripwire) 1`] = `
+{
+  "sha256": "d65b8671bbeacdb9a551acea04024aba8a98464ef52a19357c2f1aed1bbef19d",
+  "summary": {
+    "river-channel": 310,
+    "river-island": 23,
+    "total": 333,
+  },
+}
+`;

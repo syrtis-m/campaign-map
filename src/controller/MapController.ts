@@ -81,12 +81,16 @@ import {
 } from "../gen/citynet";
 import {
   makeRegion,
+  makeSpine,
+  makeCorridorRegion,
   regionContains,
   generationCenter,
   segmentCrossesBoundary,
   validateRegionRing,
+  validateSpineLine,
   distanceToBoundary,
   type ProcgenRegion,
+  type RingValidation,
 } from "../gen/region";
 import { algorithmById, algorithmForKind, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import type { GeneratorId } from "../gen/worker/generationWorker";
@@ -395,15 +399,33 @@ export class MapController {
     return this.fabricCollection.features.filter(isProcgenRegion);
   }
 
-  /** Build a ProcgenRegion (generation-space meters) from a district fabric
-   * feature (display units). Null for non-polygon geometry. */
+  /** Build a ProcgenRegion (generation-space meters) from a fabric feature
+   * (display units). Polygon → a sketched region (plan 020). LineString WITH a
+   * procgen block → a spine CORRIDOR (plan 022 §2): the corridor half-width is
+   * the algorithm's pure `corridorMaxOffset(params)`, so the generator reads
+   * `region.spine` and containment is spine-aware. A block-less line is not a
+   * region (a plain inert river) → null. */
   buildRegionFromFeature(feature: FabricFeature): ProcgenRegion | null {
-    if (feature.geometry.type !== "Polygon" || !this.campaign) return null;
+    if (!this.campaign) return null;
     const scale = this.campaign.config.scaleMetersPerUnit;
-    const ring = feature.geometry.coordinates[0].map(
-      ([x, y]) => [unitsToMeters(x, scale), unitsToMeters(y, scale)] as [number, number]
-    );
-    return makeRegion(feature.id, ring);
+    const g = feature.geometry;
+    if (g.type === "Polygon") {
+      const ring = g.coordinates[0].map(
+        ([x, y]) => [unitsToMeters(x, scale), unitsToMeters(y, scale)] as [number, number]
+      );
+      return makeRegion(feature.id, ring);
+    }
+    if (g.type === "LineString") {
+      const block = feature.properties.procgen;
+      const algorithm = block ? algorithmById(block.algorithm) : undefined;
+      if (!block || !algorithm || !algorithm.corridorMaxOffset) return null;
+      const line = g.coordinates.map(
+        ([x, y]) => [unitsToMeters(x, scale), unitsToMeters(y, scale)] as [number, number]
+      );
+      const spine = makeSpine(feature.id, line);
+      return makeCorridorRegion(feature.id, spine, algorithm.corridorMaxOffset(block.params));
+    }
+    return null;
   }
 
   /** The region feature whose polygon contains the generation-space point. */
@@ -506,7 +528,12 @@ export class MapController {
     const algorithm = algorithmById(block.algorithm);
     return (region, constraints) => {
       this.generatorRunCounter++;
-      if (worker) {
+      // Spine (line-kind) regions run on the MAIN thread: the worker protocol
+      // reconstructs a region from `region.ring` via makeRegion (plan 020) and
+      // would lose `region.spine` — and rivers are geometry-light, so the
+      // direct path is both correct and cheap (plan 022 §2 deviation, logged in
+      // DECISIONS). Polygon regions keep the worker path unchanged.
+      if (worker && !region.spine) {
         return worker.generateRegion(block.algorithm, block.seed, region.id, region.ring, block.params, constraints);
       }
       if (!algorithm) throw new Error(`unknown procgen algorithm: ${block.algorithm}`);
@@ -898,6 +925,76 @@ export class MapController {
     return { featureId: feature.id, count: feats.length, outside };
   }
 
+  /** Kind-aware pre-generate validation for the modal path (plan 020 §8.1 /
+   * plan 022 §2) — keeps all display→meters unit math on the controller. A
+   * polygon must be a valid ring and not overlap a same-algorithm region; a
+   * spine (line) must be a valid polyline. Spines MAY cross (tributaries are
+   * legal, plan 022 §3.1) so a line NEVER fails on overlap. `overlap` marks the
+   * polygon-clash case so the host can word its Notice. */
+  validateForProcgen(feature: FabricFeature, algorithmId: string): RingValidation & { overlap?: boolean } {
+    if (!this.campaign) return { ok: false, reason: "no campaign" };
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const g = feature.geometry;
+    if (g.type === "Polygon") {
+      const region = this.buildRegionFromFeature(feature);
+      const v = region ? validateRegionRing(region.ring) : ({ ok: false, reason: "not a polygon" } as const);
+      if (!v.ok) return v;
+      if (this.overlappingRegion(feature, algorithmId)) return { ok: false, reason: "overlaps an existing shape", overlap: true };
+      return { ok: true };
+    }
+    if (g.type === "LineString") {
+      const line = g.coordinates.map(([x, y]) => [unitsToMeters(x, scale), unitsToMeters(y, scale)] as [number, number]);
+      return validateSpineLine(line);
+    }
+    return { ok: false, reason: "unsupported geometry" };
+  }
+
+  /** Headless spine (line-kind) creation — the gate/test twin of
+   * `createRegionForTest` for rivers (plan 022 §2). Sketches a line of `kind`,
+   * attaches a procgen block, generates, and returns the corridor containment
+   * summary (all output within `corridorMaxOffset` of the spine). Runs the FULL
+   * commit path (validate, log, persist, regen) — modals hang CLI. */
+  async createSpineForTest(
+    coordsUnits: [number, number][],
+    kind: FabricKind,
+    algorithmId: string,
+    params: Record<string, unknown>,
+    name?: string
+  ): Promise<{ featureId: string; count: number; outside: number }> {
+    if (!this.campaign || this.campaign.config.crs !== "fictional") throw new Error("fictional campaigns only");
+    const algorithm = algorithmById(algorithmId);
+    if (!algorithm) throw new Error(`unknown algorithm: ${algorithmId}`);
+    await this.loadFabric();
+    const feature: FabricFeature = {
+      type: "Feature",
+      id: makeFabricId(),
+      geometry: { type: "LineString", coordinates: coordsUnits },
+      properties: name ? { kind, name } : { kind },
+    };
+    this.fabricCollection = withFeature(this.fabricCollection, feature);
+    this.host.render.repaintFabric();
+    await this.persistFabric("sketch-add", feature);
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const lineMeters = coordsUnits.map(([x, y]) => [unitsToMeters(x, scale), unitsToMeters(y, scale)] as [number, number]);
+    const validation = validateSpineLine(lineMeters);
+    if (!validation.ok) throw new Error(validation.reason);
+    const feats = await this.attachProcgenAndGenerate(feature, algorithm, params);
+    const updated = this.fabricCollection.features.find((f) => f.id === feature.id) ?? feature;
+    const region = this.buildRegionFromFeature(updated);
+    if (!region) throw new Error("could not build spine corridor");
+    let outside = 0;
+    const scan = (coords: unknown): void => {
+      if (!Array.isArray(coords)) return;
+      if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+        if (distanceToBoundary(region, coords[0] as number, coords[1] as number) < -1.0) outside++;
+        return;
+      }
+      for (const c of coords) scan(c);
+    };
+    for (const f of feats) scan((f.geometry as unknown as { coordinates: unknown }).coordinates);
+    return { featureId: feature.id, count: feats.length, outside };
+  }
+
   /** One-way migration (plan 020 §3.2): pre-v4 disc domains become sketched
    * district features carrying the city procgen block. */
   private async migrateDomainsIfNeeded(): Promise<void> {
@@ -1204,17 +1301,33 @@ export class MapController {
 
     if (geomChanged && isProcgenRegion(after)) {
       const algoId = after.properties.procgen!.algorithm;
-      const region = this.buildRegionFromFeature(after);
-      const validation = region ? validateRegionRing(region.ring) : ({ ok: false, reason: "not a polygon" } as const);
-      if (!validation.ok) {
-        this.host.notices.notify(`Campaign Map: can't reshape the city — ${validation.reason}. Reverted.`, 7000);
-        this.revertSketchEdit(before);
-        return false;
-      }
-      if (this.overlappingRegion(after, algoId)) {
-        this.host.notices.notify("Campaign Map: that edit would overlap another city — they can't overlap. Reverted.", 7000);
-        this.revertSketchEdit(before);
-        return false;
+      if (after.geometry.type === "LineString") {
+        // Spine (line-kind) region (plan 022 §2): validate the reshaped line;
+        // spines MAY cross (tributaries are legal) so there is NO overlap
+        // rejection — do not treat a crossing like an overlapping polygon.
+        const scale = this.campaign.config.scaleMetersPerUnit;
+        const line = after.geometry.coordinates.map(
+          ([x, y]) => [unitsToMeters(x, scale), unitsToMeters(y, scale)] as [number, number]
+        );
+        const validation = validateSpineLine(line);
+        if (!validation.ok) {
+          this.host.notices.notify(`Campaign Map: can't reshape the river — ${validation.reason}. Reverted.`, 7000);
+          this.revertSketchEdit(before);
+          return false;
+        }
+      } else {
+        const region = this.buildRegionFromFeature(after);
+        const validation = region ? validateRegionRing(region.ring) : ({ ok: false, reason: "not a polygon" } as const);
+        if (!validation.ok) {
+          this.host.notices.notify(`Campaign Map: can't reshape the city — ${validation.reason}. Reverted.`, 7000);
+          this.revertSketchEdit(before);
+          return false;
+        }
+        if (this.overlappingRegion(after, algoId)) {
+          this.host.notices.notify("Campaign Map: that edit would overlap another city — they can't overlap. Reverted.", 7000);
+          this.revertSketchEdit(before);
+          return false;
+        }
       }
     }
 

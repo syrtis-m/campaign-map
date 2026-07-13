@@ -134,6 +134,23 @@
         "src/view/SketchController.ts"
       ]
     },
+    "procgen44": {
+      "script": "scripts/gates/procgen44.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/**",
+        "src/gen/procgen/**",
+        "src/gen/river.ts",
+        "src/controller/MapController.ts",
+        "src/controller/FakeHost.ts",
+        "src/model/fabric.ts",
+        "src/map/themes/generatedLayers.ts",
+        "src/map/theme.ts",
+        "src/view/MapView.ts",
+        "src/view/RegionProcgenModal.ts",
+        "src/view/SketchController.ts"
+      ]
+    },
     "styleLoad": {
       "script": "scripts/gates/styleLoad.ts",
       "globs": [

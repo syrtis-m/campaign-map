@@ -14,6 +14,10 @@ import {
   validateRegionRing,
   REGION_MIN_AREA_M2,
   REGION_MAX_AREA_M2,
+  makeSpine,
+  makeCorridorRegion,
+  distanceToSpine,
+  validateSpineLine,
 } from "./region";
 
 type Pt = [number, number];
@@ -276,5 +280,54 @@ describe("validateRegionRing", () => {
     ];
     expect(validateRegionRing(huge).ok).toBe(false);
     expect(REGION_MIN_AREA_M2).toBeCloseTo(Math.PI * 150 * 150, 6);
+  });
+});
+
+describe("spine (line-kind) support (plan 022 §2)", () => {
+  const LINE: Pt[] = [
+    [0, 0],
+    [100, 0],
+    [100.0004, 0], // sub-mm duplicate — dropped by quantization
+    [200, 50],
+  ];
+
+  it("makeSpine mm-quantizes, dedupes, and indexes arc length", () => {
+    const s = makeSpine("s", LINE);
+    // The sub-mm duplicate collapses into its neighbor.
+    expect(s.points.length).toBe(3);
+    expect(s.cumLen[0]).toBe(0);
+    expect(s.totalLen).toBeGreaterThan(0);
+    // Monotone cumulative length.
+    for (let i = 1; i < s.cumLen.length; i++) expect(s.cumLen[i]).toBeGreaterThanOrEqual(s.cumLen[i - 1]);
+    expect(s.cumLen[s.cumLen.length - 1]).toBeCloseTo(s.totalLen, 6);
+  });
+
+  it("distanceToSpine is 0 on the polyline and grows away from it", () => {
+    const s = makeSpine("s", [[0, 0], [100, 0]]);
+    expect(distanceToSpine(s, 50, 0)).toBeCloseTo(0, 6);
+    expect(distanceToSpine(s, 50, 20)).toBeCloseTo(20, 6);
+    // Off the ends: nearest is the endpoint.
+    expect(distanceToSpine(s, -10, 0)).toBeCloseTo(10, 6);
+  });
+
+  it("makeCorridorRegion: spine-aware distanceToBoundary (positive inside, negative outside)", () => {
+    const s = makeSpine("s", [[0, 0], [200, 0]]);
+    const r = makeCorridorRegion("s", s, 30);
+    expect(r.spine).toBeDefined();
+    expect(r.corridorMaxOffset).toBe(30);
+    // On the spine: distance-to-boundary = maxOffset.
+    expect(distanceToBoundary(r, 100, 0)).toBeCloseTo(30, 6);
+    // 25 m off the spine: still inside (positive).
+    expect(distanceToBoundary(r, 100, 25)).toBeCloseTo(5, 6);
+    // 40 m off: outside (negative).
+    expect(distanceToBoundary(r, 100, 40)).toBeCloseTo(-10, 6);
+    // The ring is a valid CCW rectangle covering the corridor bbox.
+    expect(regionContains(r, 100, 0)).toBe(true);
+  });
+
+  it("validateSpineLine: rejects too-short / accepts a real line", () => {
+    expect(validateSpineLine([[0, 0], [0, 0]]).ok).toBe(false); // one distinct point
+    expect(validateSpineLine([[0, 0], [5, 0]]).ok).toBe(false); // below min length
+    expect(validateSpineLine([[0, 0], [200, 0]]).ok).toBe(true);
   });
 });

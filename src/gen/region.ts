@@ -67,6 +67,38 @@ export interface ProcgenRegion {
    * "deepest point", used as the generation center when the centroid falls
    * outside a concave ring. mm-quantized (lattice points are integral). */
   interiorPole: Pt;
+  /** Plan 022 §2: LINE-kind procgen (rivers, later walls). Present ⇔ this
+   * region is a spine CORRIDOR rather than a sketched polygon. The generator
+   * elaborates `spine` (a polyline) and the containment rule becomes "within
+   * `corridorMaxOffset` of the spine" (see `distanceToBoundary`). For a spine
+   * corridor `ring` is a bbox rectangle (spine bbox grown by the offset) used
+   * only for the tile-overlap range — never for containment. Polygon regions
+   * leave both undefined and behave exactly as before. */
+  spine?: Spine;
+  /** Corridor half-width (meters): all generated output must sit within this
+   * distance of `spine`. A pure function of the algorithm's params (plan 022
+   * §2), so a windiness increase widens it. Undefined for polygon regions. */
+  corridorMaxOffset?: number;
+}
+
+/**
+ * A sketched LINE turned into a generation spine (plan 022 §2) — the polyline
+ * a line-kind algorithm (river, later wall) elaborates. mm-quantized, with a
+ * cumulative arc-length index. Kept deliberately minimal: a generator that
+ * needs identity-preserving keying hashes each SEGMENT's quantized endpoints
+ * (never global arc-length — that would make a single-vertex edit re-roll the
+ * whole line; plan 022 §3.1 adversarial note), so `cumLen` is only for the
+ * inherently-global quantities (downstream width growth).
+ */
+export interface Spine {
+  id: string;
+  /** Open, mm-quantized polyline (consecutive duplicates dropped). */
+  points: Pt[];
+  /** Cumulative arc length at each point; `cumLen[0] === 0`. */
+  cumLen: number[];
+  /** Total polyline length (meters). */
+  totalLen: number;
+  bbox: BBox;
 }
 
 /** Open ring (closing vertex stripped) — every loop here iterates open. */
@@ -217,8 +249,15 @@ function distanceToRingBoundary(closed: Pt[], x: number, y: number): number {
 }
 
 /** Exact per-segment distance to the region boundary, signed: positive
- * inside, negative outside (plan 020 §4). */
+ * inside, negative outside (plan 020 §4). For a spine CORRIDOR (plan 022 §2)
+ * the boundary is the corridor edge: `corridorMaxOffset − distanceToSpine`,
+ * so a point is "inside" iff it sits within the offset of the spine — the same
+ * positive-inside / negative-outside convention every caller already relies
+ * on, including the containment gate (`< −1` ⇒ spilled outside). */
 export function distanceToBoundary(r: ProcgenRegion, x: number, y: number): number {
+  if (r.spine && r.corridorMaxOffset !== undefined) {
+    return r.corridorMaxOffset - distanceToSpine(r.spine, x, y);
+  }
   const d = distanceToRingBoundary(r.ring, x, y);
   return regionContains(r, x, y) ? d : -d;
 }
@@ -540,6 +579,117 @@ export function validateRegionRing(ring: Pt[]): RingValidation {
   }
   if (area > REGION_MAX_AREA_M2) {
     return { ok: false, reason: "area above the supported maximum (~2500 m radius)" };
+  }
+  return { ok: true };
+}
+
+// ─── Spine (line-kind) support (plan 022 §2) ─────────────────────────────────
+
+/** A spine shorter than this is below the useful minimum for elaboration. */
+export const SPINE_MIN_LENGTH_M = 20;
+/** Perf/area valve mirroring REGION_MAX (a river spine longer than this would
+ * blow up the corridor tile range — the useful ceiling for one sketched line). */
+export const SPINE_MAX_LENGTH_M = 40000;
+
+/**
+ * Build a spine from a polyline (plan 022 §2). Ingest normalization, all
+ * deterministic: mm-quantize every vertex (D5), drop consecutive duplicates,
+ * accumulate arc length. Never throws — validation is `validateSpineLine`'s
+ * job (host-side). `id` is the fabric feature id, so cache keys stay
+ * `region:<featureId>:…` (the id is the contract, not the geometry type).
+ */
+export function makeSpine(id: string, line: Pt[]): Spine {
+  const points: Pt[] = [];
+  for (const [x, y] of line) {
+    const p: Pt = [q(x), q(y)];
+    const last = points[points.length - 1];
+    if (last && last[0] === p[0] && last[1] === p[1]) continue;
+    points.push(p);
+  }
+  const cumLen: number[] = [];
+  let total = 0;
+  const bbox: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (let i = 0; i < points.length; i++) {
+    if (i === 0) {
+      cumLen.push(0);
+    } else {
+      total += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+      cumLen.push(total);
+    }
+    const [x, y] = points[i];
+    if (x < bbox.minX) bbox.minX = x;
+    if (y < bbox.minY) bbox.minY = y;
+    if (x > bbox.maxX) bbox.maxX = x;
+    if (y > bbox.maxY) bbox.maxY = y;
+  }
+  return { id, points, cumLen, totalLen: total, bbox };
+}
+
+/** Min distance from a point to any segment of the spine polyline — the
+ * corridor containment metric (closed-form, deterministic). */
+export function distanceToSpine(spine: Spine, x: number, y: number): number {
+  const pts = spine.points;
+  if (pts.length === 0) return Infinity;
+  if (pts.length === 1) return Math.hypot(x - pts[0][0], y - pts[0][1]);
+  let best = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, ay] = pts[i];
+    const [bx, by] = pts[i + 1];
+    const dx = bx - ax;
+    const dy = by - ay;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2));
+    const d = Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/**
+ * A spine CORRIDOR as a ProcgenRegion (plan 022 §2): reuses the whole region
+ * lifecycle (tile range, cache keys, generate/regen/clip) unchanged. `ring` is
+ * the spine bbox grown by `maxOffset` — a simple CCW rectangle used ONLY for
+ * the tile-overlap range (a harmless superset; empty tiles clip to nothing).
+ * Containment is spine-aware via `distanceToBoundary`; the generator reads
+ * `region.spine`. `maxOffset` is the algorithm's pure f(params) corridor
+ * half-width, so a windiness increase grows the corridor (never violates it).
+ */
+export function makeCorridorRegion(id: string, spine: Spine, maxOffset: number): ProcgenRegion {
+  const m = Math.max(0, maxOffset);
+  const minX = q(spine.bbox.minX - m);
+  const minY = q(spine.bbox.minY - m);
+  const maxX = q(spine.bbox.maxX + m);
+  const maxY = q(spine.bbox.maxY + m);
+  // CCW rectangle ring (positive shoelace), closed.
+  const ring: Pt[] = [
+    [minX, minY],
+    [maxX, minY],
+    [maxX, maxY],
+    [minX, maxY],
+    [minX, minY],
+  ];
+  const region = makeRegion(id, ring);
+  region.spine = spine;
+  region.corridorMaxOffset = m;
+  return region;
+}
+
+/**
+ * Host-side ingest validation for a line-kind sketch (plan 022 §2): ≥2
+ * distinct vertices and a total length within the useful envelope. Pure and
+ * side-effect free — the host turns a failure into a Notice ("kept as a plain
+ * shape"). Mirrors `validateRegionRing` for polygons.
+ */
+export function validateSpineLine(line: Pt[]): RingValidation {
+  const spine = makeSpine("", line);
+  if (spine.points.length < 2) {
+    return { ok: false, reason: "needs at least 2 distinct points" };
+  }
+  if (spine.totalLen < SPINE_MIN_LENGTH_M) {
+    return { ok: false, reason: "line is too short to generate along" };
+  }
+  if (spine.totalLen > SPINE_MAX_LENGTH_M) {
+    return { ok: false, reason: "line is longer than the supported maximum" };
   }
   return { ok: true };
 }

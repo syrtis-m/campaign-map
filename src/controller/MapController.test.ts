@@ -334,3 +334,129 @@ describe("MapController — world tier generate / regen / clear (phase3/phase4)"
     expect((await host.log()).at(-1)?.type).toBe("clear-area");
   });
 });
+
+describe("MapController — spine (river) line-kind procgen (plan 022 §2)", () => {
+  // A kinked river line in display units (1 unit = 50 m), well inside bounds.
+  const RIVER: [number, number][] = [
+    [6, -30],
+    [12, -22],
+    [6, -14],
+    [12, -6],
+  ];
+  const LAZY = { windiness: 0.85, braiding: 0.5, width: 26, widthGrowth: 0.7, braidBias: 0.2 };
+
+  function regionKeys(recs: Map<string, { features: unknown }>, id: string): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const [k, rec] of recs) if (k.startsWith(`region:${id}:`)) out.set(k, JSON.stringify(rec.features));
+    return out;
+  }
+
+  it("generates channel features inside the corridor (containment holds)", async () => {
+    const host = cityHost();
+    const res = await host.controller.createSpineForTest(RIVER, "river", "river", LAZY, "__spine_test__");
+    expect(res.count).toBeGreaterThan(0);
+    expect(res.outside).toBe(0);
+    // The fabric feature carries a river procgen block with a persisted seed.
+    const feature = (await host.fabric()).features.find((f) => f.id === res.featureId)!;
+    expect(feature.properties.kind).toBe("river");
+    expect(feature.properties.procgen?.algorithm).toBe("river");
+    expect(typeof feature.properties.procgen?.seed).toBe("number");
+    // Channel water was emitted; the render store holds region-keyed tiles.
+    const ids = host.controller.regionFeatureIds(res.featureId, "river-channel");
+    expect(ids.length).toBeGreaterThan(0);
+  });
+
+  it("re-clips byte-identically after the cache is deleted (determinism)", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createSpineForTest(RIVER, "river", "river", LAZY, "__spine_test__");
+    const before = regionKeys(await host.cache(), featureId);
+    expect(before.size).toBeGreaterThan(0);
+    await host.adapter.remove(host.cachePath());
+    await host.controller.regenerateRegionById(featureId);
+    const after = regionKeys(await host.cache(), featureId);
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [k, bytes] of before) expect(after.get(k)).toBe(bytes);
+  });
+
+  it("replays from cache on reopen without re-running any generator (explicit-only)", async () => {
+    const host = cityHost();
+    await host.controller.createSpineForTest(RIVER, "river", "river", LAZY, "__spine_test__");
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    await reopened.controller.replayGeneratedManifest();
+    expect(reopened.controller.loadedTileCount).toBeGreaterThan(0);
+    expect(reopened.controller.generatorRunCount).toBe(0);
+  });
+
+  it("a vertex edit adapts the river and stays contained; far segment is stable", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createSpineForTest(RIVER, "river", "river", LAZY, "__spine_test__");
+    const before = host.controller.regionContainmentReport(featureId).count;
+    // Move the LAST vertex (open-index 3) — moveVertex runs the full commit path.
+    const ok = await host.controller.moveVertex(featureId, 3, [16, -4]);
+    expect(ok).toBe(true);
+    const report = host.controller.regionContainmentReport(featureId);
+    expect(report.count).toBeGreaterThan(0);
+    expect(report.outside).toBe(0);
+    expect(before).toBeGreaterThan(0);
+  });
+
+  it("windiness increase widens the corridor (setRegionParams), still contained", async () => {
+    const host = cityHost();
+    const straight = { windiness: 0.1, braiding: 0, width: 12, widthGrowth: 0, braidBias: 0 };
+    const { featureId } = await host.controller.createSpineForTest(RIVER, "river", "river", straight, "__spine_test__");
+    expect(host.controller.regionContainmentReport(featureId).outside).toBe(0);
+    await host.controller.setRegionParams(featureId, { ...straight, windiness: 0.95 });
+    // Still contained against the NOW-WIDER corridor (buildRegionFromFeature
+    // recomputes maxOffset from the new params).
+    const report = host.controller.regionContainmentReport(featureId);
+    expect(report.count).toBeGreaterThan(0);
+    expect(report.outside).toBe(0);
+  });
+
+  it("re-roll changes the seed and the output", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createSpineForTest(RIVER, "river", "river", LAZY, "__spine_test__");
+    const seedBefore = (await host.fabric()).features.find((f) => f.id === featureId)!.properties.procgen!.seed;
+    const before = regionKeys(await host.cache(), featureId);
+    await host.controller.rerollRegion(featureId);
+    const seedAfter = (await host.fabric()).features.find((f) => f.id === featureId)!.properties.procgen!.seed;
+    expect(seedAfter).not.toBe(seedBefore);
+    const after = regionKeys(await host.cache(), featureId);
+    // At least the network record changed bytes.
+    let changed = false;
+    for (const [k, bytes] of before) if (after.get(k) !== bytes) changed = true;
+    expect(changed).toBe(true);
+  });
+
+  it("undo restores the pre-edit river", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createSpineForTest(RIVER, "river", "river", LAZY, "__spine_test__");
+    const before = regionKeys(await host.cache(), featureId);
+    await host.controller.moveVertex(featureId, 3, [16, -4]);
+    await host.controller.undoLastEdit();
+    // The line geometry is back; regenerate and compare bytes.
+    await host.controller.regenerateRegionById(featureId);
+    const after = regionKeys(await host.cache(), featureId);
+    for (const [k, bytes] of before) if (after.has(k)) expect(after.get(k)).toBe(bytes);
+    expect(host.controller.regionContainmentReport(featureId).outside).toBe(0);
+  });
+
+  it("a plain sketched river (no modal confirm) stays inert — no region, no generation", async () => {
+    const host = cityHost();
+    const runsBefore = host.controller.generatorRunCount;
+    const id = await host.controller.createFabricForTest("river", RIVER, "__plain_river__");
+    const feature = (await host.fabric()).features.find((f) => f.id === id)!;
+    expect(isProcgenRegion(feature)).toBe(false);
+    expect(host.controller.regionFeatureIds(id).length).toBe(0);
+    // No generator ran for a plain sketch.
+    expect(host.controller.generatorRunCount).toBe(runsBefore);
+  });
+
+  it("rejects malformed river params at the zod boundary", async () => {
+    const host = cityHost();
+    await expect(
+      host.controller.createSpineForTest(RIVER, "river", "river", { windiness: 2, braiding: 0, width: 12, widthGrowth: 0, braidBias: 0 }, "__spine_test__")
+    ).rejects.toThrow();
+  });
+});

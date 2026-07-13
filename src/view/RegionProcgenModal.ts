@@ -35,9 +35,10 @@ export class RegionProcgenModal extends Modal {
   }
 
   onOpen(): void {
-    this.titleEl.setText(`Generate ${this.algorithm.label.toLowerCase()} in this district?`);
+    const label = this.algorithm.label.toLowerCase();
+    this.titleEl.setText(`Generate ${label} from this sketch?`);
     this.contentEl.createEl("p", {
-      text: `Streets, blocks, and buildings generate inside the shape you drew and adapt to your sketches. The outline is the ${this.algorithm.label.toLowerCase()} limit — nothing spills past it.`,
+      text: `A ${label} is generated along the shape you drew and adapts to your sketches — nothing spills past it. Pick a template, then generate.`,
       cls: "setting-item-description",
     });
 

@@ -16,6 +16,7 @@ import { z } from "zod";
 import type { FabricKind } from "../../model/fabric";
 import type { GenerationConstraints } from "../types";
 import type { ProcgenRegion } from "../region";
+import { generateRiver, riverMaxOffset } from "../river";
 import {
   DOMAIN_TILE_GENERATOR_IDS,
   generateCityNetwork,
@@ -55,6 +56,13 @@ export interface ProcgenAlgorithm {
   /** Per-tile generator ids this algorithm's network clips into — the host
    * uses these for cache keys and paint layers. */
   tileGeneratorIds: readonly string[];
+  /** Plan 022 §2 (LINE-kind algorithms only): the corridor half-width, a PURE
+   * function of the params — all output must sit within this distance of the
+   * sketched spine. The host builds the spine corridor region from it (a
+   * windiness increase widens the corridor, never violates it) and plan 024
+   * reuses it as the cascade influence margin. Absent for polygon algorithms
+   * (city), which are contained by their sketched ring instead. */
+  corridorMaxOffset?(params: Record<string, unknown>): number;
   generate(
     seed: number,
     region: ProcgenRegion,
@@ -121,9 +129,76 @@ const cityAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-/** v1 registers only `city`. Order matters for `algorithmForKind` (first
- * match wins) — keep the list explicit and small. */
-const REGISTRY: readonly ProcgenAlgorithm[] = [cityAlgorithm];
+// ─── River (plan 022 §3.1) — the first LINE-kind algorithm ───────────────────
+
+/** River params v1 (plan 022 §3.1). All knobs default to the prior/simplest
+ * behavior (§1 additive-params rule): a plain straight uniform channel. */
+const riverParamsSchema = z.object({
+  windiness: z.number().min(0).max(1).default(0),
+  braiding: z.number().min(0).max(1).default(0),
+  width: z.number().positive().max(500).default(12),
+  widthGrowth: z.number().min(0).max(4).default(0),
+  braidBias: z.number().min(0).max(1).default(0),
+});
+
+/** River presets (plan 022 §3.1) — the templates Jonah named. Params are the
+ * whole truth; the "delta weights braiding toward the end" behavior is carried
+ * by `braidBias`, never a preset-id branch. */
+const RIVER_PRESETS: readonly ProcgenPreset[] = [
+  {
+    id: "lazy-lowland",
+    label: "Lazy lowland — wide, windy, braided",
+    params: { windiness: 0.85, braiding: 0.5, width: 26, widthGrowth: 0.7, braidBias: 0.2 },
+  },
+  {
+    id: "mountain-torrent",
+    label: "Mountain torrent — narrow, straight, rocky",
+    params: { windiness: 0.15, braiding: 0, width: 8, widthGrowth: 0.2, braidBias: 0 },
+  },
+  {
+    id: "canal",
+    label: "Canal — dead straight, uniform width",
+    params: { windiness: 0, braiding: 0, width: 12, widthGrowth: 0, braidBias: 0 },
+  },
+  {
+    id: "delta",
+    label: "Delta — heavy braiding near the mouth",
+    params: { windiness: 0.5, braiding: 1, width: 22, widthGrowth: 1.2, braidBias: 1 },
+  },
+];
+
+/** River tile-generator ids = the emitted feature buckets (plan 022 §3.1):
+ * channel water + island land. Cache keys + paint layers key on these. */
+export const RIVER_TILE_GENERATOR_IDS: readonly string[] = ["river-channel", "river-island"];
+
+const riverAlgorithm: ProcgenAlgorithm = {
+  id: "river",
+  label: "River",
+  appliesTo: ["river"],
+  paramsSchema: riverParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
+  presets: RIVER_PRESETS,
+  defaultPresetId(themeId: string): string {
+    // Parchment/ink-soot fantasy reads best as a lazy lowland river; the clean
+    // modern/neon themes default to a canal (their palette suits engineered
+    // water). Every returned id is a member of RIVER_PRESETS.
+    return themeId === "modern-clean" || themeId === "neon-sprawl" ? "canal" : "lazy-lowland";
+  },
+  defaultParams(themeId: string): Record<string, unknown> {
+    const preset = presetById(this, this.defaultPresetId(themeId));
+    return preset ? { ...preset.params } : { ...RIVER_PRESETS[0].params };
+  },
+  tileGeneratorIds: RIVER_TILE_GENERATOR_IDS,
+  corridorMaxOffset(params: Record<string, unknown>): number {
+    return riverMaxOffset(riverParamsSchema.parse(params));
+  },
+  generate(seed, region, params, constraints): GeoJSON.Feature[] {
+    return generateRiver(seed, region, riverParamsSchema.parse(params), constraints);
+  },
+};
+
+/** v1 registers `city` (polygon) + `river` (line). Order matters for
+ * `algorithmForKind` (first match wins) — keep the list explicit and small. */
+const REGISTRY: readonly ProcgenAlgorithm[] = [cityAlgorithm, riverAlgorithm];
 
 export function algorithmForKind(kind: FabricKind): ProcgenAlgorithm | undefined {
   return REGISTRY.find((a) => a.appliesTo.includes(kind));
