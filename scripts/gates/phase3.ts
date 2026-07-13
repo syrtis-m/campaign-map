@@ -4,19 +4,59 @@
 // this gate covers the integration surface unit tests can't: live cache
 // persistence, the generate/regenerate flow, and screenshots.
 //
-// Modernized 2026-07-11 for plan 019 + procgen v3: generation is
-// explicit-only via generate-fabric-here (tier from zoom; city tier is
-// domain-scoped), canonization is deleted (fabric never promotes — asserted
-// below), and the plan-018 toolbar holds 5 core buttons with generate living
-// in the control modal. Every stateful check clears generated state first so
-// the gate is idempotent across reruns.
+// Modernized 2026-07-12 for plan 020 (the three-layer model): generation is
+// explicit-only via generate-fabric-here (world tier from zoom; city tier is
+// sketch-driven — a sketched district IS the request, founded here via
+// createRegionForTest), canonization is deleted (fabric never promotes —
+// asserted below), and the plan-018 toolbar holds 5 core buttons with generate
+// living in the control modal. Every stateful check clears generated state
+// first so the gate is idempotent across reruns; the test district is stripped
+// from Ashfall's Fabric.geojson at the end so dev-vault stays git-clean.
 //
 // Note on evalJs: it already JSON.parses whatever the CLI prints after
 // "=> ". Returning `JSON.stringify(x)` from eval code round-trips back into
 // a parsed object anyway (double-encode, single-decode) — always return
 // plain values from eval code and let evalJs do the one parse.
-import { readFileSync, existsSync, rmSync } from "node:fs";
+import { readFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { Gate, obsidian, obsidianRaw, evalJs, clearErrors, devErrors, screenshot } from "../lib/cli.js";
+
+// The city tier is sketch-driven (plan 020): the gate founds its test city by
+// sketching a district (createRegionForTest) rather than the retired disc
+// domainChoice. That district is a real fabric feature persisted to Ashfall's
+// Fabric.geojson — strip it (by name) + its region cache records at the end so
+// the committed dev-vault baseline stays byte-intact.
+const ASHFALL_FABRIC = "dev-vault/Campaigns/Ashfall/Fabric.geojson";
+const ASHFALL_CACHE = "dev-vault/Campaigns/Ashfall/.mapcache/generated.jsonl";
+const TEST_NAME = "__phase3_test__";
+// A district filling most of Ashfall's ±8/±6-unit bounds (50 m/unit) — the
+// city-tier analog of the old radius-400 disc at the campaign center.
+const TEST_RING = "[[-7.5,-5.5],[7.5,-5.5],[7.5,5.5],[-7.5,5.5]]";
+
+function stripAshfallTestFabric(): void {
+  if (!existsSync(ASHFALL_FABRIC)) return;
+  const fabric = JSON.parse(readFileSync(ASHFALL_FABRIC, "utf8")) as {
+    features?: { id?: string; properties?: { name?: string } }[];
+  };
+  if (!Array.isArray(fabric.features)) return;
+  const before = fabric.features.length;
+  const removedIds = fabric.features.filter((f) => f.properties?.name === TEST_NAME).map((f) => f.id);
+  fabric.features = fabric.features.filter((f) => f.properties?.name !== TEST_NAME);
+  if (fabric.features.length === before) return;
+  writeFileSync(ASHFALL_FABRIC, JSON.stringify(fabric, null, 2));
+  if (!existsSync(ASHFALL_CACHE)) return;
+  const kept = readFileSync(ASHFALL_CACHE, "utf8")
+    .split("\n")
+    .filter((l) => l.trim())
+    .filter((l) => {
+      try {
+        const r = JSON.parse(l) as { key: string };
+        return !removedIds.some((id) => id && r.key.startsWith(`region:${id}:`));
+      } catch {
+        return true;
+      }
+    });
+  writeFileSync(ASHFALL_CACHE, kept.length ? kept.join("\n") + "\n" : "");
+}
 
 function resetLeaves() {
   evalJs("app.workspace.detachLeavesOfType('campaign-map-view'); 'reset'");
@@ -101,6 +141,8 @@ async function main() {
   console.log("== Phase 3 gate ==\n");
 
   resetLeaves();
+  // Clear any test district a crashed prior run left behind (app detached above).
+  stripAshfallTestFabric();
 
   await gate.try("no Node API in bundle", () => {
     const bundle = readFileSync("dev-vault/.obsidian/plugins/campaign-map/main.js", "utf8");
@@ -156,14 +198,21 @@ async function main() {
     if (!counts["world-region"]) throw new Error(`no world-region features: ${JSON.stringify(counts)}`);
   });
 
-  await gate.try("city tier: founding a domain produces streets/blocks/parcels/footprints/wards", async () => {
+  let testRegionId = "";
+  await gate.try("city tier: sketching a district produces streets/blocks/parcels/footprints/wards (plan 020)", async () => {
     clearErrors();
-    evalJs("app.plugins.plugins['campaign-map'].map.jumpTo({center:[0,0], zoom:9}); 'ok'");
+    await runOnAshfall("function(v){ return v.clearAllGenerated(); }");
+    // The sketched district IS the city-tier request — no zoom gate, no disc.
+    const res = (await runOnAshfall(
+      `function(v){ return v.createRegionForTest(${TEST_RING}, 'city', { profile: 'euro-medieval' }, '${TEST_NAME}'); }`
+    )) as { featureId: string; count: number; outside: number };
+    testRegionId = res.featureId;
+    if (res.count < 100) throw new Error(`only ${res.count} features generated in the district`);
+    if (res.outside > 0) throw new Error(`${res.outside} coords fell outside the sketched district`);
     const counts = (await runOnAshfall(
-      `function(v){ return v.generateFabricHere([0,0], { domainChoice: { profile: 'euro-medieval', radius: 400 } }).then(function(f){
-        var c = {};
-        f.forEach(function(x){ var g=(x.properties||{}).generatorId; c[g]=(c[g]||0)+1; });
-        return c; }); }`
+      `function(v){ return Promise.resolve((function(){ var c={}; var pre='region:'+${JSON.stringify(res.featureId)}+':';
+        v.loadedTiles.forEach(function(feats,k){ if(k.indexOf(pre)!==0) return; feats.forEach(function(f){ var g=(f.properties||{}).generatorId; c[g]=(c[g]||0)+1; }); });
+        return c; })()); }`
     )) as Record<string, number>;
     for (const id of ["city-street", "city-block", "city-parcel", "city-footprint", "city-district"]) {
       if (!counts[id] || counts[id] < 1) throw new Error(`missing/empty ${id}: ${JSON.stringify(counts)}`);
@@ -218,11 +267,11 @@ async function main() {
   await gate.try(
     "determinism: cache-delete + replay produces hash-identical output (docs/06 §2)",
     async () => {
-      // The world tile + city domain generated above are in the manifest;
-      // their bytes must survive a full .mapcache delete (regenerated on
-      // replay by a fresh view). rmSync, not the CLI delete command — the
-      // command can't resolve dot-folder files, and deleting out from under
-      // Obsidian is the truest "GM deletes .mapcache" simulation anyway.
+      // The sketched-district city generated above replays from the sketch
+      // layer; its region cache records must survive a full .mapcache delete
+      // (regenerated on replay by a fresh view). rmSync, not the CLI delete
+      // command — the command can't resolve dot-folder files, and deleting out
+      // from under Obsidian is the truest "GM deletes .mapcache" simulation.
       const cachePath = "dev-vault/Campaigns/Ashfall/.mapcache/generated.jsonl";
       if (!existsSync(cachePath)) throw new Error("expected a populated cache before the delete");
       const readRecords = (): Map<string, string> => {
@@ -282,17 +331,18 @@ async function main() {
     }
   });
 
-  await gate.try("regenerate adapts to canon changes; canon itself never touched (plan 019 + procgen v3)", async () => {
+  await gate.try("regenerate adapts to canon changes; canon itself never touched (plan 020 region)", async () => {
     clearErrors();
-    // Snapshot the domain generated by the city-tier check above (this check
-    // depends on it — the domain covers Ashfall's center).
+    // Snapshot the sketched-district city founded by the city-tier check above
+    // (this check depends on it — the district covers Ashfall's center).
+    // regenerateFabricHere finds the region by point, zoom-independently.
     const before = (await runOnAshfall(
-      `function(v){ return v.generateFabricHere([0,0], {}).then(function(f){
+      `function(v){ return v.regenerateFabricHere([0,0]).then(function(f){
         return JSON.stringify(f.filter(function(x){return x.properties && x.properties.generatorId === 'city-street';})); }); }`
     )) as string;
 
     const beforeIndexSize = await settleIndexSize();
-    // A new canon Location inside the domain is a CONSTRAINT change: cityness
+    // A new canon Location inside the district is a CONSTRAINT change: cityness
     // bumps ("the city grows around the GM's pins") + canon clearance.
     evalJs(
       `app.plugins.plugins['campaign-map'].createLocation('ashfall', [1, 0.5], 'Gate3 Regen Probe', 'village', 'mid'); 'ok'`
@@ -312,15 +362,15 @@ async function main() {
         return JSON.stringify(f.filter(function(x){return x.properties && x.properties.generatorId === 'city-street';})); }); }`
     )) as string;
     if (before === after) {
-      throw new Error("regenerate with a new canon Location inside the domain left streets byte-identical — constraints aren't reshaping fabric");
+      throw new Error("regenerate with a new canon Location inside the district left streets byte-identical — constraints aren't reshaping fabric");
     }
     const finalIndexSize = evalJs("app.plugins.plugins['campaign-map'].index.size") as number;
     if (finalIndexSize !== afterIndexSize) {
       throw new Error(`regenerate touched canon: index ${afterIndexSize} -> ${finalIndexSize}`);
     }
 
-    // Leave the fixture clean: clear generated state, delete the probe note.
-    await runOnAshfall("function(v){ return v.clearAllGenerated(); }");
+    // Delete the probe note (the district itself is torn down in the final
+    // fixture-cleanup step so dev-vault stays byte-intact).
     obsidianRaw(["delete", "path=Campaigns/Ashfall/Locations/Gate3 Regen Probe.md", "permanent"]);
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
@@ -336,14 +386,34 @@ async function main() {
   await gate.try("screenshot: generated city fabric alongside canon", async () => {
     resetLeaves();
     obsidian("command id=campaign-map:open-map-ashfall");
-    await new Promise((r) => setTimeout(r, 800));
-    evalJs("app.plugins.plugins['campaign-map'].map.jumpTo({center:[-8,-6],zoom:2}); 'ok'");
-    obsidian("command id=campaign-map:generate-city-here");
-    await new Promise((r) => setTimeout(r, 500));
-    evalJs("app.plugins.plugins['campaign-map'].map.fitBounds([[0,-6],[12,6]], {padding:20, animate:false}); 'ok'");
-    await new Promise((r) => setTimeout(r, 800));
+    // The test district replays from the sketch layer on open — wait for it.
+    await new Promise((r) => setTimeout(r, 2500));
+    evalJs("app.plugins.plugins['campaign-map'].map.fitBounds([[-7.5,-5.5],[7.5,5.5]], {padding:20, animate:false}); 'ok'");
+    await new Promise((r) => setTimeout(r, 1200));
     screenshot("/Users/athena/projects/campaign-map/shots/gate-phase3-ashfall-generated.png");
     if (!existsSync("shots/gate-phase3-ashfall-generated.png")) throw new Error("screenshot missing");
+  });
+
+  await gate.try("fixture cleanup: dev-vault left byte-intact", async () => {
+    resetLeaves();
+    obsidian("command id=campaign-map:open-map-ashfall");
+    await new Promise((r) => setTimeout(r, 2000));
+    // clearAllGenerated drops world entries + strips region procgen blocks +
+    // drops region cache; stripAshfallTestFabric (app detached) removes the
+    // test district feature itself + any residual region records.
+    await runOnAshfall("function(v){ return v.clearAllGenerated(); }");
+    resetLeaves();
+    await new Promise((r) => setTimeout(r, 800));
+    stripAshfallTestFabric();
+    const gen = JSON.parse(readFileSync("dev-vault/Campaigns/Ashfall/Generated.json", "utf8")) as {
+      entries?: unknown[];
+      domains?: unknown[];
+    };
+    if ((gen.entries ?? []).length !== 0 || (gen.domains ?? []).length !== 0) {
+      throw new Error(`Ashfall manifest not clean: ${JSON.stringify(gen)}`);
+    }
+    const fab = JSON.parse(readFileSync(ASHFALL_FABRIC, "utf8")) as { features: { properties?: { name?: string } }[] };
+    if (fab.features.some((f) => f.properties?.name === TEST_NAME)) throw new Error("test district survived cleanup");
   });
 
   process.exit(gate.summarize("Phase 3"));

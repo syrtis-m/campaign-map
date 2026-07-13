@@ -1680,11 +1680,10 @@ export class MapView extends ItemView {
     return this.setRegionProcgen(feature, block, null, true);
   }
 
-  /** Headless region creation (gate/test path — a modal would hang CLI
-   * automation, mirroring the retired `domainChoice` split): sketch a district
-   * from a display-space ring, attach a procgen block, and generate. Returns a
-   * containment summary so a gate can assert every emitted coordinate is
-   * inside the polygon. */
+  /** Headless region creation (gate/test path — the RegionProcgenModal would
+   * hang CLI automation): sketch a district from a display-space ring, attach a
+   * procgen block, and generate. Returns a containment summary so a gate can
+   * assert every emitted coordinate is inside the polygon. */
   async createRegionForTest(
     ringUnits: [number, number][],
     algorithmId: string,
@@ -2881,6 +2880,18 @@ export class MapView extends ItemView {
     this.refreshFabric();
     await this.persistFabric("sketch-add", feature);
     return feature.id;
+  }
+
+  /** Delete a fabric feature by id through the real select→delete path
+   * (gate/test path for the sketch-remove lifecycle — a region takes its
+   * generated city + cache records with it, plan 020 §8.4). Returns whether
+   * the feature was found and removed. */
+  async deleteFabricForTest(id: string): Promise<boolean> {
+    await this.loadFabricForCampaign();
+    if (!this.fabricCollection.features.some((f) => f.id === id)) return false;
+    await this.selectFeature(id);
+    this.deleteSelectedFabric();
+    return true;
   }
 
   /** Enter sketch mode + Select tool and select a fabric feature by id. */

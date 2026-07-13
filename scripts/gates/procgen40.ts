@@ -230,6 +230,14 @@ async function main(): Promise<void> {
     if (!errs.includes("No errors")) throw new Error(errs);
   });
 
+  // Self-clean: step (e) leaves the test district inert (that IS the check) —
+  // strip it now so the committed Vespergate baseline stays byte-intact
+  // (v4.3 board rule: gates self-clean their fixtures). App closed first so
+  // there's no in-memory/disk race; same tail as procgen41.
+  resetLeaves();
+  await new Promise((r) => setTimeout(r, 800));
+  stripTestFabric();
+
   process.exit(gate.summarize("Procgen v4.1"));
 }
 

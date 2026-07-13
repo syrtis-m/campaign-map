@@ -123,8 +123,7 @@ exists to make that true.
 (none yet)
 
 ## Log (one line per session/kill/resume — newest first)
-- 2026-07-12: file created; arc not started; v4.3 (plan 020 consolidation)
-  still finishing on a background agent — if its work is uncommitted when the
-  overnight run starts, verify + commit it FIRST (its deliverable protocol is
-  in the session that spawned it; judge by: full board green, dev-vault
-  clean, gates modernized), then begin 21-A.
+- 2026-07-12 (later): v4.3 committed — plan 020 fully DONE; arc starts clean
+  at 21-A. NOTE for 21-B/21-C: renderer degraded on the 4th gate-scale
+  workload in one Obsidian process (3 ran clean) — a concrete repro anchor.
+- 2026-07-12: file created; arc not started.

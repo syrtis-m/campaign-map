@@ -91,6 +91,17 @@ async function evalAsync(body: string, timeoutMs = 180000): Promise<unknown> {
 function sync(expr: string): unknown {
   return evalJs(`(function(){ var v=${viewExpr()}; return (${expr}); })()`);
 }
+/** macOS suspends compositing/timers for occluded windows (App Nap) — an
+ * unfronted Obsidian can stall MapLibre's style load indefinitely ("Style is
+ * not done loading"), starving every style-dependent check. Front it before
+ * polling render/style state (same rule the paint checks in procgen42 use). */
+function front(): void {
+  try {
+    execFileSync("osascript", ["-e", 'tell application "Obsidian" to activate'], { timeout: 5000 });
+  } catch {
+    /* best-effort */
+  }
+}
 /** Street-coordinate buckets (gen-space meters, `grid`-m lattice) for a region's
  * render-store tiles — the adapt/re-roll spatial-stability measure (clip-ids are
  * unstable across ring changes, so we compare occupied buckets, not ids). */
@@ -182,17 +193,21 @@ async function main(): Promise<void> {
 
   await gate.try("vespergate opens (migration + replay settle)", async () => {
     await issueOpen();
+    front(); // style load + replay stall in an occluded window (App Nap)
     await waitFor(() => evalJs(`!!(${viewExpr()})`) === true, 20000, "vespergate view");
     await new Promise((r) => setTimeout(r, 3500));
   });
 
   await gate.try("(i) Addendum 1: generated-footprint & generated-parcel are NOT zoom-restricted", async () => {
-    // The generated layers are part of the theme style but may not be present
-    // for a beat after open (style rebuild on migration/replay) — wait for them.
+    // The generated layers join the style only after the first generated-source
+    // refresh — and this gate opens onto a deliberately EMPTY cache, so the
+    // migrated district must cold-recompute first (~15 s in a fresh process,
+    // measured 2026-07-12; the old 15 s timeout sat exactly on that edge).
+    // Wait generously; the assertion is about zoom floors, not arrival latency.
     await waitFor(
       () => sync("!!(v.map.getLayer('generated-footprint') && v.map.getLayer('generated-parcel'))") === true,
-      15000,
-      "generated-footprint/parcel layers"
+      60000,
+      "generated-footprint/parcel layers (migrated district cold recompute)"
     );
     const zooms = sync(
       `JSON.stringify((function(){var m=v.map;function z(id){var l=m.getLayer(id);if(!l)return 'missing';return (l.minzoom===undefined?0:l.minzoom);}return {fp:z('generated-footprint'),pc:z('generated-parcel')};})())`

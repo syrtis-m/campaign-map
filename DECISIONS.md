@@ -320,3 +320,28 @@
   needs an undo cursor — out of scope, noted as regression on what is now the
   primary gesture). No-op-edit guard prevents a bare vertex click from wedging
   Cmd-Z.
+
+## 2026-07-12 — Plan 020 v4.3 (consolidation) — judgment calls & provenance
+- **Gate consolidation**: procgen30–33 → procgen42 ("sketch-driven city
+  content": one river-straddling district proves skeleton/growth/faces/
+  parcels/wards/walls/gates/bridges/containment/lifecycle on the CURRENT
+  contract); procgen34 → procgen43 ("profile signatures + dead-v2 sweep":
+  four districts side-by-side, per-profile signatures asserted in cache).
+  Fewer, sharper gates; disc-era mechanics gone.
+- **Board provenance (honest stamp)**: this phase's validation ran tsc,
+  316/316 unit, build, and ONLY the four new/modified gates (phase3 14/14,
+  phase4 12/12, procgen42 9/9, procgen43 7/7) per Jonah's scope cut.
+  Unchanged gates (phase0–2/5, styleLoad, procgen40/41, test:app) inherit
+  their prior green from this session's earlier runs; the next FULL board is
+  required at plan-021 21-C (MapController extraction) and re-proves plan 020
+  wholesale there.
+- **Renderer-degradation data point** (for plan 021 §2.2): three gates ran
+  clean in ONE Obsidian process; the 4th stalled with zero output; fresh
+  process → 7/7. Degradation onset ≈ 4th gate-scale workload.
+- **Process lesson (memory + here)**: subagent transcript mtime is NOT a
+  liveness signal — a 40-min gate bash writes nothing until it returns; and a
+  main-session interrupt can cancel background agents (killed the first v4.3
+  agent; its on-disk work was inherited by the replacement, nothing lost).
+- shots/ goldens for not-re-run gates were restored to committed versions
+  (rerun churn is not signal); phase1's connections-stripping remains open as
+  plan 021 §2.4b.

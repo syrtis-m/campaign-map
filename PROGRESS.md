@@ -418,3 +418,13 @@ asserts `map.isStyleLoaded()` after opening each campaign.**
   edits). Gates procgen41 16/16 + procgen40 rerun 10/10 · 316/316 · tsc+build
   green · review/v4.2-*.png (5 screenshots).
 - Next: v4.3 consolidation (gate modernization, three-layer naming, full board).
+
+- **v4.3 consolidation (2026-07-12, committed) — PLAN 020 COMPLETE**: gates
+  procgen30–34 consolidated into procgen42 (sketch-driven city content, 9/9)
+  + procgen43 (profile signatures + dead-v2 sweep, 7/7); phase3 (14/14) /
+  phase4 (12/12) modernized to three-layer contracts; layerOrder renamed to
+  the three-layer model; deleteFabricForTest test API; relaunch-obsidian.sh
+  helper. Validation: tsc + 316/316 + build + the four changed gates
+  (unchanged gates inherit prior green; next full board lands at plan-021
+  21-C per Jonah's scope cut). dev-vault byte-intact. Next: the plans
+  021–025 arc via HEARTBEAT.md.

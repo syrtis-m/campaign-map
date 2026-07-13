@@ -1,15 +1,18 @@
 import type { LayerSpecification } from "maplibre-gl";
 
 /**
- * Z-order invariant (plan 019, Phase 4): Locations always render ABOVE
- * things-on-the-map. This is the two-layer model made structural — a theme
- * edit that sinks pins under fabric must fail loudly (unit test + runtime
- * assert in both style builders), not ship as a happenstance of array order.
+ * Z-order invariant (plan 020, the three-layer model): the three content
+ * layers stack generated (1, bottom) < sketch (2) < Locations (3, top). This
+ * is that model made structural — a theme edit that sinks pins under fabric,
+ * or generated procgen over the GM's sketch, must fail loudly (unit test +
+ * runtime assert in both style builders), not ship as a happenstance of array
+ * order. (Introduced two-layer in plan 019, Phase 4; plan 020 inserted the
+ * generated layer BELOW the sketch layer to make the three-layer model named.)
  *
- * background < basemap < generated fabric < sketched fabric < connections
- * < session-path < location dots < location labels
+ * background < basemap < generated (layer 1) < fabric/sketch (layer 2)
+ * < connections < session-path < location dots < location labels (layer 3)
  *
- * (Generated below sketched: the GM's hand beats the generator's where they
+ * (Generated below sketch: the GM's hand beats the generator's where they
  * overlap. Connections/session-path are location-derived, so they ride above
  * all fabric but below the dots/labels they connect.)
  */
@@ -51,7 +54,7 @@ export function assertLayerOrder(layers: Pick<LayerSpecification, "id">[]): void
     const rank = LAYER_GROUP_ORDER.indexOf(group);
     if (rank < highest) {
       throw new Error(
-        `layerOrder violated: "${layer.id}" (${group}) renders above ${LAYER_GROUP_ORDER[highest]} layers — locations must stay on top of fabric (plan 019)`
+        `layerOrder violated: "${layer.id}" (${group}) renders above ${LAYER_GROUP_ORDER[highest]} layers — the three-layer stack is generated < sketch < locations (plan 020)`
       );
     }
     highest = Math.max(highest, rank);

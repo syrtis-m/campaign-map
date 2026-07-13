@@ -5,9 +5,12 @@ import { buildThemeStyle, HANDCRAFTED_THEMES } from "./index";
 import { assertLayerOrder, layerGroupOf, LAYER_GROUP_ORDER } from "./layerOrder";
 
 /**
- * Z-order invariant test (plan 019, Phase 4): every theme's emitted layer
- * array must keep Locations above fabric — a future theme edit that sinks
- * pins under a fill has to fail here, not surface as a screenshot regression.
+ * Z-order invariant test (plan 020, the three-layer model — generated < sketch
+ * < locations): every theme's emitted layer array must keep Locations above
+ * fabric and the sketch layer above generated procgen — a future theme edit
+ * that sinks pins under a fill, or generated over the GM's sketch, has to fail
+ * here, not surface as a screenshot regression. (First landed two-layer in
+ * plan 019, Phase 4.)
  */
 
 const GLYPHS = "http://localhost/glyphs/{fontstack}/{range}.pbf";
@@ -38,7 +41,7 @@ function allStyles(): [string, StyleSpecification][] {
   return out;
 }
 
-describe("z-order invariant across every theme (plan 019)", () => {
+describe("z-order invariant across every theme (plan 020 three-layer model)", () => {
   for (const [label, style] of allStyles()) {
     it(`${label}: groups are monotonically ordered and locations top the stack`, () => {
       expect(() => assertLayerOrder(style.layers)).not.toThrow();
@@ -59,7 +62,7 @@ describe("z-order invariant across every theme (plan 019)", () => {
   it("assertLayerOrder rejects a style with a pin sunk under fabric", () => {
     expect(() =>
       assertLayerOrder([{ id: "canon-point" }, { id: "fabric-water" }])
-    ).toThrow(/locations must stay on top/);
+    ).toThrow(/generated < sketch < locations/);
   });
 
   it("layerGroupOf rejects unknown layer families so new layers must declare a slot", () => {
