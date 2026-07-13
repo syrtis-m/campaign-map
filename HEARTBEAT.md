@@ -1,16 +1,30 @@
 # HEARTBEAT.md — overnight run: implement plans 021–025
 
-**Suggested loop command (self-paced `/loop`, no interval):**
-`/loop implement plans 021-025 per HEARTBEAT.md — each iteration is one phase: run the Wake protocol, do the next unchecked box to its green T1 gate, commit + push + flip the box, then reschedule; when every box is checked, stop the loop`
+**Unattended driver (the one that survives kills): `scripts/heartbeat-run.sh`**
+```
+./scripts/heartbeat-run.sh          # start / resume the overnight loop
+./scripts/heartbeat-run.sh status   # unchecked boxes + STOP state + last logs
+./scripts/heartbeat-run.sh stop     # perma-cancel (survives re-invocation)
+```
+This bash supervisor is the **only** thing that survives a process death. It
+re-invokes a fresh cold `claude -p` after every kill (usage-limit, crash, or
+reboot if you wrap it in cron/launchd), runs **exactly one phase per
+invocation** (docs/08 rule 2 — each process cold-reads this file, does the next
+box, commits+pushes, exits), naps ~45 min on a confirmed limit-kill, and
+perma-cancels the instant `grep` finds zero unchecked boxes. Completion is
+decided by grep on this file, not a model.
 
-Why self-paced `/loop` (no interval): each iteration re-reads this file cold
-and does exactly one phase, so a kill costs at most one phase of rework — the
-loop is restored on `claude --resume` (recurring tasks survive 7 days). While
-work is pending Claude picks a short delay between iterations; once all boxes
-are checked it calls `ScheduleWakeup(stop: true)` to end the loop itself. (A
-fixed-interval `/loop 30m …` also works but wastes clock time between phases;
-`/goal` is the alternative if you want turn-after-turn with no wait.) Press
-`Esc` while it's waiting to stop the loop manually.
+**Why a script and not just `/goal` or `/loop`:** both are **session-scoped** —
+they drive turns only while the process is alive and do **not** auto-resume a
+dead process (a goal is restored only on a manual `claude --resume`). A usage
+limit or reboot leaves nothing running; the supervisor is what relaunches. See
+docs/08 for the full pattern.
+
+**Attended alternative (you're watching, hands-on):** in an open session,
+`/goal implement plans 021-025 per HEARTBEAT.md — do the next unchecked box to
+its green T1 gate, commit+push, flip it; stop when every box is checked` keeps
+turns going with no idle wait — but only while that session lives; restore with
+`claude --resume` after a kill. `/loop` (self-paced) is the polling equivalent.
 
 This file is the **single durable source of truth for run state**. Usage
 limits WILL kill sessions mid-run (it happened twice on 2026-07-12); the run
@@ -41,8 +55,14 @@ exists to make that true.
 
 ## Execution rules (non-negotiable)
 
-- **Read first, once per session:** CLAUDE.md; the CURRENT plan file in full
-  (its §0 carries the invariants + infra pitfalls); docs/06 (gate protocol).
+- **Lean orchestrator ingest (docs/08 rule 4):** per iteration the ORCHESTRATOR
+  reads only bounded artifacts — this file, `git status`/`git log`, docs/06 (gate
+  protocol), and *only the current phase's section* of the current plan (enough
+  to write the brief + verify). The full plan §0 (invariants + infra pitfalls)
+  and the source get read **inside the phase subagent**, whose fresh window is
+  discarded after — NOT in the orchestrator's window. This keeps the
+  orchestrator's context roughly flat across the whole run. (CLAUDE.md is
+  already in context each session.)
 - **Order is the checklist order** (021 first is deliberate: after 21-A the
   fast tier makes every later phase cheaper; after 21-C most lifecycle tests
   are headless). Dependencies are already encoded — do not resequence except:

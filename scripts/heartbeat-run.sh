@@ -24,7 +24,11 @@ STOP="$CTRL/STOP"
 LOGDIR="$CTRL/logs"
 mkdir -p "$LOGDIR"
 
-GOAL_PROMPT='implement plans 021-025 per HEARTBEAT.md — resume from its checklist on every start, use opus subagents per phase, stop when all boxes are checked'
+# One PHASE per invocation (docs/08 rule 2): each run is a fresh cold `claude`
+# process that reconstructs state from disk, does exactly ONE box, and exits —
+# the while-loop below re-invokes for the next box and stops when zero remain.
+# This keeps every process's context window flat and bounds a kill to ≤1 phase.
+GOAL_PROMPT='implement plans 021-025 per HEARTBEAT.md — run the Wake protocol (cold-read HEARTBEAT.md, reconcile against git log/status), then do ONLY the next unchecked box to its green T1 gate using an opus subagent, commit + push, and flip the box. Do exactly ONE phase this run, then EXIT — do not chain phases. If every box is already checked, exit immediately without doing anything.'
 
 # Tunables
 SHORT_NAP=180        # s between runs that did real work
