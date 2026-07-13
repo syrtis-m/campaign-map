@@ -51,8 +51,18 @@
   headless target NOT cleanly met (34% all-in / 51% domain — F1, flagged for
   Jonah in HEARTBEAT §Questions); decision: no retro-migration, 022+ tests
   born headless.
-- Next: plan 022 (algorithm suite) — 22-A preset pattern + city-profiles
-  retrofit + additive-params rule.
+- **22-A DONE** (`5d7742e`): registry `presets`/`defaultPresetId` +
+  `presetById`/`matchingPresetId` helpers; four city profiles → presets
+  (`CITY_PRESETS`, id === profile id); optional display-only
+  `procgen.presetId` (city never persists it — new blocks byte-identical to
+  Vespergate's `{profile}` shape); Template dropdown in RegionProcgenModal +
+  selection panel ("Custom (from …)" when params diverge);
+  `setRegionPreset` controller twin (full commit path, center survives
+  template swap). Legacy no-presetId blocks validate + regen byte-identical
+  (headless test). Board 14/14 changed-scope (all 11 live gates), 269 s, 0
+  relaunches · fast 338 · fuzz 2/2 · review/v4.4-preset-dropdown.png.
+- Next: 22-B spine support + RIVER (windiness/braiding, position-keyed
+  per-segment meander, corridor containment).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

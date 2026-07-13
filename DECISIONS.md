@@ -423,3 +423,21 @@
 - **Injection-proof correction to 21-C notes**: procgen41's footprint/parcel
   minzoom check is headless-now (covered by fabricLayers.test.ts), not
   genuinely-live as previously noted.
+
+## 2026-07-13 — Plan 022 phase A (preset pattern + city retrofit)
+- **City profile dropdown REPLACED by the Template dropdown** (not rendered
+  alongside): city presets are 1:1 with profiles, so both controls would be
+  the same value twice; `profile` stays valid in schema/params (the template
+  picker sets it). Custom-detection implemented generically + unit-tested;
+  first param-divergent algorithm (river, 22-B) exercises "Custom (from …)"
+  live. Reversible: re-add the profile control in MapView/modal.
+- **City never persists `presetId`**: city params always match a preset, so
+  display is derived at render via `matchingPresetId`; keeps every new city
+  procgen block byte-identical in shape to Jonah's existing Vespergate
+  blocks. `presetId` (display-only, optional) is reserved for algorithms
+  whose params can diverge into Custom.
+- **`matchingPresetId` deep-equals only preset-defined keys** so orthogonal
+  params (e.g. persisted `center`) don't break template matching.
+- **Board report for changed-scope runs → /tmp**, keeping tracked
+  `shots/board-report.md` reserved for full-board milestones. Accepted; the
+  ⛳ 22-F full board will refresh the tracked report.

@@ -74,8 +74,8 @@ exists to make that true.
       assertion-migration map written (021 §4)
 
 **Plan 022 — algorithm suite** (`plans/022-procgen-suite-rivers-forests-parks-walls.md`)
-- [ ] 22-A preset pattern + city-profiles retrofit + additive-params rule
-      (022 §1)
+- [x] 5d7742e 22-A preset pattern + city-profiles retrofit + additive-params
+      rule (022 §1)
 - [ ] 22-B spine support + RIVER (windiness/braiding, position-keyed per-
       segment meander, corridor containment) (022 §2, §3.1)
 - [ ] 22-C FOREST (new kind, masked-noise canopy w/ interiorT fallback,
