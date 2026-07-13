@@ -524,3 +524,42 @@
   procgen41, then 16/16 standalone) · dev-vault byte-clean (a third board was
   killed mid-run by the intervention; its two `__p41_test__` fixtures were
   restored via git, .mapcache cleared — harmless by design).
+
+## 2026-07-13 — 22-B follow-ups (Jonah live: rivers)
+- **Sharp-bend fix is structural, two parts.** Root cause of the notches in
+  Jonah's screenshot: v1 emitted channel quads PER SEGMENT — a literal gap
+  between each spine vertex and the next segment's first sample, plus
+  mismatched bank normals across the join. Now ONE global centerline is
+  sampled (per-segment meander keying unchanged), normals are central-
+  difference across the whole line, and quads bridge joins sharing bank
+  vertices. On top, a **corner fillet**: near each interior vertex the
+  centerline blends (cos² weight) toward a quadratic Bezier (entry, vertex,
+  exit). Fillet radius scales with `windiness` — a canal (windiness 0) keeps
+  engineered crisp miters, natural rivers round their bends — and is capped
+  at FILLET_MAX_M=60 and 0.35× each adjacent segment. Corridor stays a pure
+  monotonic f(params): `riverMaxOffset` gains `windiness·FILLET_MAX_M/2`
+  (the Bezier's deviation bound).
+- **Identity blast radius widened, documented, tested:** a fillet reads BOTH
+  adjacent segments, so a vertex edit now also re-shapes ≤FILLET_MAX_M of arc
+  into the neighbors' tails. Locality test cutoff moved (x<850 → x<780) with
+  the rationale in-line; edit-vs-reroll gate measures 71.7% vs 34.3% overlap
+  — the contract holds. **Golden snapshot deliberately updated** (uniform
+  algorithm change; the tripwire worked as designed).
+- **Double-paint fix: opacity, not filter.** `fabric-river` line-opacity is
+  now `["case",["has","procgen"],0,0.95]` — a procgen river's raw spine line
+  is invisible (its channel is the paint) but stays RENDERED, so
+  queryRenderedFeatures still hit-tests it (sketch = selectable handle,
+  locked decision). Plus a corridor-exact selection fallback
+  (`spineRegionIdAtDisplayPoint`, line-kinds only): clicking the meandered
+  channel selects the river even where it swings past the 6px line box.
+  Clicking generated CITY fabric still does not select its district —
+  unchanged, deliberate.
+- **Panel de-citified:** the selected-region "Remove city" button is now
+  "Remove" for every kind; the city-only Center hint (drag-◆) no longer
+  renders for spine regions.
+- **Live-check hygiene note:** an errored check script left a headless view
+  with `sketchMode=true` but no sketch bar, which silently no-ops
+  buildSelectionPanel AND made deleteFabricForTest return false (a stray
+  fixture survived until git-restore). Interactive flows can't reach that
+  state (toggleSketchMode keeps flag+bar together); scripted flows should
+  reset leaves first (procgen44 already does).

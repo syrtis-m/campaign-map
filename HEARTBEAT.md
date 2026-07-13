@@ -1,14 +1,23 @@
 # HEARTBEAT.md — overnight run: implement plans 021–025
 
-**Suggested goal command:**
-`/goal implement plans 021-025 per HEARTBEAT.md — resume from its checklist on every start, use opus subagents per phase, stop when all boxes are checked`
+**Suggested loop command (self-paced `/loop`, no interval):**
+`/loop implement plans 021-025 per HEARTBEAT.md — each iteration is one phase: run the Wake protocol, do the next unchecked box to its green T1 gate, commit + push + flip the box, then reschedule; when every box is checked, stop the loop`
+
+Why self-paced `/loop` (no interval): each iteration re-reads this file cold
+and does exactly one phase, so a kill costs at most one phase of rework — the
+loop is restored on `claude --resume` (recurring tasks survive 7 days). While
+work is pending Claude picks a short delay between iterations; once all boxes
+are checked it calls `ScheduleWakeup(stop: true)` to end the loop itself. (A
+fixed-interval `/loop 30m …` also works but wastes clock time between phases;
+`/goal` is the alternative if you want turn-after-turn with no wait.) Press
+`Esc` while it's waiting to stop the loop manually.
 
 This file is the **single durable source of truth for run state**. Usage
 limits WILL kill sessions mid-run (it happened twice on 2026-07-12); the run
 must survive any kill with at most one phase of rework. Everything below
 exists to make that true.
 
-## Wake protocol (do this at EVERY session start / resume, before any work)
+## Wake protocol (do this at the START OF EVERY `/loop` ITERATION / session resume, before any work)
 
 1. Read this file top to bottom. The checklist (§Checklist) says what's done;
    trust it only after step 2 confirms it.
@@ -23,7 +32,12 @@ exists to make that true.
 4. If a background subagent was running when the session died, resume it
    from its transcript (SendMessage) rather than respawning cold — but if
    its transcript is gone, respawn with the phase brief from the plan.
-5. Continue at the first unchecked box, in order.
+5. Continue at the first unchecked box, in order. Do ONE phase this
+   iteration, then let the loop reschedule — don't chain phases in a single
+   turn (one kill = one phase of rework depends on this).
+6. If every box (including the FINAL box) is checked and verified against
+   `git log`, the run is done: stop the loop (`ScheduleWakeup(stop: true)`)
+   instead of rescheduling, and say so.
 
 ## Execution rules (non-negotiable)
 

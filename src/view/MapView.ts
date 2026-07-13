@@ -1348,8 +1348,13 @@ export class MapView extends ItemView {
       { layers }
     );
     const hitId = hits[0]?.properties?.id as string | undefined;
-    if (!hitId) return null;
-    return this.controller.fabricFeature(hitId) ? hitId : null;
+    if (hitId) return this.controller.fabricFeature(hitId) ? hitId : null;
+    // Fallback: a spine region's sketch line paints invisible under its
+    // generated channel (fabricLayers), and a meandered channel can sit
+    // farther from the spine than the 6px box — clicking the WATER should
+    // still select the river. Corridor-exact resolution on the controller.
+    const lngLat = this.map.unproject(point);
+    return this.controller.spineRegionIdAtDisplayPoint(lngLat.lng, lngLat.lat);
   }
 
   /** Select a fabric feature for editing (Select tool): arm the controller's
@@ -1568,11 +1573,15 @@ export class MapView extends ItemView {
       };
     }
     // Center hint (Addendum 2): drag the diamond handle to place the plaza.
-    const hasCenter = "center" in block.params;
-    section.createDiv({
-      cls: "campaign-map-sketch-procgen-label",
-      text: hasCenter ? "Center: custom (drag the ◆ handle)" : "Center: automatic (drag the ◆ handle to place)",
-    });
+    // Polygon regions only — spine (line) algorithms have no center concept.
+    const isPolygonRegion = feature.geometry.type === "Polygon";
+    const hasCenter = isPolygonRegion && "center" in block.params;
+    if (isPolygonRegion) {
+      section.createDiv({
+        cls: "campaign-map-sketch-procgen-label",
+        text: hasCenter ? "Center: custom (drag the ◆ handle)" : "Center: automatic (drag the ◆ handle to place)",
+      });
+    }
 
     const actions = section.createDiv({ cls: "campaign-map-sketch-procgen-actions" });
     const reroll = actions.createEl("button", { cls: "campaign-map-sketch-procgen-btn", text: "Re-roll" });
@@ -1583,9 +1592,11 @@ export class MapView extends ItemView {
       const resetCenter = actions.createEl("button", { cls: "campaign-map-sketch-procgen-btn", text: "Reset center" });
       resetCenter.onclick = () => void this.setRegionCenter(feature.id, null);
     }
+    // "Remove", kind-agnostic (Jonah 2026-07-13: it read "Remove city" on a
+    // selected river). Strips the procgen block; the sketch stays inert.
     const remove = actions.createEl("button", {
       cls: "campaign-map-sketch-procgen-btn campaign-map-sketch-procgen-btn-warning",
-      text: "Remove city",
+      text: "Remove",
     });
     remove.onclick = () => void this.removeRegionById(feature.id);
   }

@@ -2,11 +2,11 @@
 
 exports[`river generator — determinism > matches the seeded snapshot fixture (windy + braided — golden drift tripwire) 1`] = `
 {
-  "sha256": "d65b8671bbeacdb9a551acea04024aba8a98464ef52a19357c2f1aed1bbef19d",
+  "sha256": "9ecdd5a5fc284643e2134b90c203e5230993ce935226b13269c672d0e19e12f9",
   "summary": {
-    "river-channel": 310,
+    "river-channel": 313,
     "river-island": 23,
-    "total": 333,
+    "total": 336,
   },
 }
 `;

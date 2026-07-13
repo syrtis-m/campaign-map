@@ -85,6 +85,16 @@
 - **PROTOCOL (Jonah live, 2026-07-13): full board ONCE per plan (⛳ boxes);
   per-phase commits gate on T1 (fast+tsc+build+own gate standalone). See
   DECISIONS + docs/05 §Test tiers.**
+- **22-B follow-ups (Jonah live)**: sharp bends → global centerline (join
+  gaps/normal mismatch killed) + windiness-scaled corner fillets (canal keeps
+  crisp corners; corridor stays pure f(params)); procgen rivers no longer
+  double-paint the raw spine line (opacity keyed on `procgen`, selection
+  kept via corridor-exact fallback `spineRegionIdAtDisplayPoint`); panel
+  button "Remove city"→"Remove", city Center hint gated off line kinds.
+  Golden deliberately updated. Gate: fast 374/374 · river fuzz 2/2 · build ·
+  procgen44 12/12 (locality 71.7% vs re-roll 34.3%) · live check (fallback,
+  button, style expr, dev:errors) · screenshots re-eyeballed · dev-vault
+  byte-clean. See DECISIONS "22-B follow-ups".
 - Next: 22-C FOREST (new kind, masked-noise canopy w/ interiorT fallback,
   theme paint in ALL themes).
 

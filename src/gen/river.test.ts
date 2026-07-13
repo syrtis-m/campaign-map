@@ -155,11 +155,14 @@ describe("river generator — identity / edit locality (deliverable 4)", () => {
     const feats0 = generateRiver(50, region, PARAMS({ widthGrowth: 0 }), CONSTRAINTS);
     const moved: Pt[] = [...LINE.slice(0, -1), [1230, 30]];
     const feats1 = generateRiver(50, regionFor(moved, PARAMS({ widthGrowth: 0 })), PARAMS({ widthGrowth: 0 }), CONSTRAINTS);
-    // Features whose coordinates all sit before x=850 lie on the first three
-    // (unmoved) segments; they must appear identically in both runs.
+    // Features whose coordinates all sit before x=780 lie on the first three
+    // (unmoved) segments AND clear of the corner-fillet window at the [900,50]
+    // vertex (the fillet there reads the edited segment, so up to FILLET_MAX_M
+    // of segment 2's tail — x ≳ 850 — legitimately moves with the edit); they
+    // must appear identically in both runs.
     const early = (fs: GeoJSON.Feature[]): string[] =>
       fs
-        .filter((f) => allCoords([f]).every(([x]) => x < 850))
+        .filter((f) => allCoords([f]).every(([x]) => x < 780))
         .map((f) => JSON.stringify(f.geometry))
         .sort();
     const e0 = early(feats0);

@@ -12,10 +12,11 @@
  *    of each ORIGINAL spine segment, AND its braid placement, hash on THAT
  *    segment's quantized endpoints — NOT on global arc-length. Resampling is
  *    also per-segment (0→segLen anchored at the segment's own start), so a
- *    single-vertex edit re-meanders ONLY the two adjacent segments; every other
- *    segment's output is byte-identical. Global arc-length (`cumLen`) feeds only
- *    the smooth downstream width growth, whose sub-meter drift a bucket grid
- *    absorbs.
+ *    single-vertex edit re-meanders ONLY the two adjacent segments plus the
+ *    corner-fillet windows (≤FILLET_MAX_M of arc) reaching into their
+ *    neighbors' tails; everything further is byte-identical. Global arc-length
+ *    (`cumLen`) feeds only the smooth downstream width growth, whose sub-meter
+ *    drift a bucket grid absorbs.
  *  - Containment: each lateral displacement term is bounded by a params-only
  *    constant, and `riverMaxOffset(params)` is their sum + a margin, so all
  *    output sits strictly within the corridor `distanceToBoundary` measures
@@ -56,6 +57,14 @@ const SECONDARY_WIDTH_FRAC = 0.5; // braid side-channel width vs main
 const AMP_SEG_FRAC = 0.35; // per-segment amplitude cap (self-intersection guard)
 const BRAID_SUB0 = 0.15; // braid occupies [BRAID_SUB0, 1-BRAID_SUB0] of a segment
 const MIN_BRAID_SEG_LEN_M = 60;
+// Corner fillet (Jonah 2026-07-13: sharp spine bends must curve naturally).
+// Radius scales with windiness so a canal (windiness 0) keeps its engineered
+// crisp corners while a natural river rounds its bends; the quadratic-Bezier
+// blend deviates from the spine corner by at most R/2, so the corridor grows
+// by windiness·FILLET_MAX_M/2 — still a pure, monotonic function of params.
+const FILLET_MAX_M = 60;
+const FILLET_FRAC = 0.35; // ≤ this fraction of each adjacent segment
+const FILLET_ALLOWANCE_M = FILLET_MAX_M / 2;
 
 function q(v: number): number {
   return Math.round(v * 1000) / 1000;
@@ -81,9 +90,10 @@ function maxHalfWidth(params: RiverParams): number {
 export function riverMaxOffset(params: RiverParams): number {
   const meander = params.windiness * BASE_MEANDER_AMP_M;
   const braid = params.braiding * BASE_BRAID_OFFSET_M;
+  const fillet = params.windiness * FILLET_ALLOWANCE_M;
   // Worst case at a braid: main meander + lens bulge + (main + secondary) banks.
   const banks = maxHalfWidth(params) * (1 + SECONDARY_WIDTH_FRAC);
-  return q(meander + braid + banks + CORRIDOR_MARGIN_M);
+  return q(meander + braid + fillet + banks + CORRIDOR_MARGIN_M);
 }
 
 interface CenterPoint {
@@ -93,17 +103,14 @@ interface CenterPoint {
   f: number;
 }
 
-/** A meandered centerline sample plus enough per-segment context to build banks
- * and (optionally) a braid. */
-interface SampledSegment {
-  center: CenterPoint[];
+/** Per-original-segment generation context: an analytic evaluator for the
+ * meandered position at any segment-local arc `s` (fillets need off-sample
+ * points), plus the segment's braid decision. */
+interface SegmentCtx {
+  evalAt: (s: number) => Pt;
+  segLen: number;
   /** Whether this ORIGINAL segment carries a braid, and its params. */
   braid: { side: number; amp: number } | null;
-  /** Local unit left-normal of the ORIGINAL segment (braid displaces along it). */
-  leftN: Pt;
-  /** Segment-local arc position (meters from segment start) for each center pt. */
-  localS: number[];
-  segLen: number;
 }
 
 function unit(dx: number, dy: number): Pt {
@@ -139,35 +146,23 @@ function meanderSegment(seed: number, a: Pt, b: Pt, windiness: number): {
   return { offset, segLen, leftN };
 }
 
-/** Sample one original segment independently (0→segLen), anchored at its own
- * start vertex. Skips the join vertex for k>0 (it duplicates the previous
- * segment's tail; both sit at offset 0 on the spine vertex). */
-function sampleSegment(
+/** Build one original segment's generation context: the analytic meandered
+ * evaluator (identity-keyed on the segment's quantized endpoints) and the
+ * braid decision (same keying). */
+function segmentCtx(
   seed: number,
   params: RiverParams,
   a: Pt,
   b: Pt,
   arcStart: number,
-  totalLen: number,
-  includeStart: boolean
-): SampledSegment {
+  totalLen: number
+): SegmentCtx {
   const { offset, segLen, leftN } = meanderSegment(seed, a, b, params.windiness);
   const [ux, uy] = unit(b[0] - a[0], b[1] - a[1]);
-  const steps = Math.max(1, Math.ceil(segLen / RESAMPLE_STEP_M));
-  const center: CenterPoint[] = [];
-  const localS: number[] = [];
-  for (let j = includeStart ? 0 : 1; j <= steps; j++) {
-    const s = (j * segLen) / steps;
+  const evalAt = (s: number): Pt => {
     const off = offset(s);
-    const bx = a[0] + ux * s;
-    const by = a[1] + uy * s;
-    center.push({
-      x: bx + leftN[0] * off,
-      y: by + leftN[1] * off,
-      f: totalLen > 0 ? (arcStart + s) / totalLen : 0,
-    });
-    localS.push(s);
-  }
+    return [a[0] + ux * s + leftN[0] * off, a[1] + uy * s + leftN[1] * off];
+  };
   // Braid decision, keyed on the segment endpoints (per-segment, not global).
   let braid: { side: number; amp: number } | null = null;
   if (params.braiding > 0 && segLen >= MIN_BRAID_SEG_LEN_M) {
@@ -182,7 +177,7 @@ function sampleSegment(
       braid = { side, amp };
     }
   }
-  return { center, braid, leftN, localS, segLen };
+  return { evalAt, segLen, braid };
 }
 
 /** Local unit left-normal of a centerline, by central difference. */
@@ -231,62 +226,117 @@ export function generateRiver(
   const pts = spine.points;
   const totalLen = spine.totalLen;
 
-  const out: GeoJSON.Feature[] = [];
+  // 1. Per-segment meandered samples (identity-keyed per segment), concatenated
+  //    into ONE global centerline. The join vertex appears exactly once (as the
+  //    tail sample of the previous segment), so banks and quads bridge every
+  //    spine vertex seamlessly — the per-segment emission of v1 left a gap and
+  //    a normal mismatch at each vertex (the "sharp bend" notch,
+  //    Jonah 2026-07-13).
+  const center: CenterPoint[] = [];
+  const sampleSeg: number[] = []; // per-sample original-segment index
+  const sampleS: number[] = []; // per-sample segment-local arc (m)
+  const segs: SegmentCtx[] = [];
   for (let k = 0; k < pts.length - 1; k++) {
-    const a = pts[k];
-    const b = pts[k + 1];
-    const seg = sampleSegment(seed, params, a, b, spine.cumLen[k], totalLen, k === 0);
-    const c = seg.center;
-    if (c.length < 2) continue;
-
-    // Precompute banks along this segment's centerline.
-    const leftBank: Pt[] = [];
-    const rightBank: Pt[] = [];
-    const normals: Pt[] = [];
-    for (let i = 0; i < c.length; i++) {
-      const n = centerlineNormal(c, i);
-      normals.push(n);
-      const hw = halfWidthAt(params, c[i].f);
-      leftBank.push([c[i].x + n[0] * hw, c[i].y + n[1] * hw]);
-      rightBank.push([c[i].x - n[0] * hw, c[i].y - n[1] * hw]);
+    const seg = segmentCtx(seed, params, pts[k], pts[k + 1], spine.cumLen[k], totalLen);
+    segs.push(seg);
+    const steps = Math.max(1, Math.ceil(seg.segLen / RESAMPLE_STEP_M));
+    for (let j = k === 0 ? 0 : 1; j <= steps; j++) {
+      const s = (j * seg.segLen) / steps;
+      const [x, y] = seg.evalAt(s);
+      center.push({ x, y, f: totalLen > 0 ? (spine.cumLen[k] + s) / totalLen : 0 });
+      sampleSeg.push(k);
+      sampleS.push(s);
     }
-    // Main channel: one quad per centerline sub-segment (robust tile clipping,
-    // no self-intersecting ribbon; adjacent quads share bank vertices exactly).
-    for (let i = 0; i < c.length - 1; i++) {
-      out.push(quad(seed, "river-channel", leftBank[i], leftBank[i + 1], rightBank[i + 1], rightBank[i]));
-    }
+  }
+  if (center.length < 2) return [];
 
-    // Braid: a secondary channel bulging to one side over the mid sub-interval,
-    // with an island filling the gap between the two channels. Collect the
-    // sub-interval banks first, then emit quads over consecutive pairs.
-    if (seg.braid) {
-      const { side, amp } = seg.braid;
-      const s0 = BRAID_SUB0 * seg.segLen;
-      const s1 = (1 - BRAID_SUB0) * seg.segLen;
-      const span = s1 - s0;
-      const mainSide: Pt[] = []; // main bank on `side`
-      const secInner: Pt[] = []; // secondary bank facing main
-      const secOuter: Pt[] = []; // secondary bank away from main
-      const gap: boolean[] = []; // is there real open land (island) here?
-      for (let i = 0; i < c.length && span > 0; i++) {
-        const s = seg.localS[i];
-        if (s < s0 || s > s1) continue;
-        const env = Math.sin(Math.PI * ((s - s0) / span)) ** 2;
-        const lens = amp * env; // lateral bulge of the secondary centerline
-        const n = normals[i];
-        const hw = halfWidthAt(params, c[i].f);
-        const secHw = hw * SECONDARY_WIDTH_FRAC;
-        mainSide.push([c[i].x + n[0] * side * hw, c[i].y + n[1] * side * hw]);
-        secInner.push([c[i].x + n[0] * side * (lens - secHw), c[i].y + n[1] * side * (lens - secHw)]);
-        secOuter.push([c[i].x + n[0] * side * (lens + secHw), c[i].y + n[1] * side * (lens + secHw)]);
-        gap.push(lens - hw - secHw > 0);
+  // 2. Corner fillets: near each interior spine vertex, blend the centerline
+  //    toward a quadratic Bezier (entry point, vertex, exit point) so bends
+  //    curve naturally instead of kinking. Radius scales with windiness (a
+  //    canal keeps engineered corners) and is capped per adjacent segment; the
+  //    cos² blend is 1 at the vertex and 0 at the window edges, so the curve
+  //    stays continuous where it rejoins the meander. Identity: a fillet
+  //    depends only on its two adjacent segments, so an edit's blast radius is
+  //    the adjacent segments plus ≤FILLET_MAX_M into their neighbors' tails.
+  const filletMax = params.windiness * FILLET_MAX_M;
+  if (filletMax > RESAMPLE_STEP_M) {
+    for (let k = 1; k < pts.length - 1; k++) {
+      const prev = segs[k - 1];
+      const next = segs[k];
+      const R = Math.min(FILLET_FRAC * prev.segLen, FILLET_FRAC * next.segLen, filletMax);
+      if (R <= RESAMPLE_STEP_M) continue;
+      const A = prev.evalAt(prev.segLen - R);
+      const B = next.evalAt(R);
+      const V = pts[k];
+      for (let i = 0; i < center.length; i++) {
+        let u: number | null = null;
+        if (sampleSeg[i] === k - 1 && sampleS[i] >= prev.segLen - R) u = sampleS[i] - prev.segLen;
+        else if (sampleSeg[i] === k && sampleS[i] <= R) u = sampleS[i];
+        if (u === null) continue;
+        const t = (u + R) / (2 * R);
+        const bx = (1 - t) * (1 - t) * A[0] + 2 * t * (1 - t) * V[0] + t * t * B[0];
+        const by = (1 - t) * (1 - t) * A[1] + 2 * t * (1 - t) * V[1] + t * t * B[1];
+        const w = Math.cos((Math.PI * u) / (2 * R)) ** 2;
+        center[i].x += (bx - center[i].x) * w;
+        center[i].y += (by - center[i].y) * w;
       }
-      for (let i = 0; i < mainSide.length - 1; i++) {
-        out.push(quad(seed, "river-channel", secInner[i], secInner[i + 1], secOuter[i + 1], secOuter[i]));
-        // Island only where the lens clears both banks at BOTH ends of the quad.
-        if (gap[i] && gap[i + 1]) {
-          out.push(quad(seed, "river-island", mainSide[i], mainSide[i + 1], secInner[i + 1], secInner[i]));
-        }
+    }
+  }
+
+  // 3. Global banks + main channel: normals by central difference over the
+  //    WHOLE centerline (miter-consistent across joins); one quad per
+  //    centerline sub-segment, adjacent quads sharing bank vertices exactly —
+  //    including across spine vertices.
+  const out: GeoJSON.Feature[] = [];
+  const normals: Pt[] = [];
+  const leftBank: Pt[] = [];
+  const rightBank: Pt[] = [];
+  for (let i = 0; i < center.length; i++) {
+    const n = centerlineNormal(center, i);
+    normals.push(n);
+    const hw = halfWidthAt(params, center[i].f);
+    leftBank.push([center[i].x + n[0] * hw, center[i].y + n[1] * hw]);
+    rightBank.push([center[i].x - n[0] * hw, center[i].y - n[1] * hw]);
+  }
+  for (let i = 0; i < center.length - 1; i++) {
+    out.push(quad(seed, "river-channel", leftBank[i], leftBank[i + 1], rightBank[i + 1], rightBank[i]));
+  }
+
+  // 4. Braids: per-original-segment decision (identity keying unchanged), a
+  //    secondary channel bulging to one side over the mid sub-interval, with an
+  //    island filling the gap. Banks come from the GLOBAL centerline/normals so
+  //    braids follow the filleted curve.
+  for (let k = 0; k < segs.length; k++) {
+    const braidCtx = segs[k].braid;
+    if (!braidCtx) continue;
+    const { side, amp } = braidCtx;
+    const s0 = BRAID_SUB0 * segs[k].segLen;
+    const s1 = (1 - BRAID_SUB0) * segs[k].segLen;
+    const span = s1 - s0;
+    if (span <= 0) continue;
+    const mainSide: Pt[] = []; // main bank on `side`
+    const secInner: Pt[] = []; // secondary bank facing main
+    const secOuter: Pt[] = []; // secondary bank away from main
+    const gap: boolean[] = []; // is there real open land (island) here?
+    for (let i = 0; i < center.length; i++) {
+      if (sampleSeg[i] !== k) continue;
+      const s = sampleS[i];
+      if (s < s0 || s > s1) continue;
+      const env = Math.sin(Math.PI * ((s - s0) / span)) ** 2;
+      const lens = amp * env; // lateral bulge of the secondary centerline
+      const n = normals[i];
+      const hw = halfWidthAt(params, center[i].f);
+      const secHw = hw * SECONDARY_WIDTH_FRAC;
+      mainSide.push([center[i].x + n[0] * side * hw, center[i].y + n[1] * side * hw]);
+      secInner.push([center[i].x + n[0] * side * (lens - secHw), center[i].y + n[1] * side * (lens - secHw)]);
+      secOuter.push([center[i].x + n[0] * side * (lens + secHw), center[i].y + n[1] * side * (lens + secHw)]);
+      gap.push(lens - hw - secHw > 0);
+    }
+    for (let i = 0; i < mainSide.length - 1; i++) {
+      out.push(quad(seed, "river-channel", secInner[i], secInner[i + 1], secOuter[i + 1], secOuter[i]));
+      // Island only where the lens clears both banks at BOTH ends of the quad.
+      if (gap[i] && gap[i + 1]) {
+        out.push(quad(seed, "river-island", mainSide[i], mainSide[i + 1], secInner[i + 1], secInner[i]));
       }
     }
   }

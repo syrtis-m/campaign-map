@@ -437,6 +437,24 @@ export class MapController {
     return undefined;
   }
 
+  /** Selection fallback for spine (line-kind) regions: the sketch line paints
+   * invisible once its generated channel exists (fabricLayers), so a click on
+   * the channel may miss the 6px line hit-test. Returns the id of the spine
+   * region whose CORRIDOR (exact `distanceToBoundary`) contains the
+   * display-units point. Line kinds only — clicking generated city fabric has
+   * never selected its district, and that stays true. */
+  spineRegionIdAtDisplayPoint(unitsX: number, unitsY: number): string | null {
+    if (!this.campaign) return null;
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const px = unitsToMeters(unitsX, scale);
+    const py = unitsToMeters(unitsY, scale);
+    for (const feature of this.regionFeatures()) {
+      const region = this.buildRegionFromFeature(feature);
+      if (region?.spine && distanceToBoundary(region, px, py) >= 0) return feature.id;
+    }
+    return null;
+  }
+
   /** Render-store key for a region-clipped tile (plan 020 §3.3). */
   private regionRenderKey(regionId: string, tileX: number, tileY: number): string {
     return `region:${regionId}:${tileX}:${tileY}`;

@@ -89,7 +89,12 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       paint: {
         "line-color": tokens.fabricRiver,
         "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 14, 5],
-        "line-opacity": 0.95,
+        // A river carrying a procgen block paints as its GENERATED channel
+        // (plan 022 §3.1) — hide the raw spine line so the water doesn't
+        // double-paint (Jonah 2026-07-13). Opacity 0, NOT a filter: the line
+        // must stay rendered so queryRenderedFeatures still hit-tests it for
+        // selection — the sketch stays the selectable handle on the output.
+        "line-opacity": ["case", ["has", "procgen"], 0, 0.95],
       },
     },
     road: {
