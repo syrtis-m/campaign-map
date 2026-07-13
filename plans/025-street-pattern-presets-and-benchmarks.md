@@ -260,7 +260,10 @@ laid out on a spaced grid so every city renders in isolation:
 
 Each phase: unit gates (determinism, seams, containment, metrics benchmarks,
 preset fuzz) + live gate + screenshots per docs/06. The §0 protocol of plan 022
-applies verbatim.
+applies verbatim — including the board cadence (Jonah 2026-07-13): per-phase
+commits gate on T1 (fast suite + tsc + build + the phase's own live gate
+standalone); this plan's ONE full board runs at 25-E with the refreshed
+gallery contact sheet. Never run `board`/`board --changed` per phase.
 
 ## 5. Open questions
 1. Should benchmark gates HARD-fail or warn? Proposal: hard-fail for the

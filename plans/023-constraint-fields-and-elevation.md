@@ -75,7 +75,10 @@ the lifecycle (sketch-finish → modal → generate; edit → debounced regen;
 
 **Protocol:** phase-by-phase with one gate per phase (unit + live), PROGRESS.md
 updated, every judgment call logged in DECISIONS.md, commit per green gate with
-the `[gate: …]` message convention. Open questions need a ruling from Jonah or
+the `[gate: …]` message convention. **Board cadence (Jonah 2026-07-13): a
+phase commits on T1 — fast suite + tsc + build + the phase's OWN live gate
+standalone (+ fuzz iff generator behavior changed); this plan's ONE full board
+runs at 23-D. Never run `board`/`board --changed` per phase.** Open questions need a ruling from Jonah or
 the orchestrator — if unavailable, decide, log decision AND rationale in
 DECISIONS.md, and flag it prominently in your report; never guess silently.
 

@@ -91,7 +91,11 @@ undo).
 
 **Protocol:** work the numbered phases of §4, one gate per phase (unit + live),
 update PROGRESS.md, log every judgment call/deviation in DECISIONS.md, commit
-per green gate with the `[gate: …]` message convention. §5's open questions
+per green gate with the `[gate: …]` message convention. **Board cadence
+(Jonah 2026-07-13): a phase commits on T1 — fast suite + tsc + build + the
+phase's OWN live gate standalone (+ fuzz iff generator behavior changed); the
+full board runs ONCE for this plan, at 22-F. Never run `board`/`board
+--changed` per phase.** §5's open questions
 need a ruling — if you can't get one, decide, log the decision AND rationale in
 DECISIONS.md, and flag it prominently in your report; never guess silently.
 
@@ -278,7 +282,9 @@ driven); line kinds reuse it unchanged.
 
 Each: pure generator + unit gates (determinism, containment-corridor, 2×2 seam
 via whole-artifact clip, preset fuzz), live gate (sketch → generate → edit
-params → regen; screenshots), zod at every boundary.
+params → regen; screenshots), zod at every boundary. Per-phase verification =
+T1 only (fast suite + tsc + build + the phase's own live gate standalone);
+the plan's ONE full board runs at the end of phase 6 (farmland, 22-F).
 
 **New-feature-type checklist (easy to forget, invisible when missed):** every
 new emitted feature `type` needs paint in ALL themes (the obsidian-native

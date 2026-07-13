@@ -45,9 +45,16 @@ exists to make that true.
   drawn from the plan (the plans' §0 sections are written for exactly this).
   Orchestrator verifies independently (fast suite + tsc minimum) before
   committing. Subagents never commit.
-- **Tier discipline** (from plan 021 §2.6, once 21-A lands): inner loop = fast
-  suite; full board ONLY at arc milestones marked ⛳ below — not per phase.
-  Until 21-A lands, phases 21-A/21-B use today's protocol.
+- **Tier discipline (TIGHTENED by Jonah live, 2026-07-13 — overrides any
+  looser reading):** inner loop = fast suite; a phase COMMITS on T1 = fast
+  suite + tsc + build + that phase's OWN live gate standalone (+ fuzz iff
+  generator behavior changed). The full board runs ONLY at the ⛳ plan-end
+  boxes below — never per phase, never per commit, and `board --changed` is
+  retired as a commit step (its determinism-path escalation made it a full
+  board almost every phase). Board-flake rule: a gate that fails in a board
+  but passes standalone immediately after counts GREEN (environment flake,
+  021-B) — log both results, do NOT re-run the board. Repeated ~6-min boards
+  turned hours of dev into >24 h; that is the failure this rule kills.
 - **Jonah's data:** `dev-vault/Campaigns/Vespergate` is real campaign data —
   byte-intact after every gate (git diff empty or frontmatter-formatting
   only). Gate fixtures: name-tagged, self-cleaning.
@@ -76,8 +83,8 @@ exists to make that true.
 **Plan 022 — algorithm suite** (`plans/022-procgen-suite-rivers-forests-parks-walls.md`)
 - [x] 5d7742e 22-A preset pattern + city-profiles retrofit + additive-params
       rule (022 §1)
-- [ ] 22-B spine support + RIVER (windiness/braiding, position-keyed per-
-      segment meander, corridor containment) (022 §2, §3.1)
+- [x] 4e6d981 22-B spine support + RIVER (windiness/braiding, position-keyed
+      per-segment meander, corridor containment) (022 §2, §3.1)
 - [ ] 22-C FOREST (new kind, masked-noise canopy w/ interiorT fallback,
       theme paint in ALL themes) (022 §3.2)
 - [ ] 22-D PARK incl. japanese-garden (022 §3.3)
@@ -129,6 +136,14 @@ exists to make that true.
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-13 (arc run, session 4): resumed on dirty tree — session 3's run died
+  mid "board for 22-B" (its 4.5 s fuzz FAIL was the kill; fuzz re-ran 4/4).
+  22-B was code-complete; re-verified fast/fuzz/tsc/build + screenshots. Two
+  full boards each went 14/15 on DISJOINT env flakes (phase0 then procgen41,
+  both green standalone). **Jonah intervened live mid third board**: board
+  cadence tightened to ONCE per plan (see §Execution rules + DECISIONS
+  2026-07-13); third board killed, its `__p41_test__` fixture strays restored.
+  22-B committed 4e6d981 under the new T1 bar. Proceeding to 22-C.
 - 2026-07-13 (arc run, session 3): resumed on dirty tree — session 2 died mid
   21-C with the extraction complete and an after-board at 13/15 (procgen41/43).
   Phase subagent re-verified on the UNMODIFIED tree: both gates pass

@@ -61,8 +61,32 @@
   template swap). Legacy no-presetId blocks validate + regen byte-identical
   (headless test). Board 14/14 changed-scope (all 11 live gates), 269 s, 0
   relaunches · fast 338 · fuzz 2/2 · review/v4.4-preset-dropdown.png.
-- Next: 22-B spine support + RIVER (windiness/braiding, position-keyed
-  per-segment meander, corridor containment).
+- **22-B DONE** (`4e6d981`): line-kind (spine) procgen + the RIVER
+  generator. `makeSpine`/`makeCorridorRegion`/`distanceToSpine`/
+  `validateSpineLine` in region.ts (corridor containment via the same
+  signed `distanceToBoundary` convention); `src/gen/river.ts` — position-
+  keyed PER-SEGMENT meander (sin² envelope, C1 at joins — a vertex edit
+  re-meanders only adjacent segments), braiding with lens islands,
+  `braidBias` carries delta's toward-the-mouth behavior (params are the
+  whole truth), `riverMaxOffset` = pure f(params) exposed via registry
+  `corridorMaxOffset`; 4 presets (lazy-lowland / mountain-torrent / canal /
+  delta); per-sample quads w/ position-hashed integer ids; theme paint
+  `generated-river-channel`/`-island` + all-themes coverage test;
+  kind-aware `validateForProcgen` (spines MAY cross — tributaries legal,
+  junction hydrology a logged v1 limitation); `createSpineForTest` headless
+  twin; spine regions generate on the main thread (worker protocol is
+  ring-only — logged deviation); phase5 style-load assertion now polls
+  (pre-existing flaky caught + fixed); modal copy de-citified. Gate: fast
+  374/374 · fuzz 4/4 · tsc+build · procgen44 16 checks PASS in two full
+  boards (34.2/35.0 s) · two disjoint board env-flakes (phase0, procgen41)
+  both green standalone (10/10, 16/16) — see the 2026-07-13 board-cadence
+  DECISIONS entry · dev-vault byte-clean ·
+  review/v4.5-river-windy-braided.png + v4.5-river-canal.png.
+- **PROTOCOL (Jonah live, 2026-07-13): full board ONCE per plan (⛳ boxes);
+  per-phase commits gate on T1 (fast+tsc+build+own gate standalone). See
+  DECISIONS + docs/05 §Test tiers.**
+- Next: 22-C FOREST (new kind, masked-noise canopy w/ interiorT fallback,
+  theme paint in ALL themes).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

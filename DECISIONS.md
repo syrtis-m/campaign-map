@@ -441,3 +441,86 @@
 - **Board report for changed-scope runs → /tmp**, keeping tracked
   `shots/board-report.md` reserved for full-board milestones. Accepted; the
   ⛳ 22-F full board will refresh the tracked report.
+
+## 2026-07-13 — Plan 022 phase B (spine support + river)
+- **Spine (line-kind) regions generate on the MAIN thread, bypassing the
+  generation worker** (plan 022 §2 deviation): the worker protocol
+  reconstructs a region from `region.ring` via `makeRegion` and would lose
+  `region.spine`/`corridorMaxOffset`; rivers are geometry-light (a few
+  hundred quads vs a city's tens of thousands of segments), so the direct
+  path is correct and cheap. Alternative — extending the worker protocol to
+  carry spines — deferred until a heavy line-kind algorithm needs it (wall
+  elaboration, 22-E, is the likely trigger). Reversible; polygon regions
+  keep the worker path unchanged.
+- **Corridor region reuses ProcgenRegion wholesale**: `ring` is the spine
+  bbox grown by `corridorMaxOffset` (a plain CCW rectangle) used ONLY for
+  the tile-overlap range; containment is spine-aware via
+  `distanceToBoundary` = `corridorMaxOffset − distanceToSpine` (same
+  positive-inside convention every caller relies on). Cache keys stay
+  `region:<featureId>:…` — the id is the contract, not the geometry type.
+- **`braidBias` param carries delta's braids-toward-the-mouth behavior** —
+  params are the whole truth (determinism §1); no preset-id branch anywhere
+  in the generator. All five river params default to the simplest prior
+  behavior (straight uniform channel), honoring the additive-params rule.
+- **Channel emitted as per-sample quads sharing bank vertices, not one
+  ribbon polygon**: a long meandering ribbon self-intersects and clips
+  badly; quads clip robustly per tile and each id hashes on its centerline
+  endpoints (position, never emission order; integer for
+  `clipNetworkToTile`'s `Number(id)` sort).
+- **Tributaries: crossing river spines are legal** (plan 022 §3.1) —
+  channels union visually where they overlap; junction hydrology (width
+  growth after a confluence, smooth bank merge) is a logged v1 limitation.
+  Line-kind edits are therefore NEVER rejected on overlap (unlike
+  polygons); `validateForProcgen` is the kind-aware host entry.
+- **Spine ingest valves**: `SPINE_MIN_LENGTH_M` 20 m (below useful
+  elaboration) / `SPINE_MAX_LENGTH_M` 40 km (mirrors the REGION_MAX
+  perf/area valve — corridor tile range stays bounded).
+- **Per-generator golden snapshot added** (river.test.ts, sha256 + type
+  counts) per the 21-D tripwire note: self-relative determinism tests
+  survive a uniform algorithm change; the golden does not. Every 022+
+  generator gets one.
+- **Harness hardening (CROSS-CUTTING, not river code): phase5's "open
+  Ashfall, style loads" assertion now POLLS `isStyleLoaded()`** instead of a
+  single-shot read. The 22-B full board caught this pre-existing flaky (the
+  gate fast-fails in ~4 s: `openAshfall` polls for readiness, then a
+  `css-change` style rebuild lands in the sub-second gap before the recheck
+  and reads false — while every downstream export/replay/screenshot check
+  passes, proving Ashfall is functional). Not a phase-B regression: the
+  `styleLoad` gate loads the identical ashfall obsidian-native style and
+  passed 5/5 in both full boards; it waits properly, phase5 didn't. Fix
+  mirrors phase3's `waitForStyleLoaded` poll. Touches a non-phase-B gate
+  (affects every future phase's board), so flagged for the orchestrator.
+- **Banks = the channel polygon's edge, NOT a separate emitted feature**
+  (plan 022 §3.1 "banks as the channel SDF's zero set" describes the
+  channel boundary, not a distinct generatorId): the generator emits only
+  `river-channel` + `river-island`. On the v4.5 review screenshots the
+  channel water reads with a legible bank against the dark ground purely by
+  fill contrast, so NO separate bank outline layer was added — themes own
+  all paint, and if a future theme needs a crisper bank it is a paint-only
+  `fill-outline`/line layer keyed on `river-channel`, never a generator
+  change. Considered and deliberately omitted, not missed.
+
+## 2026-07-13 — Jonah live intervention: board cadence (BINDING protocol change)
+- **Ruling (Jonah, in-session):** the full board runs **ONCE per plan**, at its
+  final ⛳ phase — never per phase, never per commit. Repeated ~6-min boards
+  (plus flake-chasing re-runs) turned hours of dev into >24 h.
+- **Why it was happening:** `board --changed` auto-escalates to FULL whenever a
+  determinism-critical path changes (src/gen/region.ts etc.) — during a
+  generator arc that is almost every phase; and the 021-B renderer-degradation
+  flake produced disjoint one-gate failures across board runs, each "clean
+  sweep" attempt costing another ~6 min.
+- **How applied:** per-phase commit bar is now T1 = fast suite + tsc + build +
+  the phase's OWN live gate standalone (+ fuzz iff generator behavior
+  changed); unchanged gates inherit the previous board's green. Board-flake
+  rule codified: a gate that fails in a board but passes standalone
+  immediately after counts GREEN (log both results); never re-run the whole
+  board to chase a sweep. Updated: CLAUDE.md, docs/05 §Test tiers, docs/06 §2,
+  plans 022–025 protocol paragraphs, HEARTBEAT §Execution rules.
+- **22-B gate evidence under this ruling:** fast 374/374 (24.6 s) · fuzz 4/4
+  (88.5 s — the prior session's 4.5 s board "fuzz FAIL" was its kill, not a
+  red) · tsc + build green · procgen44 PASS in BOTH full boards run this
+  session (34.2 s / 35.0 s) · the two board failures were disjoint env flakes
+  (board 1: phase0, 5.4 s post-relaunch, then 10/10 standalone; board 2:
+  procgen41, then 16/16 standalone) · dev-vault byte-clean (a third board was
+  killed mid-run by the intervention; its two `__p41_test__` fixtures were
+  restored via git, .mapcache cleared — harmless by design).
