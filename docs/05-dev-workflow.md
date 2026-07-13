@@ -71,6 +71,22 @@ obsidian dev:mobile on && obsidian dev:errors && obsidian dev:mobile off
 
 Unit tests need no Obsidian and stay fast — that's why generators are host-agnostic. Integration tests are a bash/TS script of CLI calls with exit-code assertions; run before any commit touching `src/map/`, reconciliation, or themes.
 
+## Test tiers (T0–T3) — how much to run, when (plan 021)
+
+Testing used to mean "run the whole board," which cost an afternoon. It no longer does. Pick the smallest tier that covers what you changed and escalate only as you approach a commit/merge. Each tier is a strict superset of the one below.
+
+| Tier | When | What runs | Command(s) | Budget |
+|---|---|---|---|---|
+| **T0** inner loop | every edit | fast unit suite + tsc | `npm test` (+ `npx tsc --noEmit`) | **<45 s** |
+| **T1** phase checkpoint | finishing a phase's work | T0 **+ fuzz tier + that phase's own gate(s)** | `npm test && npm run test:fuzz` + `tsx scripts/gates/<phase>.ts` | <5 min |
+| **T2** pre-commit | before any commit | T1 **+ change-scoped gates** | `npm run gates:changed` (add `--run` to execute them) | scoped |
+| **T3** pre-merge / release / determinism-critical | merging, releasing, or touching determinism-critical shared code | **full board** (unit + fuzz + tsc + build + every live gate) | `npm run board` *(lands in plan 021 phase B; until then, run the gate scripts one-per-fresh-process)* | <15 min |
+
+- **`npm test` is the FAST tier** (target <30 s): everything except the slow fuzz/stress tests, which live in `*.fuzz.test.ts` and run via **`npm run test:fuzz`** at T1+. Run the fuzz tier whenever a **generator's behavior actually changed**; skip it for docs/UI-only edits. Together `npm test` + `npm run test:fuzz` cover the identical set of tests — every test is in exactly one tier.
+- **Change-scoped gates (T2):** `npm run gates:changed` intersects `git diff --name-only` (vs the last green board, stored in `.lastgreenboard`; override with `--ref=<sha>`) against `scripts/gates/coverage.json` and runs only the gates whose globs match. It **escalates to the full board automatically** when a determinism-critical path changes (`src/gen/region.ts`, `src/gen/rng.ts`, any `clip.ts`, `src/model/tileCache.ts`) — those feed every generator, so a scoped run can't prove them safe.
+- **Screenshot judgment stays mandatory where visual** (docs/04's screenshot test is untouched — the tiers make room for it by removing everything else from the critical path). Never mark visual work done without reading the png.
+- **Commit-message tag records the tier that ran:** `[gate: changed-scope 4/4]` for a T2 commit, `[gate: full board]` for T3. A commit that only ran T0/T1 says so.
+
 ## Rules for agents
 
 - Never mark UI work done without `dev:errors` clean + a screenshot you have actually read.

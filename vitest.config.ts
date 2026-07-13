@@ -1,8 +1,13 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig, configDefaults } from "vitest/config";
 
+// Fast unit tier (`npm test`) — target <30 s wall clock (plan 021 §2.1).
+// The slow fuzz/stress tests live in `*.fuzz.test.ts` and run via
+// `npm run test:fuzz` (vitest.fuzz.config.ts). Every test runs in exactly one
+// tier; `npm test && npm run test:fuzz` together cover the identical set.
 export default defineConfig({
   test: {
     include: ["src/**/*.test.ts"],
+    exclude: [...configDefaults.exclude, "**/*.fuzz.test.ts"],
     environment: "node",
   },
 });

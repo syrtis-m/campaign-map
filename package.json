@@ -10,9 +10,11 @@
     "typecheck": "tsc --noEmit",
     "fonts:fetch": "scripts/fetch-fonts.sh",
     "fonts:build": "npm run fonts:fetch && node scripts/build-glyphs.mjs",
-    "test": "vitest run",
+    "test": "vitest run --config vitest.config.ts",
+    "test:fuzz": "vitest run --config vitest.fuzz.config.ts",
     "test:watch": "vitest",
-    "test:app": "tsx scripts/test-app.ts"
+    "test:app": "tsx scripts/test-app.ts",
+    "gates:changed": "tsx scripts/changed-gates.ts"
   },
   "devDependencies": {
     "@maplibre/maplibre-gl-style-spec": "^20.4.0",

@@ -28,63 +28,11 @@ import { subdivideBlocks } from "./parcels";
 import { makeCityness } from "./cityness";
 import { toMeters, type StreetGraph } from "./graph";
 import { tileBBox, GENERATION_TILE_SIZE } from "../cache/tileGrid";
-
-const WORLD_BOUNDS: BBox = { minX: -4000, minY: -4000, maxX: 4000, maxY: 4000 };
-const CAMPAIGN_SEED = 90210;
-
-/** Disc-shaped fixture (v3 parity): domain → 32-gon region, v3's seed. */
-function fixtureAt(cx: number, cy: number, profile: ProfileId = "euro-medieval", radius = 900) {
-  const domain = makeDomain(cx, cy, radius, profile, 0);
-  const seed = citySeedFor(CAMPAIGN_SEED, domain);
-  const region = makeRegion(`dom-shim:${domain.id}`, discToRing(domain));
-  return { domain, seed, region };
-}
-
-function net(
-  cx: number,
-  cy: number,
-  profile: ProfileId = "euro-medieval",
-  constraints: Partial<GenerationConstraints> = {},
-  radius = 900
-) {
-  const { seed, region } = fixtureAt(cx, cy, profile, radius);
-  return generateCityNetwork(seed, region, profile, { worldBounds: WORLD_BOUNDS, ...constraints });
-}
-
-/** A river line that fully bisects the region's cost-field bbox horizontally. */
-function riverThrough(cy: number): FabricFeature {
-  return {
-    type: "Feature",
-    id: "river-1",
-    geometry: { type: "LineString", coordinates: [[-4000, cy], [4000, cy]] },
-    properties: { kind: "river" },
-  };
-}
+// Shared fixtures also feed the slow fuzz tier (citynet.fuzz.test.ts). Plan 021 §2.1.
+import { WORLD_BOUNDS, CAMPAIGN_SEED, fixtureAt, net, riverThrough, allCoordsInside } from "./citynet.fixtures";
 
 function lineCoords(f: GeoJSON.Feature): [number, number][] {
   return (f.geometry as GeoJSON.LineString).coordinates as [number, number][];
-}
-
-/** Every coordinate of every feature is inside the region (≥ −eps signed
- * distance) — plan 020's "nothing spills past the GM's line". */
-function allCoordsInside(network: GeoJSON.Feature[], region: ProcgenRegion, eps = 0.01): boolean {
-  const check = (x: number, y: number): boolean => distanceToBoundary(region, x, y) >= -eps;
-  for (const f of network) {
-    const g = f.geometry;
-    if (g.type === "Point") {
-      const [x, y] = g.coordinates as [number, number];
-      if (!check(x, y)) return false;
-    } else if (g.type === "LineString") {
-      for (const [x, y] of g.coordinates as [number, number][]) {
-        if (!check(x, y)) return false;
-      }
-    } else if (g.type === "Polygon") {
-      for (const [x, y] of g.coordinates[0] as [number, number][]) {
-        if (!check(x, y)) return false;
-      }
-    }
-  }
-  return true;
 }
 
 describe("generateCityNetwork determinism (gate a)", () => {
@@ -328,39 +276,7 @@ describe("v3.1 connectivity (gate d)", () => {
   });
 });
 
-describe("v3.1/v3.4 200-region fuzz (gate e, anti-Watabou — all four profiles)", () => {
-  it("200 hashed disc regions (50 per profile) generate without throwing, each within budget", () => {
-    const fuzzProfiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb"];
-    const t0 = Date.now();
-    for (let i = 0; i < 200; i++) {
-      const rng = mulberry32(hashSeed(4242, "fuzz", i));
-      const cx = Math.round((rng() - 0.5) * 5000);
-      const cy = Math.round((rng() - 0.5) * 5000);
-      const radius = 400 + Math.round(rng() * 1100);
-      const fabric: FabricFeature[] = [];
-      if (i % 5 === 0) fabric.push(riverThrough(cy + Math.round((rng() - 0.5) * radius)));
-      if (i % 7 === 0) {
-        fabric.push({
-          type: "Feature",
-          id: `road-${i}`,
-          geometry: {
-            type: "LineString",
-            coordinates: [
-              [cx - radius, cy - Math.round(radius * 0.4)],
-              [cx + radius, cy + Math.round(radius * 0.4)],
-            ],
-          },
-          properties: { kind: "road" },
-        });
-      }
-      const runStart = Date.now();
-      const network = net(cx, cy, fuzzProfiles[i % 4], { fabricFeatures: fabric }, radius);
-      expect(network.length).toBeGreaterThan(0);
-      expect(Date.now() - runStart).toBeLessThan(5000); // per-run wall clock sane
-    }
-    expect(Date.now() - t0).toBeLessThan(180000);
-  }, 240000);
-});
+// The 200-region 4-profile fuzz (gate e) moved to citynet.fuzz.test.ts (plan 021 §2.1).
 
 describe("v3.1 budget (gate f, §8)", () => {
   it("radius-900 euro-medieval full network in ≤ 2000 ms", () => {
@@ -815,52 +731,7 @@ describe("v4.0 disc-equivalence (plan 020 gate e)", () => {
   });
 });
 
-describe("v4.0 4-profile polygon fuzz (plan 020 gate f)", () => {
-  /** Deterministic random SIMPLE polygon: radial-monotone star (angles
-   * ascending ⇒ no self-intersection), scaled to an exact target
-   * effectiveRadius. 5–10 vertices. */
-  function randomRegion(i: number): ProcgenRegion {
-    const rng = mulberry32(hashSeed(7777, "poly", i));
-    const n = 5 + Math.floor(rng() * 6); // 5–10 vertices
-    const cx = Math.round((rng() - 0.5) * 6000);
-    const cy = Math.round((rng() - 0.5) * 6000);
-    const targetR = 400 + rng() * 1100; // effectiveRadius 400–1500
-    const pts: [number, number][] = [];
-    for (let k = 0; k < n; k++) {
-      const ang = ((k + 0.4 * (rng() - 0.5)) / n) * 2 * Math.PI;
-      const rad = targetR * (0.55 + 0.9 * rng());
-      pts.push([cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)]);
-    }
-    // Scale about the center so area = π·targetR² exactly (pre-quantization).
-    let area2 = 0;
-    for (let k = 0; k < n; k++) {
-      const [ax, ay] = pts[k];
-      const [bx, by] = pts[(k + 1) % n];
-      area2 += ax * by - bx * ay;
-    }
-    const s = Math.sqrt((Math.PI * targetR * targetR) / Math.abs(area2 / 2));
-    const ring: [number, number][] = pts.map(([x, y]) => [cx + (x - cx) * s, cy + (y - cy) * s]);
-    ring.push(ring[0]);
-    return makeRegion(`fuzz-poly-${i}`, ring);
-  }
-
-  const fuzzProfiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb"];
-
-  it("30 random simple polygons × 4 profiles: no throw, all output inside", () => {
-    for (let i = 0; i < 30; i++) {
-      const region = randomRegion(i);
-      for (const profile of fuzzProfiles) {
-        const seed = hashSeed(7777, "fuzzseed", i, profile);
-        let network: GeoJSON.Feature[] = [];
-        expect(() => {
-          network = generateCityNetwork(seed, region, profile, { worldBounds: WORLD_BOUNDS });
-        }).not.toThrow();
-        expect(network.length).toBeGreaterThan(0);
-        expect(allCoordsInside(network, region)).toBe(true);
-      }
-    }
-  }, 300000);
-});
+// The v4.0 4-profile polygon fuzz (gate f) moved to citynet.fuzz.test.ts (plan 021 §2.1).
 
 describe("generation center override (plan 020 Addendum 2)", () => {
   function plazaCentroid(network: GeoJSON.Feature[]): [number, number] | null {

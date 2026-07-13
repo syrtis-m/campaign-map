@@ -1,0 +1,147 @@
+{
+  "_comment": "Change-scoped gating manifest (plan 021 §2.5). Maps each live gate script to the source globs it exercises, so `npm run gates:changed` can run only the gates whose coverage intersects a diff. Globs deliberately err toward OVER-inclusion: over-covering just runs an extra gate; under-covering ships a real break unguarded. `determinismCritical` paths bypass scoping entirely and escalate to the FULL board (region/rng/clip/tileCache feed every generator — a change there can break any gate's determinism). Glob syntax: `**` = any path segments, `*` = any non-slash chars.",
+  "determinismCritical": [
+    "src/gen/region.ts",
+    "src/gen/rng.ts",
+    "**/clip.ts",
+    "src/model/tileCache.ts"
+  ],
+  "gates": {
+    "phase0": {
+      "script": "scripts/gates/phase0.ts",
+      "globs": [
+        "src/main.ts",
+        "src/view/MapView.ts",
+        "src/model/campaignConfig.ts",
+        "src/map/fictionalCRS.ts",
+        "src/map/pmtilesVaultProtocol.ts"
+      ]
+    },
+    "phase1": {
+      "script": "scripts/gates/phase1.ts",
+      "globs": [
+        "src/main.ts",
+        "src/view/MapView.ts",
+        "src/vault/**",
+        "src/model/locationNote.ts",
+        "src/model/connections.ts",
+        "src/model/mutationLog.ts",
+        "src/map/locationIndex.ts",
+        "src/map/themes/**",
+        "src/map/theme.ts"
+      ]
+    },
+    "phase2": {
+      "script": "scripts/gates/phase2.ts",
+      "globs": [
+        "src/map/pmtilesVaultProtocol.ts",
+        "src/map/themes/**",
+        "src/map/theme.ts",
+        "src/map/glyphs.ts",
+        "src/model/campaignConfig.ts",
+        "src/view/MapView.ts"
+      ]
+    },
+    "phase3": {
+      "script": "scripts/gates/phase3.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/**",
+        "src/map/generation/**",
+        "src/model/generatedManifest.ts",
+        "src/model/tileCache.ts",
+        "src/vault/generatedManifestStore.ts",
+        "src/view/MapView.ts"
+      ]
+    },
+    "phase4": {
+      "script": "scripts/gates/phase4.ts",
+      "globs": [
+        "src/main.ts",
+        "src/map/generation/**",
+        "src/model/tileCache.ts",
+        "src/gen/**",
+        "src/view/MapView.ts"
+      ]
+    },
+    "phase5": {
+      "script": "scripts/gates/phase5.ts",
+      "globs": [
+        "src/map/posterExport.ts",
+        "src/map/atlasExport.ts",
+        "src/gen/populate.ts",
+        "src/vault/importOps.ts",
+        "src/model/importGeojson.ts",
+        "src/model/sessionPath.ts",
+        "src/model/mutationLog.ts",
+        "src/model/connections.ts",
+        "src/map/themes/connectionLayers.ts",
+        "src/map/themes/sessionPathLayers.ts",
+        "src/view/PopulateAreaModal.ts",
+        "src/view/ImportFileModal.ts",
+        "src/view/MapView.ts"
+      ]
+    },
+    "procgen40": {
+      "script": "scripts/gates/procgen40.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/**",
+        "src/model/fabric.ts",
+        "src/vault/fabricStore.ts",
+        "src/map/themes/fabricLayers.ts",
+        "src/map/themes/generatedLayers.ts",
+        "src/view/MapView.ts",
+        "src/view/SketchController.ts",
+        "src/view/RegionProcgenModal.ts"
+      ]
+    },
+    "procgen41": {
+      "script": "scripts/gates/procgen41.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/**",
+        "src/model/fabric.ts",
+        "src/vault/fabricStore.ts",
+        "src/map/themes/fabricLayers.ts",
+        "src/map/themes/generatedLayers.ts",
+        "src/view/MapView.ts",
+        "src/view/SketchController.ts",
+        "src/view/RegionProcgenModal.ts"
+      ]
+    },
+    "procgen42": {
+      "script": "scripts/gates/procgen42.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/**",
+        "src/model/fabric.ts",
+        "src/vault/fabricStore.ts",
+        "src/map/themes/fabricLayers.ts",
+        "src/view/MapView.ts",
+        "src/view/SketchController.ts"
+      ]
+    },
+    "procgen43": {
+      "script": "scripts/gates/procgen43.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/**",
+        "src/gen/procgen/**",
+        "src/model/fabric.ts",
+        "src/map/themes/fabricLayers.ts",
+        "src/view/MapView.ts",
+        "src/view/SketchController.ts"
+      ]
+    },
+    "styleLoad": {
+      "script": "scripts/gates/styleLoad.ts",
+      "globs": [
+        "src/map/theme.ts",
+        "src/map/themes/**",
+        "src/map/glyphs.ts",
+        "src/view/MapView.ts"
+      ]
+    }
+  }
+}

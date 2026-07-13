@@ -7,14 +7,22 @@ const CAMPAIGN = "ashfall";
 const TEST_LOC_PATH = "Campaigns/Ashfall/Locations/__GateTestLocation.md";
 const RENAMED_PATH = "Campaigns/Ashfall/Locations/__GateTestRenamed.md";
 const BAD_PATH = "Campaigns/Ashfall/Locations/__GateBad.md";
-const QUICKADD_PATH = "Campaigns/Ashfall/Locations/Gatetown.md";
+// Fixture-hygiene (plan 021 §2.4b): both of these are NAME-TAGGED throwaway
+// notes the gate creates and deletes. Earlier this gate connected/created onto
+// the committed Ashfall City.md + Gatetown.md, stripping the former's
+// `connections:` list and adding `visibility:` to the latter — dirtying
+// dev-vault fixtures. The gate now touches only `__Gate*` notes.
+const CONNECT_SRC_NAME = "__GateConnectSource";
+const CONNECT_SRC_PATH = `Campaigns/Ashfall/Locations/${CONNECT_SRC_NAME}.md`;
+const QUICKADD_NAME = "__GateQuickAdd";
+const QUICKADD_PATH = `Campaigns/Ashfall/Locations/${QUICKADD_NAME}.md`;
 
 async function existsInVault(path: string): Promise<boolean> {
   return evalJs(`app.vault.adapter.exists('${path}')`) === true;
 }
 
 async function cleanupFixtures() {
-  for (const p of [TEST_LOC_PATH, RENAMED_PATH, BAD_PATH, QUICKADD_PATH]) {
+  for (const p of [TEST_LOC_PATH, RENAMED_PATH, BAD_PATH, CONNECT_SRC_PATH, QUICKADD_PATH]) {
     if (await existsInVault(p)) obsidianRaw(["delete", `path=${p}`, "permanent"]);
   }
 }
@@ -60,8 +68,25 @@ async function main() {
 
   await gate.try("connect: write path (plan 005) creates a rendered connection line", async () => {
     clearErrors();
-    const FROM = `Campaigns/Ashfall/Locations/Ashfall City.md`;
+    // Fixture hygiene (plan 021 §2.4b): connect FROM a name-tagged throwaway
+    // note, never the committed `Ashfall City.md` — `addConnection` writes a
+    // `connections:` list into the SOURCE frontmatter, which used to dirty
+    // that fixture. Create the source via the plugin's own createLocation so
+    // the TFile is registered (getFileByPath resolves) before we connect.
+    const FROM = CONNECT_SRC_PATH;
     const TO_BASENAME = "Fairenford";
+    evalJs(
+      `app.plugins.plugins['campaign-map'].createLocation('${CAMPAIGN}', [2, 2], '${CONNECT_SRC_NAME}', 'city').then(()=>{window.__gateConnectSrcMade=true})`
+    );
+    let made = false;
+    for (let i = 0; i < 20 && !made; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      made =
+        evalJs("!!window.__gateConnectSrcMade") === true &&
+        evalJs(`!!app.vault.getFileByPath('${FROM}')`) === true;
+    }
+    if (!made) throw new Error("connect source note not registered in time");
+
     const countLines = () =>
       evalJs(`(function(){
         var map = app.plugins.plugins['campaign-map'].map;
@@ -102,7 +127,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 200));
       cleaned = evalJs("!!window.__gateConnectCleaned") === true;
     }
-    evalJs("delete window.__gateConnectDone; delete window.__gateConnectCleaned; true");
+    evalJs("delete window.__gateConnectDone; delete window.__gateConnectCleaned; delete window.__gateConnectSrcMade; true");
     if (!cleaned) throw new Error("cleanup did not resolve in time");
 
     const errs = devErrors();
@@ -166,7 +191,7 @@ async function main() {
   await gate.try("quick-add path (scripted): creates note + renders pin < 5s", async () => {
     const start = Date.now();
     evalJs(
-      `app.plugins.plugins['campaign-map'].createLocation('${CAMPAIGN}', [4, 3], 'Gatetown', 'town').then(()=>{window.__gateAddDone=true})`
+      `app.plugins.plugins['campaign-map'].createLocation('${CAMPAIGN}', [4, 3], '${QUICKADD_NAME}', 'town').then(()=>{window.__gateAddDone=true})`
     );
     let done = false;
     for (let i = 0; i < 20 && !done; i++) {
@@ -294,6 +319,12 @@ async function main() {
     screenshot("/Users/athena/projects/campaign-map/shots/gate-phase1.png");
     if (!existsSync("shots/gate-phase1.png")) throw new Error("screenshot missing");
   });
+
+  // Fixture hygiene (plan 021 §2.4b): the connect/quick-add tests create
+  // name-tagged throwaway notes; the start-of-gate cleanup only covers
+  // cross-run leftovers, so delete them here too — otherwise a clean 16/16 run
+  // still leaves untracked `__Gate*.md` files dirtying `git status dev-vault/`.
+  await cleanupFixtures();
 
   process.exit(gate.summarize("Phase 1"));
 }

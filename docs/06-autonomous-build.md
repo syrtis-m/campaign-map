@@ -33,6 +33,15 @@ The agent's first act is `scripts/preflight.sh` (build it in Phase 0 before anyt
 
 **Tier B — human review, non-blocking.** Aesthetic judgment (F6 craft, "genre in 3s", generator beauty) queues instead of stopping: agent writes `review/NNN-<topic>.md` with screenshots + specific questions, then *continues building*. Jonah reviews asynchronously; feedback becomes new tasks. The Phase 1 "run a real session" test is Tier B: the agent ships the phase on Tier A and flags the session test as pending.
 
+**Gate execution tiers (T0–T3, plan 021).** Tier A assertions above are still the bar; what changed is *how many gates you run when*. Don't re-prove the world on every edit — run the smallest tier that covers the change and escalate toward a commit. Full protocol in docs/05 §Test tiers; the gate-relevant summary:
+
+- **T0** (every edit): fast unit suite (`npm test`, <30 s) + `tsc`. No live gates.
+- **T1** (phase checkpoint): T0 + fuzz tier (`npm run test:fuzz`) + **the phase's own gate(s)**. This is the minimum to call a phase's own work done.
+- **T2** (pre-commit): T1 + **change-scoped gates** — `npm run gates:changed` intersects the diff (vs `.lastgreenboard`, override `--ref=<sha>`) against `scripts/gates/coverage.json` and runs only the covering gates. Commit tag: `[gate: changed-scope N/M]`.
+- **T3** (pre-merge / release / **determinism-critical change**): the **full board** — unit + fuzz + tsc + build + every live gate, one report. `gates:changed` auto-escalates here when a determinism-critical path changes (`src/gen/region.ts`, `src/gen/rng.ts`, any `clip.ts`, `src/model/tileCache.ts`). Commit tag: `[gate: full board]`. The one-command `npm run board` runner lands in **plan 021 phase B**; until then run the gate scripts one-per-fresh-process (renderer-degradation workaround, docs/05 §pitfalls).
+
+Fixture hygiene is enforced: after every gate, `git status --short dev-vault/` must be empty (§2.4b) — a gate that passes its own assertions while dirtying committed fixtures is a **red** gate. Screenshot judgment (Tier B / docs/04) stays mandatory where visual.
+
 ## 3. Pinned decisions (so the agent never stalls or invents)
 
 **Fonts** (download + generate glyph PBFs via font-maker in Phase 2; all OFL-licensed): `obsidian-native` → inherit theme font, fallback Inter. `modern-clean` → Inter. `parchment` → Alegreya (labels) / Cormorant SC (regions). `ink-soot` → IBM Plex Serif / Oswald (regions). `neon-sprawl` → Rajdhani / Saira Condensed (regions).
