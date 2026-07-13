@@ -21,16 +21,22 @@ function ashfallView(): string {
 
 async function openAshfall() {
   resetLeaves();
-  // per-campaign commands register async on load; retry the open a few times
+  // per-campaign commands register async on load; retry the open a few times.
+  // phase5 runs right after phase4's full-app-reload step on the board — the
+  // reloaded app can still be settling, so be patient (the style-load LATENCY
+  // bar lives in the styleLoad gate, not here) and re-issue the open if the
+  // view never materialized.
   for (let i = 0; i < 8; i++) {
     const out = obsidian(`command id=campaign-map:open-map-${CAMPAIGN}`);
     if (out.includes("Executed")) break;
     await new Promise((r) => setTimeout(r, 1500));
   }
-  // wait for style load
-  for (let i = 0; i < 12; i++) {
-    const ready = evalJs(`(function(){var v=${ashfallView()};return !!(v&&v.map&&v.map.isStyleLoaded());})()`);
-    if (ready === true) return;
+  for (let i = 0; i < 30; i++) {
+    const state = evalJs(`(function(){var v=${ashfallView()};if(!v)return 'no-view';if(!v.map)return 'no-map';return v.map.isStyleLoaded()?'ready':'loading';})()`);
+    if (state === "ready") return;
+    if (state === "no-view" && i > 0 && i % 5 === 0) {
+      obsidian(`command id=campaign-map:open-map-${CAMPAIGN}`);
+    }
     await new Promise((r) => setTimeout(r, 1000));
   }
 }
@@ -45,6 +51,39 @@ function exportsCount(ext: string): Promise<number> {
     var listed = await app.vault.adapter.list(dir);
     return (listed.files || []).filter(function(f){ return f.toLowerCase().endsWith('.${ext}'); }).length;
   })()`) as unknown as Promise<number>;
+}
+
+/** Full file list of `<campaign>/Exports/` (vault-relative paths). */
+async function listExports(): Promise<string[]> {
+  const result = await (evalJs(`(async function(){
+    var v = ${ashfallView()};
+    var dir = v.campaign.path.slice(0, v.campaign.path.lastIndexOf('/')) + '/Exports';
+    var has = await app.vault.adapter.exists(dir);
+    if (!has) return JSON.stringify([]);
+    var listed = await app.vault.adapter.list(dir);
+    return JSON.stringify(listed.files || []);
+  })()`) as unknown as Promise<unknown>);
+  return typeof result === "string" ? JSON.parse(result) : (result as string[]);
+}
+
+/** Remove every Exports/ file not in `baseline` — the gate's own artifacts.
+ * Committed fixture exports stay byte-intact (board hygiene rule, 021 §2.4b). */
+async function removeNewExports(baseline: string[]): Promise<number> {
+  const result = await (evalJs(`(async function(){
+    var v = ${ashfallView()};
+    var dir = v.campaign.path.slice(0, v.campaign.path.lastIndexOf('/')) + '/Exports';
+    var keep = ${JSON.stringify(baseline)};
+    var has = await app.vault.adapter.exists(dir);
+    if (!has) return 0;
+    var listed = await app.vault.adapter.list(dir);
+    var files = listed.files || [];
+    var removed = 0;
+    for (var i = 0; i < files.length; i++) {
+      if (keep.indexOf(files[i]) === -1) { await app.vault.adapter.remove(files[i]); removed++; }
+    }
+    return removed;
+  })()`) as unknown as Promise<number>);
+  return typeof result === "number" ? result : Number(result);
 }
 
 async function main() {
@@ -62,6 +101,13 @@ async function main() {
     await openAshfall();
     const ok = evalJs(`(function(){var v=${ashfallView()};return !!(v&&v.map&&v.map.isStyleLoaded());})()`);
     if (ok !== true) throw new Error("Ashfall map did not load");
+  });
+
+  // snapshot committed Exports/ so the hygiene step can remove only what this
+  // gate created (exports are timestamp-named — they'd dirty dev-vault forever)
+  let exportsBaseline: string[] = [];
+  await gate.try("snapshot Exports/ baseline", async () => {
+    exportsBaseline = await listExports();
   });
 
   await gate.try("Phase 5 command + method surface present", () => {
@@ -126,6 +172,14 @@ async function main() {
     await new Promise((r) => setTimeout(r, 1500));
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
+  });
+
+  await gate.try("fixture hygiene: gate-created exports removed", async () => {
+    const removed = await removeNewExports(exportsBaseline);
+    const after = await listExports();
+    const extra = after.filter((f) => !exportsBaseline.includes(f));
+    if (extra.length > 0) throw new Error(`Exports/ still has gate leftovers: ${extra.join(", ")}`);
+    console.log(`    (removed ${removed} gate-created export file(s))`);
   });
 
   await gate.try("screenshot", () => {

@@ -10,6 +10,12 @@ const MAX_BUFFER = 50 * 1024 * 1024;
 
 export class ObsidianCliError extends Error {}
 
+// SIGKILL on timeout: a CLI invocation whose IPC reply is lost ignores SIGTERM
+// and keeps execFileSync blocked FOREVER (observed 2026-07-13 — a stuck
+// `eval` poll hung a board run 20+ min with a healthy app). Unattended runs
+// must fail a call loudly after 30s, never wedge.
+const KILL = { killSignal: "SIGKILL" as const };
+
 /** Runs a single obsidian CLI command against dev-vault and returns trimmed stdout. */
 export function obsidian(args: string): string {
   try {
@@ -17,6 +23,7 @@ export function obsidian(args: string): string {
       encoding: "utf8",
       timeout: 30_000,
       maxBuffer: MAX_BUFFER,
+      ...KILL,
     }).trim();
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string; message: string };
@@ -41,7 +48,7 @@ export function evalJs(code: string): unknown {
 
 export function obsidianRaw(argv: string[]): string {
   try {
-    return execFileSync("obsidian", [VAULT, ...argv], { encoding: "utf8", timeout: 30_000, maxBuffer: MAX_BUFFER });
+    return execFileSync("obsidian", [VAULT, ...argv], { encoding: "utf8", timeout: 30_000, maxBuffer: MAX_BUFFER, ...KILL });
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string; message: string };
     throw new ObsidianCliError(

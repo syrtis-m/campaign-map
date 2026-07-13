@@ -202,9 +202,22 @@ function restoreDevVault(): void {
 }
 
 // ── live gate execution with probe-attributed retries ────────────────────────
+// Hard per-gate cap: the slowest gate (procgen41) runs ~80s; 10 min means a
+// wedged gate (e.g. a CLI call whose IPC reply was lost, 2026-07-13) fails
+// loudly instead of hanging an unattended board forever. SIGKILL because a
+// stuck obsidian CLI child ignores SIGTERM.
+const GATE_TIMEOUT_MS = 600_000;
 function runGateScript(script: string): { status: number; ms: number } {
   const t0 = Date.now();
-  const res = spawnSync("npx", ["tsx", script], { cwd: REPO_ROOT, stdio: "inherit" });
+  const res = spawnSync("npx", ["tsx", script], {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+    timeout: GATE_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+  });
+  if (res.error && (res.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+    console.log(`  [board] gate ${script} exceeded ${GATE_TIMEOUT_MS / 1000}s cap — killed`);
+  }
   return { status: res.status ?? 1, ms: Date.now() - t0 };
 }
 
