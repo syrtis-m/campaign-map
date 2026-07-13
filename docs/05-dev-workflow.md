@@ -80,12 +80,30 @@ Testing used to mean "run the whole board," which cost an afternoon. It no longe
 | **T0** inner loop | every edit | fast unit suite + tsc | `npm test` (+ `npx tsc --noEmit`) | **<45 s** |
 | **T1** phase checkpoint | finishing a phase's work | T0 **+ fuzz tier + that phase's own gate(s)** | `npm test && npm run test:fuzz` + `tsx scripts/gates/<phase>.ts` | <5 min |
 | **T2** pre-commit | before any commit | T1 **+ change-scoped gates** | `npm run gates:changed` (add `--run` to execute them) | scoped |
-| **T3** pre-merge / release / determinism-critical | merging, releasing, or touching determinism-critical shared code | **full board** (unit + fuzz + tsc + build + every live gate) | `npm run board` *(lands in plan 021 phase B; until then, run the gate scripts one-per-fresh-process)* | <15 min |
+| **T3** pre-merge / release / determinism-critical | merging, releasing, or touching determinism-critical shared code | **full board** (unit + fuzz + tsc + build + every live gate) | `npm run board` | <15 min |
 
 - **`npm test` is the FAST tier** (target <30 s): everything except the slow fuzz/stress tests, which live in `*.fuzz.test.ts` and run via **`npm run test:fuzz`** at T1+. Run the fuzz tier whenever a **generator's behavior actually changed**; skip it for docs/UI-only edits. Together `npm test` + `npm run test:fuzz` cover the identical set of tests — every test is in exactly one tier.
 - **Change-scoped gates (T2):** `npm run gates:changed` intersects `git diff --name-only` (vs the last green board, stored in `.lastgreenboard`; override with `--ref=<sha>`) against `scripts/gates/coverage.json` and runs only the gates whose globs match. It **escalates to the full board automatically** when a determinism-critical path changes (`src/gen/region.ts`, `src/gen/rng.ts`, any `clip.ts`, `src/model/tileCache.ts`) — those feed every generator, so a scoped run can't prove them safe.
 - **Screenshot judgment stays mandatory where visual** (docs/04's screenshot test is untouched — the tiers make room for it by removing everything else from the critical path). Never mark visual work done without reading the png.
 - **Commit-message tag records the tier that ran:** `[gate: changed-scope 4/4]` for a T2 commit, `[gate: full board]` for T3. A commit that only ran T0/T1 says so.
+
+## The board runner (`npm run board`, plan 021 §2.3)
+
+One command runs the whole board in **one Obsidian process**, restarting it only when a health probe says the renderer degraded — no more hand-running a dozen gate scripts one-per-fresh-process.
+
+```bash
+npm run board                          # full board: prologue (unit+fuzz+tsc+build) + every live gate
+npm run board -- --changed             # change-scoped: unit+tsc+build + selectGates() live gates (respects full-board escalation)
+npm run board -- --gates=phase1,styleLoad   # explicit live-gate subset (demo/debug)
+npm run board -- --no-prologue         # live gates only (you already ran unit/build)
+npm run board -- --probe-fail-at=N     # inject ONE probe failure at the Nth gate to exercise the relaunch/resume path
+```
+
+- **Prologue first** (process-independent): `npm test` → `npm run test:fuzz` → `tsc --noEmit` → `npm run build`. A broken build aborts the board before any live gate (a bad bundle makes every gate meaningless). `--changed` drops the fuzz tier (a scoped run isn't a generator-behavior checkpoint) but keeps build. `test:app` is intentionally **not** in the board — it's a single-gate wrapper the board subsumes by running gates from `coverage.json` directly.
+- **Health-probe attribution is the whole point.** Renderer degradation produces not just spurious FAILs but *vacuous PASSes* (a collision check passes when nothing is drawn), so the discriminator is the probe **after** each gate: pre-gate probe unhealthy → relaunch first; post-gate probe unhealthy → the result (pass *or* fail) is untrustworthy → relaunch + **re-run that gate** (capped at 3 relaunches); post-gate probe healthy + gate failed → **genuine RED, never retried**. The probe is `isStyleLoaded` + `loaded()` + a `queryRenderedFeatures()` sanity + background-layer presence on the ashfall map, ~5s budget.
+- **Process control shells out to `scripts/relaunch-obsidian.sh`** (osascript quit → wait for exit → `open -a Obsidian` → poll the plugin ready). The board never relaunches unless a probe fails.
+- **Fixture hygiene is enforced per gate** (§2.4b): after every live gate the board asserts `git status --short dev-vault/` is empty; a gate that passes its own assertions while dirtying committed fixtures is a **RED** gate. The board restores cleanliness (`git checkout -- dev-vault/` + `git clean -fdq -- dev-vault/`, which respects `.gitignore` so `.mapcache/` is untouched) before continuing so one offender doesn't cascade.
+- **The report** is written to `shots/board-report.md` (per-gate pass/fail + wall-clock + relaunch count + post-probe health + totals) — that's the artifact you paste into PROGRESS.md.
 
 ## Rules for agents
 
