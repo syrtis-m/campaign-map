@@ -91,10 +91,22 @@ while true; do
   after="$(unchecked)"
   echo "   run #$run ended after ${dur}s — boxes: $left → $after"
 
-  # Completion may have happened inside the run; loop top handles STOP/0.
+  # Triage a fast death by what the run actually said — an auth/config error
+  # aborts loudly (napping can never fix it); only a real limit message (or
+  # an unidentifiable fast death) earns the long nap.
   if (( dur < FAST_DEATH )) && [[ "$after" == "$left" ]]; then
-    echo "   fast death + no progress → limit likely still up; sleeping $((LIMIT_NAP/60)) min"
-    sleep "$LIMIT_NAP"
+    if grep -qiE "authenticat|oauth|logged out|login|api key" "$log"; then
+      echo "❌ AUTH FAILURE — run 'claude' interactively and log in, then restart this script."
+      tail -3 "$log" | sed 's/^/   > /'
+      exit 1
+    elif grep -qiE "usage limit|rate limit|session limit|resets [0-9]" "$log"; then
+      echo "   limit-kill confirmed in log; sleeping $((LIMIT_NAP/60)) min"
+      sleep "$LIMIT_NAP"
+    else
+      echo "   fast death, cause unclear (see $log); sleeping $((LIMIT_NAP/60)) min"
+      tail -3 "$log" | sed 's/^/   > /'
+      sleep "$LIMIT_NAP"
+    fi
   else
     sleep "$SHORT_NAP"
   fi
