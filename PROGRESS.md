@@ -41,8 +41,18 @@
   the interrupted session's 13/15 (procgen41/43) did NOT reproduce on the
   unmodified tree — environment flakiness, zero fix-edits (see DECISIONS
   2026-07-13). `.lastgreenboard` → 62660d3.
-- Next: 21-D plan-021 acceptance gate (injected determinism break caught;
-  assertion-migration map), then plan 022.
+- **21-D DONE** (`4369db6`) — **PLAN 021 COMPLETE**: §4 acceptance proven —
+  inner loop 17 s (<45 s), T1 ~3.1 min (<5 min), full board 6.6 min (<15 min,
+  0 relaunches); rng.ts FNV-salt injection caught RED in 15 s by corridor
+  golden snapshots AND independently escalated to full board by
+  `gates:changed`; reverted byte-clean, 329/329 green.
+  `review/021D-assertion-migration.md`: 125 assertions / 11 gates → 31
+  headless-now + 12 headless-candidate + 82 genuinely-live; §2.4's ≥70%
+  headless target NOT cleanly met (34% all-in / 51% domain — F1, flagged for
+  Jonah in HEARTBEAT §Questions); decision: no retro-migration, 022+ tests
+  born headless.
+- Next: plan 022 (algorithm suite) — 22-A preset pattern + city-profiles
+  retrofit + additive-params rule.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

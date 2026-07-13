@@ -70,7 +70,7 @@ exists to make that true.
       evidence, keep probe-restarts, move on (021 §2.2–2.3)
 - [x] 62660d3 21-C MapController extraction + FakeHost harness, ZERO behavior
       change, full board green before AND after (021 §2.4) ⛳ full board
-- [ ] 21-D plan-021 acceptance gate: injected determinism break caught;
+- [x] 4369db6 21-D plan-021 acceptance gate: injected determinism break caught;
       assertion-migration map written (021 §4)
 
 **Plan 022 — algorithm suite** (`plans/022-procgen-suite-rivers-forests-parks-walls.md`)
@@ -120,7 +120,13 @@ exists to make that true.
 (none — add entries as `- <box-id>: <why> — <what's needed>`)
 
 ## Questions for Jonah (answered decisions logged in DECISIONS.md; morning digest)
-(none yet)
+- 21-D F1: plan 021 §2.4's "≥70% of live-gate assertions move headless" is NOT
+  cleanly met — 34% all-in (51% of domain assertions; ~33% of live-gate checks
+  are irreducible live scaffolding: plugin-load/reload/dev:errors/screenshot
+  per gate). Speed goals all met. Decision taken (DECISIONS 2026-07-13): no
+  retro-migration of existing gates; 022+ tests are born headless on the 21-C
+  harness. Full analysis: review/021D-assertion-migration.md. OK, or do you
+  want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
 - 2026-07-13 (arc run, session 3): resumed on dirty tree — session 2 died mid

@@ -401,3 +401,25 @@
   no disposable resources (no listeners/timers/workers/DOM; generation worker
   stays plugin-owned, borrowed via `host.gen.getWorker()`); MapView `onClose`
   still disposes map/timer/keydown.
+
+## 2026-07-13 — Plan 021 phase D (acceptance gate)
+- **§4 ≥70% headless-migration target NOT cleanly met — recorded as F1, not a
+  phase failure**: 125 live-gate assertions mapped → 31 headless-now, 12
+  headless-candidate (43 = 34% all-in; 51% of domain assertions). ~33% of all
+  live-gate checks are irreducible live scaffolding (plugin load/open/reload,
+  dev:errors, screenshots × 11 gates); the remainder is dominated by
+  plan-designated-live concerns (paint, qRF, style-load, exports, frame
+  timing, bundle sweeps). Decision: NO retro-migration of existing gates —
+  the 21-C harness captured the cost core (procgen41, slowest gate at 92 s,
+  is 59% eligible) and plans 022+ write tests born-headless. Flagged for
+  Jonah in HEARTBEAT §Questions. Full map:
+  review/021D-assertion-migration.md.
+- **Fast-tier determinism tripwire is narrow**: only the corridor golden
+  snapshots (corridor.test.ts) catch a uniform hashSeed salt flip — sigil's
+  seed path doesn't route through hashSeed, and ~40 self-relative determinism
+  tests survive any uniform flip by construction. Acceptable because
+  gates:changed independently escalates ANY rng.ts edit to full board
+  (defense in depth); worth a golden snapshot per new generator in 022+.
+- **Injection-proof correction to 21-C notes**: procgen41's footprint/parcel
+  minzoom check is headless-now (covered by fabricLayers.test.ts), not
+  genuinely-live as previously noted.
