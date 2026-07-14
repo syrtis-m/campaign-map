@@ -279,6 +279,17 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "adopt-all-regions",
+      name: "Update all regions to current generators",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.adoptAllRegions();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "toggle-sketch-mode",
       name: "Toggle sketch mode (draw city fabric)",
       checkCallback: (checking) => {

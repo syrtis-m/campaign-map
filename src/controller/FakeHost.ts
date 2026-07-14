@@ -87,6 +87,10 @@ export class FakeHost {
 
   // Recorded side effects (assertion surface).
   readonly notices: { message: string; timeoutMs?: number }[] = [];
+  /** Adoption-prompt calls, in order. `confirmResponse` is what each returns
+   * (tests flip it, or use the controller's queued test responses instead). */
+  readonly confirms: string[] = [];
+  confirmResponse = true;
   readonly featureChanges: FeatureChange[] = [];
   readonly selectionInvalidations: string[] = [];
   readonly selectionKeptPanel: string[] = [];
@@ -135,6 +139,12 @@ export class FakeHost {
       notices: {
         notify: (message, timeoutMs) => {
           this.notices.push({ message, timeoutMs });
+        },
+      },
+      confirm: {
+        confirm: async (message) => {
+          this.confirms.push(message);
+          return this.confirmResponse;
         },
       },
       render: {

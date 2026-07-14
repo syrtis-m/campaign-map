@@ -1,5 +1,5 @@
 {
-  "_comment": "Change-scoped gating manifest (plan 021 §2.5). Maps each live gate script to the source globs it exercises, so `npm run gates:changed` can run only the gates whose coverage intersects a diff. Globs deliberately err toward OVER-inclusion: over-covering just runs an extra gate; under-covering ships a real break unguarded. `determinismCritical` paths bypass scoping entirely and escalate to the FULL board (region/rng/clip/tileCache feed every generator — a change there can break any gate's determinism). Glob syntax: `**` = any path segments, `*` = any non-slash chars.",
+  "_comment": "Change-scoped gating manifest (plan 021 \u00a72.5). Maps each live gate script to the source globs it exercises, so `npm run gates:changed` can run only the gates whose coverage intersects a diff. Globs deliberately err toward OVER-inclusion: over-covering just runs an extra gate; under-covering ships a real break unguarded. `determinismCritical` paths bypass scoping entirely and escalate to the FULL board (region/rng/clip/tileCache feed every generator \u2014 a change there can break any gate's determinism). Glob syntax: `**` = any path segments, `*` = any non-slash chars.",
   "determinismCritical": [
     "src/gen/region.ts",
     "src/gen/rng.ts",
@@ -477,6 +477,17 @@
         "src/map/generation/**",
         "src/map/themes/**",
         "src/view/MapView.ts"
+      ]
+    },
+    "version29": {
+      "script": "scripts/gates/version29.ts",
+      "globs": [
+        "src/gen/procgen/registry.ts",
+        "src/gen/cache/fingerprint.ts",
+        "src/controller/MapController.ts",
+        "src/model/fabric.ts",
+        "src/view/MapView.ts",
+        "src/main.ts"
       ]
     }
   }

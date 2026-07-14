@@ -265,6 +265,178 @@ describe("MapController — version pinning", () => {
   });
 });
 
+describe("MapController — adoption lifecycle (pinned-old regions)", () => {
+  /** A pinned-old fixture: create at v1, then simulate a city bump to v2. */
+  async function pinnedOldHost(): Promise<{ host: FakeHost; featureId: string }> {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    host.controller.overrideCurrentVersionForTest("city", 2);
+    return { host, featureId };
+  }
+
+  it("a param edit on a pinned-old region prompts; DECLINE cancels the edit entirely", async () => {
+    const { host, featureId } = await pinnedOldHost();
+    const runsBefore = host.controller.generatorRunCount;
+    const logBefore = (await host.log()).length;
+
+    host.controller.queueConfirmResponseForTest(false);
+    await host.controller.setRegionParams(featureId, { profile: "na-grid" });
+
+    const block = (await host.fabric()).features[0].properties.procgen!;
+    expect(block.params.profile).toBe("euro-medieval"); // edit cancelled
+    expect(block.version).toBe(1); // pin untouched
+    expect(host.controller.generatorRunCount).toBe(runsBefore); // nothing regenerated
+    expect((await host.log()).length).toBe(logBefore); // nothing logged
+  });
+
+  it("PROCEED adopts (version raised, migrated params), applies the edit, regenerates, logs before/after", async () => {
+    const { host, featureId } = await pinnedOldHost();
+    const runsBefore = host.controller.generatorRunCount;
+
+    host.controller.queueConfirmResponseForTest(true);
+    await host.controller.setRegionParams(featureId, { profile: "na-grid" });
+
+    const block = (await host.fabric()).features[0].properties.procgen!;
+    expect(block.version).toBe(2); // adopted
+    expect(block.params.profile).toBe("na-grid"); // edit applied
+    expect(host.controller.generatorRunCount).toBeGreaterThan(runsBefore);
+    const last = (await host.log()).at(-1)!;
+    expect(last.type).toBe("sketch-procgen-set");
+    const data = last.data as unknown as { before: { version: number }; after: { version: number } };
+    expect(data.before.version).toBe(1);
+    expect(data.after.version).toBe(2);
+    expect(host.controller.needsAdoptionIds()).toEqual([]);
+    expect(host.controller.isRegionPinnedOld(featureId)).toBe(false);
+  });
+
+  it("a vertex edit on a pinned-old region prompts; decline reverts the geometry", async () => {
+    const { host, featureId } = await pinnedOldHost();
+    const ringBefore = JSON.stringify((await host.fabric()).features[0].geometry);
+
+    host.controller.queueConfirmResponseForTest(false);
+    const ok = await host.controller.moveVertex(featureId, 0, [6, -30]);
+
+    expect(ok).toBe(false);
+    expect(JSON.stringify((await host.fabric()).features[0].geometry)).toBe(ringBefore);
+    expect((await host.fabric()).features[0].properties.procgen!.version).toBe(1);
+  });
+
+  it("a vertex edit accepted adopts first, then applies the reshape", async () => {
+    const { host, featureId } = await pinnedOldHost();
+    host.controller.queueConfirmResponseForTest(true);
+    const ok = await host.controller.moveVertex(featureId, 0, [6, -30]);
+
+    expect(ok).toBe(true);
+    const feat = (await host.fabric()).features[0];
+    expect(feat.properties.procgen!.version).toBe(2);
+    // Both steps logged, adoption before the edit (each its own undo step).
+    const types = (await host.log()).map((e) => e.type);
+    expect(types.at(-1)).toBe("sketch-edit");
+    expect(types.at(-2)).toBe("sketch-procgen-set");
+  });
+
+  it("with no queued response the host confirm sink decides (prompt surface)", async () => {
+    const { host, featureId } = await pinnedOldHost();
+    host.confirmResponse = true;
+    await host.controller.rerollRegion(featureId);
+    expect(host.confirms.length).toBe(1);
+    expect(host.confirms[0]).toContain("older version");
+    expect((await host.fabric()).features[0].properties.procgen!.version).toBe(2);
+  });
+
+  it("replay serves a pinned-old region from cache untouched (no prompt, no generator run)", async () => {
+    const { host, featureId } = await pinnedOldHost();
+    const bytesBefore = new Map<string, string>();
+    for (const [k, rec] of await host.cache()) bytesBefore.set(k, JSON.stringify(rec.features));
+
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    reopened.controller.overrideCurrentVersionForTest("city", 2);
+    await reopened.controller.replayGeneratedManifest();
+
+    expect(reopened.controller.generatorRunCount).toBe(0); // pure cache hits
+    expect(reopened.controller.needsAdoptionIds()).toEqual([]); // no badge
+    expect(reopened.confirms.length).toBe(0); // no prompt
+    expect(reopened.controller.regionFeatureIds(featureId).length).toBeGreaterThan(0); // painted
+    for (const [k, rec] of await reopened.cache()) {
+      expect(JSON.stringify(rec.features)).toBe(bytesBefore.get(k)); // bytes untouched
+    }
+  });
+
+  it("cache missing: a pinned-old region renders NOTHING + a needs-adoption badge — never regenerates", async () => {
+    const { host, featureId } = await pinnedOldHost();
+    await host.adapter.remove(host.cachePath());
+
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    reopened.controller.overrideCurrentVersionForTest("city", 2);
+    await reopened.controller.replayGeneratedManifest();
+
+    expect(reopened.controller.generatorRunCount).toBe(0); // NEVER silently regenerated
+    expect(reopened.controller.regionFeatureIds(featureId)).toEqual([]); // renders nothing
+    expect(reopened.controller.needsAdoptionIds()).toEqual([featureId]); // badge
+    expect(reopened.notices.some((n) => n.message.includes("needs adoption"))).toBe(true);
+  });
+
+  it("adoptRegion raises the pin, regenerates deterministically, and clears the badge", async () => {
+    const { host, featureId } = await pinnedOldHost();
+    await host.adapter.remove(host.cachePath());
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    reopened.controller.overrideCurrentVersionForTest("city", 2);
+    await reopened.controller.replayGeneratedManifest();
+    expect(reopened.controller.needsAdoptionIds()).toEqual([featureId]);
+
+    const adopted = await reopened.controller.adoptRegion(featureId);
+    expect(adopted).toBe(true);
+    expect((await reopened.fabric()).features[0].properties.procgen!.version).toBe(2);
+    expect(reopened.controller.needsAdoptionIds()).toEqual([]);
+    expect(reopened.controller.regionFeatureIds(featureId).length).toBeGreaterThan(0);
+
+    // Determinism at the adopted version: delete cache ⇒ identical bytes.
+    const bytes = new Map<string, string>();
+    for (const [k, rec] of await reopened.cache()) bytes.set(k, JSON.stringify(rec.features));
+    await reopened.adapter.remove(reopened.cachePath());
+    await reopened.controller.regenerateRegionById(featureId);
+    for (const [k, rec] of await reopened.cache()) {
+      expect(JSON.stringify(rec.features)).toBe(bytes.get(k));
+    }
+  });
+
+  it("adoptRegion is a no-op on a current-version region", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    expect(await host.controller.adoptRegion(featureId)).toBe(false);
+  });
+
+  it("adoptAllRegions adopts every pinned-old region and reports the count", async () => {
+    const host = cityHost();
+    const a = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "A");
+    const FOREST_RING: [number, number][] = [
+      [-30, 10],
+      [-14, 10],
+      [-14, 26],
+      [-30, 26],
+    ];
+    const b = await host.controller.createRegionForTest(
+      FOREST_RING,
+      "forest",
+      { variety: "mixed", density: 0.6, clearings: 0.15, edgeRaggedness: 0.5 },
+      "B",
+      "forest"
+    );
+    host.controller.overrideCurrentVersionForTest("city", 2);
+    host.controller.overrideCurrentVersionForTest("forest", 3);
+
+    const count = await host.controller.adoptAllRegions();
+    expect(count).toBe(2);
+    const fabric = await host.fabric();
+    expect(fabric.features.find((f) => f.id === a.featureId)!.properties.procgen!.version).toBe(2);
+    expect(fabric.features.find((f) => f.id === b.featureId)!.properties.procgen!.version).toBe(3);
+    expect(await host.controller.adoptAllRegions()).toBe(0); // idempotent
+  });
+});
+
 describe("MapController — clear + undo lifecycle", () => {
   it("clearAllGenerated strips every region's procgen block and drops its cache", async () => {
     const host = cityHost();
