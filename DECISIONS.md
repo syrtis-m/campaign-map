@@ -921,3 +921,28 @@
   contour layer's own cadence — visual duplication); flat-ground fallback =
   concentric interior-distance bands, kept permanently as the documented
   no-relief look (boundary-following, hence ring-edit-reshaped — correct).
+
+## 2026-07-14 — Plan 026 phase B (organic canopy, phase subagent; advisor banned)
+- **Advisor tool BANNED for the rest of the arc:** four separate phase agents
+  hit fatal "response stalled mid-stream" API errors during advisor consults
+  (22-F-era through 23-E). Agents now decide inline and document judgment
+  calls; nothing of value lost — every advisor-free phase went green.
+- **Field design:** F(p) = min(warp(fbm) + Σ metaball(clump parents) −
+  edgeFade − clearings − threshold, sdf(p) − CONTAIN) traced at level 0 —
+  metaballs scallop the outline toward the same clump anchors the 26-A trees
+  use (visual coherence for free); the sdf term is a hard containment floor
+  so no polygon clipping is needed; Chaikin only pulls inward so smoothing
+  can't violate it. Density/clearings/raggedness read LOCAL signed distance,
+  never interiorT — edit-locality holds (92.8% vs 39.3%).
+- **Rim = separate LineStrings, not line-on-fill:** a line layer on the
+  MultiPolygon strokes the per-tile CLIP edges — visible grid seams (caught
+  on the first screenshot). Polyline clipping cuts at tile edges without
+  synthesizing seam segments. Pattern to remember for any outlined fill.
+- **clipNetworkToTile had no MultiPolygon branch** and dropped holes on
+  Polygon — canopy silently vanished from tiles. Added clipRingsToBBox
+  (holes preserved) + MultiPolygon case. Additive to a determinism-critical
+  path: all pre-existing goldens byte-green; the 28-C board is the full
+  sweep.
+- **forest-clearing retired as emitted features** (holes replace them); gid +
+  paint kept for pre-026-B cache back-compat. Dasharray rim per theme
+  deferred (needs a tokens.ts style flag).

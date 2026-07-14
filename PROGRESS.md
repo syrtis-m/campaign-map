@@ -278,9 +278,19 @@
   byte-identity asserted for BOTH kinds. Gate: fast 650/650 · fuzz 21/21 ·
   coupling23e 13/13 ×2 fresh-process · 3 screenshots eyeballed · dev-vault
   clean. See DECISIONS "23-E".
-- Next: visual-overhaul wave 2 — 26-B forest canopy (marching squares on the
-  23-C machinery), 26-C tree glyphs, then ∥ P3 (27-C + 28-C ⛳ one board for
-  026+027+028).
+- **26-B DONE** (`558a8a8`): organic CANOPY — domain-warped masked noise +
+  metaballs on the 26-A clump parents → 23-C marching squares → Chaikin →
+  ONE forest-canopy MultiPolygon with glade holes; sdf containment floor;
+  seam-safe rim LineStrings; dead-wood bare; trees pinned byte-identical.
+  Two integration catches: line-on-fill rim strokes tile-clip edges;
+  clipNetworkToTile lacked a MultiPolygon branch (holes now preserved).
+  New reusable fields/{smoothing,metaball,polygons} + fDomainWarp (27-C
+  consumes these next). Gate: fast 673/673 · fuzz green · procgen50-canopy
+  13/13 · 3 screenshots eyeballed (organic mass, no staircase/seams) ·
+  dev-vault clean. See DECISIONS "26-B".
+- Next: 26-C tree glyphs (treeGlyphs.ts canvas/SDF module + symbol layers;
+  perf on throttled CPU), then ∥ P3: 27-C park organic water/canopy + 28-C
+  river junctions/mouths ⛳ ONE board covers 026+027+028.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

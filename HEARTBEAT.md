@@ -181,7 +181,7 @@ wave box commits on T1 only.
 
 **Plans 026–028 — visual overhaul, wave 2** (needs 023: 23-C marching squares
 for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
-- [ ] 26-B forest canopy: domain-warped masked-noise field + clump metaballs →
+- [x] 558a8a8 26-B forest canopy: domain-warped masked-noise field + clump metaballs →
       marching squares (23-C machinery) + Chaikin → ONE multipolygon w/
       clearing holes; rim line layer; dead-wood emits no canopy; 2×2 seam gate
       (026 §2)
@@ -255,6 +255,15 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 7 cont.): 26-B via phase subagent (advisor
+  BANNED after repeated fatal API stalls — decisions made inline + documented),
+  T1 green — organic canopy MultiPolygon w/ holes; two integration
+  catches: line-on-fill rim stroked per-tile clip edges (→ rim LineStrings),
+  and clipNetworkToTile had NO MultiPolygon branch (canopy silently dropped
+  from tiles; branch added + holes preserved — all pre-existing goldens
+  byte-green vouch the change is additive; 28-C board exercises it fully).
+  Trees pinned byte-identical. procgen50-canopy 13/13. Committed 558a8a8.
+  Fast 673. Next: 26-C tree glyphs.
 - 2026-07-14 (arc run, session 7 cont.): procgen46 gate-rot RED fixed as its
   own commit (77c3bdb, 11/11 twice; the parallel chip session will find it
   green — reconcile its worktree). Then 23-E via phase subagent (resumed once
