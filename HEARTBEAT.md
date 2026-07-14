@@ -122,7 +122,7 @@ exists to make that true.
 - [x] c012975 22-C FOREST (new kind, masked-noise canopy — cell-fill fallback,
       marching squares deferred to 023; theme paint in ALL themes) (022 §3.2)
 - [x] ab320f4 22-D PARK incl. japanese-garden (022 §3.3)
-- [ ] 22-E WALL elaboration + raw-sketch double-wall suppression (022 §3.4)
+- [x] b119117 22-E WALL elaboration + raw-sketch double-wall suppression (022 §3.4)
 - [ ] 22-F FARMLAND incl. outskirt-field suppression (022 §3.5) ⛳ full board
 
 **Plan 023 — constraint fields + elevation** (`plans/023-constraint-fields-and-elevation.md`)
@@ -161,6 +161,18 @@ exists to make that true.
 (none — add entries as `- <box-id>: <why> — <what's needed>`)
 
 ## Questions for Jonah (answered decisions logged in DECISIONS.md; morning digest)
+- 22-E: new plan files `plans/026-forest-visual-overhaul.md` +
+  `plans/027-park-visual-overhaul.md` appeared from a parallel research
+  session (21:09, 2026-07-13) recommending an execution slot between 023 and
+  024. Left UNTRACKED and NOT added to this run's checklist — ratify the slot
+  (and commit the plan files) or defer? This run continues 22-F → 023 → 024 →
+  025 as written meanwhile.
+- 22-E judgment calls (details in DECISIONS.md): wall gates key on SKETCHED
+  roads pre-024 (generated-street alignment deferred to the cascade — §3.4's
+  "align to stage-3 streets" is read as the 024 target state); moat/bastions
+  project to the deterministic left normal of the sketched line (open lines
+  have no inside); suppression corridor 28 m, drops only the city's own
+  wall-band segments (ring road + gates kept).
 - 21-D F1: plan 021 §2.4's "≥70% of live-gate assertions move headless" is NOT
   cleanly met — 34% all-in (51% of domain assertions; ~33% of live-gate checks
   are irreducible live scaffolding: plugin-load/reload/dev:errors/screenshot
@@ -170,6 +182,13 @@ exists to make that true.
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-13 (arc run, session 6 cont.): 22-E WALL via Opus 4.8 phase subagent,
+  T1 green first try (fast 454/454, wall fuzz 2/2, procgen47 13/13 standalone,
+  screenshots eyeballed, dev-vault clean); orchestrator re-verified
+  fast+tsc+build. Committed b119117. NOTE: plans/026 + 027 (forest/park visual
+  overhauls) appeared untracked at 21:09 from a PARALLEL research session —
+  left uncommitted, flagged under §Questions; not added to this checklist
+  without Jonah. Next: 22-F FARMLAND (⛳ full board).
 - 2026-07-13 (arc run, session 6): resumed on dirty tree — a prior session died
   mid 22-D with park.ts/waterEmit.ts code-complete but 2 tests red. Per wake
   protocol, finished via an Opus 4.8 phase subagent: degradation-ladder

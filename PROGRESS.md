@@ -134,7 +134,24 @@
   edit-locality 100% vs re-roll 32.9%, undo, explicit-only) · both screenshots
   eyeballed (japanese asymmetric-with-pond; formal axial symmetric) ·
   dev-vault byte-clean. See DECISIONS "phase D".
-- Next: 22-E WALL elaboration + raw-sketch double-wall suppression (022 §3.4).
+- **22-E DONE** (`b119117`): WALL — the sketched `wall` line kind gets stage-4
+  elaboration via `src/gen/wall.ts` (pure line-kind generator on the river
+  corridor lifecycle — zero new host code, registry binding inherits
+  createSpineForTest/edit/regen/undo): masonry band quads + towers with
+  position-keyed PER-SEGMENT identity (seeded phase per original segment —
+  vertex edits keep untouched-segment towers, 82.5% overlap vs re-roll 37.9%),
+  gates where SKETCHED roads cross the spine (generated-street alignment
+  deferred to plan-024 cascade; documented), optional offset moat channel;
+  presets curtain-wall/palisade/bastioned. Double-wall suppression per §3.4
+  adversarial correction: city `buildWall` drops its own wall-band segments
+  within 28 m of a RAW wall-kind sketch (raw sketch is the signal, never
+  stage-4 output; strict no-op without wall sketches — unit-asserted). 4 new
+  generated layers painted in all themes + coverage test; `fabric-wall` hides
+  under procgen (river/forest precedent). Gate: fast 454/454 · wall fuzz 2/2 ·
+  tsc+build · procgen47 13/13 (identity/gates/moat/undo/double-wall city-band
+  14→0/explicit-only) · both screenshots eyeballed (curtain towered band;
+  bastioned star-fort + moat) · dev-vault byte-clean. See DECISIONS "phase E".
+- Next: 22-F FARMLAND incl. outskirt-field suppression (022 §3.5) ⛳ full board.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

@@ -639,3 +639,32 @@
   asserts ≥1 per element.
 - **Stale registry test updated, not preserved:** `algorithmForKind("park")`
   now resolves (that IS the phase); `road` still has no algorithm.
+
+## 2026-07-13 — Plan 022 phase E (WALL, Opus 4.8 phase subagent)
+- **Towers get a seeded per-segment PHASE** (`hashSeed(seed,"wall-tower-phase",
+  a,b)`), not pure geometry: pure geometry would make re-roll a no-op (the
+  spine doesn't change) and the edit-locality-vs-re-roll gate unsatisfiable.
+  Same identity trick as the river meander — edits re-phase only adjacent
+  segments; re-roll re-phases all.
+- **Gates key on SKETCHED roads, not generated streets.** §3.4's "align to the
+  stage-3 streets" is the plan-024 cascade target; reading stage-3 output in a
+  stage-4 generator pre-024 is the exact layering violation the adversarial
+  review killed. Implemented against raw `roadLines` constraints; street
+  alignment lands with 024's DAG. Documented in wall.ts header.
+- **Moat + bastions project to the deterministic LEFT normal** of the sketched
+  line: an open polyline has no inside/outside; picking a fixed normal keeps
+  the corridor pure f(params) and puts moat + bastions on one coherent
+  "outboard" side. GM controls the side by draw direction (flag if this needs
+  an explicit `side` param instead).
+- **Double-wall suppression: 28 m corridor, segment-level, city's own wall
+  BAND only** (ring road + city gates survive; the GM's wall + its towers/
+  gates take over the fortification read). Signal is the RAW sketch — legal
+  input for every stage; strict no-op when no wall sketch exists, so every
+  pre-existing city is byte-identical (unit-asserted).
+- **`fabric-wall` sketch line hides once a procgen block exists** (opacity
+  keyed on `procgen`, selection via the existing corridor fallback) — same
+  double-paint kill as river spine/forest fill.
+- **Parallel-session artifact:** plans/026 + 027 (forest/park visual
+  overhauls) appeared untracked mid-phase from a separate research session;
+  left uncommitted + flagged in HEARTBEAT §Questions rather than folded into
+  this run (checklist scope is Jonah's call).
