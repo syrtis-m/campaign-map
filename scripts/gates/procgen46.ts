@@ -14,14 +14,16 @@
 //       cache + rendered; containment holds; determinism (regenerate twice →
 //       byte-identical); the composition set (pond/island/bridge/rock/court) all
 //       present on a large region (graceful-degradation ladder at full extent);
-//   (b) vertex edit → the park adapts (lawn bucket set changes) and stays inside;
-//       locality: an edit changes output far LESS than a re-roll (measure both);
-//   (c) rerollRegion → NEW seed, output changes, still contained;
+//   (b) vertex edit on a city-park → the tree scatter adapts (park-tree bucket
+//       set) and stays inside; locality: an edit changes output far LESS than a
+//       re-roll (the lawn is the seed-independent ring since 027-A, so locality
+//       is measured on the seed-driven park-tree scatter — measure both);
+//   (c) rerollRegion → NEW seed, tree scatter changes, still contained;
 //   (d) sketch-edit undo → restores the previous park;
 //   (e) pan/zoom → generatorRunCount unchanged (explicit-only preserved);
 //   (f) dev:errors clean end-to-end;
 //   screenshots → review/: a japanese-garden (asymmetric, pond+island) and a
-//       formal-garden (axial cross, symmetric beds + tree rows).
+//       formal-garden (axial cross, symmetric beds + intrinsic central basin).
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { Gate, obsidian, evalJs, clearErrors, devErrors, screenshot } from "../lib/cli.js";
@@ -38,8 +40,15 @@ const TEST_NAME = "__p46_test__";
 // well past the court(≥200 m)/island(≥130 m) rungs so every element emits.
 const JAPANESE_RING = "[[16,8],[36,8],[36,28],[16,28]]";
 const FORMAL_RING = "[[-40,-28],[-20,-28],[-20,-8],[-40,-8]]";
+// A city-park upper-left, clear of the japanese (upper-right) + formal (lower-
+// left) rings and the migrated district (~[-4.8, 6]). Since plan 027-A the lawn
+// is the seed-independent ring, so edit-locality (b–d) is measured on the
+// city-park's park-tree scatter (an absolute world lattice — an outward vertex
+// move only ADDS trees, moves none → edit overlap is structurally 100%).
+const CITY_RING = "[[-40,8],[-20,8],[-20,28],[-40,28]]";
 const JAPANESE = "{ variety: 'japanese-garden', pathDensity: 0.4, pond: true }";
 const FORMAL = "{ variety: 'formal-garden', pathDensity: 0.6, pond: false }";
+const CITY = "{ variety: 'city-park', pathDensity: 0.5, pond: true }";
 // The japanese composition set — every one must render on a large region.
 const COMPOSITION: readonly string[] = ["park-pond", "park-island", "park-bridge", "park-rock", "park-court"];
 
@@ -96,11 +105,12 @@ function front(): void {
     /* best-effort */
   }
 }
-/** Lawn coordinate buckets (gen-space meters) — the ground lattice is the
- * containment/locality backbone (forest-canopy's role in p45). A fine grid so
- * the seed-driven vertex jitter (±3.5 m) registers under a re-roll. */
-function lawnBuckets(id: string, grid = 5): string[] {
-  const code = `(function(){var v=${viewExpr()};var pre='region:'+${JSON.stringify(id)}+':';var s=new Set();v.loadedTiles.forEach(function(feats,k){if(k.indexOf(pre)!==0)return;feats.forEach(function(f){if(!f.properties||f.properties.generatorId!=='park-lawn')return;var g=f.geometry;if(!g||!g.coordinates)return;var scan=function(c){if(!Array.isArray(c))return;if(typeof c[0]==='number'&&typeof c[1]==='number'){s.add(Math.round(c[0]/${grid})+','+Math.round(c[1]/${grid}));return;}c.forEach(scan);};scan(g.coordinates);});});return JSON.stringify(Array.from(s));})()`;
+/** park-tree coordinate buckets (gen-space meters). Since plan 027-A the lawn is
+ * the (seed-independent) ring itself, so edit-locality is carried by the
+ * seed-driven scatter-tree grid (city-park). A fine grid so re-jittered trees
+ * register under a re-roll. */
+function treeBuckets(id: string, grid = 10): string[] {
+  const code = `(function(){var v=${viewExpr()};var pre='region:'+${JSON.stringify(id)}+':';var s=new Set();v.loadedTiles.forEach(function(feats,k){if(k.indexOf(pre)!==0)return;feats.forEach(function(f){if(!f.properties||f.properties.generatorId!=='park-tree')return;var g=f.geometry;if(!g||!g.coordinates)return;var scan=function(c){if(!Array.isArray(c))return;if(typeof c[0]==='number'&&typeof c[1]==='number'){s.add(Math.round(c[0]/${grid})+','+Math.round(c[1]/${grid}));return;}c.forEach(scan);};scan(g.coordinates);});});return JSON.stringify(Array.from(s));})()`;
   const r = evalJs(code);
   return (typeof r === "string" ? JSON.parse(r) : r) as string[];
 }
@@ -205,6 +215,7 @@ async function main(): Promise<void> {
   });
 
   let id = "";
+  let cityId = "";
   await gate.try("(a) japanese-garden → full composition in cache + rendered, contained + deterministic", async () => {
     id = await newPark(JAPANESE_RING, JAPANESE);
     const lawn = featureCount(id, "park-lawn");
@@ -234,19 +245,22 @@ async function main(): Promise<void> {
     );
   });
 
-  await gate.try("(b) vertex edit adapts far less than a re-roll (locality) + stays contained", async () => {
-    const base = lawnBuckets(id);
-    // Move a corner (open-index 1 = [36,8]) outward — only boundary cells near
-    // it change containment, so the ground lattice overlap stays high.
-    const ok = await evalAsync(`function(v){ return v.moveVertex(${JSON.stringify(id)}, 1, [40, 8]); }`);
+  await gate.try("(b) vertex edit adapts the tree scatter far less than a re-roll (locality) + stays contained", async () => {
+    cityId = await newPark(CITY_RING, CITY);
+    const base = treeBuckets(cityId);
+    if (base.length === 0) throw new Error("no park-tree buckets — cannot measure locality");
+    // Move a corner (open-index 1 = [-20,8]) outward — the scatter lattice is
+    // absolute world, so an outward move only ADDS trees near the corner and
+    // moves none: overlap stays 100% (edit-local), while a re-roll re-jitters all.
+    const ok = await evalAsync(`function(v){ return v.moveVertex(${JSON.stringify(cityId)}, 1, [-16, 8]); }`);
     if (ok !== true) throw new Error("moveVertex returned false (reverted)");
-    const editOverlap = overlapPct(base, lawnBuckets(id));
-    if (containment(id).outside > 0) throw new Error("coords outside after vertex edit");
-    // Reset the corner, snapshot, then re-roll → the whole ground lattice re-jitters.
-    await evalAsync(`function(v){ return v.moveVertex(${JSON.stringify(id)}, 1, [36, 8]); }`);
-    const pre = lawnBuckets(id);
-    await evalAsync(`function(v){ return v.rerollRegion(${JSON.stringify(id)}); }`);
-    const rerollOverlap = overlapPct(pre, lawnBuckets(id));
+    const editOverlap = overlapPct(base, treeBuckets(cityId));
+    if (containment(cityId).outside > 0) throw new Error("coords outside after vertex edit");
+    // Reset the corner, snapshot, then re-roll → the whole tree scatter re-places.
+    await evalAsync(`function(v){ return v.moveVertex(${JSON.stringify(cityId)}, 1, [-20, 8]); }`);
+    const pre = treeBuckets(cityId);
+    await evalAsync(`function(v){ return v.rerollRegion(${JSON.stringify(cityId)}); }`);
+    const rerollOverlap = overlapPct(pre, treeBuckets(cityId));
     console.log(`     [b] edit overlap ${editOverlap.toFixed(1)}% | re-roll overlap ${rerollOverlap.toFixed(1)}%`);
     if (!(editOverlap > rerollOverlap + 15)) {
       throw new Error(`edit (${editOverlap.toFixed(1)}%) did not stay more stable than re-roll (${rerollOverlap.toFixed(1)}%)`);
@@ -254,35 +268,34 @@ async function main(): Promise<void> {
     if (!(editOverlap > 70)) throw new Error(`edit overlap unexpectedly low (${editOverlap.toFixed(1)}%)`);
   });
 
-  await gate.try("(c) re-roll → new seed, output changes, still contained", async () => {
-    await evalAsync(`function(v){ return v.setRegionParams(${JSON.stringify(id)}, ${JAPANESE}); }`);
-    const seedBefore = fabricFeature(id)?.properties.procgen?.seed;
-    const pre = lawnBuckets(id);
-    await evalAsync(`function(v){ return v.rerollRegion(${JSON.stringify(id)}); }`);
-    const seedAfter = fabricFeature(id)?.properties.procgen?.seed;
-    const overlap = overlapPct(pre, lawnBuckets(id));
+  await gate.try("(c) re-roll → new seed, tree scatter changes, still contained", async () => {
+    await evalAsync(`function(v){ return v.setRegionParams(${JSON.stringify(cityId)}, ${CITY}); }`);
+    const seedBefore = fabricFeature(cityId)?.properties.procgen?.seed;
+    const pre = treeBuckets(cityId);
+    await evalAsync(`function(v){ return v.rerollRegion(${JSON.stringify(cityId)}); }`);
+    const seedAfter = fabricFeature(cityId)?.properties.procgen?.seed;
+    const overlap = overlapPct(pre, treeBuckets(cityId));
     console.log(`     [c] seed ${seedBefore} → ${seedAfter}; re-roll overlap ${overlap.toFixed(1)}%`);
     if (seedBefore === seedAfter) throw new Error("re-roll did not change the persisted seed");
-    if (overlap > 92) throw new Error("re-roll did not visibly change the park ground");
-    if (containment(id).outside > 0) throw new Error("coords outside after re-roll");
-    // The composition still emits after a re-roll (a different-but-valid garden).
-    for (const gid of COMPOSITION) {
-      if (featureCount(id, gid) < 1) throw new Error(`re-rolled japanese-garden emitted no ${gid}`);
-    }
+    if (overlap > 92) throw new Error("re-roll did not visibly change the park tree scatter");
+    if (containment(cityId).outside > 0) throw new Error("coords outside after re-roll");
+    // The ground (seed-independent merged ring) still emits after a re-roll.
+    if (featureCount(cityId, "park-lawn") < 1) throw new Error("re-rolled city-park emitted no park-lawn ground");
+    if (treeBuckets(cityId).length === 0) throw new Error("re-rolled city-park emitted no park-tree scatter");
   });
 
   await gate.try("(d) sketch-edit undo restores the previous park", async () => {
-    const pre = lawnBuckets(id);
-    // Move the corner INWARD so lawn cells are REMOVED (an outward extension only
-    // adds cells, leaving every pre bucket present — overlap wouldn't drop).
-    await evalAsync(`function(v){ return v.moveVertex(${JSON.stringify(id)}, 1, [26, 12]); }`);
-    const edited = lawnBuckets(id);
+    const pre = treeBuckets(cityId);
+    // Move the corner INWARD so trees are REMOVED (an outward extension only adds
+    // trees, leaving every pre bucket present — overlap wouldn't drop).
+    await evalAsync(`function(v){ return v.moveVertex(${JSON.stringify(cityId)}, 1, [-24, 12]); }`);
+    const edited = treeBuckets(cityId);
     if (overlapPct(pre, edited) > 98) throw new Error("edit didn't change the park — can't test undo");
     await evalAsync(`function(v){ return v.undoLastEdit(); }`);
-    const back = overlapPct(pre, lawnBuckets(id));
+    const back = overlapPct(pre, treeBuckets(cityId));
     console.log(`     [d] restored-vs-pre-edit overlap ${back.toFixed(1)}%`);
     if (back < 98) throw new Error(`undo did not restore the pre-edit park (${back.toFixed(1)}%)`);
-    if (containment(id).outside > 0) throw new Error("coords outside after undo");
+    if (containment(cityId).outside > 0) throw new Error("coords outside after undo");
   });
 
   await gate.try("(e) pan/zoom never generates (explicit-only preserved)", async () => {
@@ -310,7 +323,10 @@ async function main(): Promise<void> {
   await gate.try("screenshot: formal-garden (axial cross, symmetric beds + tree rows)", async () => {
     formalId = await newPark(FORMAL_RING, FORMAL);
     if (containment(formalId).outside > 0) throw new Error("formal-garden spilled outside its ring");
-    if (featureCount(formalId, "park-pond") !== 0) throw new Error("formal-garden should not pond");
+    // Since plan 027-B the formal-garden has an INTRINSIC central basin (a Grande
+    // Perspective water parterre), emitted even at pond:false — so it MUST pond.
+    // (featureCount is raw per-tile-clip record count, so assert presence, ≥1.)
+    if (featureCount(formalId, "park-pond") < 1) throw new Error("formal-garden emitted no central basin");
     if (featureCount(formalId, "park-bed") < 1) throw new Error("formal-garden emitted no symmetric beds");
     sync("(function(){v.map.fitBounds([[-42,-30],[-18,-6]],{animate:false,padding:40});return 'ok';})()");
     await new Promise((r) => setTimeout(r, 2500));
