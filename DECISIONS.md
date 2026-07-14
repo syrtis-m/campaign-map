@@ -867,3 +867,30 @@
 - **Paint note for Jonah:** contours over water (mountain sketched across a
   shoreline) are contained/correct but low-contrast on dark themes — a paint
   tweak if it ever matters, not a generation change.
+
+## 2026-07-14 — Plan 023 phase D (hillshade + 3D terrain, Opus/Fable phase subagent resumed across a user interrupt)
+- **Pitch-adaptive terrain toggle:** maplibre-gl 4.7.1 misrenders the
+  hillshade layer while a terrain mesh is active (drape smears past relief;
+  isolated live — each alone renders clean, DEM lattices proven numerically
+  correct). Toggle ON adapts: top-down = 2D hillshade, pitched = 3D mesh
+  with hillshade hidden (draped hachures/contours carry the read). Revisit
+  on a MapLibre upgrade.
+- **Terrarium-capped vertical scale K=25, per campaign:** the physical
+  fictional-CRS correction (~2226×) overflows terrarium's ±32768 m; hillshade
+  slope is zoom-normalized so the capped constant still shades correctly
+  (screenshot-verified). 3D exaggeration 6 on top (screenshot-tuned).
+- **Digest invalidation over reactive invalidation:** DEM records fingerprint
+  the mountain set (id+seed+params+ring)+K; edits/re-rolls self-invalidate on
+  read. Keyed dem:z:x:y so the file never grows across edits.
+- **DEM fetch-on-pan is NOT generation:** pure field evaluation over the
+  durable sketch layer; generatorRunCount stays flat (gate e). Explicit-only
+  preserved.
+- **Board attribution (25/27):** procgen48 (f) is a seed-luck fixture flake
+  (timestamp-derived city seed sometimes grows <threshold outskirt fields;
+  in-board FAIL, standalone PASS 13/13 — GREEN per rule, root cause chipped).
+  procgen46 (old park gate) is a PRE-EXISTING deterministic RED: 8/11
+  identically at clean HEAD 5f37fd9 with the whole 23-D diff stashed —
+  introduced earlier (likely 027-A/B park-rework gate rot; vo27-park passes
+  20/20). Chipped + flagged in HEARTBEAT §Questions; .lastgreenboard NOT
+  advanced. Perf note: DEM tile fill on Surface Pro untested (default-OFF
+  feature; DEM_TILE_RES=256 is the cost knob).

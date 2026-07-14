@@ -248,8 +248,21 @@
   · tsc+build · contours23c 11/11 (9-tile seam continuity, byte-identical
   regen) · screenshots eyeballed · dev-vault byte-clean. See DECISIONS
   "23-C".
-- Next: 23-D hillshade + 3D terrain (raw-lattice cache, PNG at serve;
-  heights compared in gates, never PNG bytes) ⛳ full board.
+- **23-D DONE** (`958f263`): HILLSHADE + 3D TERRAIN. Raw-lattice DEM cache
+  (.mapcache/dem.jsonl, quantized int heights, digest-invalidated by
+  mountain-set fingerprint) + `campaigndem://` protocol encoding terrarium
+  PNGs at SERVE time only; fields/dem.ts pure lattice/packing +
+  `unionFields` (plan-024 stage-0 shape); terrarium-capped K per campaign
+  (fictional-CRS reconciliation); hillshade z-group + theme-derived paint,
+  default-hidden; PITCH-ADAPTIVE toggle (maplibre 4.7.1 misrenders
+  hillshade+mesh together: top-down = 2D hillshade, pitched = 3D mesh).
+  Gate: fast 630/630 · fuzz 19/19 · hillshade23d 14/14 (lattice hash stable
+  across regenerate AND rm-cache, seam step 186) · 3 screenshots eyeballed ·
+  dev-vault clean · plan-023 BOARD 25/27 (procgen48 seed-luck flake
+  standalone-PASS per rule; **procgen46 pre-existing RED at clean HEAD** —
+  chipped + flagged; .lastgreenboard stays 257e280). See DECISIONS "23-D".
+- Next: 23-E paddy-terraces + river-slope coupling (deferred from 022;
+  builds on 28-B's meanderSegment param seam + 23-B elevation).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 
