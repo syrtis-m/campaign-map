@@ -298,8 +298,21 @@
   procgen51-glyphs 13/13 · screenshots eyeballed (real tree shapes) ·
   dev-vault clean. PERF flag: 52fps p95 on the unthrottled dev machine —
   Surface Pro throttled numbers owed. See DECISIONS "26-C".
-- Next: ∥ P3 — 27-C park organic water/canopy + 28-C river junctions/mouths
-  ⛳ ONE board covers plans 026+027+028; then plan 024.
+- **P3 DONE (27-C `9e510d6` · 28-C `27ca5fe`) — PLANS 026/027/028 COMPLETE,
+  VISUAL OVERHAUL DONE.** 27-C: organic marching-squares pond shorelines +
+  canopy blob-union (double-darkening fixed), karesansui rake, arch/zigzag
+  bridges, parkGlyphs point/rock SDF dressing; the new c8 check caught a
+  REAL host bug (rebuildTheme missed refreshGeneratedSource — css-change
+  blanked generated fabric). 28-C: confluence Y-merge (width law exact),
+  delta ~72° bird's-foot, estuary flare, point-bar/oxbow/ford-rapids-falls
+  glyphs; all additive with canal + lone-river byte-identity pinned.
+  WAVE-2 BOARD 26/30 → every failure standalone-green same day (2 flakes,
+  procgen45 gate rot fixed to area-based density, procgen48 seed-luck);
+  `.lastgreenboard` → 27ca5fe. Fast suite 714. Flags for Jonah: confluence
+  gusset reads blocky (numerically exact), timestamp-seed gate fixtures
+  need pinning (chip open). See DECISIONS "wave-2 P3".
+- Next: plan 024 cross-layer cascade — 24-A input fingerprints +
+  stale-replay detection; then 24-B stage DAG; 24-C ⛳ board.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

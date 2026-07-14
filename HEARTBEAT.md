@@ -189,10 +189,10 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
       symbol layers (icon-allow-overlap + ignore-placement,
       symbol-z-order viewport-y, icon-translate shadow layer, per-variety
       glyph/tint, rank×zoom opacity fade); perf on throttled CPU (026 §2)
-- [ ] 27-C park organic water/canopy (marching-squares shorelines) + glyph
+- [x] 9e510d6 27-C park organic water/canopy (marching-squares shorelines) + glyph
       dressing via treeGlyphs + karesansui texture + bridge styling (027 §4)
       — ∥ group P3
-- [ ] 28-C river junctions/mouths/dressing: confluence Y-merge
+- [x] 27ca5fe 28-C river junctions/mouths/dressing: confluence Y-merge
       (W₃=√(W₁²+W₂²), no inland forks), delta ~72° distributaries, estuary
       exponential flare, point bars/oxbows/rapids-falls-ford glyphs (028 §2)
       — ∥ group P3 ⛳ full board — ONE board covers plans 026+027+028
@@ -255,6 +255,19 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 7 cont.): ∥ P3 concurrent worktrees, serial
+  integration — 27-C 9e510d6 (vo27-park 23/23 after the c8 investigation
+  found a REAL host bug: rebuildTheme's styledata handler missed
+  refreshGeneratedSource — css-change blanked all generated fabric; fixed) +
+  28-C 27ca5fe (procgen49 22 checks green across two runs w/ disjoint
+  seed-luck fails — timestamp-seed fixture class; confluence gusset
+  numerically exact but reads blocky, flagged). WAVE-2 BOARD 26/30 (1142s,
+  0 relaunches; all four wave-2 gates green in-board): procgen41 +
+  hillshade23d flakes (standalone green), procgen45 gate rot from 26-B
+  (density check rewritten to canopy AREA — fixed 12/12), procgen48
+  seed-luck (standalone 13/13). Every failure standalone-green same day →
+  .lastgreenboard → 27ca5fe. **PLANS 026/027/028 COMPLETE (visual overhaul
+  done).** Fast 714. Next: plan 024 (24-A input fingerprints).
 - 2026-07-14 (arc run, session 7 cont.): 26-C via phase subagent, T1 green —
   reusable SDF glyph module (headless EDT synthesis, addImage+
   styleimagemissing lifecycle surviving setStyle; 27-C/28-C consume it);

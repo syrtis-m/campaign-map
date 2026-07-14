@@ -970,3 +970,32 @@
   procgen49-forest gate's circle probes updated to symbol probes so the 28-C
   board stays valid. `mixed` reuses the broadleaf silhouette (placement
   already interleaves populations).
+
+## 2026-07-14 — Wave-2 ∥ P3 (27-C/28-C) + wave-2 board — VISUAL OVERHAUL COMPLETE
+- **c8's raw-setStyle probe found a real host bug:** rebuildTheme's
+  once("styledata") handler called refreshSource but NOT
+  refreshGeneratedSource — a live css-change under obsidian-native blanked
+  every generated feature until the next explicit generation. Fixed
+  (MapView.ts:1932); the gate now performs the app's own post-restyle
+  contract (data re-push) and asserts image survival separately. The
+  raw-setStyle-without-handler scenario itself doesn't exist in the app.
+- **procgen45 gate rot #2 (26-B):** density check counted canopy records —
+  invariant once the canopy is ONE MultiPolygon. Rewritten to shoelace AREA
+  (454k→600k m² across the density sweep). Same lesson as procgen46:
+  visual-overhaul phases must sweep OLD gates for count-based assertions.
+- **28-C topology from RAW sketch only:** partner river spines + sketched
+  water polygons via constraints (mouth signals); no new params —
+  riverParamsSchema strips unknown keys, so triggers ride existing
+  braidBias/windiness + constraints. Dressing gate windiness ≥0.7 (OQ#2).
+- **Board conduct (26/30 → effective green):** all four wave-2 gates green
+  in-board first try; failures: procgen41 + hillshade23d environment flakes
+  (standalone 16/16, 14/14), procgen45 rot (fixed), procgen48 seed-luck
+  (standalone 13/13). Every failure standalone-green the same day →
+  .lastgreenboard advanced. The timestamp-derived-fixture-seed class now
+  accounts for MOST gate noise (procgen48 (f), procgen49 (c)/(g), 23-E's
+  note) — the open chip to pin fixture seeds is the single highest-leverage
+  gate-infra fix remaining.
+- **Flags for Jonah:** confluence gusset numerically exact but reads blocky
+  at close zoom (aesthetic polish candidate); this run's hashed bridge came
+  up arch-only (zigzag unit-covered); Surface-Pro throttled perf numbers
+  still owed for glyph layers (26-C flag stands).
