@@ -465,6 +465,19 @@
         "src/view/RegionProcgenModal.ts",
         "src/view/SketchController.ts"
       ]
+    },
+    "presetGallery": {
+      "script": "scripts/gates/presetGallery.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/citynet/**",
+        "src/gen/procgen/registry.ts",
+        "src/gen/region.ts",
+        "src/controller/MapController.ts",
+        "src/map/generation/**",
+        "src/map/themes/**",
+        "src/view/MapView.ts"
+      ]
     }
   }
 }

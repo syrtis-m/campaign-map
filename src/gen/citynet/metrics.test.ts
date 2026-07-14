@@ -1,0 +1,230 @@
+// Metrics module (plan 025 §3.1) — two jobs:
+//   1. MEANINGFULNESS: each metric returns the hand-computed value on a
+//      synthetic fixture whose geometry we control exactly (so the measurement
+//      logic is proven independent of the city generator).
+//   2. BENCHMARK GATES: the four EXISTING presets, generated deterministically
+//      on the gallery ring with PINNED seeds, land inside their §3.1 bands, and
+//      the cross-preset ORDERINGS the research predicts hold.
+// Determinism: metrics are a pure function of (features, region) — same input,
+// same numbers forever. Metrics never touch the generator, so city goldens
+// (citynet.test.ts) are byte-unchanged; that suite still passes alongside this.
+import { describe, expect, it } from "vitest";
+import {
+  computeNetworkMetrics,
+  benchmarkViolations,
+  PRESET_BENCHMARKS,
+  WIDTH_BY_CLASS,
+  type NetworkMetrics,
+} from "./metrics";
+import { generateCityNetwork, type ProfileId } from "./index";
+import { makeRegion, type ProcgenRegion } from "../region";
+import { hashSeed } from "../rng";
+
+const WORLD = { minX: -8000, minY: -8000, maxX: 8000, maxY: 8000 };
+const GALLERY_SEED = 90210;
+
+/** The gallery shape: a regular 16-gon of effective radius ~700 m at the
+ * origin — the SAME apples-to-apples boundary every gallery preset uses, so
+ * on-screen differences are the preset, never the polygon (plan 025 §3.5). */
+function galleryRegion(effR = 700, n = 16): ProcgenRegion {
+  const targetArea = Math.PI * effR * effR;
+  const unit = 0.5 * n * Math.sin((2 * Math.PI) / n);
+  const R = Math.sqrt(targetArea / unit);
+  const ring: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * 2 * Math.PI;
+    ring.push([R * Math.cos(a), R * Math.sin(a)]);
+  }
+  ring.push(ring[0]);
+  return makeRegion("gallery", ring);
+}
+
+function presetNet(profile: ProfileId, region: ProcgenRegion): GeoJSON.Feature[] {
+  const seed = hashSeed(GALLERY_SEED, "gallery", profile);
+  return generateCityNetwork(seed, region, profile, { worldBounds: WORLD });
+}
+
+// ── Synthetic-fixture helpers (exact hand geometry) ──────────────────────────
+
+function street(id: number, coords: [number, number][], roadClass = "street"): GeoJSON.Feature {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "LineString", coordinates: coords },
+    properties: { generated: true, generatorId: "city-street", type: "street", roadClass },
+  };
+}
+function block(id: number, ring: [number, number][]): GeoJSON.Feature {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "Polygon", coordinates: [ring] },
+    properties: { generated: true, generatorId: "city-block", type: "block" },
+  };
+}
+
+/** A square region of exactly 1 km² (1000×1000 m) so per-km² metrics read
+ * straight off the raw counts. */
+function squareKm2(): ProcgenRegion {
+  return makeRegion("sq", [
+    [0, 0],
+    [1000, 0],
+    [1000, 1000],
+    [0, 1000],
+    [0, 0],
+  ]);
+}
+
+describe("computeNetworkMetrics — meaningfulness on exact hand geometry", () => {
+  it("a 3×3 node grid (100 m spacing) yields the hand-computed nodes/links/intersections", () => {
+    // 9 nodes at (i,j)·100, one LineString per grid edge (edges split at nodes,
+    // exactly as the generator emits chains). 3 rows × 2 + 3 cols × 2 = 12 edges.
+    const feats: GeoJSON.Feature[] = [];
+    let id = 1;
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 2; c++) {
+        feats.push(street(id++, [[c * 100, r * 100], [(c + 1) * 100, r * 100]]));
+      }
+    }
+    for (let c = 0; c < 3; c++) {
+      for (let r = 0; r < 2; r++) {
+        feats.push(street(id++, [[c * 100, r * 100], [c * 100, (r + 1) * 100]]));
+      }
+    }
+    const m = computeNetworkMetrics(feats, squareKm2());
+    // Degrees: 4 corners=2, 4 edge-mids=3, 1 centre=4 → intersections (≥3) = 5,
+    // dead-ends (=1) = 0, nodes = 9, links = 12.
+    expect(m.nodeCount).toBe(9);
+    expect(m.linkCount).toBe(12);
+    expect(m.intersectionCount).toBe(5);
+    expect(m.deadEndCount).toBe(0);
+    expect(m.permeability).toBeCloseTo(12 / 9, 6);
+    // area = 1 km² exactly ⇒ per-km² == raw.
+    expect(m.areaKm2).toBeCloseTo(1, 3);
+    expect(m.intersectionsPerKm2).toBeCloseTo(5, 3);
+    // 12 edges × 100 m = 1200 m = 1.2 km.
+    expect(m.streetKm).toBeCloseTo(1.2, 6);
+    expect(m.streetKmPerKm2).toBeCloseTo(1.2, 3);
+  });
+
+  it("a stub off a line is a dead-end; width bands + land share match the width table", () => {
+    // One 300 m arterial (width 18) with a 40 m alley (width 5) stub at its end.
+    const feats = [
+      street(1, [[0, 500], [300, 500]], "arterial"),
+      street(2, [[300, 500], [300, 540]], "alley"),
+    ];
+    const m = computeNetworkMetrics(feats, squareKm2());
+    // Nodes: (0,500) deg1, (300,500) deg2, (300,540) deg1 → 2 dead-ends, 0 intersections.
+    expect(m.nodeCount).toBe(3);
+    expect(m.deadEndCount).toBe(2);
+    expect(m.intersectionCount).toBe(0);
+    expect(m.deadEndShare).toBeCloseTo(2 / 3, 6);
+    // Width histogram by LENGTH: 300 m in 10–20 band (arterial=18), 40 m <10 (alley=5).
+    expect(m.widthHistogram.m10to20).toBeCloseTo(300 / 340, 6);
+    expect(m.widthHistogram.lt10).toBeCloseTo(40 / 340, 6);
+    expect(m.widthHistogram.gt20).toBe(0);
+    // Land share = (300·18 + 40·5) / 1e6 = 5600 / 1e6.
+    expect(m.streetLandShare).toBeCloseTo((300 * 18 + 40 * 5) / 1e6, 9);
+    // Avenue share = arterial length / total = 300/340.
+    expect(m.avenueShare).toBeCloseTo(300 / 340, 6);
+  });
+
+  it("blockGrainP50 is √(median block area)", () => {
+    // Three square blocks: 100², 200², 300² m² → grains 100, 200, 300 → median 200.
+    const feats = [
+      block(1, [[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]]),
+      block(2, [[0, 0], [200, 0], [200, 200], [0, 200], [0, 0]]),
+      block(3, [[0, 0], [300, 0], [300, 300], [0, 300], [0, 0]]),
+    ];
+    const m = computeNetworkMetrics(feats, squareKm2());
+    expect(m.blockCount).toBe(3);
+    expect(m.blockGrainP50).toBeCloseTo(200, 3);
+  });
+
+  it("prefers an emitted width property over the class table (forward-compat with §3.3)", () => {
+    const f = street(1, [[0, 0], [100, 0]], "street");
+    (f.properties as Record<string, unknown>).width = 25; // >20 band despite class 'street'
+    const m = computeNetworkMetrics([f], squareKm2());
+    expect(m.widthHistogram.gt20).toBe(1);
+    expect(m.streetLandShare).toBeCloseTo((100 * 25) / 1e6, 9);
+    // Sanity: the class fallback would have put it in 10–20.
+    expect(WIDTH_BY_CLASS.street).toBe(12);
+  });
+
+  it("is a pure deterministic function of its inputs", () => {
+    const region = galleryRegion();
+    const net = presetNet("euro-medieval", region);
+    const a = computeNetworkMetrics(net, region);
+    const b = computeNetworkMetrics(net, region);
+    expect(b).toEqual(a);
+  });
+
+  it("empty / street-less input is well-defined (no NaN/Infinity)", () => {
+    const m = computeNetworkMetrics([], squareKm2());
+    for (const v of [
+      m.intersectionsPerKm2,
+      m.streetKmPerKm2,
+      m.streetLandShare,
+      m.blockGrainP50,
+      m.avenueShare,
+      m.deadEndShare,
+      m.permeability,
+    ]) {
+      expect(Number.isFinite(v)).toBe(true);
+    }
+    expect(m.blockGrainP50).toBe(0);
+  });
+});
+
+describe("computeNetworkMetrics — §3.1 benchmark gates for the four existing presets", () => {
+  const region = galleryRegion();
+  const profiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb"];
+  const M: Record<string, NetworkMetrics> = {};
+  for (const p of profiles) M[p] = computeNetworkMetrics(presetNet(p, region), region);
+
+  for (const p of profiles) {
+    it(`${p} lands inside its §3.1 benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
+      const violations = benchmarkViolations(p, M[p]);
+      expect(violations, violations.join("; ")).toEqual([]);
+    });
+  }
+
+  it("all presets clear Salat's ≥15 km/km² street-density floor (guideline 18)", () => {
+    for (const p of profiles) expect(M[p].streetKmPerKm2).toBeGreaterThanOrEqual(15);
+  });
+
+  it("euro-medieval grain sits in Salat's urban-grain window (finer end of 30–120 m)", () => {
+    expect(M["euro-medieval"].blockGrainP50).toBeGreaterThanOrEqual(30);
+    expect(M["euro-medieval"].blockGrainP50).toBeLessThanOrEqual(120);
+  });
+
+  // ── Cross-preset orderings — the strongest research-faithful signals ───────
+  it("na-grid is the coarsest grain and the most permeable (the grid signature)", () => {
+    const grid = M["na-grid"];
+    for (const p of ["euro-medieval", "euro-continental", "na-suburb"] as const) {
+      expect(grid.blockGrainP50).toBeGreaterThan(M[p].blockGrainP50);
+      expect(grid.permeability).toBeGreaterThan(M[p].permeability);
+    }
+  });
+
+  it("na-grid is the sparsest: fewest intersections/km² and least street length/km²", () => {
+    const grid = M["na-grid"];
+    for (const p of ["euro-medieval", "euro-continental", "na-suburb"] as const) {
+      expect(grid.intersectionsPerKm2).toBeLessThan(M[p].intersectionsPerKm2);
+      expect(grid.streetKmPerKm2).toBeLessThan(M[p].streetKmPerKm2);
+    }
+  });
+
+  it("euro-medieval is a finer, denser warren than the na-grid (Venice vs Manhattan)", () => {
+    expect(M["euro-medieval"].blockGrainP50).toBeLessThan(M["na-grid"].blockGrainP50);
+    expect(M["euro-medieval"].intersectionsPerKm2).toBeGreaterThan(M["na-grid"].intersectionsPerKm2);
+  });
+
+  it("na-suburb produces more dead-ends than the na-grid (the cul-de-sac signature)", () => {
+    expect(M["na-suburb"].deadEndCount).toBeGreaterThan(M["na-grid"].deadEndCount);
+  });
+
+  it("every walkable preset's streets are majority medium-width (10–20 m band; narrow-majority lands with §3.3 widths)", () => {
+    for (const p of profiles) expect(M[p].widthHistogram.m10to20).toBeGreaterThanOrEqual(0.85);
+  });
+});
