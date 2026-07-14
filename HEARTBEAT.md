@@ -129,7 +129,7 @@ exists to make that true.
 `plans/027-park-visual-overhaul.md`, `plans/028-river-visual-overhaul.md` —
 slotted by Jonah's ruling 2026-07-13; no 023 dependency, biggest visual wins
 pulled forward. First box here also commits the three plan files + README rows.)
-- [ ] VO-W0 prep: split `generatedLayers.ts` into per-kind modules (e.g.
+- [x] 749c74f VO-W0 prep: split `generatedLayers.ts` into per-kind modules (e.g.
       `src/map/themes/generated/{world,city,river,forest,park,wall,farm}.ts`),
       ZERO behavior change — style-JSON byte-identical gate before/after.
       This is the ONE file all three plans touch; it makes the ∥ groups below
@@ -243,6 +243,12 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 6 cont.): VO-W0 via Opus 4.8 phase subagent, T1
+  green first try — style-JSON byte-identical 6/6 themes (gate script
+  scripts/gates/vo-w0-style-bytes.ts, kept), fast 484/484, live smoke
+  eyeballed. One deviation, required by byte-identity: world.ts + city.ts each
+  export TWO fragments (region+route / block+street) because the original emit
+  order interleaves. Committed 749c74f. Next: 26-A/27-A/28-A (∥ group P1).
 - 2026-07-13/14 (arc run, session 6 cont.): 22-F FARMLAND — first spawn
   user-interrupted mid-phase (its work stayed on the tree; TaskList had no
   transcript to resume), respawned an Opus 4.8 agent to FINISH it per wake

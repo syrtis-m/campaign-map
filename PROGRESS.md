@@ -172,9 +172,18 @@
   (procgen45 board-flake, standalone 12/12; first run externally killed
   mid-phase4 and resumed). `.lastgreenboard` → 257e280. See DECISIONS
   "phase F".
-- Next: visual-overhaul wave 1 (plans 026–028, Jonah-slotted 2026-07-13) —
-  VO-W0 generatedLayers per-kind split (byte-identical style gate), then
-  26-A/27-A/28-A (∥ P1), 27-B/28-B (∥ P2); then plan 023.
+- **VO-W0 DONE** (`749c74f`): generatedLayers.ts → per-kind modules under
+  `src/map/themes/generated/` ({world,farm,city,river,forest,park,wall}.ts),
+  generatedLayers() a pure composer keeping the exact interleaved order
+  (world/city each contribute two fragments: region+route, block+street).
+  Zero behavior change proven by the new style-JSON byte-identical gate
+  (scripts/gates/vo-w0-style-bytes.ts, 6/6 themes, sizes unchanged) — plans
+  026/027/028 now touch disjoint files. Gate: byte-identical 6/6 · fast
+  484/484 · tsc+build · live smoke (31 gen layers, 4920 features, dev:errors
+  clean, screenshot eyeballed) · dev-vault byte-clean.
+- Next: wave-1 ∥ group P1 — 26-A forest trees, 27-A park ground, 28-A river
+  body (disjoint files post-VO-W0; 27-A owns tokens.ts edits); then P2
+  (27-B/28-B); then plan 023.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

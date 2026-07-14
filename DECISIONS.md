@@ -715,3 +715,17 @@
   and passed standalone 12/12 immediately after → counts GREEN per the
   2026-07-13 flake rule; board not re-run. Combined: 16/16 gates, 0 probe
   relaunches.
+
+## 2026-07-14 — VO-W0 (generatedLayers per-kind split, Opus 4.8 phase subagent)
+- **world.ts + city.ts each export TWO fragments** (worldRegion+worldRoute,
+  cityBlock+cityStreet) instead of one function per kind: the original emit
+  order interleaves (region first, route near the end; city block mid-stack,
+  street last), and byte-identity forbids reordering. The composer spreads 9
+  fragments in the original sequence.
+- **Coverage tests deliberately NOT split** alongside the modules: their
+  assertions are cross-module composition contracts (island>channel,
+  farm<district, whole-array assertLayerOrder) — exactly what must survive
+  the split; splitting them would drop coverage, not move it.
+- **Byte gate kept as a repeatable script** (scripts/gates/vo-w0-style-bytes.ts,
+  --out <dir>): builds all 6 theme styles (4 handcrafted + obsidian-native
+  light/dark) through the plugin's own code path; board can adopt it later.
