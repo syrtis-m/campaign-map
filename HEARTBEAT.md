@@ -134,14 +134,14 @@ pulled forward. First box here also commits the three plan files + README rows.)
       ZERO behavior change — style-JSON byte-identical gate before/after.
       This is the ONE file all three plans touch; it makes the ∥ groups below
       conflict-free
-- [ ] 26-A forest trees: hashed Thomas-cluster placement + sizeN/rank/variety
+- [x] 6f9c430 26-A forest trees: hashed Thomas-cluster placement + sizeN/rank/variety
       properties; stacked shadow/base/highlight circle paint keyed on
       forestType; `fill-antialias: false` on canopy (026 §2) — ∥ group P1
-- [ ] 27-A park ground: merged single lawn polygon + two-green canopy blobs +
+- [x] cd4f52f 27-A park ground: merged single lawn polygon + two-green canopy blobs +
       cased path LINE layers + water shore casing (027 §4) — ∥ group P1
       [P1 file protocol: 27-A owns any tokens.ts edit; 26-A uses match
       expressions per 026 Q1 default; 28-A touches neither]
-- [ ] 28-A river body: per-segment channel-polygon merge + `river-bank`
+- [x] e514ac0 28-A river body: per-segment channel-polygon merge + `river-bank`
       casing LineStrings + braid-island legibility floor; canal preset
       regression-checked (028 §2) — ∥ group P1
 - [ ] 27-B park skeletons: boundary entrances (sketched-road constraints) +
@@ -243,6 +243,18 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 6 cont.): ∥ group P1 executed as three CONCURRENT
+  Opus 4.8 worktree subagents per the attended fan-out clause; integration
+  strictly serial in checklist order (patch → fast+tsc+build → own live gate →
+  screenshots eyeballed → commit+push): 26-A 6f9c430 (procgen49-forest 13/13;
+  one screenshot-timing flake retried), 27-A cd4f52f (vo27-park 14/14 in a
+  FRESH Obsidian after two degraded-process eval flakes; two REAL integration
+  fixes: gate now counts distinct feature ids per per-tile-clip semantics, and
+  park-canopy added to PARK_TILE_GENERATOR_IDS — uncached gids are silently
+  dropped), 28-A e514ac0 (procgen49 15/15 first try; canal sha-pinned
+  byte-identical). Stale FOREST_LAYER_IDS pruned post-merge (7c8771d). Two
+  agents were killed mid-run by transient API stalls and resumed from
+  transcript with zero rework. Fast suite now 508. Next: 27-B (∥ P2).
 - 2026-07-14 (arc run, session 6 cont.): VO-W0 via Opus 4.8 phase subagent, T1
   green first try — style-JSON byte-identical 6/6 themes (gate script
   scripts/gates/vo-w0-style-bytes.ts, kept), fast 484/484, live smoke

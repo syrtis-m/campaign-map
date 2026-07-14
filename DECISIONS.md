@@ -729,3 +729,46 @@
 - **Byte gate kept as a repeatable script** (scripts/gates/vo-w0-style-bytes.ts,
   --out <dir>): builds all 6 theme styles (4 handcrafted + obsidian-native
   light/dark) through the plugin's own code path; board can adopt it later.
+
+## 2026-07-14 — Visual-overhaul wave 1, ∥ group P1 (26-A/27-A/28-A, concurrent Opus 4.8 worktree agents)
+- **Fan-out conduct:** three worktree agents ran concurrently (attended-session
+  clause of the ∥ protocol); integration was strictly serial in checklist
+  order — apply patch → fast+tsc+build → phase's own live gate standalone →
+  screenshots eyeballed → commit+push. Two agents were killed mid-run by
+  transient API stalls; both resumed from transcript with zero rework (patches
+  were already durable on disk in one case).
+- **Two real integration bugs caught at the seam (not by the agents):**
+  (1) vo27-park counted raw cache records — per-tile clipping splits one
+  logical lawn into N tile records, so "ONE merged lawn" must count DISTINCT
+  feature ids (same semantics documented for procgen46, phase D); (2) the new
+  `park-canopy` gid was missing from PARK_TILE_GENERATOR_IDS, so canopy
+  features were generated then silently dropped from cache — the exact
+  uncached-gid trap 28-A predicted for river-bank and fixed in its own patch.
+  Checklist candidate for future new-feature-type work: "new gid ⇒ registry
+  tileGeneratorIds entry" belongs next to "paint in ALL themes".
+- **Degraded-process eval flakes, diagnosed:** vo27-park failed twice at
+  RANDOM checks whose evals returned VALID results (`failed: => started`,
+  `failed: => {"count":187,"outside":0}`) after ~6 gate runs in one Obsidian
+  process; a fresh process (relaunch-obsidian.sh) went 14/14 immediately.
+  Matches the docs/05 long-session renderer degradation; standalone gates
+  after several runs should relaunch first rather than chase evals.
+- **26-A rank fade is a constant step, not zoom-ramped** — the zoom×rank
+  composition is research-flagged as screenshot-dependent; `rank` is emitted,
+  so the zoom-interpolate is a paint-only drop-in later if Jonah wants loners
+  to fade at overview zooms. Tints derive from each theme's fabricForest by
+  relative channel moves (no new tokens; 27-A owned tokens.ts).
+- **27-A canopy is city-park-only and interior-clumps-only** (formal/wild/
+  japanese get their treatments in 27-B; perimeter belt deferred to 27-B;
+  polygon-union canopy to 27-C w/ marching squares). Overlapping canopy blobs
+  double-darken at intersections until 27-C — known-rough, opacity 0.85.
+  **Flag for Jonah**: two-green renders in 1 of 4 park varieties this phase.
+- **28-A judgment calls:** channel opacity 0.85→1.0 (deliberately-overlapping
+  ribbons/welds must not double-darken; casing carries the edge read);
+  lazy-lowland rarely braids now (26 m channel can't open a 0.4-width island —
+  suggest width-relative lens amplitude in 28-B if Jonah wants wide rivers
+  braiding); optional thalweg line-gradient deferred (needs lineMetrics
+  plumbing); a real fabricRiverBank token is a want (bank color is a local
+  darken() for now).
+- **Gate naming:** 28-A's live gate shipped as `procgen49.ts` and 26-A's as
+  `procgen49-forest.ts` (the agents numbered independently). Both registered
+  in coverage.json; names left as-is — renumber cosmetically if it grates.

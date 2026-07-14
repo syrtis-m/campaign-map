@@ -181,9 +181,23 @@
   026/027/028 now touch disjoint files. Gate: byte-identical 6/6 · fast
   484/484 · tsc+build · live smoke (31 gen layers, 4920 features, dev:errors
   clean, screenshot eyeballed) · dev-vault byte-clean.
-- Next: wave-1 ∥ group P1 — 26-A forest trees, 27-A park ground, 28-A river
-  body (disjoint files post-VO-W0; 27-A owns tokens.ts edits); then P2
-  (27-B/28-B); then plan 023.
+- **P1 DONE (26-A `6f9c430` · 27-A `cd4f52f` · 28-A `e514ac0`)** — first
+  concurrent-worktree fan-out (3 Opus agents, serial integration). 26-A:
+  Thomas-cluster tree placement (per-variety clumping, broadleaf VMR 4.0;
+  sizeN/rank/variant props) + shadow/base/highlight circle stack w/ per-variety
+  tints derived from fabricForest; fill-antialias off kills the canopy
+  hairline. 27-A: ONE merged lawn (lattice grid gone; lawn now
+  seed-independent), city-park canopy clumps (second green), cased LineString
+  paths + pond shore casing, fabricPathCasing/fabricWaterShore tokens; two
+  integration fixes (distinct-id gate counting; park-canopy tile gid). 28-A:
+  per-segment merged channel ribbons + 0.5m joint welds (per-quad hairline
+  gone), river-bank casing under channel@1.0, braid islands as tapered
+  lozenges w/ 0.4-width no-sliver floor; canal footprint sha-pinned
+  byte-identical. Gates: fast 508/508 · per-kind fuzz green ·
+  procgen49-forest 13/13, vo27-park 14/14 (fresh process), procgen49 15/15 ·
+  9 screenshots eyeballed · dev-vault byte-clean. See DECISIONS "wave-1 P1".
+- Next: wave-1 ∥ group P2 — 27-B park skeletons, 28-B river meander math
+  (28-B MUST precede 23-E); then plan 023.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 
