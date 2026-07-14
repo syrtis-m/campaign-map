@@ -32,6 +32,27 @@ screenshot below. It also exercises no host code (cache, worker, lifecycle, undo
 so it never substitutes for a live gate. Generator work order: **playground (tune +
 judge) → unit/fuzz tests (T0/T1) → Obsidian loop only for the host-integration slice.**
 
+### Shipping a retune — the standard tuning loop (plan 029, versioned determinism)
+
+A generator change that alters output bytes for the same `(seed, params)` needs **no
+byte-neutrality analysis** — it ships behind a version bump:
+
+1. **Tune** in the playground until the output reads right.
+2. **Bump** the algorithm's `currentVersion` in `src/gen/procgen/registry.ts` (add a
+   `migrateParams` entry only if param semantics changed with it).
+3. **Re-golden**: `npm run goldens:accept -- <algorithm>` regenerates the one
+   byte-golden fixture (explicit-only — never CI-auto); review the diffstat.
+4. **Bands stay green**: the structural invariants + metric-band tests are the net
+   that survives tuning — if a band breaks, the retune changed more than intended.
+5. **Adoption is the GM's**: existing regions keep rendering their pinned cached
+   bytes; editing one prompts, the panel offers Adopt, and "Update all regions to
+   current generators" adopts campaign-wide. Never fork old generator code to
+   reproduce old bytes — cache + consent carry them.
+
+Prefer a param over a bump when an absent param naturally reproduces old behavior;
+bumps are for retunes and algorithmic changes where byte-neutral defaults would
+distort the design.
+
 ## The core loop — Obsidian (host/theme/integration work; the live-gate cycle)
 
 ```bash

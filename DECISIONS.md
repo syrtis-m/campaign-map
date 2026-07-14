@@ -1152,3 +1152,23 @@
 - **FINAL box:** README rows 021–028 → DONE with per-phase commits; docs/03
   gains the arc-shipped summary; review/ARC-021-028-NOTES.md is the
   morning-read digest (all §Questions entries consolidated there).
+
+## 2026-07-14 — plan 029 execution (29-A/29-B)
+- **Order swap (goal directive):** the arc runs 029 → 030 (the ratified
+  030-A-first ordering had assumed the sweep preceded mechanics; the goal
+  command "implement plan 029, then plan 030" supersedes — the sweep then
+  covers 029's new code too, which is strictly better).
+- **29-B delta — indirect demands badge, never prompt:** plan 029 §4 lists
+  "cascade invalidation / constraint edit" under regeneration-demanded-while-
+  pinned → prompt. Prompting from a debounced flush or mid-cascade is
+  unanswerable UX (no direct GM action to cancel, potential prompt storm), so
+  the split is: DIRECT edits (params/preset/re-roll/center/vertex) prompt and
+  a decline cancels the edit; INDIRECT demands (replay, flush, cascade,
+  constraint-edit fan-out) are cache-only — fresh cached bytes keep rendering,
+  a missing/stale record renders nothing + the needs-adoption badge. Consent
+  is preserved in both; nothing silently regenerates under an old pin.
+- **29-B gate scope — adopt-all not exercised live:** running adopt-all inside
+  the Vespergate campaign would adopt Jonah's real district under the gate's
+  simulated version override (rewriting his Fabric.geojson). The live gate
+  verifies command registration only; adopt-all behavior is unit-tested on
+  FakeHost (multi-algorithm, count, idempotence).
