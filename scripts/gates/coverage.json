@@ -1,5 +1,5 @@
 {
-  "_comment": "Change-scoped gating manifest (plan 021 \u00a72.5). Maps each live gate script to the source globs it exercises, so `npm run gates:changed` can run only the gates whose coverage intersects a diff. Globs deliberately err toward OVER-inclusion: over-covering just runs an extra gate; under-covering ships a real break unguarded. `determinismCritical` paths bypass scoping entirely and escalate to the FULL board (region/rng/clip/tileCache feed every generator \u2014 a change there can break any gate's determinism). Glob syntax: `**` = any path segments, `*` = any non-slash chars.",
+  "_comment": "Change-scoped gating manifest (plan 021 §2.5). Maps each live gate script to the source globs it exercises, so `npm run gates:changed` can run only the gates whose coverage intersects a diff. Globs deliberately err toward OVER-inclusion: over-covering just runs an extra gate; under-covering ships a real break unguarded. `determinismCritical` paths bypass scoping entirely and escalate to the FULL board (region/rng/clip/tileCache feed every generator — a change there can break any gate's determinism). Glob syntax: `**` = any path segments, `*` = any non-slash chars.",
   "determinismCritical": [
     "src/gen/region.ts",
     "src/gen/rng.ts",
@@ -427,6 +427,23 @@
         "src/model/tileCache.ts",
         "src/model/fabric.ts",
         "src/view/MapView.ts"
+      ]
+    },
+    "cascade24b": {
+      "script": "scripts/gates/cascade24b.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/**",
+        "src/gen/procgen/**",
+        "src/gen/cache/**",
+        "src/controller/MapController.ts",
+        "src/controller/FakeHost.ts",
+        "src/model/fabric.ts",
+        "src/model/tileCache.ts",
+        "src/map/generation/**",
+        "src/view/MapView.ts",
+        "src/view/RegionProcgenModal.ts",
+        "src/view/SketchController.ts"
       ]
     }
   }
