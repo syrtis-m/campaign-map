@@ -2,6 +2,36 @@ import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "../tokens";
 
 /**
+ * Per-feature street-width → px multiplier (plan 025 §3.3), reused at every zoom
+ * stop of `generated-street`'s `line-width`. It reads the emitted `width`
+ * (metres) and normalises to the 12 m ordinary-street reference, FLOORED at 0.7
+ * (alleys never blink out sub-pixel) and CAPPED at 6 (an 85 m superblock canyon
+ * stays legible without swallowing the frame). A widthless legacy feature
+ * (sketch-corridor, roadClass "major") derives its metres from `roadClass` so
+ * it flows through the identical ramp. Kept OUTSIDE the zoom `interpolate` (a
+ * pure data expression, no `["zoom"]`) — nesting zoom under `["*", …]`
+ * invalidates the whole style at load (006-class), so only this multiplier is
+ * folded into each interpolate output.
+ */
+const W_MULT: unknown = [
+  "max",
+  0.7,
+  [
+    "min",
+    6,
+    [
+      "/",
+      [
+        "coalesce",
+        ["get", "width"],
+        ["match", ["get", "roadClass"], ["major", "arterial"], 18, "ring", 16, ["alley", "court"], 5, 12],
+      ],
+      12,
+    ],
+  ],
+];
+
+/**
  * City fabric. Split across the emitted array: the district/footprint/parcel/
  * landmark/gate block sits in the middle (above farm/world-region, below the
  * river/forest/park/wall blocks); the street network paints LAST of all
@@ -119,17 +149,26 @@ export function cityStreetLayers(t: ThemeTokens): LayerSpecification[] {
         // interpolate(zoom)]`) and that silently invalidates the whole style
         // (map loads blank, no error — 006-class). So the per-feature avenue
         // multiplier is folded into each interpolate output instead.
-        // Procgen v3 (§6): roadClass → width is the theme's job. Arterials
-        // read a step over ring roads, which read over plain streets;
-        // alleys/courts sit under streets. Legacy "major" (corridor
-        // avenues) keeps its arterial-equivalent width.
+        // Plan 025 §3.3: WIDTH-DRIVEN. Every generated street now carries an
+        // explicit `width` (metres); the theme ramps px from it so a preset's
+        // form hierarchy (Manhattan avenues vs streets, a superblock's 85 m
+        // arterial CANYONS vs its lanes) reads directly, not just via roadClass.
+        // The multiplier = width ÷ 12 m (the ordinary-street reference),
+        // FLOORED at 0.7 so alleys never blink out sub-pixel and CAPPED at 6 so
+        // an 85 m canyon stays legible without swallowing the frame. Legacy
+        // features with no `width` (sketch-corridor, roadClass "major") fall
+        // back to the class→width the pre-025 ramp used, so their px is
+        // unchanged. The zoom `interpolate` MUST stay the top-level expression
+        // (MapLibre rejects `zoom` nested inside `["*", …]` — it silently
+        // invalidates the whole style, 006-class), so the per-feature width
+        // multiplier is folded into each interpolate output.
         "line-width": [
           "interpolate",
           ["linear"],
           ["zoom"],
-          8, ["*", 1, ["match", ["get", "roadClass"], ["major", "arterial"], 1.8, "ring", 1.5, ["alley", "court"], 0.7, 1]],
-          12, ["*", 1.6, ["match", ["get", "roadClass"], ["major", "arterial"], 1.8, "ring", 1.5, ["alley", "court"], 0.7, 1]],
-          18, ["*", 3.5, ["match", ["get", "roadClass"], ["major", "arterial"], 1.8, "ring", 1.5, ["alley", "court"], 0.7, 1]],
+          8, ["*", 1, W_MULT],
+          12, ["*", 1.6, W_MULT],
+          18, ["*", 3.5, W_MULT],
         ],
       },
     } as unknown as LayerSpecification,

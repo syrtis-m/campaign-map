@@ -1,9 +1,11 @@
 #!/usr/bin/env tsx
-// Plan 025-A gate — the PRESET GALLERY (plan 025 §3.5): the living style catalog
-// for city procgen. A dedicated dev-vault campaign (`Campaigns/Preset Gallery`,
-// committed fixture) holds ONE sketched district per city preset, all the SAME
-// shape (regular 16-gon, effective radius ~700 m) on a 2×2 grid, so on-screen
-// differences are the PRESET, never the boundary. This gate:
+// Plan 025 gate (seeded 025-A; superblock joined 025-B) — the PRESET GALLERY
+// (plan 025 §3.5): the living style catalog for city procgen. A dedicated
+// dev-vault campaign (`Campaigns/Preset Gallery`, committed fixture) holds ONE
+// sketched district per city preset, all the SAME shape (regular 16-gon,
+// effective radius ~700 m) in a 1×N equatorial row, so on-screen differences are
+// the PRESET, never the boundary. Phase 025-B adds the superblock district +
+// the §3.3 width histogram columns in the metrics table. This gate:
 //
 //   (a) reloads the plugin with the gallery cache cleared, opens the gallery,
 //       and confirms every preset's district GENERATES from the committed
@@ -46,7 +48,12 @@ const REVIEW = "/Users/athena/projects/campaign-map/review/gallery";
 const SCALE = 100;
 // Campaign bounds (units) — the worldBounds the app passes to generation, so
 // the pure metrics below match the live render byte-for-byte.
-const BOUNDS: [number, number, number, number] = [-33, -10, 33, 10];
+// Bounds widen EAST as presets append (existing districts keep their x); the
+// campaign worldBounds the app passes to generation = these × SCALE, so a wider
+// bound shifts every preset's height-falloff a hair (warn-only metrics; the hard
+// bands live in the unit suite on a fixed-bounds ring). superblock at x=40 spans
+// 32.9–47.1, so maxX 49 fits it with margin.
+const BOUNDS: [number, number, number, number] = [-33, -10, 49, 10];
 const WORLD = { minX: BOUNDS[0] * SCALE, minY: BOUNDS[1] * SCALE, maxX: BOUNDS[2] * SCALE, maxY: BOUNDS[3] * SCALE };
 // Per-preset display-space centres (must match the authored Fabric.geojson) +
 // the district circumradius in display units, for fitBounds framing.
@@ -55,9 +62,10 @@ const CENTERS: Record<string, [number, number]> = {
   "euro-continental": [-8, 0],
   "na-grid": [8, 0],
   "na-suburb": [24, 0],
+  superblock: [40, 0],
 };
 const R_UNITS = 7.6; // circumradius 7.09 + margin
-const PRESET_ORDER: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb"];
+const PRESET_ORDER: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb", "superblock"];
 
 interface GalleryFeature {
   id: string;
@@ -135,7 +143,7 @@ function printMetricsTable(gate: Gate): void {
   console.log("\n  Plan 025 §3.1 metrics — gallery presets vs §1.2 Salat anchors:");
   console.log(
     "  " +
-      ["preset", "int/km²", "km/km²", "land%", "grainM", "aven%", "dead", "perm"]
+      ["preset", "int/km²", "km/km²", "land%", "grainM", "aven%", "dead", "perm", "w<10%", "w10-20", "w>20%"]
         .map((s) => s.padEnd(9))
         .join("")
   );
@@ -152,6 +160,11 @@ function printMetricsTable(gate: Gate): void {
       (m.avenueShare * 100).toFixed(0),
       String(m.deadEndCount),
       m.permeability.toFixed(2),
+      // §3.3 width histogram (share of street LENGTH by band) — the superblock's
+      // wide arterial canyons show up as a nonzero >20 m column, unique to it.
+      (m.widthHistogram.lt10 * 100).toFixed(0),
+      (m.widthHistogram.m10to20 * 100).toFixed(0),
+      (m.widthHistogram.gt20 * 100).toFixed(0),
     ];
     console.log("  " + row.map((s) => String(s).padEnd(9)).join(""));
     console.log(`       anchor: ${PRESET_BENCHMARKS[profile].anchor}`);
@@ -175,7 +188,7 @@ async function main(): Promise<void> {
   const fabricBefore = fabricDigest();
 
   await gate.try(`gallery fixture present (${gallery.length} presets), plugin reloads clean`, () => {
-    if (gallery.length !== 4) throw new Error(`expected 4 gallery presets, found ${gallery.length}`);
+    if (gallery.length !== 5) throw new Error(`expected 5 gallery presets, found ${gallery.length}`);
     if (existsSync(CACHE_ABS)) rmSync(CACHE_ABS);
     obsidian("plugin:reload id=campaign-map");
     clearErrors();
@@ -243,7 +256,7 @@ async function main(): Promise<void> {
         throw new Error(`preset ${f.properties.name} not byte-identical after cache delete`);
       }
     }
-    console.log("     [d] all 4 presets byte-identical across a full regenerate");
+    console.log(`     [d] all ${gallery.length} presets byte-identical across a full regenerate`);
   });
 
   await gate.try("(f) dev:errors clean at end", () => {

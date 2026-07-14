@@ -17,6 +17,41 @@ import type { ProfileId } from "./domain";
 /** Plaza-adjacent landmark footprint kinds (themes filter on `landmark`). */
 export type LandmarkKind = "church" | "market" | "temple" | "keep";
 
+/**
+ * Form-based street-width table (plan 025 §3.3), metres facade-to-facade. Every
+ * emitted `city-street` feature carries an explicit `width` read straight off
+ * this table by its `roadClass` — themes ramp px from the width, and the §3.1
+ * metrics (`streetLandShare`, `widthHistogram`) measure it directly.
+ *
+ * ADDITIVE-PARAMS (§3.3, binding): the four PRE-025 profiles set these to the
+ * exact values the metrics module's class→width stand-in already used
+ * (`WIDTH_BY_CLASS`: alley 5 · street 12 · ring 16 · arterial 18 · boulevard
+ * 30), so emitting `width` changes ZERO measured metrics and moves ONLY the
+ * cached bytes (a property gained, geometry untouched — the regenerate-on-
+ * upgrade minor-version note in §3.3). New presets (superblock) set their own
+ * widths — that IS their intended geometry signal, so their bytes/metrics are
+ * theirs from birth. `boulevard` is unused by the current presets (it lands
+ * with the §3.2 axial operator) but is typed now so haussmann slots in without
+ * a schema change.
+ */
+export interface StreetWidths {
+  arterial: number;
+  ring: number;
+  street: number;
+  alley: number;
+  boulevard: number;
+}
+
+/** The pre-025 class→width mapping, shared by every walkable profile so their
+ * emitted widths reproduce the metrics stand-in exactly (additive-params). */
+export const LEGACY_STREET_WIDTHS: StreetWidths = {
+  arterial: 18,
+  ring: 16,
+  street: 12,
+  alley: 5,
+  boulevard: 30,
+};
+
 export interface CityProfile {
   id: ProfileId;
 
@@ -90,6 +125,11 @@ export interface CityProfile {
    * Empty for organic profiles. */
   gridAzimuths: number[];
 
+  // ── Form-based width (plan 025 §3.3) ────────────────────────────────────
+  /** Metre width emitted per roadClass (see `StreetWidths`). Read at emission
+   * in `index.ts` and by the §3.1 metrics; NEVER affects growth geometry. */
+  streetWidths: StreetWidths;
+
   // ── Stage C: blocks / parcels / footprints (v3.2 — typed now, unread) ──
   /** Target block area window, m² (§6 "block target"). */
   blockAreaMin: number;
@@ -139,6 +179,7 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     culdesacs: false,
     snapProb: 1,
     gridAzimuths: [],
+    streetWidths: LEGACY_STREET_WIDTHS,
     blockAreaMin: 1000,
     blockAreaMax: 3000,
     parcelMinArea: 120,
@@ -172,6 +213,7 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     culdesacs: false,
     snapProb: 1,
     gridAzimuths: [],
+    streetWidths: LEGACY_STREET_WIDTHS,
     blockAreaMin: 3000,
     blockAreaMax: 8000,
     parcelMinArea: 200,
@@ -205,6 +247,7 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     culdesacs: false,
     snapProb: 1,
     gridAzimuths: [0, Math.PI / 2],
+    streetWidths: LEGACY_STREET_WIDTHS,
     blockAreaMin: 6000,
     blockAreaMax: 12000,
     parcelMinArea: 300,
@@ -238,6 +281,7 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     culdesacs: true,
     snapProb: 0.55,
     gridAzimuths: [],
+    streetWidths: LEGACY_STREET_WIDTHS,
     blockAreaMin: 12000,
     blockAreaMax: 30000,
     parcelMinArea: 500,
@@ -246,6 +290,60 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     footprintInset: 4,
     footprintDepth: 10,
     footprintCoverage: 0.4,
+  },
+  // ── superblock (plan 025 §2.6) — the research's ANTI-pattern AS A GENRE ────
+  // The Le-Corbusier / Chongqing modernist megablock, encoded DELIBERATELY as a
+  // dystopian aesthetic (neon-sprawl / Dishonored), NOT as good urbanism. Its
+  // §3.1 benchmark asserts the anti-pattern IS produced — sparse intersections,
+  // internal dead-ends, wide arterial canyons, megablock grain. DO NOT "fix" it
+  // toward walkable numbers: low connectivity is the whole point (§1.1, §2.6).
+  //
+  // How the params buy the look, all data-only (no new operator, §4 seq #2):
+  //  • gridAzimuths [0, π/2] — a coarse orthogonal ARTERIAL grid (the canyons);
+  //  • segmentLen 130 + high `edge` (0.4) + low branchProb (0.14) + low
+  //    maxSegments — few, long streets ⇒ ~megablock faces, sparse junctions;
+  //  • culdesacs true + snapProb 0.35 — the internal streets DEAD-END rather
+  //    than knit through (the low-permeability signature);
+  //  • streetWidths.arterial 85 (§1.1 "roads 70–100 m") — the wide canyon that
+  //    reads on screen + drives streetLandShare/widthHistogram into >20 m;
+  //  • towers-in-plot footprints — big inset, low coverage on huge parcels.
+  superblock: {
+    id: "superblock",
+    arterialCount: 4,
+    waterfrontOffsets: [],
+    landmarks: ["market"],
+    plazaRadius: 26,
+    hasWall: false,
+    wallChance: 0,
+    ringRadiusFrac: 0,
+    segmentLen: 130,
+    branchProb: 0.14,
+    edge: 0.4,
+    branchAngle: Math.PI / 2,
+    branchAngleJitter: (3 * Math.PI) / 180,
+    curvature: 0,
+    snapDist: 26,
+    minAngle: (55 * Math.PI) / 180,
+    minEdge: 22,
+    minStub: 40,
+    maxSegments: 900,
+    alleys: false,
+    culdesacs: true,
+    snapProb: 0.35,
+    gridAzimuths: [0, Math.PI / 2],
+    // Wide arterial CANYONS (§1.1 70–100 m); ordinary internal streets stay
+    // narrow so the width hierarchy reads as a hard step, not a ramp.
+    streetWidths: { arterial: 85, ring: 40, street: 14, alley: 8, boulevard: 90 },
+    // Megablocks (§1.1 400–800 m): 400²–800² m² parcels-target windows.
+    blockAreaMin: 160000,
+    blockAreaMax: 640000,
+    parcelMinArea: 4000,
+    parcelMaxAspect: 2.2,
+    parcelMinFrontage: 24,
+    // Towers-in-plot: deep inset, sparse coverage on the huge parcels.
+    footprintInset: 10,
+    footprintDepth: 24,
+    footprintCoverage: 0.32,
   },
 };
 
@@ -258,8 +356,13 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
 export function defaultProfileForTheme(theme: string | undefined): ProfileId {
   switch (theme) {
     case "modern-clean":
-    case "neon-sprawl":
       return "na-grid";
+    // neon-sprawl is the dystopia/Dishonored palette — the superblock megablock
+    // IS its genre (plan 025 §2.6 "superblock (neon-sprawl default)"). Only the
+    // pre-filled default for a FRESH neon-sprawl district changes; existing
+    // regions persist their own params and never re-roll (additive rule).
+    case "neon-sprawl":
+      return "superblock";
     case "parchment":
     case "ink-soot":
       return "euro-medieval";

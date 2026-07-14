@@ -31,7 +31,7 @@ import { clipPolylineToBBox, clipPolygonToBBox, type Vec2 } from "../clip";
 import type { GenerationConstraints } from "../types";
 import { blockedByWater, indexConstraints } from "../fabricConstraints";
 import { regionContains, type ProcgenRegion } from "../region";
-import { PROFILES } from "./profiles";
+import { PROFILES, type CityProfile } from "./profiles";
 import type { ProfileId } from "./domain";
 import { makeCostField } from "./costField";
 import { buildSkeleton } from "./skeleton";
@@ -64,6 +64,27 @@ export const DOMAIN_TILE_GENERATOR_IDS: readonly string[] = [
   "city-landmark",
   "city-district",
 ];
+
+/** Form-based street width (plan 025 §3.3): the metre width emitted on a
+ * `city-street` feature for its `roadClass`, read straight off the profile's
+ * width table. Unknown classes fall back to `street` (the ordinary width).
+ * Emitted as an explicit `width` property so themes ramp px from it and the
+ * §3.1 metrics measure it directly instead of re-deriving from the class. */
+function widthFor(profile: CityProfile, roadClass: string): number {
+  const w = profile.streetWidths;
+  switch (roadClass) {
+    case "arterial":
+      return w.arterial;
+    case "ring":
+      return w.ring;
+    case "alley":
+      return w.alley;
+    case "boulevard":
+      return w.boulevard;
+    default:
+      return w.street;
+  }
+}
 
 /** D5 coordinate quantization: millimeter lattice. */
 function q(v: number): number {
@@ -149,6 +170,7 @@ export function generateCityNetwork(
       generatorId: "city-street",
       type: "street",
       roadClass: "arterial",
+      width: widthFor(profile, "arterial"),
       regionId: region.id,
     };
     if (art.degraded) properties.degraded = true;
@@ -171,6 +193,7 @@ export function generateCityNetwork(
         generatorId: "city-street",
         type: "bridge",
         roadClass: "arterial",
+        width: widthFor(profile, "arterial"),
         regionId: region.id,
       },
     });
@@ -187,6 +210,7 @@ export function generateCityNetwork(
         generatorId: "city-street",
         type: "street",
         roadClass: "street",
+        width: widthFor(profile, "street"),
         regionId: region.id,
       },
     });
@@ -235,6 +259,7 @@ export function generateCityNetwork(
         generatorId: "city-street",
         type: "street",
         roadClass: "ring",
+        width: widthFor(profile, "ring"),
         regionId: region.id,
       },
     });
@@ -282,6 +307,7 @@ export function generateCityNetwork(
         generatorId: "city-street",
         type: "street",
         roadClass: chain.roadClass,
+        width: widthFor(profile, chain.roadClass),
         regionId: region.id,
       },
     });

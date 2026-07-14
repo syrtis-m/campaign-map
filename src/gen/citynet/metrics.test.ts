@@ -178,11 +178,14 @@ describe("computeNetworkMetrics — meaningfulness on exact hand geometry", () =
 
 describe("computeNetworkMetrics — §3.1 benchmark gates for the four existing presets", () => {
   const region = galleryRegion();
+  // The four WALKABLE presets: the floor/medium-width assertions below are the
+  // urbanism-virtue signals that hold for these but DELIBERATELY not for the
+  // superblock anti-pattern (§2.6), so superblock is measured separately.
   const profiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb"];
   const M: Record<string, NetworkMetrics> = {};
-  for (const p of profiles) M[p] = computeNetworkMetrics(presetNet(p, region), region);
+  for (const p of [...profiles, "superblock" as ProfileId]) M[p] = computeNetworkMetrics(presetNet(p, region), region);
 
-  for (const p of profiles) {
+  for (const p of [...profiles, "superblock" as ProfileId]) {
     it(`${p} lands inside its §3.1 benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
       const violations = benchmarkViolations(p, M[p]);
       expect(violations, violations.join("; ")).toEqual([]);
@@ -226,5 +229,55 @@ describe("computeNetworkMetrics — §3.1 benchmark gates for the four existing 
 
   it("every walkable preset's streets are majority medium-width (10–20 m band; narrow-majority lands with §3.3 widths)", () => {
     for (const p of profiles) expect(M[p].widthHistogram.m10to20).toBeGreaterThanOrEqual(0.85);
+  });
+
+  // ── superblock: the research's anti-pattern, asserted AS the genre (§2.6) ───
+  it("superblock is the SPARSEST preset: fewer intersections/km² than every walkable preset", () => {
+    for (const p of profiles) {
+      expect(M["superblock"].intersectionsPerKm2).toBeLessThan(M[p].intersectionsPerKm2);
+    }
+  });
+
+  it("superblock is the LEAST permeable preset: the tree-like low-connectivity signature", () => {
+    for (const p of profiles) {
+      expect(M["superblock"].permeability).toBeLessThan(M[p].permeability);
+    }
+  });
+
+  it("superblock streets run BELOW Salat's 18 km/km² floor — the deliberate anti-pattern (all walkable presets clear it)", () => {
+    expect(M["superblock"].streetKmPerKm2).toBeLessThan(15);
+  });
+
+  it("superblock is the ONLY preset with wide arterial canyons: >15% of street length in the >20 m band", () => {
+    expect(M["superblock"].widthHistogram.gt20).toBeGreaterThan(0.15);
+    for (const p of profiles) expect(M[p].widthHistogram.gt20).toBe(0);
+  });
+});
+
+describe("§3.3 form-based width — the generator emits an explicit metre width per street", () => {
+  const region = galleryRegion();
+
+  it("every city-street feature carries a numeric width matching its profile's class table", () => {
+    // The four legacy profiles all share LEGACY_STREET_WIDTHS (additive rule):
+    // arterial 18 · ring 16 · street 12 · alley 5.
+    const legacy: Record<string, number> = { arterial: 18, ring: 16, street: 12, alley: 5 };
+    const net = presetNet("euro-medieval", region);
+    const streets = net.filter((f) => f.properties?.generatorId === "city-street");
+    expect(streets.length).toBeGreaterThan(0);
+    for (const f of streets) {
+      const w = f.properties?.width;
+      const cls = String(f.properties?.roadClass);
+      expect(typeof w, `street ${f.id} width type`).toBe("number");
+      expect(w, `roadClass ${cls}`).toBe(legacy[cls]);
+    }
+  });
+
+  it("superblock emits its wide 85 m arterial canyons (its own width table, not the legacy one)", () => {
+    const net = presetNet("superblock", region);
+    const arterials = net.filter(
+      (f) => f.properties?.generatorId === "city-street" && f.properties?.roadClass === "arterial"
+    );
+    expect(arterials.length).toBeGreaterThan(0);
+    for (const f of arterials) expect(f.properties?.width).toBe(85);
   });
 });

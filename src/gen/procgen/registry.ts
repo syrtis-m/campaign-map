@@ -102,6 +102,7 @@ export const CITY_PROFILE_IDS = [
   "euro-continental",
   "na-grid",
   "na-suburb",
+  "superblock",
 ] as const satisfies readonly ProfileId[];
 
 const cityParamsSchema = z.object({
@@ -128,6 +129,7 @@ const CITY_PRESETS: readonly ProcgenPreset[] = [
   { id: "euro-continental", label: "European continental — regular blocks, wide angles", params: { profile: "euro-continental" } },
   { id: "na-grid", label: "North American grid — right angles, jogged grids", params: { profile: "na-grid" } },
   { id: "na-suburb", label: "North American suburb — curving streets, cul-de-sacs", params: { profile: "na-suburb" } },
+  { id: "superblock", label: "Superblock — modernist megablocks, arterial canyons, dead-ends", params: { profile: "superblock" } },
 ];
 
 const cityAlgorithm: ProcgenAlgorithm = {

@@ -9,9 +9,11 @@ import { hashSeed, mulberry32 } from "../rng";
 import type { FabricFeature } from "../../model/fabric";
 import { WORLD_BOUNDS, net, riverThrough, allCoordsInside } from "./citynet.fixtures";
 
-describe("v3.1/v3.4 200-region fuzz (gate e, anti-Watabou — all four profiles)", () => {
-  it("200 hashed disc regions (50 per profile) generate without throwing, each within budget", () => {
-    const fuzzProfiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb"];
+describe("v3.1/v3.4 200-region fuzz (gate e, anti-Watabou — all five profiles)", () => {
+  it("200 hashed disc regions generate without throwing, each within budget", () => {
+    // Five profiles incl. plan 025-B superblock (§2.6) — a new profile must
+    // survive the same no-throw/within-budget fuzz as the originals.
+    const fuzzProfiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb", "superblock"];
     const t0 = Date.now();
     for (let i = 0; i < 200; i++) {
       const rng = mulberry32(hashSeed(4242, "fuzz", i));
@@ -35,7 +37,7 @@ describe("v3.1/v3.4 200-region fuzz (gate e, anti-Watabou — all four profiles)
         });
       }
       const runStart = Date.now();
-      const network = net(cx, cy, fuzzProfiles[i % 4], { fabricFeatures: fabric }, radius);
+      const network = net(cx, cy, fuzzProfiles[i % fuzzProfiles.length], { fabricFeatures: fabric }, radius);
       expect(network.length).toBeGreaterThan(0);
       expect(Date.now() - runStart).toBeLessThan(5000); // per-run wall clock sane
     }
@@ -72,9 +74,9 @@ describe("v4.0 4-profile polygon fuzz (plan 020 gate f)", () => {
     return makeRegion(`fuzz-poly-${i}`, ring);
   }
 
-  const fuzzProfiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb"];
+  const fuzzProfiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb", "superblock"];
 
-  it("30 random simple polygons × 4 profiles: no throw, all output inside", () => {
+  it("30 random simple polygons × 5 profiles: no throw, all output inside", () => {
     for (let i = 0; i < 30; i++) {
       const region = randomRegion(i);
       for (const profile of fuzzProfiles) {

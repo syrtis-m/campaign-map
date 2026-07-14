@@ -11,12 +11,13 @@
  * superblocks ~49–66 /km²), street linear density (≥18 km/km² guideline floor;
  * Amsterdam 30.7, Manhattan 22.7), and street land share (25–30 %).
  *
- * SCOPE (phase 025-A): street WIDTH is not yet an emitted property — it lands
- * with the §3.3 form-based width system in a later phase. Until then the
- * width-derived metrics (`streetLandShare`, `widthHistogram`) use a
- * class→width table (`WIDTH_BY_CLASS`) as a documented approximation; when 3.3
- * emits a real `width`, this module reads it and the approximation retires
- * (see `widthOf`). Every other metric is exact today.
+ * WIDTH (phase 025-B): the §3.3 form-based width system now emits an explicit
+ * `width` (metres) on every `city-street` feature (`profiles.ts` width table →
+ * `index.ts`), so the width-derived metrics (`streetLandShare`,
+ * `widthHistogram`) read it directly and are exact for generated cities. The
+ * class→width table (`WIDTH_BY_CLASS`) survives ONLY as the fallback for a
+ * feature that carries no `width` (synthetic test fixtures, pre-025 cached
+ * tiles) — see `widthOf`. Every metric is exact for real generator output.
  */
 import type { ProcgenRegion } from "../region";
 
@@ -127,6 +128,22 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [1.2, 1.55],
     anchor: "Washington suburbs ~36 (ours denser) — cul-de-sac dead-ends",
   },
+  // superblock (plan 025 §2.6 + §3.1) — the ANTI-pattern band. Unlike the
+  // walkable presets, these ranges assert the research's BAD numbers ARE
+  // produced: the SPARSEST intersections, a street density DELIBERATELY under
+  // Salat's 18 km/km² floor, tree-like (low) permeability, and coarse megablock
+  // grain. streetLandShare stays in the 25–30 % window despite the sparse web
+  // because the arterial CANYONS (85 m) are wide — that width also puts >20 % of
+  // street length in the >20 m histogram band (the only preset that does). DO
+  // NOT retune toward walkable values; low connectivity is the genre (§2.6).
+  superblock: {
+    intersectionsPerKm2: [12, 42],
+    streetKmPerKm2: [5, 14],
+    streetLandShare: [0.18, 0.36],
+    blockGrainP50: [45, 140],
+    permeability: [1.0, 1.28],
+    anchor: "Chongqing superblocks ~49–66 / Beijing South 13–16 — modernist megablocks, low connectivity",
+  },
 };
 
 /** True when `value` lies within the closed band. */
@@ -153,10 +170,13 @@ export function benchmarkViolations(presetId: string, m: NetworkMetrics): string
 }
 
 /**
- * Class→width table (metres), the §3.3 stand-in until streets carry a real
- * `width`. Values follow §1.2's form hierarchy: alleys narrow, ordinary
- * streets ~10–18 m facade-to-facade, arterials/rings wider, boulevards widest.
- * Kept intentionally coarse — the honest precise histogram arrives with 3.3.
+ * Class→width table (metres): the FALLBACK width for a street feature that
+ * carries no emitted `width` (synthetic test fixtures; pre-025 cached tiles).
+ * Generated cities now emit an explicit `width` (§3.3), so `widthOf` prefers
+ * that; these values match the pre-025 profiles' emitted widths
+ * (`LEGACY_STREET_WIDTHS`) so a missing-width fallback reads identically.
+ * Values follow §1.2's form hierarchy: alleys narrow, ordinary streets
+ * ~10–18 m facade-to-facade, arterials/rings wider, boulevards widest.
  */
 export const WIDTH_BY_CLASS: Record<string, number> = {
   alley: 5,

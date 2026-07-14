@@ -10,7 +10,14 @@
  *
  * CAPTURE DISCIPLINE (do not casually `-u`): these digests were captured on the
  * PRE-retrofit source. A diff here after the retrofit is a PHASE FAILURE — the
- * whole point is bit-exactness — never a snapshot update. The golden is the
+ * whole point is bit-exactness — never a snapshot update. THE ONE SANCTIONED
+ * EXCEPTION SO FAR: plan 025-B (§3.3 form-based width) DELIBERATELY regenerated
+ * all four digests — every `city-street` feature gained an explicit `width`
+ * property (metres, from the profile's width table), so the emitted BYTES grew
+ * while the feature COUNT and every coordinate stayed identical (a property
+ * added, geometry untouched — the regenerate-on-upgrade minor-version note in
+ * §3.3, same additive-output precedent as 24-C's footprint drop). If a diff
+ * here is NOT that, it is still a phase failure. The golden is the
  * SHA-256 of `JSON.stringify(network)` (the cache emit surface: mm-quantized
  * coords, canonical feature order) plus the byte length and feature count, so
  * the golden IS the determinism surface the `.mapcache/` relies on — a full-JSON

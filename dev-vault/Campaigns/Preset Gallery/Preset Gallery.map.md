@@ -7,7 +7,7 @@ scaleMetersPerUnit: 100
 bounds:
   - -33
   - -10
-  - 33
+  - 49
   - 10
 ---
 
@@ -15,11 +15,15 @@ Preset Gallery (plan 025 §3.5) — the living style catalog for city procgen.
 
 One sketched district per city preset, all the SAME shape (regular 16-gon,
 effective radius ~700 m ⇒ circumradius 7.091 units at
-100 m/unit), laid in a 1×4 row ON THE EQUATOR (lat 0) so Mercator treats
+100 m/unit), laid in a 1×N row ON THE EQUATOR (lat 0) so Mercator treats
 every district identically and on-screen differences are the PRESET, never the
 boundary or projection:
 
-    euro-medieval(-24)  euro-continental(-8)  na-grid(8)  na-suburb(24)
+    euro-medieval(-24)  euro-continental(-8)  na-grid(8)  na-suburb(24)  superblock(40)
+
+New presets APPEND to the right (fixed x, existing districts never move) and the
+eastern bound widens to fit — so a fixture diff stays localised to the appended
+district + the one bound. superblock landed in 025-B (§2.6).
 
 Committed fixture: this note + Fabric.geojson are durable repo content; the
 .mapcache/ is regenerable and sync-excluded. `scripts/gates/presetGallery.ts`
