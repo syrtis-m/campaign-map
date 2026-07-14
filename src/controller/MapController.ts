@@ -1160,7 +1160,7 @@ export class MapController {
     const block: ProcgenBlock = {
       algorithm: algorithm.id,
       seed: hashSeed(this.campaign.config.seed, feature.id),
-      version: 1,
+      version: algorithm.currentVersion,
       params: parsedParams,
     };
     return this.setRegionProcgen(feature, block, null, true);

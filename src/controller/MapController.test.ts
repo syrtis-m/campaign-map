@@ -13,6 +13,7 @@ import { fabricPath } from "../vault/fabricStore";
 import { discToRing, citySeedFor, type CityDomain } from "../gen/citynet";
 import { regionNetworkKey } from "../map/generation/generationService";
 import { isProcgenRegion } from "../model/fabric";
+import { algorithmById } from "../gen/procgen/registry";
 
 /** A district ring in display units (1 unit = 50 m ⇒ an 800 m square), the
  * same fixture geometry the live procgen40 gate sketches. */
@@ -237,6 +238,30 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
     expect(host.controller.loadedTileCount).toBe(0);
     expect((await host.cache()).has(regionNetworkKey(featureId))).toBe(false);
     expect((await host.log()).at(-1)?.type).toBe("sketch-remove");
+  });
+});
+
+describe("MapController — version pinning", () => {
+  it("creation writes the algorithm's currentVersion into the block", async () => {
+    const host = cityHost();
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const block = (await host.fabric()).features[0].properties.procgen!;
+    expect(block.version).toBe(algorithmById("city")!.currentVersion);
+  });
+
+  it("param edits, re-rolls, and vertex edits keep the pinned version", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const pinned = (await host.fabric()).features[0].properties.procgen!.version;
+
+    await host.controller.setRegionParams(featureId, { profile: "na-grid" });
+    expect((await host.fabric()).features[0].properties.procgen!.version).toBe(pinned);
+
+    await host.controller.rerollRegion(featureId);
+    expect((await host.fabric()).features[0].properties.procgen!.version).toBe(pinned);
+
+    await host.controller.moveVertex(featureId, 0, [8, -28]);
+    expect((await host.fabric()).features[0].properties.procgen!.version).toBe(pinned);
   });
 });
 

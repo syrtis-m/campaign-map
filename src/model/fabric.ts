@@ -50,7 +50,12 @@ const PolygonGeom = z.object({
 export const ProcgenBlockSchema = z.object({
   algorithm: z.string().min(1), // registry id, e.g. "city"
   seed: z.number().int(),
-  version: z.number().int().default(1), // schema version of `params`
+  /** Pinned generator contract version (params semantics + output bytes) —
+   * written from the algorithm's `currentVersion` at creation; only explicit
+   * GM adoption may raise it. Kept as loose data here: params under an older
+   * pin parse leniently (they feed the pinned cache's fingerprint, never
+   * current generator code). */
+  version: z.number().int().default(1),
   params: z.record(z.string(), z.unknown()),
   /** Plan 022 §1: the "template" the params were seeded from — DISPLAY ONLY.
    * Optional so legacy blocks (and city blocks, whose params always match a

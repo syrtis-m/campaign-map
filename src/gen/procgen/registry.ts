@@ -46,6 +46,18 @@ export interface ProcgenPreset {
 export interface ProcgenAlgorithm {
   id: string; // "city"
   label: string; // "City"
+  /** Generator contract version: params semantics + output bytes, one number.
+   * Any change that alters output bytes for the same `(seed, params)` MUST
+   * bump this (and then needs no byte-neutrality argument — plan 029 policy).
+   * Host-side routing data only: written into new procgen blocks at creation,
+   * compared at edit time to drive the adoption prompt. NEVER a generator
+   * input — a generator never branches on version; the code IS the version. */
+  currentVersion: number;
+  /** Adoption-time params migration: maps params persisted under `oldVersion`
+   * to the current shape. Pure; identity when a bump changed no param
+   * semantics (then omit it). Called only by the host's adoption flow, never
+   * during generation. */
+  migrateParams?(oldVersion: number, params: Record<string, unknown>): Record<string, unknown>;
   appliesTo: readonly FabricKind[]; // ["district"]
   /** Plan 024 §2: the fixed stage this algorithm occupies in the cross-layer
    * regen cascade. An algorithm consumes only from STRICTLY LOWER stages, so
@@ -157,6 +169,7 @@ const CITY_PRESETS: readonly ProcgenPreset[] = [
 const cityAlgorithm: ProcgenAlgorithm = {
   id: "city",
   label: "City",
+  currentVersion: 1,
   appliesTo: ["district"],
   // Stage 3 (settlement): bridges over the meandered channel + a growth-cost
   // bump from canopy → consumes water + vegetation (plan 024 §3; the actual
@@ -253,6 +266,7 @@ export const RIVER_TILE_GENERATOR_IDS: readonly string[] = [
 const riverAlgorithm: ProcgenAlgorithm = {
   id: "river",
   label: "River",
+  currentVersion: 1,
   appliesTo: ["river"],
   // Stage 1 (hydrology): reads the sketched mountains' `elevation` field
   // (slope straightens the meander — box 23-E, already wired); produces the
@@ -320,6 +334,7 @@ export const FOREST_TILE_GENERATOR_IDS: readonly string[] = [
 const forestAlgorithm: ProcgenAlgorithm = {
   id: "forest",
   label: "Forest",
+  currentVersion: 1,
   appliesTo: ["forest"],
   // Stage 2 (vegetation): no canopy in the river → consumes `water` (plan 024
   // §3; consumption wires in 24-C). Produces `vegetation` for the city's
@@ -391,6 +406,7 @@ export const PARK_TILE_GENERATOR_IDS: readonly string[] = [
 const parkAlgorithm: ProcgenAlgorithm = {
   id: "park",
   label: "Park",
+  currentVersion: 1,
   appliesTo: ["park"],
   // Stage 2 (vegetation), same band as forest: a park pond sits away from a
   // river channel → consumes `water`; produces `vegetation`.
@@ -443,6 +459,7 @@ export const WALL_TILE_GENERATOR_IDS: readonly string[] = ["wall-moat", "wall-qu
 const wallAlgorithm: ProcgenAlgorithm = {
   id: "wall",
   label: "Wall",
+  currentVersion: 1,
   appliesTo: ["wall"],
   // Stage 4 (detail): the procgen wall ELABORATION (towers/gates/moat) consumes
   // stage-3 `settlement` (plan 024 §7 resolution; consumption wires later). The
@@ -520,6 +537,7 @@ export const FARMLAND_TILE_GENERATOR_IDS: readonly string[] = [
 const farmlandAlgorithm: ProcgenAlgorithm = {
   id: "farmland",
   label: "Farmland",
+  currentVersion: 1,
   appliesTo: ["farmland"],
   // Stage 2 (grouped with vegetation): paddy-terraces follow the sketched
   // mountains' `elevation` contours (box 23-E, already wired) → consumes
@@ -584,6 +602,7 @@ export const MOUNTAIN_TILE_GENERATOR_IDS: readonly string[] = [
 const mountainAlgorithm: ProcgenAlgorithm = {
   id: "mountain",
   label: "Mountain",
+  currentVersion: 1,
   appliesTo: ["mountain"],
   // Stage 0 (elevation): the base FIELD. Produces `elevation` (the river's
   // slope coupling + farmland's paddy terraces read it via the sketch-derived
@@ -626,6 +645,12 @@ export function algorithmForKind(kind: FabricKind): ProcgenAlgorithm | undefined
   return REGISTRY.find((a) => a.appliesTo.includes(kind));
 }
 
+/** Every registered algorithm, in registry order. Read-only enumeration for
+ * hosts (adopt-all), scripts (goldens), and contract tests. */
+export function allAlgorithms(): readonly ProcgenAlgorithm[] {
+  return REGISTRY;
+}
+
 export function algorithmById(id: string): ProcgenAlgorithm | undefined {
   return REGISTRY.find((a) => a.id === id);
 }
@@ -660,4 +685,18 @@ export function matchingPresetId(
   params: Record<string, unknown>
 ): string | undefined {
   return algorithm.presets.find((p) => presetParamsMatch(p.params, params))?.id;
+}
+
+/** Params for adopting a region pinned at `fromVersion` into the current
+ * contract: the algorithm's `migrateParams` when it defines one, identity
+ * otherwise. Always returns a fresh object (callers persist it into a new
+ * block). Pure — the ONLY sanctioned path from pinned-old params to
+ * current-shape params. */
+export function migrateParamsForAdoption(
+  algorithm: ProcgenAlgorithm,
+  fromVersion: number,
+  params: Record<string, unknown>
+): Record<string, unknown> {
+  if (fromVersion >= algorithm.currentVersion || !algorithm.migrateParams) return { ...params };
+  return algorithm.migrateParams(fromVersion, { ...params });
 }
