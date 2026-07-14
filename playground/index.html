@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>procgen playground</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; display: flex; height: 100vh; overflow: hidden;
+    font: 13px/1.45 ui-sans-serif, system-ui, sans-serif; color: #2c2a26; background: #efe9dc;
+  }
+  #sidebar {
+    width: 320px; flex: none; overflow-y: auto; padding: 14px 16px;
+    background: #f7f3ea; border-right: 1px solid #d8d0bf;
+  }
+  #sidebar h1 { font-size: 15px; margin: 0 0 10px; }
+  #sidebar h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #8a8271; margin: 18px 0 6px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .row label { flex: 1; min-width: 0; }
+  .row .val { width: 52px; text-align: right; font-variant-numeric: tabular-nums; color: #6b6355; }
+  select, input[type=number], button {
+    font: inherit; padding: 3px 6px; border: 1px solid #c9c0ac; border-radius: 4px; background: #fff;
+  }
+  select { width: 100%; }
+  input[type=range] { flex: 2; min-width: 0; }
+  button { cursor: pointer; }
+  button:hover { background: #f0ead9; }
+  button.primary { background: #4a5d3a; color: #fff; border-color: #3c4c2f; }
+  button.primary:hover { background: #3e4f31; }
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #status {
+    padding: 6px 12px; font-variant-numeric: tabular-nums; color: #6b6355;
+    border-bottom: 1px solid #d8d0bf; background: #f7f3ea; display: flex; gap: 16px;
+  }
+  #status .err { color: #a03325; white-space: pre-wrap; }
+  #canvasWrap { flex: 1; position: relative; min-height: 0; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+  #view.panning { cursor: grabbing; }
+  #grid {
+    flex: none; display: flex; gap: 8px; padding: 8px 12px; overflow-x: auto;
+    background: #f7f3ea; border-top: 1px solid #d8d0bf; min-height: 0;
+  }
+  #grid:empty { display: none; }
+  .cell { flex: none; text-align: center; cursor: pointer; }
+  .cell canvas { display: block; border: 1px solid #d8d0bf; border-radius: 4px; background: #f4efe4; }
+  .cell.active canvas { border-color: #4a5d3a; box-shadow: 0 0 0 1px #4a5d3a; }
+  .cell .name { font-size: 10px; color: #8a8271; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hint { font-size: 11px; color: #9a9280; margin: 4px 0; }
+</style>
+</head>
+<body>
+  <div id="sidebar">
+    <h1>procgen playground</h1>
+    <div class="hint">imports <code>src/gen</code> directly — no Obsidian, no MapLibre. Scroll to zoom, drag to pan.</div>
+
+    <h2>Algorithm</h2>
+    <select id="algorithm"></select>
+
+    <h2>Seed</h2>
+    <div class="row">
+      <input type="number" id="seed" value="4181" style="width:110px" />
+      <button id="seedPrev" title="seed − 1">◀</button>
+      <button id="seedNext" title="seed + 1">▶</button>
+      <button id="seedRandom">random</button>
+    </div>
+
+    <h2>Region</h2>
+    <div id="regionControls"></div>
+
+    <h2>Template</h2>
+    <select id="preset"></select>
+
+    <h2>Params</h2>
+    <div id="params"></div>
+
+    <h2></h2>
+    <div class="row">
+      <button id="regen" class="primary">Regenerate</button>
+      <button id="renderGrid">Render preset grid</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="status"><span id="statTime"></span><span id="statCount"></span><span id="statErr" class="err"></span></div>
+    <div id="canvasWrap"><canvas id="view"></canvas></div>
+    <div id="grid"></div>
+  </div>
+
+  <script src="dist/main.js"></script>
+</body>
+</html>

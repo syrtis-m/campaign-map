@@ -16,7 +16,8 @@
     "test:app": "tsx scripts/test-app.ts",
     "gates:changed": "tsx scripts/changed-gates.ts",
     "board": "tsx scripts/board.ts",
-    "soak": "tsx scripts/rendererSoak.ts"
+    "soak": "tsx scripts/rendererSoak.ts",
+    "playground": "node playground/serve.mjs"
   },
   "devDependencies": {
     "@maplibre/maplibre-gl-style-spec": "^20.4.0",

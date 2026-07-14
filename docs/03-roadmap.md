@@ -54,6 +54,19 @@
 
 ## Current procgen phase — Plan 020: sketch-driven regions (v4.0–v4.2 SHIPPED 2026-07-12; v4.3 in flight)
 
+## Procgen v4 arc — plans 021–028 (SHIPPED 2026-07-14)
+
+The full 021–025 arc plus the 026–028 visual-overhaul waves landed over
+2026-07-12 → 2026-07-14 (HEARTBEAT.md has the box-by-box log; plans/README.md
+rows carry per-phase commits). Summary: fast-testing infrastructure (fuzz tier,
+board runner, headless harness) → the algorithm suite (rivers/forests/parks/
+walls/farmland) → constraint fields + elevation (mountains, contours,
+hillshade/3D) → the cross-layer regen cascade (stage DAG, fingerprints, city
+consumes the generated river channel) → street-pattern presets + numeric
+benchmarks (12 presets, metrics module, Preset Gallery campaign + contact
+sheet in review/gallery/). Next axis: the rearchitecture waves (plan 030) +
+versioned determinism (plan 029), both ratified 2026-07-14.
+
 *Phases 0–5 above are the product build axis (all shipped). Procgen has its own
 version axis; **v4** is the current work. Plan 020 (Jonah, 2026-07-12) moves city
 generation from disc domains (click at z≥8 → DomainProfileModal → disc) to the

@@ -1118,3 +1118,37 @@
   Jonah. Re-flagged: 10 presets is the edge of scannable.
 - Gallery reopenAndSettle now polls for region population (fixed 5s sleep
   outgrown at 10 districts).
+
+## 2026-07-14 — Rearchitecture arc ratified: versioned determinism + playground (Jonah, direct session)
+- **Versioned determinism ADOPTED (plan 029 §1 is the ruling):** byte-determinism
+  holds WITHIN an algorithm version (D1–D6 unchanged); a change that moves bytes
+  for the same (seed, params) bumps the algorithm's version instead of proving
+  byte-neutrality. Regions pin their version at creation; upgrades never visibly
+  change a region without explicit GM adoption (consent = cache + prompt, NEVER
+  legacy code forks — plan 029 §4). The additive-params LAW is repealed
+  (downgraded to a preference); byte-goldens shrink to one per algorithm and
+  re-accept on bump; metric bands + structural invariants become the primary
+  net. World tier stays frozen (029 §7). Mechanics execute as wave 3 — after
+  the 026–028 HEARTBEAT waves and the plan-030-A sweep, not before.
+- **Standalone procgen playground shipped** (`playground/`, `npm run playground`):
+  esbuild-served browser harness importing `src/gen` directly — live param
+  knobs (zod-introspected), seed scrubber, region/spine shape picker, preset
+  grid, per-gid canvas renderer. Dev tooling only: not in the plugin bundle,
+  not a determinism surface, no Obsidian/MapLibre imports. Its renderer is an
+  acknowledged SHIM until plan 030-D's declarative paint contract replaces it.
+- **Sequencing ratified (plan 030 §1):** 030-A comment/doc sweep (quiet window,
+  after in-flight work lands) → 029 mechanics → 030-B gate shrink → 030-D
+  declarative paint; operators+data becomes a standing convention (030-C), not
+  a wave. Rationale: sweep needs the 029 policy to know which comments are
+  dead; gate shrink needs playground + metric bands to exist as replacements.
+
+## 2026-07-14 — 25-E + arc close
+- **25-E board close-out (Jonah live ruling):** plan-025 board 30/33; the
+  three fails are the established flake classes (phase3 + procgen49
+  screenshot-write infra — standalone-green in the plan-024 board hours
+  earlier; procgen48 the chipped seed-luck fixture). Jonah visually
+  confirmed the 12-city gallery live and directed commit/push/close without
+  further standalone chasing — consistent with the 2026-07-13 flake ruling.
+- **FINAL box:** README rows 021–028 → DONE with per-phase commits; docs/03
+  gains the arc-shipped summary; review/ARC-021-028-NOTES.md is the
+  morning-read digest (all §Questions entries consolidated there).

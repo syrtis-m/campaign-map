@@ -8,7 +8,31 @@
 2. Dev vault at `dev-vault/` in this repo (a real vault with a test campaign per genre: fictional-fantasy, real-city, neon-sprawl city).
 3. `npm run dev` — esbuild watch, output symlinked/copied into `dev-vault/.obsidian/plugins/campaign-map/`.
 
-## The core loop (agents: this is your inner cycle)
+## Playground — the procgen inner loop (start here for generator work)
+
+`npm run playground` → http://localhost:8734 — a standalone browser harness
+(`playground/`, esbuild serve, zero new deps) that imports `src/gen` **directly**: no
+build-to-vault, no plugin reload, no Obsidian. Iteration on a generator goes from
+minutes to milliseconds, so it is the FIRST stop for any procgen work:
+
+- **Tuning**: every algorithm's zod params render as live knobs (sliders/dropdowns
+  auto-derived from the schema — a new param appears with zero playground changes);
+  regenerate-on-release with per-run timing and feature count.
+- **Seed sweeps**: scrub seeds (◀ ▶ / random) to judge variety and robustness before
+  writing a fuzz assertion.
+- **Preset review**: one click renders every preset side-by-side at the current seed —
+  the fastest way to check a new preset reads distinctly (docs/04 genre test).
+- **Region robustness**: circle / square / blob / concave-L region shapes and spine
+  shapes for line-kind algorithms — eyeball containment and concave behavior live.
+
+What the playground is NOT: its canvas paint is a per-gid **shim** (plan 030-D replaces
+it with the theme style contract), so it judges *geometry and composition*, not theme
+paint — final visual sign-off for anything paint-related still needs the in-app
+screenshot below. It also exercises no host code (cache, worker, lifecycle, undo),
+so it never substitutes for a live gate. Generator work order: **playground (tune +
+judge) → unit/fuzz tests (T0/T1) → Obsidian loop only for the host-integration slice.**
+
+## The core loop — Obsidian (host/theme/integration work; the live-gate cycle)
 
 ```bash
 npm run build                                   # or rely on the dev watcher
@@ -64,6 +88,7 @@ obsidian dev:mobile on && obsidian dev:errors && obsidian dev:mobile off
 
 | Layer | Tool | What |
 |---|---|---|
+| Generator visuals + tuning | **Playground** (`npm run playground`), no Obsidian | Live param knobs, seed sweeps, preset grid, region-shape robustness — the judgment surface BEFORE assertions are written; geometry/composition only (paint shim, not theme truth) |
 | Generators (pure) | **Vitest**, no Obsidian | Seeded snapshot fixtures; 2×2 seam tests; determinism (same seed twice → identical) |
 | Model/validators | Vitest | Zod schemas, frontmatter parse round-trips |
 | Integration | **Obsidian CLI script** (`npm run test:app`) | The loops above: reload → drive → eval-assert → `dev:errors` clean |
@@ -87,7 +112,7 @@ Testing used to mean "run the whole board," which cost an afternoon. It no longe
 - **`npm test` is the FAST tier** (target <30 s): everything except the slow fuzz/stress tests, which live in `*.fuzz.test.ts` and run via **`npm run test:fuzz`** at T1+. Run the fuzz tier whenever a **generator's behavior actually changed**; skip it for docs/UI-only edits. Together `npm test` + `npm run test:fuzz` cover the identical set of tests — every test is in exactly one tier.
 - **Change-scoped gates (T2):** `npm run gates:changed` intersects `git diff --name-only` (vs the last green board, stored in `.lastgreenboard`; override with `--ref=<sha>`) against `scripts/gates/coverage.json` and runs only the gates whose globs match. It **escalates to the full board automatically** when a determinism-critical path changes (`src/gen/region.ts`, `src/gen/rng.ts`, any `clip.ts`, `src/model/tileCache.ts`) — which is why it is no longer a per-commit requirement: during generator-heavy plans it escalates almost every time, re-proving the world per commit. Determinism safety is instead carried by the fast tier's byte-identity/golden tests per generator and the plan-end board.
 - **Board-flake rule:** a live gate that FAILS inside a board but passes standalone immediately after is an **environment flake** (long-lived-renderer degradation, plan 021-B — known, mitigated, not fully fixed). Log it (gate name + both results) in PROGRESS.md, count the gate green, and do **not** re-run the whole board to chase a clean sweep — disjoint flakes across re-runs burn ~6 min each and prove nothing new.
-- **Screenshot judgment stays mandatory where visual** (docs/04's screenshot test is untouched — the tiers make room for it by removing everything else from the critical path). Never mark visual work done without reading the png.
+- **Screenshot judgment stays mandatory where visual** (docs/04's screenshot test is untouched — the tiers make room for it by removing everything else from the critical path). Never mark visual work done without reading the png. For GENERATOR visuals, do the iterating in the playground (instant re-render beats a build+reload+screenshot cycle per data point) and reserve the in-app screenshot for the final theme-paint judgment — the playground's shim paint can't stand in for themes.
 - **Commit-message tag records the tier that ran:** `[gate: T1 …]` for a phase commit, `[gate: full board N/M]` for the plan-end T3. A commit that only ran T0 says so.
 
 ## The board runner (`npm run board`, plan 021 §2.3)
@@ -110,6 +135,9 @@ npm run board -- --probe-fail-at=N     # inject ONE probe failure at the Nth gat
 
 ## Rules for agents
 
+- Generator/tuning work starts in the playground (§Playground above) — do not burn
+  build+reload+screenshot cycles iterating on `src/gen` output the playground shows
+  in milliseconds. Come to the Obsidian loop for the host-integration slice.
 - Never mark UI work done without `dev:errors` clean + a screenshot you have actually read.
 - `eval` is for *reading* state and driving the map; write vault content via `create`/`property:set` etc. (goes through Obsidian's own file layer, exercising the same events users trigger).
 - `plugin:reload` after every build; `obsidian reload` (full window) if view registration changed.

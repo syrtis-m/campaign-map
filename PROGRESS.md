@@ -366,8 +366,16 @@
   baroque-axial presets; dropdown kept flat per OQ#2 (Jonah's UX call);
   gallery 1×10. Gate: fast 824/824 · fuzz ×10 · presetGallery 8/8 ·
   eyeballed (chords→star plazas; clear trivium). See DECISIONS "25-D".
-- Next: 25-E canal-rings + radial-star + seam boulevards + growth rings +
-  small wins ⛳ plan-025 board + refreshed gallery contact sheet.
+- **25-E DONE** (`337ab7f`) + **FINAL box DONE — ARC 021–028 COMPLETE
+  (2026-07-14)**: canal-rings + radial-star presets, seam boulevards, growth
+  rings; 12-preset gallery + final contact sheet; plan-025 board 30/33 (the
+  three known flake classes; Jonah live-confirmed and called the close).
+  README rows → DONE w/ commits; docs/03 arc summary;
+  review/ARC-021-028-NOTES.md is the morning digest (screenshots to view,
+  decisions needing eyes, open procgen48-seed chip, real bugs found+fixed).
+  Fast suite 314 → 832 across the arc. Next axis: plan 030 rearchitecture
+  waves + plan 029 versioned-determinism mechanics (both ratified
+  2026-07-14).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 
