@@ -175,7 +175,7 @@ wave box commits on T1 only.
       surface) (023 §4.1)
 - [x] 958f263 23-D hillshade + 3D terrain (raw-lattice cache, PNG at serve; heights
       compared in gates, never PNG bytes) (023 §4.2) ⛳ full board
-- [ ] 23-E paddy-terraces + river-slope coupling deferred from 022 (022 §3.1,
+- [x] 38abcdd 23-E paddy-terraces + river-slope coupling deferred from 022 (022 §3.1,
       §3.5) [runs after wave-1's 28-B by checklist order — coupling builds on
       the new meander math]
 
@@ -222,12 +222,13 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
 (none — add entries as `- <box-id>: <why> — <what's needed>`)
 
 ## Questions for Jonah (answered decisions logged in DECISIONS.md; morning digest)
-- 23-D board found **procgen46 (old park gate) genuinely RED at clean HEAD**
-  (8/11, deterministic, fails identically with 23-D stashed — so introduced
-  earlier, most likely gate rot from 027-A/B's park figure-ground rework;
-  the NEWER vo27-park gate passes 20/20). Task chip filed. `.lastgreenboard`
-  NOT advanced (stays 257e280). OK to fix as its own small commit next
-  session, or do you want it triaged differently?
+- ~~23-D board found procgen46 genuinely RED at clean HEAD~~ **FIXED
+  (77c3bdb, this session):** confirmed gate rot from 027-A/B's park rework
+  (lawn now seed-independent; formal basin intrinsic) — gate retargeted to
+  park-tree scatter, 11/11 twice standalone. NOTE: the task chip for this was
+  also STARTED in a parallel worktree session — that session will find it
+  already green on pull; reconcile/discard its worktree as appropriate.
+  `.lastgreenboard` still 257e280 (the 23-D board itself was 25/27).
 - 23-D judgment calls (DECISIONS): pitch-adaptive terrain toggle (maplibre
   4.7.1 misrenders hillshade+mesh together — top-down gets 2D hillshade,
   pitched gets 3D mesh); terrarium-capped K=25 vertical scale; 3D
@@ -254,6 +255,16 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 7 cont.): procgen46 gate-rot RED fixed as its
+  own commit (77c3bdb, 11/11 twice; the parallel chip session will find it
+  green — reconcile its worktree). Then 23-E via phase subagent (resumed once
+  after the recurring advisor-consult API stall — advisor skipped): cross-kind
+  elevation via fields/mountainField (verbatim move + elevationFieldFromFabric
+  — raw-sketch legality), paddy terraces w/ marching-squares banks + flat
+  fallback, river slopeSensitivity (DEFAULT-ON — flagged for Jonah; rcCap
+  pinned or λ-stretch cancels damping, caught live twice). coupling23e 13/13
+  twice fresh-process. Committed 38abcdd. Fast 650. **PLAN 023 COMPLETE.**
+  Next: wave-2 26-B (forest canopy marching squares).
 - 2026-07-14 (arc run, session 7): resumed after a user interrupt of the 23-D
   agent (partial work on tree); goal re-set to "implement heartbeat.md";
   resumed the SAME agent from transcript per wake protocol — zero rework.

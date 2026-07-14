@@ -894,3 +894,30 @@
   20/20). Chipped + flagged in HEARTBEAT §Questions; .lastgreenboard NOT
   advanced. Perf note: DEM tile fill on Surface Pro untested (default-OFF
   feature; DEM_TILE_RES=256 is the cost knob).
+
+## 2026-07-14 — procgen46 gate-rot fix + Plan 023 phase E (cross-kind coupling)
+- **procgen46 (77c3bdb):** pre-existing board RED was gate rot, not a
+  generator regression — verified the re-roll path live before touching the
+  gate. Locality retargeted to city-park park-tree scatter (the structural
+  edit-locality carrier post-027-A); formal check now asserts the intrinsic
+  basin (>=1, per-tile-clip-aware).
+- **23-E cross-kind legality:** farmland/river read the ELEVATION FIELD
+  composed purely from the sketched mountains' persisted procgen blocks
+  (elevationFieldFromFabric over constraints.fabricFeatures) — same legality
+  as 23-D's DEM; generator OUTPUT coupling stays plan 024. The mountain
+  internals moved verbatim to fields/mountainField.ts (23-A technique;
+  mountain.ts re-exports, all goldens byte-green).
+- **river slopeSensitivity DEFAULTS ON (flag for Jonah):** a 0-default would
+  make the feature invisible forever; 23-C set the regen-additive precedent.
+  Only rivers actually crossing a sketched mountain change, only on next
+  regenerate; canal preset pins 0.
+- **rcCap pinned at the unstretched value** — λ-stretch grows the R_c cap
+  ∝h² and cancels the slope damping almost exactly in the R_c-bound regime
+  (28-B's saturation regime; caught live twice). Slope k uses a 5-sample
+  mean |∇h| (single midpoint sample was luck-hostage). Coupled/control ratio
+  measured 0.50–0.77 across 12 seeds; braids not slope-coupled in v1;
+  downhill flow-direction check deferred to 024.
+- **Paddy:** interval ladder capped at 25 m (uncapped converged on the
+  contour layer's own cadence — visual duplication); flat-ground fallback =
+  concentric interior-distance bands, kept permanently as the documented
+  no-relief look (boundary-following, hence ring-edit-reshaped — correct).

@@ -261,8 +261,26 @@
   dev-vault clean · plan-023 BOARD 25/27 (procgen48 seed-luck flake
   standalone-PASS per rule; **procgen46 pre-existing RED at clean HEAD** —
   chipped + flagged; .lastgreenboard stays 257e280). See DECISIONS "23-D".
-- Next: 23-E paddy-terraces + river-slope coupling (deferred from 022;
-  builds on 28-B's meanderSegment param seam + 23-B elevation).
+- **procgen46 gate-rot fix** (`77c3bdb`): the 23-D board's pre-existing RED
+  diagnosed as gate rot from 027-A/B's park rework (lawn seed-independent;
+  formal basin intrinsic) — gate retargeted to park-tree scatter, formal
+  check asserts the basin; 11/11 twice from fresh Obsidian. Generator +
+  vo27-park untouched.
+- **23-E DONE** (`38abcdd`) — **PLAN 023 COMPLETE**: cross-kind elevation.
+  fields/mountainField.ts (verbatim move; elevationFieldFromFabric composes
+  the campaign field from sketched mountains' persisted procgen blocks —
+  raw-sketch legality, generators never read each other's output). Farmland
+  `paddy-terraces` preset: region wash + marching-squares `farm-bank`
+  contour lines (25m-capped ladder; concentric interior-distance fallback
+  below 8m relief). River `slopeSensitivity` (DEFAULT-ON — flagged): steep
+  ground damps amplitude ×(1−.85k) with the R_c cap pinned (λ-stretch would
+  cancel damping otherwise — caught live) and stretches λ. No-mountain
+  byte-identity asserted for BOTH kinds. Gate: fast 650/650 · fuzz 21/21 ·
+  coupling23e 13/13 ×2 fresh-process · 3 screenshots eyeballed · dev-vault
+  clean. See DECISIONS "23-E".
+- Next: visual-overhaul wave 2 — 26-B forest canopy (marching squares on the
+  23-C machinery), 26-C tree glyphs, then ∥ P3 (27-C + 28-C ⛳ one board for
+  026+027+028).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 
