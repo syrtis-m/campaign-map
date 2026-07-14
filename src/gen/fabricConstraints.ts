@@ -12,6 +12,8 @@
  */
 import type { FabricFeature } from "../model/fabric";
 import type { AngleSampler } from "./city/streamlines";
+import type { GenerationConstraints } from "./types";
+import { buildUpstreamConstraints } from "./upstream";
 import { sampleFieldAngle, type TensorFieldParams } from "./city/tensorField";
 // The water-polygon predicate is fields' `pointInRingClosed` (moved verbatim,
 // plan 023 §2), imported back so the constraint math shares the fields
@@ -38,6 +40,16 @@ export interface FabricConstraintIndex {
    * that ground. Strict empty when no farmland is sketched, so a city without
    * one is byte-identical to before this feature. */
   farmlandRings: Pt[][];
+  /** Plan 024 §3 (24-C): outer rings of the GENERATED, meandered river CHANNEL
+   * (`upstream.water` — stage-1 hydrology output the city consumes). Unlike a
+   * `water`-polygon LAKE (impassable), a channel is a RIVER: passable-but-
+   * bridged. Street-ends/buildings/walls treat it as water (they avoid it);
+   * arterials cross it as bridges; euro quays hug its real bank. Strict empty
+   * when there is no upstream channel, so a city WITHOUT a procgen river
+   * upstream is byte-identical to before this feature. When NON-empty it
+   * SUPERSEDES the raw sketched `river` spine (`riverLines` is emptied): the
+   * generated channel is the river's real geometry the city tracks. */
+  channelRings: Pt[][];
 }
 
 const EMPTY: FabricConstraintIndex = {
@@ -46,6 +58,7 @@ const EMPTY: FabricConstraintIndex = {
   roadLines: [],
   wallLines: [],
   farmlandRings: [],
+  channelRings: [],
 };
 
 /** Buckets fabric features by the constraint role their kind plays. Park
@@ -61,6 +74,7 @@ export function indexFabricConstraints(features: FabricFeature[] | undefined): F
     roadLines: [],
     wallLines: [],
     farmlandRings: [],
+    channelRings: [],
   };
   for (const f of features) {
     const g = f.geometry;
@@ -77,6 +91,36 @@ export function indexFabricConstraints(features: FabricFeature[] | undefined): F
     }
   }
   return idx;
+}
+
+/**
+ * Plan 024 §3 (24-C) — the FULL constraint index a stage-3 consumer reads: the
+ * raw sketched fabric (`indexFabricConstraints`) PLUS the strictly-lower-stage
+ * GENERATED upstream it declared it `consumes` — today the meandered river
+ * CHANNEL (`constraints.upstream.water`). This is where output→output coupling
+ * enters the city: bridges track the meandered channel, quays hug its real
+ * bank, street-ends/buildings stop at it (§6's windiness acceptance).
+ *
+ * The channel arrives as DATA (`upstream.water` GeoJSON polygons); we rebuild
+ * its outer rings via the shared pure `buildUpstreamConstraints` (host + worker
+ * agree, D6) — citynet never imports `river.ts`. When a channel is present it
+ * SUPERSEDES the raw sketched `river` spine (the generated meander is the
+ * river's real geometry, so the straight spine would be a phantom second
+ * river): `riverLines` is dropped, and `channelRings` drives every water
+ * predicate. Absent/empty upstream ⇒ byte-identical to `indexFabricConstraints`
+ * (a city with no procgen river upstream is untouched — the 23-A digest golden
+ * and the sketched-river citynet tests still hold).
+ *
+ * LIMITATION (flagged, DECISIONS 24-C): a channel present drops ALL raw
+ * `river` spines, so a hypothetical NON-procgen raw river coexisting with a
+ * procgen river inside the same city would lose its constraint. The suite has
+ * no such fixture (Vespergate has one river); acceptable for v1.
+ */
+export function indexConstraints(constraints: GenerationConstraints): FabricConstraintIndex {
+  const base = indexFabricConstraints(constraints.fabricFeatures);
+  const channelRings = buildUpstreamConstraints(constraints.upstream).waterRings;
+  if (channelRings.length === 0) return base;
+  return { ...base, riverLines: [], channelRings };
 }
 
 /** Inside a raw `farmland` sketch polygon (plan 022 §3.5)? True ⇒ the city
@@ -116,9 +160,15 @@ export function nearestOnLine(line: Pt[], x: number, y: number): { dist: number;
   return best;
 }
 
-/** Inside a sketched water polygon, or within a river's half-width. */
+/** Inside a sketched water polygon, within a sketched river's half-width, or
+ * inside the GENERATED meandered channel (plan 024 §3, 24-C). Street-ends,
+ * buildings and walls all avoid these — so "zero city geometry intersects the
+ * channel" holds once `channelRings` is folded in (via `indexConstraints`). */
 export function blockedByWater(idx: FabricConstraintIndex, x: number, y: number): boolean {
   for (const ring of idx.waterRings) {
+    if (pointInRing(ring, x, y)) return true;
+  }
+  for (const ring of idx.channelRings) {
     if (pointInRing(ring, x, y)) return true;
   }
   for (const line of idx.riverLines) {
@@ -157,7 +207,7 @@ export function truncateAtBarriers<P extends { x: number; y: number }>(
   idx: FabricConstraintIndex,
   line: P[]
 ): P[] {
-  const hasWater = idx.waterRings.length > 0 || idx.riverLines.length > 0;
+  const hasWater = idx.waterRings.length > 0 || idx.riverLines.length > 0 || idx.channelRings.length > 0;
   const hasWalls = idx.wallLines.length > 0;
   if (!hasWater && !hasWalls) return line;
 

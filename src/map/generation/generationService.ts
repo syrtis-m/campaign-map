@@ -10,7 +10,7 @@ import { appendCachedTile, getCachedTile, type CachedTile } from "../../model/ti
 import { GENERATION_ZOOM, tileBBox, tileKey } from "../../gen/cache/tileGrid";
 import { isCacheRecordFresh } from "../../gen/cache/fingerprint";
 import type { BBox } from "../../gen/spatialHash";
-import type { GenerationConstraints } from "../../gen/types";
+import type { GenerationConstraints, UpstreamArtifacts } from "../../gen/types";
 import type { FabricFeature } from "../../model/fabric";
 import { genreForCampaign } from "../../gen/naming/cultures";
 import { clipNetworkToTile } from "../../gen/citynet";
@@ -34,6 +34,13 @@ export interface GenerationContext {
   /** Sketched fabric in generation-space (meters) — plan 019 Phase 3:
    * every generator run sees the GM's hand-drawn geometry as constraints. */
   fabricFeatures?: FabricFeature[];
+  /** Plan 024 §3 (24-C) — the strictly-lower-stage GENERATED output this
+   * region's algorithm consumes (the meandered river channel etc.), built by
+   * the host PER region from fresh lower-stage artifacts and threaded to the
+   * generator as DATA (`constraints.upstream`). Absent for a region with no
+   * upstream coupling ⇒ byte-identical to before the cascade. A cache HIT never
+   * reads it (the bytes are already right — plan 024 §5). */
+  upstream?: UpstreamArtifacts;
 }
 
 /** Cache-or-generate a tile. Cached results are returned as-is; a cache hit
@@ -111,6 +118,7 @@ function regionConstraints(ctx: GenerationContext): GenerationConstraints {
     fabricFeatures: ctx.fabricFeatures,
     namingGenre: genreForCampaign(ctx.campaign.config.crs, ctx.campaign.config.theme),
     namingCultureIds: ctx.campaign.config.namingCultures,
+    upstream: ctx.upstream,
   };
 }
 

@@ -52,6 +52,7 @@ import {
 } from "../model/generatedManifest";
 import { generatedManifestPath } from "../vault/generatedManifestStore";
 import type { CachedTile } from "../model/tileCache";
+import type { UpstreamArtifacts } from "../gen/types";
 import { campaignFolderFromConfigPath, type LogEntry } from "../model/mutationLog";
 import { defaultFictionalBounds } from "../map/fictionalCRS";
 import {
@@ -597,6 +598,10 @@ export class MapController {
     }
     if (this.campaign?.id !== campaign.id) return [];
     const ctx = this.generationContext();
+    // Plan 024 §3 (24-C): thread this region's fresh lower-stage upstream (the
+    // meandered river channel the city consumes) as DATA. Built from the shared
+    // cache when present (replay/flush) or a one-shot vault read (cascade).
+    ctx.upstream = await this.buildRegionUpstream(feature, region, algorithm, preloaded, folder);
     const worker = await this.host.gen.getWorker();
     const compute = this.regionCompute(worker, feature);
     // Plan 024 §5.1 + 24-B: the durable-input fingerprint stamped on every
@@ -641,6 +646,70 @@ export class MapController {
   }
 
   // ─── Cross-layer regen cascade (plan 024 §2/§4) ────────────────────────
+
+  /**
+   * Plan 024 §3 (24-C) — build this region's UPSTREAM artifacts: the fresh
+   * GENERATED output of strictly-lower-stage regions whose `produces` this
+   * region `consumes` and whose bbox (grown by the influence reach) overlaps it.
+   * Today the sole WIRED consumption is `water` — the meandered river channel
+   * (`river-channel` polygons) the city bridges/quays track (`indexConstraints`
+   * folds it in). Vegetation stays declared-but-inert (a forest edit still
+   * recomputes the city byte-identically — 24-B's accepted over-invalidation).
+   *
+   * The channel is read from the upstream region's NETWORK cache record: in the
+   * replay/flush path it is already in the shared `cache` map (no extra IO); in
+   * the cascade path (each region regenerated in `(stage, regionId)` order,
+   * upstream before downstream) the upstream network was just written to the
+   * vault, so a one-shot read backfills it. Returns `undefined` when there is no
+   * upstream water — the generator then runs byte-identically to pre-24-C.
+   *
+   * Determinism/replay: a city cache HIT returns cached bytes without ever
+   * calling the generator, so this upstream is built but unused on a hit (the
+   * bytes are already right — plan 024 §5); only a MISS consumes it, and by then
+   * the lower stage has landed. Feature order is `(stage, id)`-deterministic.
+   */
+  private async buildRegionUpstream(
+    feature: FabricFeature,
+    region: ProcgenRegion,
+    algorithm: ProcgenAlgorithm,
+    cache: Map<string, CachedTile> | undefined,
+    folder: string
+  ): Promise<UpstreamArtifacts | undefined> {
+    if (!algorithm.consumes.includes("water")) return undefined;
+    const reach = MapController.CONSTRAINT_REACH;
+    const rb = region.bbox;
+    // Lower-stage water producers overlapping this region (the §4 edge rule,
+    // computed directly so it holds even for a just-attached feature not yet in
+    // the DAG node set). Sorted by id for deterministic feature order.
+    const upstreamFeatures = this.regionFeatures()
+      .filter((f) => {
+        const b = f.properties.procgen;
+        const a = b ? algorithmById(b.algorithm) : undefined;
+        if (!a || a.stage >= algorithm.stage || !a.produces.includes("water")) return false;
+        const r = this.buildRegionFromFeature(f);
+        if (!r) return false;
+        const e = r.bbox;
+        return !(e.maxX + reach < rb.minX || rb.maxX < e.minX - reach || e.maxY + reach < rb.minY || rb.maxY < e.minY - reach);
+      })
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    if (upstreamFeatures.length === 0) return undefined;
+    let full: Map<string, CachedTile> | null = null;
+    const water: GeoJSON.Feature[] = [];
+    for (const up of upstreamFeatures) {
+      const key = regionNetworkKey(up.id);
+      let rec = cache?.get(key);
+      if (!rec) {
+        full = full ?? (await this.host.vault.readCached(folder));
+        rec = full.get(key);
+      }
+      if (!rec) continue;
+      for (const f of rec.features as unknown as GeoJSON.Feature[]) {
+        const gid = (f.properties as { generatorId?: string } | null)?.generatorId;
+        if (gid === "river-channel") water.push(f);
+      }
+    }
+    return water.length > 0 ? { water } : undefined;
+  }
 
   /** Build a `DagNode` per procgen region from the registry (stage + the
    * produces/consumes constraint kinds) and its gen-space bbox. The pure

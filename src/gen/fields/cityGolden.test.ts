@@ -115,6 +115,11 @@ describe("city byte golden (plan 023-A bit-exact retrofit reference)", () => {
     });
     // Sanity: the constraints must actually bite (fewer features than the bare
     // city), else this fixture would silently stop covering the predicate path.
+    // NOTE (plan 024-C): this golden was DELIBERATELY regenerated — the new
+    // "buildings don't swim" filter drops footprints whose centroid falls in the
+    // sketched river/lake (39 fewer features). The BARE (no-water) golden above
+    // is byte-identical (the filter is a strict no-op without water), so the
+    // 23-A retrofit reference still stands for every no-water city.
     expect(net.length).toBeGreaterThan(0);
     expect(digest(net)).toMatchSnapshot();
   });

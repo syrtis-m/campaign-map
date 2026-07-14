@@ -18,9 +18,9 @@ exports[`city byte golden (plan 023-A bit-exact retrofit reference) > bare disc 
 
 exports[`city byte golden (plan 023-A bit-exact retrofit reference) > constrained region — river + lake + road (fabricConstraints water/river predicate path) 1`] = `
 {
-  "bytes": 2281581,
-  "features": 7980,
-  "sha256": "7f344617c881924795d28917c193ae2f091775deac1126e7a03e28e41d4f5eb0",
+  "bytes": 2270416,
+  "features": 7941,
+  "sha256": "d41afab38ab6fce8a4205a841e45c20cd051f5aff026050681c5ff57954c4733",
 }
 `;
 

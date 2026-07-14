@@ -50,9 +50,8 @@ import type { GenerationConstraints } from "../types";
 import { chaikinSmooth } from "../city/corridor";
 import {
   blockedByWater,
-  indexFabricConstraints,
+  indexConstraints,
   nearestOnLine,
-  RIVER_HALF_WIDTH,
   type FabricConstraintIndex,
 } from "../fabricConstraints";
 
@@ -303,15 +302,14 @@ function destinationBearings(
 
 // ── Bridges ──────────────────────────────────────────────────────────────
 
-/** Consecutive bridge-span cells of a cell path — cells within one cost cell of
- * the river-crossing penalty band (so bridge coords stay within
- * `RIVER_HALF_WIDTH + COST_CELL_M` of the river, matching the seam tolerance). */
+/** Consecutive bridge-span cells of a cell path — the cost field's `bridgeCell`
+ * marks cells in the sketched-river crossing band OR inside the generated
+ * meandered channel (24-C), so a bridge tracks the real water either way. */
 function bridgeSpans(cells: Cell[], cost: CostField): Cell[][] {
-  const band = RIVER_HALF_WIDTH + COST_CELL_M;
   const spans: Cell[][] = [];
   let run: Cell[] = [];
   for (const c of cells) {
-    if (cost.riverDist(c.cx, c.cy) < band) {
+    if (cost.bridgeCell(c.cx, c.cy)) {
       run.push(c);
     } else if (run.length > 0) {
       spans.push(run);
@@ -357,6 +355,68 @@ function offsetPolyline(line: Pt[], dist: number, side: number): Pt[] | null {
     if (sdx * odx + sdy * ody <= 0) return null;
   }
   return out;
+}
+
+/**
+ * Offset a CLOSED ring OUTWARD by `dist` along per-vertex outward normals (24-C
+ * quays hug the generated channel's real bank). Winding is read from the signed
+ * area so "outward" is unambiguous; unlike `offsetPolyline` this does NOT reject
+ * folds — a meander ring inevitably folds on the inside of a bend, and the
+ * folded points land back inside the channel, where `splitDryRuns` drops them.
+ * Deterministic (pure arithmetic on the ring). Returns [] for a degenerate ring.
+ */
+function offsetRingOutward(ring: Pt[], dist: number): Pt[] {
+  const n = ring.length - 1; // closed ring: ring[n] === ring[0]
+  if (n < 3) return [];
+  let area2 = 0;
+  for (let i = 0; i < n; i++) {
+    area2 += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+  }
+  // The left normal (−dy, dx) points to the interior for a CCW ring (area2 > 0),
+  // so the outward direction flips with winding.
+  const outwardSign = area2 > 0 ? -1 : 1;
+  const out: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const prev = ring[(i - 1 + n) % n];
+    const cur = ring[i];
+    const next = ring[(i + 1) % n];
+    const l1 = leftUnitNormal(prev, cur);
+    const l2 = leftUnitNormal(cur, next);
+    let mx = l1[0] + l2[0];
+    let my = l1[1] + l2[1];
+    const ml = Math.hypot(mx, my) || 1;
+    mx /= ml;
+    my /= ml;
+    out.push([cur[0] + outwardSign * dist * mx, cur[1] + outwardSign * dist * my]);
+  }
+  out.push(out[0]);
+  return out;
+}
+
+/** Unit left-normal of edge a→b (deterministic; zero-length edge ⇒ [0,0]). */
+function leftUnitNormal(a: Pt, b: Pt): Pt {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy) || 1;
+  return [-dy / len, dx / len];
+}
+
+/** Split a polyline into maximal sub-runs of consecutive points that are NOT
+ * water/channel (24-C): a quay derived from an outward ring offset keeps only
+ * the dry stretches, so no quay vertex ever sits inside the channel. */
+function splitDryRuns(line: Pt[], idx: FabricConstraintIndex): Pt[][] {
+  const runs: Pt[][] = [];
+  let cur: Pt[] = [];
+  for (const p of line) {
+    if (blockedByWater(idx, p[0], p[1])) {
+      if (cur.length > 0) runs.push(cur);
+      cur = [];
+    } else {
+      cur.push(p);
+    }
+  }
+  if (cur.length > 0) runs.push(cur);
+  return runs;
 }
 
 // ── Plaza + landmarks ────────────────────────────────────────────────────
@@ -644,14 +704,34 @@ export function buildSkeleton(
   // nothing, which is the same answer the old disc pre-filter gave.
   const waterfront: { coords: Pt[] }[] = [];
   if (profile.waterfrontOffsets.length > 0) {
-    const idx = indexFabricConstraints(constraints.fabricFeatures);
-    for (const river of idx.riverLines) {
-      for (const off of profile.waterfrontOffsets) {
-        for (const side of [1, -1]) {
-          const offsetLine = offsetPolyline(river, off, side);
-          if (!offsetLine) continue;
-          for (const run of clipPolylineToRegion(region, offsetLine)) {
-            if (run.length >= 2) waterfront.push({ coords: run });
+    const idx = indexConstraints(constraints);
+    if (idx.channelRings.length > 0) {
+      // 24-C: the generated meandered channel supersedes the sketched spine.
+      // Quays hug its real bank — offset each channel ring OUTWARD and keep the
+      // dry stretches (folded/inner points fall in the channel and are dropped),
+      // so quays track the channel and never sit in the water.
+      for (const ring of idx.channelRings) {
+        for (const off of profile.waterfrontOffsets) {
+          const offsetRing = offsetRingOutward(ring, off);
+          if (offsetRing.length < 2) continue;
+          for (const clipped of clipPolylineToRegion(region, offsetRing)) {
+            for (const dry of splitDryRuns(clipped, idx)) {
+              if (dry.length >= 2) waterfront.push({ coords: dry });
+            }
+          }
+        }
+      }
+    } else {
+      // No distance pre-filter: a river that never enters the region clips to
+      // nothing, which is the same answer the old disc pre-filter gave.
+      for (const river of idx.riverLines) {
+        for (const off of profile.waterfrontOffsets) {
+          for (const side of [1, -1]) {
+            const offsetLine = offsetPolyline(river, off, side);
+            if (!offsetLine) continue;
+            for (const run of clipPolylineToRegion(region, offsetLine)) {
+              if (run.length >= 2) waterfront.push({ coords: run });
+            }
           }
         }
       }
@@ -663,8 +743,9 @@ export function buildSkeleton(
   const landmarks = buildLandmarks(citySeed, center, profile);
 
   // 4) Wall / ring / gates (plan 020 §6: the wall traces the sketch). Water
-  // test reuses the fabric index so the wall band is segmented at rivers.
-  const wallIdx = indexFabricConstraints(constraints.fabricFeatures);
+  // test reuses the constraint index (incl. the generated channel, 24-C) so the
+  // wall band is segmented at rivers and the meandered channel alike.
+  const wallIdx = indexConstraints(constraints);
   const wall = buildWall(
     citySeed,
     region,

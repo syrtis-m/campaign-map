@@ -34,7 +34,7 @@ import {
   blockedByWater,
   crossesWall,
   fabricAngleSampler,
-  indexFabricConstraints,
+  indexConstraints,
 } from "../fabricConstraints";
 import {
   clipPolylineToRegion,
@@ -307,7 +307,7 @@ export function growNetwork(
   skeleton: SkeletonOutput
 ): { graph: StreetGraph; stats: GrowthStats } {
   const graph = new StreetGraph();
-  const idx = indexFabricConstraints(constraints.fabricFeatures);
+  const idx = indexConstraints(constraints);
   // Canon-bumped cityness (§5.4 complete, v3.3): the GM's settlement pins
   // pull density toward themselves.
   const cityness = makeCityness(citySeed, region, constraints.canonFeatures ?? []);

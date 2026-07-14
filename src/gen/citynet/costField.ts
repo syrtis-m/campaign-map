@@ -18,7 +18,7 @@
 import { bboxWithMargin, type ProcgenRegion } from "../region";
 import type { GenerationConstraints } from "../types";
 import {
-  indexFabricConstraints,
+  indexConstraints,
   nearestOnLine,
   pointInRing,
   RIVER_HALF_WIDTH,
@@ -53,6 +53,12 @@ export interface CostField {
    * cells as those within `RIVER_HALF_WIDTH + COST_CELL_M` (one cell of
    * approach past the crossing penalty band, matching the seam-test tolerance). */
   riverDist(cellX: number, cellY: number): number;
+  /** True iff the cell should count as part of a bridge span (plan 024 §3,
+   * 24-C): within the sketched-river crossing band (`riverDist <
+   * RIVER_HALF_WIDTH + COST_CELL_M`) OR inside the GENERATED meandered channel
+   * (`upstream.water`). `skeleton.ts`'s `bridgeSpans` keys on this so a bridge
+   * tracks the channel, not the straight spine. */
+  bridgeCell(cellX: number, cellY: number): boolean;
   /** Is the cell within the cost field's bbox (domain + margin)? A* never
    * expands outside this — the field's finite support bounds the search. */
   inBounds(cellX: number, cellY: number): boolean;
@@ -73,9 +79,21 @@ function canonPoints(constraints: GenerationConstraints): [number, number][] {
   return out;
 }
 
-/** True inside any sketched water polygon (open water ⇒ impassable). */
+/** True inside any sketched water polygon (open water ⇒ impassable). Note the
+ * generated river CHANNEL is NOT here: a channel is passable-but-bridged
+ * (`inChannel` + BRIDGE_COST), not an impassable lake. */
 function inWater(idx: FabricConstraintIndex, x: number, y: number): boolean {
   for (const ring of idx.waterRings) {
+    if (pointInRing(ring, x, y)) return true;
+  }
+  return false;
+}
+
+/** True inside the GENERATED meandered channel (plan 024 §3, 24-C). Passable
+ * (arterials bridge it), so it adds BRIDGE_COST rather than blocking. Empty
+ * when there is no upstream river ⇒ byte-identical to before. */
+function inChannel(idx: FabricConstraintIndex, x: number, y: number): boolean {
+  for (const ring of idx.channelRings) {
     if (pointInRing(ring, x, y)) return true;
   }
   return false;
@@ -102,7 +120,7 @@ export function makeCostField(
   region: ProcgenRegion,
   constraints: GenerationConstraints
 ): CostField {
-  const idx = indexFabricConstraints(constraints.fabricFeatures);
+  const idx = indexConstraints(constraints);
   const canon = canonPoints(constraints);
   const worldBounds = constraints.worldBounds;
   const bbox = bboxWithMargin(region.bbox, COST_FIELD_MARGIN_M);
@@ -147,6 +165,23 @@ export function makeCostField(
     return v;
   };
 
+  const channelCache = new Map<number, boolean>();
+  const inChannelCell = (cellX: number, cellY: number): boolean => {
+    if (idx.channelRings.length === 0) return false;
+    const k = memoKey(cellX, cellY);
+    let v = channelCache.get(k);
+    if (v === undefined) {
+      v = inChannel(idx, cellToWorld(cellX), cellToWorld(cellY));
+      channelCache.set(k, v);
+    }
+    return v;
+  };
+
+  /** A bridge-span cell (§3, 24-C): the sketched-river crossing band OR inside
+   * the generated meandered channel — so bridges cluster over the real water. */
+  const bridgeCell = (cellX: number, cellY: number): boolean =>
+    riverDist(cellX, cellY) < RIVER_HALF_WIDTH + COST_CELL_M || inChannelCell(cellX, cellY);
+
   const costCache = new Map<number, number>();
   const cellCost = (cellX: number, cellY: number): number => {
     const k = memoKey(cellX, cellY);
@@ -170,8 +205,10 @@ export function makeCostField(
       const grad = Math.hypot(hx, hy);
       cost += Math.min(SLOPE_PENALTY_MAX, grad * SLOPE_PENALTY_SCALE);
 
-      // River crossing: expensive but passable ⇒ crossings concentrate.
-      if (riverDist(cellX, cellY) < RIVER_HALF_WIDTH) cost += BRIDGE_COST;
+      // River crossing: expensive but passable ⇒ crossings concentrate. The
+      // sketched-river band OR the generated meandered channel (24-C) both
+      // charge the bridge toll, so crossings cluster over the real water.
+      if (riverDist(cellX, cellY) < RIVER_HALF_WIDTH || inChannelCell(cellX, cellY)) cost += BRIDGE_COST;
 
       // Canon proximity: never pave the GM's pins.
       for (const [px, py] of canon) {
@@ -192,5 +229,5 @@ export function makeCostField(
     cellY >= cellBounds.minY &&
     cellY <= cellBounds.maxY;
 
-  return { cellCost, riverDist, inBounds, cellBounds };
+  return { cellCost, riverDist, bridgeCell, inBounds, cellBounds };
 }

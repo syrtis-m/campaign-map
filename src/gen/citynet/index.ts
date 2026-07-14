@@ -29,7 +29,7 @@ import { hashSeed } from "../rng";
 import type { BBox } from "../spatialHash";
 import { clipPolylineToBBox, clipPolygonToBBox, type Vec2 } from "../clip";
 import type { GenerationConstraints } from "../types";
-import { blockedByWater, indexFabricConstraints } from "../fabricConstraints";
+import { blockedByWater, indexConstraints } from "../fabricConstraints";
 import { regionContains, type ProcgenRegion } from "../region";
 import { PROFILES } from "./profiles";
 import type { ProfileId } from "./domain";
@@ -317,7 +317,7 @@ export function generateCityNetwork(
   // Stage C (v3.2): faces → blocks → parcels → footprints, plus wards.
   // Block identity is the face's sorted node keys (position-derived); parcel/
   // footprint identity is (blockKey, split path) — never emission order (D2).
-  const fabricIdx = indexFabricConstraints(constraints.fabricFeatures);
+  const fabricIdx = indexConstraints(constraints);
   const { blocks } = extractBlocks(graph, region);
   const dryBlocks = blocks.filter((b) => {
     // A face bounded by two quays can span the river; buildings don't swim.
@@ -361,6 +361,17 @@ export function generateCityNetwork(
     });
   }
   for (const fp of footprints) {
+    // Buildings don't swim (plan 024-C): a footprint on a block that STRADDLES
+    // the water — dry centroid, but this sub-parcel falls in the river/channel —
+    // is dropped. Byte-neutral for a city with no water (blockedByWater is false
+    // everywhere ⇒ every footprint is kept, identical to before).
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0; i < fp.ring.length; i++) {
+      cx += fp.ring[i][0];
+      cy += fp.ring[i][1];
+    }
+    if (blockedByWater(fabricIdx, cx / fp.ring.length, cy / fp.ring.length)) continue;
     const ring = [...fp.ring, fp.ring[0]];
     features.push({
       type: "Feature",
