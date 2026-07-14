@@ -282,3 +282,97 @@ describe("generatedLayers — wall moat/band/tower/gate paint coverage (plan 022
     for (const id of WALL_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
   });
 });
+
+/** Every emitted farmland feature type (plan 022 §3.5) needs paint in every
+ * theme: the tilled fields, the lane web, the field-edge hedges/fences, the
+ * farmstead footprints and the orchard tree stipple. Coverage guard for the
+ * farmland types added in plan 022-F. Two of these are LINE layers and
+ * `generated-farm-hedge` paints `line-color` as a `["match", …]` expression —
+ * the loose helper below reads fill/circle/line color and validates the match
+ * outputs, unlike the fill-only `anyColor`. */
+const FARM_LAYER_IDS = [
+  "generated-farm-field",
+  "generated-farm-lane",
+  "generated-farm-hedge",
+  "generated-farm-building",
+  "generated-orchard-tree",
+] as const;
+
+/** A non-empty color from a fill, circle, or line layer — accepts a plain token
+ * string OR a `["match", …]` expression (validating every non-keyword string
+ * output is non-empty). */
+function hasColor(layer: LayerSpecification): boolean {
+  const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
+  const c = paint["fill-color"] ?? paint["circle-color"] ?? paint["line-color"];
+  if (typeof c === "string") return c.length > 0;
+  if (Array.isArray(c)) {
+    // match expr: ["match", input, label1, out1, …, fallback] — every string
+    // that isn't the "match"/"get" keyword head must be a non-empty color.
+    const strings = c.filter((x, i) => typeof x === "string" && i > 0) as string[];
+    return strings.length > 0 && strings.every((s) => s.length > 0);
+  }
+  return false;
+}
+
+describe("generatedLayers — farmland field/lane/hedge/building/tree paint coverage (plan 022 §3.5)", () => {
+  it("all five farmland layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
+    const layers = generatedLayers(PARCHMENT);
+    for (const id of FARM_LAYER_IDS) {
+      const layer = layers.find((l) => l.id === id);
+      expect(layer, `${id} missing from generatedLayers`).toBeDefined();
+      expect((layer as { source?: string }).source).toBe("generated");
+      const filter = JSON.stringify((layer as { filter?: unknown }).filter);
+      expect(filter).toContain('"generatorId"');
+      expect(filter).not.toContain('"zoom"'); // NO zoom LOD (Jonah 2026-07-12)
+    }
+  });
+
+  it("farm stack sits BELOW the district/street layers (farmland is stage 2, city stage 3)", () => {
+    const ids = generatedLayers(PARCHMENT).map((l) => l.id);
+    const field = ids.indexOf("generated-farm-field");
+    const district = ids.indexOf("generated-district");
+    // Lanes/hedges/buildings/trees paint above the field fill, below the city.
+    expect(ids.indexOf("generated-farm-lane")).toBeGreaterThan(field);
+    expect(ids.indexOf("generated-farm-building")).toBeGreaterThan(field);
+    expect(ids.indexOf("generated-orchard-tree")).toBeGreaterThan(field);
+    if (district >= 0) expect(field).toBeLessThan(district);
+  });
+
+  it("farmland layers keep the generated- prefix so the z-order stack holds", () => {
+    expect(() => assertLayerOrder(generatedLayers(PARCHMENT))).not.toThrow();
+  });
+
+  for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
+    it(`${id}: every farmland layer paints a color`, () => {
+      const layers = generatedLayers(tokens);
+      for (const layerId of FARM_LAYER_IDS) {
+        const layer = layers.find((l) => l.id === layerId)!;
+        expect(hasColor(layer), `${id}: ${layerId} paints no color`).toBe(true);
+      }
+      // Tilled field (cultivated tan) and orchard tree (woodland green) must read
+      // as different things — distinct token families in every theme.
+      const field = fillColor(layers.find((l) => l.id === "generated-farm-field")!);
+      const tree = (
+        (layers.find((l) => l.id === "generated-orchard-tree")!.paint as Record<string, unknown>)[
+          "circle-color"
+        ] as string
+      ).toLowerCase();
+      expect(field, `${id}: field and orchard tree share a color`).not.toBe(tree);
+    });
+  }
+
+  it("obsidian-native runtime style paints all five farmland layers", () => {
+    const css: ObsidianCssTokens = {
+      backgroundPrimary: "#1e1e1e",
+      backgroundSecondary: "#262626",
+      backgroundModifierBorder: "#4d4d4d",
+      textMuted: "#999999",
+      textNormal: "#dcddde",
+      interactiveAccent: "#7c3aed",
+      fontText: "sans-serif",
+    };
+    const style = obsidianNativeStyle(css, "http://localhost/glyphs/{fontstack}/{range}.pbf");
+    const ids = style.layers.map((l) => l.id);
+    for (const id of FARM_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
+  });
+});

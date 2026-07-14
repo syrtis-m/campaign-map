@@ -28,6 +28,7 @@ export interface ThemeTokens {
   fabricWall: string; // masonry/boundary line (dashed) — stony, never a label gray
   fabricPark: string; // greenspace fill — the per-theme green (manicured/lawn)
   fabricForest: string; // woodland canopy fill — a DEEPER, less-manicured green than fabricPark (plan 022 §3.2)
+  fabricFarmland: string; // tilled-field fill — a warm cultivated ochre/khaki, distinct from both greens (plan 022 §3.5)
   fabricDistrict: string; // neighborhood wash — rendered at low opacity, must not slab the base
   fontRegular: string; // glyph stack name (fontstack)
   fontRegion: string; // glyph stack name for region/accent labels
@@ -61,6 +62,7 @@ export const MODERN_CLEAN: ThemeTokens = {
   fabricWall: "#857a68",
   fabricPark: "#a8d5a2",
   fabricForest: "#6fae72", // deeper than the pale park green — reads as woodland
+  fabricFarmland: "#d9c48a", // warm cultivated wheat-tan, distinct from both greens
   fabricDistrict: "#e07f4f",
   fontRegular: "Inter Regular",
   fontRegion: "Inter Bold",
@@ -87,6 +89,7 @@ export const PARCHMENT: ThemeTokens = {
   fabricWall: "#5e564a",
   fabricPark: "#9db87a",
   fabricForest: "#6d8f4e", // muted olive-green woodland, sits on parchment
+  fabricFarmland: "#c9b070", // aged wheat-ochre, the hand-tinted field wash on parchment
   fabricDistrict: "#8f4a3d",
   fontRegular: "Alegreya Regular",
   fontRegion: "Cormorant SC SemiBold",
@@ -113,6 +116,7 @@ export const INK_SOOT: ThemeTokens = {
   fabricWall: "#8a7a5f",
   fabricPark: "#5f7a4d",
   fabricForest: "#43613a", // dark ink-soot canopy, deeper than the park green
+  fabricFarmland: "#6e6144", // dark tilled-earth khaki, warmer than the moss greens
   fabricDistrict: "#584a6b",
   fontRegular: "IBM Plex Serif Regular",
   fontRegion: "Oswald Regular",
@@ -141,6 +145,7 @@ export const NEON_SPRAWL: ThemeTokens = {
   fabricWall: "#ff6a3d",
   fabricPark: "#30c85e",
   fabricForest: "#1f9e6d", // neon teal-green canopy, distinct from the bright park green
+  fabricFarmland: "#b89b3a", // synthetic amber cropland, distinct from the neon greens
   fabricDistrict: "#8034a8",
   fontRegular: "Saira Condensed Regular",
   fontRegion: "Rajdhani Bold",

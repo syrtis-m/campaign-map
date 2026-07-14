@@ -1,0 +1,14 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`farmland generator — determinism > matches the seeded snapshot fixture (enclosed-patchwork — golden drift tripwire) 1`] = `
+{
+  "sha256": "141f6da6dd4e043c0c1d61cd805d263b5d54540b25755ddadfe25c7ec9659fdd",
+  "summary": {
+    "farm-building": 23,
+    "farm-field": 231,
+    "farm-hedge": 806,
+    "farm-lane": 12,
+    "total": 1072,
+  },
+}
+`;

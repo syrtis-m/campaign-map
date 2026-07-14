@@ -29,6 +29,11 @@ export interface FabricConstraintIndex {
   riverLines: Pt[][];
   roadLines: Pt[][];
   wallLines: Pt[][];
+  /** Raw `farmland`-kind sketch polygons (plan 022 §3.5). The CITY reads these
+   * to suppress its own outskirt fields inside them — the GM's farmland claims
+   * that ground. Strict empty when no farmland is sketched, so a city without
+   * one is byte-identical to before this feature. */
+  farmlandRings: Pt[][];
 }
 
 const EMPTY: FabricConstraintIndex = {
@@ -36,6 +41,7 @@ const EMPTY: FabricConstraintIndex = {
   riverLines: [],
   roadLines: [],
   wallLines: [],
+  farmlandRings: [],
 };
 
 /** Buckets fabric features by the constraint role their kind plays. Park
@@ -50,6 +56,7 @@ export function indexFabricConstraints(features: FabricFeature[] | undefined): F
     riverLines: [],
     roadLines: [],
     wallLines: [],
+    farmlandRings: [],
   };
   for (const f of features) {
     const g = f.geometry;
@@ -61,9 +68,21 @@ export function indexFabricConstraints(features: FabricFeature[] | undefined): F
       idx.roadLines.push(g.coordinates as Pt[]);
     } else if (f.properties.kind === "wall" && g.type === "LineString") {
       idx.wallLines.push(g.coordinates as Pt[]);
+    } else if (f.properties.kind === "farmland" && g.type === "Polygon") {
+      idx.farmlandRings.push(g.coordinates[0] as Pt[]);
     }
   }
   return idx;
+}
+
+/** Inside a raw `farmland` sketch polygon (plan 022 §3.5)? True ⇒ the city
+ * suppresses its own outskirt field here. Strict `false` when nothing is
+ * sketched, so a city without farmland is byte-identical to before. */
+export function insideSketchedFarmland(idx: FabricConstraintIndex, x: number, y: number): boolean {
+  for (const ring of idx.farmlandRings) {
+    if (pointInRing(ring, x, y)) return true;
+  }
+  return false;
 }
 
 /** Ray-cast point-in-polygon — pure arithmetic on the ring, deterministic. */

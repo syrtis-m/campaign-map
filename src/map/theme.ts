@@ -81,6 +81,7 @@ const FABRIC_ON_LIGHT = {
   fabricWall: "#8a8175",
   fabricPark: "#93bd80",
   fabricForest: "#5f9560", // deeper than park; woodland on a light Obsidian theme
+  fabricFarmland: "#cdb679", // warm cultivated tan on a light Obsidian theme
 } as const;
 const FABRIC_ON_DARK = {
   fabricWater: "#26384c",
@@ -88,6 +89,7 @@ const FABRIC_ON_DARK = {
   fabricWall: "#8d8478",
   fabricPark: "#5d7a4e",
   fabricForest: "#3f5c38", // dark canopy, distinct from the park green on dark
+  fabricFarmland: "#6b5d3f", // dark tilled-earth khaki on a dark Obsidian theme
 } as const;
 
 function obsidianTokensAsThemeTokens(tokens: ObsidianCssTokens): ThemeTokens {

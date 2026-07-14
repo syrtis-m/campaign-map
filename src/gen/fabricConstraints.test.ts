@@ -4,6 +4,7 @@ import {
   crossesWall,
   fabricAngleSampler,
   indexFabricConstraints,
+  insideSketchedFarmland,
   nearestOnLine,
   pointInRing,
   truncateAtBarriers,
@@ -99,6 +100,53 @@ describe("water predicates", () => {
     expect(blockedByWater(idx, 0, 300)).toBe(true);
     expect(blockedByWater(idx, 0, 300 + RIVER_HALF_WIDTH - 0.5)).toBe(true);
     expect(blockedByWater(idx, 0, 300 + RIVER_HALF_WIDTH + 0.5)).toBe(false);
+  });
+});
+
+describe("farmland outskirt-suppression (plan 022 §3.5)", () => {
+  const FIELD: Pt[] = [
+    [-80, -120],
+    [90, -120],
+    [90, 130],
+    [-80, 130],
+    [-80, -120],
+  ];
+  function farmland(ring: Pt[]): FabricFeature {
+    return {
+      type: "Feature",
+      id: "fabric-test-farmland",
+      geometry: { type: "Polygon", coordinates: [ring] },
+      properties: { kind: "farmland" },
+    };
+  }
+
+  it("indexes a raw farmland polygon into farmlandRings", () => {
+    const idx = indexFabricConstraints([farmland(FIELD)]);
+    expect(idx.farmlandRings.length).toBe(1);
+  });
+
+  it("insideSketchedFarmland is true inside the ring, false outside", () => {
+    const idx = indexFabricConstraints([farmland(FIELD)]);
+    expect(insideSketchedFarmland(idx, 0, 0)).toBe(true);
+    expect(insideSketchedFarmland(idx, 500, 500)).toBe(false);
+  });
+
+  it("is a STRICT no-op when no farmland is sketched — the guard that keeps existing cities byte-identical", () => {
+    // The whole double-field resolution hangs on this: with no farmland sketch,
+    // farmlandRings is empty and insideSketchedFarmland returns false for every
+    // point, so the city's outskirt-field `continue` never fires (procgen44–47
+    // city output is unchanged when the board re-runs them).
+    const noFarm = indexFabricConstraints([
+      water(LAKE),
+      line("road", [[0, -500], [0, 500]]),
+      district(LAKE),
+    ]);
+    expect(noFarm.farmlandRings.length).toBe(0);
+    for (const [x, y] of [[0, 0], [50, 50], [-300, 200], [999, -999]] as Pt[]) {
+      expect(insideSketchedFarmland(noFarm, x, y)).toBe(false);
+    }
+    expect(insideSketchedFarmland(indexFabricConstraints([]), 0, 0)).toBe(false);
+    expect(insideSketchedFarmland(indexFabricConstraints(undefined), 0, 0)).toBe(false);
   });
 });
 

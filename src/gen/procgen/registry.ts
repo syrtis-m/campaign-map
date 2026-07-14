@@ -20,6 +20,7 @@ import { generateRiver, riverMaxOffset } from "../river";
 import { generateForest, FOREST_VARIETIES } from "../forest";
 import { generatePark, PARK_VARIETIES } from "../park";
 import { generateWall, wallMaxOffset, WALL_STYLES } from "../wall";
+import { generateFarmland, FARMLAND_TYPES, HEDGING_KINDS } from "../farmland";
 import {
   DOMAIN_TILE_GENERATOR_IDS,
   generateCityNetwork,
@@ -357,10 +358,75 @@ const wallAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-/** v1 registers `city` + `forest` + `park` (polygon) + `river` + `wall` (line).
- * Order matters for `algorithmForKind` (first match wins) — keep the list
- * explicit and small. */
-const REGISTRY: readonly ProcgenAlgorithm[] = [cityAlgorithm, riverAlgorithm, forestAlgorithm, parkAlgorithm, wallAlgorithm];
+// ─── Farmland (plan 022 §3.5) — the new agriculture polygon kind ─────────────
+
+/** Farmland params v1 (plan 022 §3.5). All knobs have defaults so a bare `{}`
+ * validates to a reasonable patchwork (additive-params rule §1). `fieldType`
+ * drives layout (like the city `profile` / park `variety`), never a preset-id
+ * branch. `paddy-terraces` is intentionally absent (deferred to plan 023). */
+const farmlandParamsSchema = z.object({
+  fieldType: z.enum(FARMLAND_TYPES).default("enclosed-patchwork"),
+  fieldSize: z.number().min(0).max(1).default(0.5),
+  hedging: z.enum(HEDGING_KINDS).default("hedgerows"),
+  laneDensity: z.number().min(0).max(1).default(0.5),
+  farmsteads: z.number().min(0).max(1).default(0.4),
+});
+
+/** Farmland presets (plan 022 §3.5) — the four templates. `paddy-terraces` is
+ * DEFERRED to plan 023 (box 23-E) and deliberately omitted (additive later).
+ * Params are the whole truth; `fieldType` is carried onto features for theme
+ * tinting, never a runtime preset-id branch. */
+const FARMLAND_PRESETS: readonly ProcgenPreset[] = [
+  { id: "open-field-strips", label: "Open-field strips — medieval furlongs off lanes", params: { fieldType: "open-field-strips", fieldSize: 0.55, hedging: "none", laneDensity: 0.66, farmsteads: 0.3 } },
+  { id: "enclosed-patchwork", label: "Enclosed patchwork — irregular hedged fields", params: { fieldType: "enclosed-patchwork", fieldSize: 0.5, hedging: "hedgerows", laneDensity: 0.4, farmsteads: 0.45 } },
+  { id: "grid-quarters", label: "Grid quarters — rectilinear sections + section roads", params: { fieldType: "grid-quarters", fieldSize: 0.7, hedging: "fences", laneDensity: 0.66, farmsteads: 0.35 } },
+  { id: "orchard", label: "Orchard — regular tree rows", params: { fieldType: "orchard", fieldSize: 0.4, hedging: "hedgerows", laneDensity: 0.5, farmsteads: 0.3 } },
+];
+
+/** Farmland tile-generator ids = the emitted feature buckets (plan 022 §3.5):
+ * tilled fields, the lane web, field-edge hedges/fences, farmstead footprints,
+ * and orchard tree points. Cache keys + paint layers key on these. */
+export const FARMLAND_TILE_GENERATOR_IDS: readonly string[] = [
+  "farm-field",
+  "farm-lane",
+  "farm-hedge",
+  "farm-building",
+  "orchard-tree",
+];
+
+const farmlandAlgorithm: ProcgenAlgorithm = {
+  id: "farmland",
+  label: "Farmland",
+  appliesTo: ["farmland"],
+  paramsSchema: farmlandParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
+  presets: FARMLAND_PRESETS,
+  defaultPresetId(themeId: string): string {
+    // Fantasy parchment/ink-soot read best as open medieval strips or hedged
+    // patchwork; the clean modern/na themes default to grid quarters (their
+    // rectilinear sections suit the palette). Every returned id is a member.
+    return themeId === "modern-clean" || themeId === "neon-sprawl" ? "grid-quarters" : "enclosed-patchwork";
+  },
+  defaultParams(themeId: string): Record<string, unknown> {
+    const preset = presetById(this, this.defaultPresetId(themeId));
+    return preset ? { ...preset.params } : { ...FARMLAND_PRESETS[1].params };
+  },
+  tileGeneratorIds: FARMLAND_TILE_GENERATOR_IDS,
+  generate(seed, region, params, constraints): GeoJSON.Feature[] {
+    return generateFarmland(seed, region, farmlandParamsSchema.parse(params), constraints);
+  },
+};
+
+/** v1 registers `city` + `forest` + `park` + `farmland` (polygon) + `river` +
+ * `wall` (line). Order matters for `algorithmForKind` (first match wins) — keep
+ * the list explicit and small. */
+const REGISTRY: readonly ProcgenAlgorithm[] = [
+  cityAlgorithm,
+  riverAlgorithm,
+  forestAlgorithm,
+  parkAlgorithm,
+  wallAlgorithm,
+  farmlandAlgorithm,
+];
 
 export function algorithmForKind(kind: FabricKind): ProcgenAlgorithm | undefined {
   return REGISTRY.find((a) => a.appliesTo.includes(kind));

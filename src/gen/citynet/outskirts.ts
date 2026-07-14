@@ -21,7 +21,7 @@
  */
 import { hashSeed, mulberry32 } from "../rng";
 import type { FabricConstraintIndex } from "../fabricConstraints";
-import { blockedByWater } from "../fabricConstraints";
+import { blockedByWater, insideSketchedFarmland } from "../fabricConstraints";
 import { distanceToBoundary, regionContains, type ProcgenRegion } from "../region";
 import type { CityProfile } from "./profiles";
 import type { CitynessFn } from "./cityness";
@@ -196,6 +196,11 @@ export function buildOutskirts(
         const center: Pt = [s.p[0] + nx * offset, s.p[1] + ny * offset];
         // Soft boundary margin (the disc's rim margin, region form).
         if (distanceToBoundary(region, center[0], center[1]) < FIELD_RIM_MARGIN_M) continue;
+        // Double-field resolution (plan 022 §3.5): a GM's raw farmland sketch
+        // claims this ground — drop the city's own outskirt field inside it so
+        // the two don't double-paint. Strict no-op when no farmland is sketched
+        // (empty farmlandRings ⇒ false ⇒ city byte-identical to before).
+        if (insideSketchedFarmland(waterIdx, center[0], center[1])) continue;
         // The lateral offset can land in a noise pocket the growth loop would
         // still build in — no farm fields where cityness says "city".
         if (cityness(center[0], center[1]) >= profile.edge) continue;

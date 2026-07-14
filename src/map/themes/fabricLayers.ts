@@ -97,6 +97,24 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
         "fill-outline-color": tokens.fabricForest,
       },
     },
+    farmland: {
+      // Inert sketched farmland (plan 022 §3.5, forest §5.2 precedent): a faint
+      // cultivated-tan wash so an un-generated farmland outline reads as
+      // "fields here" without competing with the dense generated fields. Once a
+      // procgen block is attached the generated `farm-field` polygons ARE the
+      // paint, so the raw polygon drops to opacity 0 — same mechanism as the
+      // forest fill / river+wall spine lines (fill stays rendered so
+      // queryRenderedFeatures still hit-tests it for selection).
+      id: "fabric-farmland",
+      type: "fill",
+      source: "fabric",
+      filter: kindFilter("farmland"),
+      paint: {
+        "fill-color": tokens.fabricFarmland,
+        "fill-opacity": ["case", ["has", "procgen"], 0, 0.28],
+        "fill-outline-color": tokens.fabricFarmland,
+      },
+    },
     // Lines
     river: {
       id: "fabric-river",
