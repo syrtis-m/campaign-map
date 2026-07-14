@@ -4,6 +4,7 @@ import {
   generateRiver,
   riverMaxOffset,
   BASE_MEANDER_AMP_M,
+  MIN_ISLAND_WIDTH_FRAC,
   type RiverParams,
 } from "./river";
 import { makeSpine, makeCorridorRegion, distanceToSpine, type ProcgenRegion } from "./region";
@@ -88,6 +89,16 @@ describe("river generator — determinism", () => {
   it("matches the seeded snapshot fixture (windy + braided — golden drift tripwire)", () => {
     const p = PARAMS({ windiness: 0.85, braiding: 0.6, width: 26, widthGrowth: 0.7, braidBias: 0.2 });
     expect(digest(generateRiver(4242, regionFor(LINE, p), p, CONSTRAINTS))).toMatchSnapshot();
+  });
+
+  it("matches the seeded snapshot fixture (delta — braid/island drift tripwire)", () => {
+    // The windy+braided golden above carries no braids post-028 (its 26 m
+    // channel can't afford a legible island — degradation ladder, plan 028
+    // §1.3), so this second golden pins the braid + island emission path.
+    const p = PARAMS({ windiness: 0.4, braiding: 1, width: 20, widthGrowth: 1, braidBias: 1 });
+    const d = digest(generateRiver(8, regionFor(LINE, p), p, CONSTRAINTS));
+    expect(d.summary["river-island"]).toBeGreaterThan(0);
+    expect(d).toMatchSnapshot();
   });
 
   it("is byte-identical across two runs (same seed/region/params)", () => {
@@ -269,5 +280,186 @@ describe("river generator — 2x2 seam via whole-artifact clip", () => {
       }
     }
     expect(clippedFeatures).toBeGreaterThan(0);
+  });
+});
+
+// ─── Plan 028 §1.1/§1.3 (box 28-A): channel-merge topology, bank casing,
+// island legibility, canal regression ────────────────────────────────────────
+
+const byType = (feats: GeoJSON.Feature[], type: string): GeoJSON.Feature[] =>
+  feats.filter((f) => (f.properties as { type?: string }).type === type);
+
+/** Open (closing vertex dropped) polygon ring of a Feature. */
+function openRing(f: GeoJSON.Feature): Pt[] {
+  const ring = (f.geometry as GeoJSON.Polygon).coordinates[0] as Pt[];
+  return ring.slice(0, -1);
+}
+
+const key = ([x, y]: Pt): string => `${x},${y}`;
+const dist = (a: Pt, b: Pt): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
+
+describe("river generator — channel-merge topology + bank casing (plan 028 §1.1)", () => {
+  // Windy, no braids: emission is exactly [channel, leftBank, rightBank] per
+  // ORIGINAL segment, in segment order (emission order is deterministic).
+  const p = PARAMS();
+  const feats = generateRiver(50, regionFor(LINE, p), p, CONSTRAINTS);
+  const channels = byType(feats, "river-channel");
+  const banks = byType(feats, "river-bank");
+  const nSegs = LINE.length - 1;
+
+  it("merges each original segment's quad chain into ONE ribbon polygon", () => {
+    expect(channels.length).toBe(nSegs);
+    for (const c of channels) {
+      expect(c.geometry.type).toBe("Polygon");
+      // A merged ribbon, not a quad: dozens of bank samples per side.
+      expect(openRing(c).length).toBeGreaterThan(20);
+    }
+  });
+
+  it("emits left+right river-bank LineStrings per segment, welded at joints", () => {
+    expect(banks.length).toBe(2 * nSegs);
+    for (const b of banks) expect(b.geometry.type).toBe("LineString");
+    // banks[2k] = left of segment k, banks[2k+1] = right (emission order).
+    for (let k = 0; k + 1 < nSegs; k++) {
+      for (const side of [0, 1]) {
+        const cur = (banks[2 * k + side].geometry as GeoJSON.LineString).coordinates as Pt[];
+        const next = (banks[2 * (k + 1) + side].geometry as GeoJSON.LineString).coordinates as Pt[];
+        // Shared quantized joint vertex — EXACT, so round line-joins render
+        // the casing continuous across spine vertices.
+        expect(key(cur[cur.length - 1])).toBe(key(next[0]));
+      }
+    }
+  });
+
+  it("bank casing hugs the channel: every bank vertex lies on its segment's ribbon outline", () => {
+    for (let k = 0; k < nSegs; k++) {
+      const ringSet = new Set(openRing(channels[k]).map(key));
+      for (const side of [0, 1]) {
+        const line = (banks[2 * k + side].geometry as GeoJSON.LineString).coordinates as Pt[];
+        for (const c of line) expect(ringSet.has(key(c))).toBe(true);
+      }
+    }
+  });
+
+  it("adjacent ribbons OVERLAP by the joint weld (no abutting hairline)", () => {
+    for (let k = 1; k < nSegs; k++) {
+      const ring = openRing(channels[k]);
+      const jointL = ((banks[2 * k].geometry as GeoJSON.LineString).coordinates as Pt[])[0];
+      const jointR = ((banks[2 * k + 1].geometry as GeoJSON.LineString).coordinates as Pt[])[0];
+      const weldL = ring[0]; // ribbon head, extended upstream past the joint
+      const weldR = ring[ring.length - 1];
+      for (const [weld, joint] of [
+        [weldL, jointL],
+        [weldR, jointR],
+      ] as [Pt, Pt][]) {
+        const d = dist(weld, joint);
+        expect(d).toBeGreaterThan(0); // strictly past the joint → overlap
+        expect(d).toBeLessThanOrEqual(0.5 + 5e-3); // …by ≤ JOINT_WELD_M
+      }
+    }
+  });
+});
+
+describe("river generator — braid islands are legible lozenges (plan 028 §1.3)", () => {
+  const p = PARAMS({ windiness: 0.4, braiding: 1, width: 20, widthGrowth: 1, braidBias: 1 });
+  const feats = generateRiver(8, regionFor(LINE, p), p, CONSTRAINTS);
+  const islands = byType(feats, "river-island");
+  const banks = byType(feats, "river-bank");
+  const channels = byType(feats, "river-channel");
+  const nSegs = LINE.length - 1;
+
+  it("emits islands, one merged lozenge per braid (no sliver quads)", () => {
+    expect(islands.length).toBeGreaterThan(0);
+    const nBraids = islands.length;
+    // One extra channel ribbon + two extra bank lines per braid.
+    expect(channels.length).toBe(nSegs + nBraids);
+    expect(banks.length).toBe(2 * nSegs + 2 * nBraids);
+  });
+
+  it("every island cross-section is ≥ MIN_ISLAND_WIDTH_FRAC × channel width (no-sliver floor)", () => {
+    for (const island of islands) {
+      const open = openRing(island);
+      expect(open.length % 2).toBe(0);
+      const n = open.length / 2;
+      expect(n).toBeGreaterThanOrEqual(2);
+      const main = open.slice(0, n);
+      const inner = open.slice(n).reverse(); // back to forward order
+      for (let j = 0; j < n; j++) {
+        // Paired vertices sit on the same cross-normal, so this distance IS
+        // the island's local width. Local channel width ≥ params.width
+        // (growth ≥ 0), so the params-only floor is a valid lower bound.
+        expect(dist(main[j], inner[j])).toBeGreaterThanOrEqual(MIN_ISLAND_WIDTH_FRAC * p.width - 0.01);
+      }
+    }
+  });
+
+  it("islands taper downstream (widest cross-section in the upstream 60%)", () => {
+    for (const island of islands) {
+      const open = openRing(island);
+      const n = open.length / 2;
+      const main = open.slice(0, n);
+      const inner = open.slice(n).reverse();
+      let argmax = 0;
+      let max = -1;
+      for (let j = 0; j < n; j++) {
+        const w = dist(main[j], inner[j]);
+        if (w > max) {
+          max = w;
+          argmax = j;
+        }
+      }
+      expect(argmax).toBeLessThanOrEqual(Math.ceil(0.6 * n));
+    }
+  });
+
+  it("island extent respects the braid-unit scale (≈4–5× channel width)", () => {
+    const maxW = 2 * (p.width / 2) * (1 + p.widthGrowth); // width at the mouth
+    for (const island of islands) {
+      const open = openRing(island);
+      let extent = 0;
+      for (const a of open) for (const b of open) extent = Math.max(extent, dist(a, b));
+      expect(extent).toBeLessThanOrEqual(5 * maxW);
+    }
+  });
+});
+
+describe("river generator — canal preset regression (plan 028 §2, 28-A gate)", () => {
+  // Pre-028 fixture, captured from the last quad-chain build (commit 5dc9fe6):
+  // the canal preset's 414 unique bank coordinates over LINE with seed 3. The
+  // merge must not move a single bank sample — the bank casing lines carry
+  // exactly the old outline, and the ribbons add ONLY the ≤2 weld vertices per
+  // interior joint, each within JOINT_WELD_M of a pre-028 coordinate.
+  const PRE_028_SHA = "63bde42fc912f4d6a1162d68d3bd559d3fae5bc264d6fc42df5acff2cef0e48c";
+  const PRE_028_COUNT = 414;
+  const p = PARAMS({ windiness: 0, braiding: 0, width: 12, widthGrowth: 0 });
+  const feats = generateRiver(3, regionFor(LINE, p), p, CONSTRAINTS);
+
+  it("bank geometry is byte-identical to the pre-028 channel outline", () => {
+    const bankCoords = new Set<string>();
+    for (const [x, y] of allCoords(byType(feats, "river-bank"))) bankCoords.add(`${x},${y}`);
+    expect(bankCoords.size).toBe(PRE_028_COUNT);
+    const sha = createHash("sha256").update(JSON.stringify(Array.from(bankCoords).sort())).digest("hex");
+    expect(sha).toBe(PRE_028_SHA);
+  });
+
+  it("channel ribbons add only the joint-weld vertices (each ≤ JOINT_WELD_M from the old outline)", () => {
+    const bankCoords = new Set<string>();
+    const bankPts: Pt[] = [];
+    for (const [x, y] of allCoords(byType(feats, "river-bank"))) {
+      if (!bankCoords.has(`${x},${y}`)) bankPts.push([x, y]);
+      bankCoords.add(`${x},${y}`);
+    }
+    const extras: Pt[] = [];
+    for (const [x, y] of allCoords(byType(feats, "river-channel"))) {
+      if (!bankCoords.has(`${x},${y}`)) extras.push([x, y]);
+    }
+    // ≤ 2 welds per interior spine vertex (dedup: the close vertex repeats).
+    const uniqExtras = Array.from(new Set(extras.map(key))).map((s) => s.split(",").map(Number) as Pt);
+    expect(uniqExtras.length).toBeLessThanOrEqual(2 * (LINE.length - 2));
+    for (const e of uniqExtras) {
+      let nearest = Infinity;
+      for (const b of bankPts) nearest = Math.min(nearest, dist(e, b));
+      expect(nearest).toBeLessThanOrEqual(0.5 + 5e-3);
+    }
   });
 });

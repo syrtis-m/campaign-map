@@ -279,6 +279,24 @@
         "src/view/RegionProcgenModal.ts",
         "src/view/SketchController.ts"
       ]
+    },
+    "procgen49": {
+      "script": "scripts/gates/procgen49.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/river.ts",
+        "src/gen/waterEmit.ts",
+        "src/gen/procgen/**",
+        "src/controller/MapController.ts",
+        "src/controller/FakeHost.ts",
+        "src/model/fabric.ts",
+        "src/map/themes/generatedLayers.ts",
+        "src/map/themes/generated/river.ts",
+        "src/map/theme.ts",
+        "src/view/MapView.ts",
+        "src/view/RegionProcgenModal.ts",
+        "src/view/SketchController.ts"
+      ]
     }
   }
 }

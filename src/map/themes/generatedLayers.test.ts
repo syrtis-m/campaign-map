@@ -9,7 +9,7 @@ import { assertLayerOrder } from "./layerOrder";
  * entry means invisible output that passes every non-visual gate (plan 022 §4
  * new-feature-type checklist). This is the coverage guard for the river types
  * added in plan 022-B. */
-const RIVER_LAYER_IDS = ["generated-river-channel", "generated-river-island"] as const;
+const RIVER_LAYER_IDS = ["generated-river-bank", "generated-river-channel", "generated-river-island"] as const;
 const FOREST_LAYER_IDS = ["generated-forest-canopy", "generated-forest-clearing", "generated-forest-tree"] as const;
 /** Every emitted park feature type (plan 022 §3.3) needs paint in every theme —
  * ground (lawn/bed), path web, water (pond/island/bridge), gravel court, and the
@@ -43,13 +43,22 @@ function fillColor(layer: LayerSpecification): string {
   return (c as string).toLowerCase();
 }
 
-describe("generatedLayers — river channel/island paint coverage (plan 022 §4)", () => {
-  it("both river layers exist, are fills on the generated source, filter on generatorId", () => {
+/** The bank casing's line-color (plan 028 §1.1) — river-block-local helper. */
+function bankLineColor(layer: LayerSpecification): string {
+  const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
+  const c = paint["line-color"];
+  expect(typeof c, `${layer.id} must paint a plain line color`).toBe("string");
+  return (c as string).toLowerCase();
+}
+
+describe("generatedLayers — river bank/channel/island paint coverage (plan 022 §4 + plan 028 §1.1)", () => {
+  it("all three river layers exist on the generated source, filter on generatorId, no zoom LOD", () => {
     const layers = generatedLayers(PARCHMENT);
     for (const id of RIVER_LAYER_IDS) {
       const layer = layers.find((l) => l.id === id);
       expect(layer, `${id} missing from generatedLayers`).toBeDefined();
-      expect(layer!.type).toBe("fill");
+      // Bank casing is a LINE layer; channel + island stay fills.
+      expect(layer!.type).toBe(id === "generated-river-bank" ? "line" : "fill");
       expect((layer as { source?: string }).source).toBe("generated");
       const filter = JSON.stringify((layer as { filter?: unknown }).filter);
       expect(filter).toContain('"generatorId"');
@@ -57,8 +66,9 @@ describe("generatedLayers — river channel/island paint coverage (plan 022 §4)
     }
   });
 
-  it("island paints ABOVE the channel water (later in the array)", () => {
+  it("depth idiom order: bank casing UNDER channel, island ABOVE channel (plan 028 §1.1)", () => {
     const ids = generatedLayers(PARCHMENT).map((l) => l.id);
+    expect(ids.indexOf("generated-river-bank")).toBeLessThan(ids.indexOf("generated-river-channel"));
     expect(ids.indexOf("generated-river-island")).toBeGreaterThan(ids.indexOf("generated-river-channel"));
   });
 
@@ -69,20 +79,25 @@ describe("generatedLayers — river channel/island paint coverage (plan 022 §4)
   });
 
   for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
-    it(`${id}: channel and island both paint a color`, () => {
+    it(`${id}: bank, channel and island all paint (existing tokens only)`, () => {
       const layers = generatedLayers(tokens);
-      for (const layerId of RIVER_LAYER_IDS) {
-        const layer = layers.find((l) => l.id === layerId)!;
-        expect(fillColor(layer).length).toBeGreaterThan(0);
-      }
       // Channel water and island land must read differently.
       const channel = fillColor(layers.find((l) => l.id === "generated-river-channel")!);
       const island = fillColor(layers.find((l) => l.id === "generated-river-island")!);
       expect(channel, `${id}: channel and island share a color`).not.toBe(island);
+      // Bank casing: a deliberate DARKER stroke of the channel hue (the
+      // dark-edge/light-core depth idiom) — never the channel color itself.
+      const bank = bankLineColor(layers.find((l) => l.id === "generated-river-bank")!);
+      expect(bank.length).toBeGreaterThan(0);
+      expect(bank, `${id}: bank casing must differ from the channel fill`).not.toBe(channel);
+      // Channel fill must stay EXACTLY the theme's river token (hue
+      // discipline, plan 028 §1.1: water-hued paint never drifts, so
+      // fill/line overlaps never artifact).
+      expect(channel).toBe(tokens.fabricRiver.toLowerCase());
     });
   }
 
-  it("obsidian-native runtime style paints both river layers", () => {
+  it("obsidian-native runtime style paints all three river layers", () => {
     const css: ObsidianCssTokens = {
       backgroundPrimary: "#1e1e1e",
       backgroundSecondary: "#262626",
