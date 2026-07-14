@@ -360,8 +360,14 @@
   gallery 1×8. Flags: eixample chaflán contrast (theme), modal grouping at
   10 presets. Gate: fast 813/813 · fuzz ×8 profiles · presetGallery 8/8 ×2 ·
   eyeballed. See DECISIONS "25-C".
-- Next: 25-D axial-breakthrough operator → haussmann + baroque-axial (025
-  §3.2).
+- **25-D DONE** (`68c3ebc`): axial-breakthrough operator (driveBoulevards
+  splices boulevard chords/tridents into the planar graph BEFORE
+  faces/parcels — blocks re-close fronting the cut) + haussmann +
+  baroque-axial presets; dropdown kept flat per OQ#2 (Jonah's UX call);
+  gallery 1×10. Gate: fast 824/824 · fuzz ×10 · presetGallery 8/8 ·
+  eyeballed (chords→star plazas; clear trivium). See DECISIONS "25-D".
+- Next: 25-E canal-rings + radial-star + seam boulevards + growth rings +
+  small wins ⛳ plan-025 board + refreshed gallery contact sheet.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

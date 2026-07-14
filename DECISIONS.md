@@ -1104,3 +1104,17 @@
   intended.
 - **Flag for 25-D:** 10 presets crosses the flat-dropdown threshold —
   RegionProcgenModal grouping/preview ergonomics should be decided there.
+
+## 2026-07-14 — Plan 025 phase D (axial breakthrough, phase subagent)
+- **Operator runs pre-faces** (§3.2 stage order): the splice only ADDS
+  boulevard edges + nodes on crossed edges; preservation/demolition are
+  emergent (every base vertex survives; crossed blocks re-close + re-parcel
+  fronting the cut) — no reflow pass needed.
+- **Trident ray bugfix:** far ray cast from the CENTER, not the rim apex —
+  a boundary-origin ray immediately re-intersects its own edge (t≈0
+  self-hit).
+- **OQ#2 dropdown: kept flat, zero code** — grouping means abandoning
+  Obsidian's DropdownComponent; §5 reserves the grouping/thumbnail UX for
+  Jonah. Re-flagged: 10 presets is the edge of scannable.
+- Gallery reopenAndSettle now polls for region population (fixed 5s sleep
+  outgrown at 10 districts).

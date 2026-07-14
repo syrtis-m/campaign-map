@@ -211,7 +211,7 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
       GALLERY campaign & gate (025 §3.1, §3.5)
 - [x] 967bcb8 25-B width system + superblock preset (025 §3.3, §2.6)
 - [x] d5056c8 25-C tartan-grid + ward-grid + eixample + chamfer operator (025 §2)
-- [ ] 25-D axial-breakthrough operator → haussmann + baroque-axial (025 §3.2)
+- [x] 68c3ebc 25-D axial-breakthrough operator → haussmann + baroque-axial (025 §3.2)
 - [ ] 25-E canal-rings + radial-star + seam boulevards + growth rings +
       small wins (025 §2, §3.4) ⛳ full board + refreshed gallery contact sheet
 - [ ] FINAL: plans/README.md rows → DONE w/ evidence; docs/03 updated;
@@ -255,6 +255,12 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 7 cont.): 25-D via phase subagent, T1 green —
+  driveBoulevards axial operator (pre-faces splice; trident ray bugfix) +
+  haussmann/baroque-axial; dropdown kept FLAT per OQ#2 (Jonah's UX call
+  re-flagged at 10 presets); gallery 1×10. Committed 68c3ebc. Fast 824.
+  Next: 25-E canal-rings + radial-star + seam boulevards + growth rings ⛳
+  plan-025 board + refreshed contact sheet.
 - 2026-07-14 (arc run, session 7 cont.): 25-C via phase subagent, T1 green —
   tartan/ward/eixample presets + chamfer operator (convex-only, clamp-safe;
   332/332 gallery blocks octagons) + uniformGrid flag; existing goldens
