@@ -106,6 +106,14 @@ function containment(id: string): { count: number; outside: number } {
 function canopyCount(id: string): number {
   return sync(`v.regionFeatureIds(${JSON.stringify(id)}, 'forest-canopy').length`) as number;
 }
+/** Total canopy AREA (m², shoelace; exteriors minus holes, summed over the
+ * per-tile clipped pieces). Since plan 026-B the canopy is ONE MultiPolygon
+ * whose SHAPE responds to density — feature/record counts are invariant, so
+ * "density UP → more canopy" must be measured as covered area. */
+function canopyArea(id: string): number {
+  const code = `(function(){var v=${viewExpr()};var pre='region:'+${JSON.stringify(id)}+':';var total=0;function ringArea(r){var a=0;for(var i=0;i<r.length-1;i++){a+=r[i][0]*r[i+1][1]-r[i+1][0]*r[i][1];}return Math.abs(a/2);}v.loadedTiles.forEach(function(feats,k){if(k.indexOf(pre)!==0)return;feats.forEach(function(f){if(!f.properties||f.properties.generatorId!=='forest-canopy')return;var g=f.geometry;if(!g)return;var polys=g.type==='MultiPolygon'?g.coordinates:(g.type==='Polygon'?[g.coordinates]:[]);polys.forEach(function(rings){if(!rings.length)return;total+=ringArea(rings[0]);for(var h=1;h<rings.length;h++)total-=ringArea(rings[h]);});});});return Math.round(total);})()`;
+  return sync(code) as number;
+}
 function regionCacheRecords(regionId: string): Map<string, string> {
   const out = new Map<string, string>();
   if (!existsSync(CACHE_ABS)) return out;
@@ -234,14 +242,14 @@ async function main(): Promise<void> {
 
   await gate.try("(c) density UP → more canopy; output stays fully contained", async () => {
     await evalAsync(`function(v){ return v.setRegionParams(${JSON.stringify(id)}, { variety: 'broadleaf', density: 0.3, clearings: 0.1, edgeRaggedness: 0.5 }); }`);
-    const sparse = canopyCount(id);
+    const sparse = canopyArea(id);
     if (containment(id).outside > 0) throw new Error("outside at low density");
     await evalAsync(`function(v){ return v.setRegionParams(${JSON.stringify(id)}, { variety: 'broadleaf', density: 0.9, clearings: 0.1, edgeRaggedness: 0.5 }); }`);
-    const dense = canopyCount(id);
+    const dense = canopyArea(id);
     const cont = containment(id);
     if (cont.outside > 0) throw new Error(`${cont.outside} coords outside at high density`);
-    console.log(`     [c] canopy cells ${sparse} (density 0.3) → ${dense} (density 0.9); 0 outside`);
-    if (!(dense > sparse)) throw new Error(`density increase did not add canopy (${sparse} → ${dense})`);
+    console.log(`     [c] canopy area ${sparse} m² (density 0.3) → ${dense} m² (density 0.9); 0 outside`);
+    if (!(dense > sparse)) throw new Error(`density increase did not grow canopy area (${sparse} → ${dense})`);
   });
 
   await gate.try("(d) re-roll → new seed, output changes", async () => {

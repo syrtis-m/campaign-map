@@ -256,3 +256,121 @@ describe("river generator — 28-B extreme-params fuzz (R_c clamp as containment
 function hashLike(a: number, b: number): number {
   return ((a * 2654435761) ^ (b * 40503)) >>> 0;
 }
+
+// ─── Plan 028 §1.4 (box 28-C): junction / delta / estuary fuzz ────────────────
+// Random spines meeting random partner rivers and random water polygons at
+// their mouths, at delta braidBias — the confluence/delta/estuary code paths
+// on degenerate configurations. The additive containment guard must keep every
+// appended vertex inside the corridor, and the whole thing must be a pure
+// function of (seed, spine, params, sketch layer).
+
+type FF = NonNullable<GenerationConstraints["fabricFeatures"]>[number];
+
+const byT = (fs: GeoJSON.Feature[], t: string): number => fs.filter((f) => (f.properties as { type?: string }).type === t).length;
+
+describe("river generator — 28-C junction/mouth/dressing fuzz", () => {
+  it("random confluences + deltas + estuaries: never throws, always contained, deterministic", () => {
+    const rng = mulberry32(90210);
+    let sawConfluence = 0;
+    let sawDelta = 0;
+    let sawEstuary = 0;
+    for (let s = 0; s < 120; s++) {
+      const line = randomLine(s + 1300);
+      // Delta braidBias so the mouth path is exercised; vary the other knobs.
+      const params: RiverParams = {
+        windiness: rng(),
+        braiding: rng(),
+        width: 6 + rng() * 40,
+        widthGrowth: rng() * 3,
+        braidBias: rng() < 0.5 ? 1 : rng(), // half the runs are delta-strength
+      };
+      const region = makeCorridorRegion("fz", makeSpine("fz", line), riverMaxOffset(params));
+      const spine = region.spine!;
+      if (spine.totalLen < 1) continue;
+      const M = spine.points[spine.points.length - 1];
+      const feats: FF[] = [];
+      const mode = s % 3;
+      if (mode === 0 || mode === 2) {
+        // A partner river ending exactly at the mouth (confluence).
+        feats.push({
+          type: "Feature",
+          id: `p-${s}`,
+          geometry: { type: "LineString", coordinates: [[M[0], M[1]], [M[0] + 200, M[1] + 150]] },
+          properties: { kind: "river", procgen: { algorithm: "river", seed: s, version: 1, params: { width: 5 + rng() * 30 } } },
+        } as FF);
+      }
+      if (mode === 1) {
+        // A water polygon straddling the mouth (estuary signal).
+        const r = 100 + rng() * 300;
+        feats.push({
+          type: "Feature",
+          id: `w-${s}`,
+          geometry: { type: "Polygon", coordinates: [[[M[0] - r, M[1] - r], [M[0] + r, M[1] - r], [M[0] + r, M[1] + r], [M[0] - r, M[1] + r], [M[0] - r, M[1] - r]]] },
+          properties: { kind: "water" },
+        } as FF);
+      }
+      const constraints = { worldBounds: CONSTRAINTS.worldBounds, fabricFeatures: feats } as GenerationConstraints;
+      const maxOffset = riverMaxOffset(params);
+      let a: GeoJSON.Feature[] = [];
+      expect(() => {
+        a = generateRiver(hashLike(s, 28), region, params, constraints);
+      }).not.toThrow();
+      for (const f of a) {
+        const scan = (c: unknown): void => {
+          if (!Array.isArray(c)) return;
+          if (typeof c[0] === "number" && typeof c[1] === "number") {
+            expect(distanceToSpine(spine, c[0] as number, c[1] as number)).toBeLessThanOrEqual(maxOffset + 1e-2);
+            return;
+          }
+          for (const x of c) scan(x);
+        };
+        scan((f.geometry as { coordinates: unknown }).coordinates);
+      }
+      const b = generateRiver(hashLike(s, 28), region, params, constraints);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+      sawConfluence += byT(a, "river-confluence") > 0 ? 1 : 0;
+      sawDelta += byT(a, "river-distributary") > 0 ? 1 : 0;
+      sawEstuary += byT(a, "river-estuary") > 0 ? 1 : 0;
+    }
+    // The fuzz actually exercised each mouth path (not vacuously green).
+    expect(sawConfluence).toBeGreaterThan(0);
+    expect(sawDelta).toBeGreaterThan(0);
+    expect(sawEstuary).toBeGreaterThan(0);
+  });
+
+  it("degenerate: a partner river coincident with the whole spine still never throws or spills", () => {
+    for (let s = 0; s < 40; s++) {
+      const line = randomLine(s + 1700);
+      const params = PRESETS[s % PRESETS.length];
+      const region = makeCorridorRegion("fzd", makeSpine("fzd", line), riverMaxOffset(params));
+      const spine = region.spine!;
+      if (spine.totalLen < 1) continue;
+      // The partner IS this spine's own polyline (a pathological overlap) plus a
+      // zero-length water polygon at the mouth.
+      const M = spine.points[spine.points.length - 1];
+      const constraints = {
+        worldBounds: CONSTRAINTS.worldBounds,
+        fabricFeatures: [
+          { type: "Feature", id: `dup-${s}`, geometry: { type: "LineString", coordinates: spine.points.map((p) => [p[0], p[1]]) }, properties: { kind: "river", procgen: { algorithm: "river", seed: s, version: 1, params: { width: 12 } } } },
+          { type: "Feature", id: `wz-${s}`, geometry: { type: "Polygon", coordinates: [[[M[0], M[1]], [M[0], M[1]], [M[0], M[1]], [M[0], M[1]]]] }, properties: { kind: "water" } },
+        ],
+      } as GenerationConstraints;
+      const maxOffset = riverMaxOffset(params);
+      let feats: GeoJSON.Feature[] = [];
+      expect(() => {
+        feats = generateRiver(hashLike(s, 99), region, params, constraints);
+      }).not.toThrow();
+      for (const f of feats) {
+        const scan = (c: unknown): void => {
+          if (!Array.isArray(c)) return;
+          if (typeof c[0] === "number" && typeof c[1] === "number") {
+            expect(distanceToSpine(spine, c[0] as number, c[1] as number)).toBeLessThanOrEqual(maxOffset + 1e-2);
+            return;
+          }
+          for (const x of c) scan(x);
+        };
+        scan((f.geometry as { coordinates: unknown }).coordinates);
+      }
+    }
+  });
+});

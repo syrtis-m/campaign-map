@@ -37,6 +37,7 @@ import { demVerticalScale } from "../gen/fields";
 import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
 import { registerTreeGlyphs, installTreeGlyphProvider } from "../map/treeGlyphs";
 import { registerParkGlyphs, installParkGlyphProvider } from "../map/parkGlyphs";
+import { registerRiverGlyphs, installRiverGlyphProvider } from "../map/riverGlyphs";
 import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
 import type { BBox } from "../gen/spatialHash";
@@ -281,6 +282,7 @@ export class MapView extends ItemView {
       this.map.once("styledata", () => {
         registerTreeGlyphs(this.map!);
         registerParkGlyphs(this.map!);
+        registerRiverGlyphs(this.map!);
         this.refreshSource();
         this.refreshGeneratedSource();
         this.applyFocusReveal();
@@ -514,6 +516,7 @@ export class MapView extends ItemView {
     // registers them up front so there's no first-paint flash.
     installTreeGlyphProvider(this.map);
     installParkGlyphProvider(this.map);
+    installRiverGlyphProvider(this.map);
 
     this.map.on("load", () => {
       // Fallback only, for the one case setCampaign()'s own synchronous
@@ -531,6 +534,7 @@ export class MapView extends ItemView {
       if (this.campaign && !this.campaignAppliedOnce) this.applyCampaign();
       registerTreeGlyphs(this.map!);
       registerParkGlyphs(this.map!);
+        registerRiverGlyphs(this.map!);
       this.refreshSource();
       this.refreshGeneratedSource();
       this.applyFocusReveal();
@@ -1923,6 +1927,7 @@ export class MapView extends ItemView {
     this.map.once("styledata", () => {
       registerTreeGlyphs(this.map!);
       registerParkGlyphs(this.map!);
+        registerRiverGlyphs(this.map!);
       this.refreshSource();
       // setStyle bakes an EMPTY `generated` source (buildStyle's baseline), so
       // the generated fabric must be re-pushed here exactly as setCampaign's and

@@ -1,9 +1,20 @@
 #!/usr/bin/env tsx
-// Procgen v4.11 gate — RIVER visual overhaul wave 1 (plan 028 §2, boxes 28-A
-// + 28-B): per-segment merged channel polygons + river-bank casing
-// LineStrings + legible braid islands (28-A); SGC/Kinoshita quasi-periodic
-// meander math with per-bend hashed λ/amplitude jitter and the R_c ≥ 2W
-// realism clamp (28-B); canal preset regression-checked.
+// Procgen v4.11 gate — RIVER visual overhaul (plan 028 §2, boxes 28-A + 28-B +
+// 28-C): per-segment merged channel polygons + river-bank casing LineStrings +
+// legible braid islands (28-A); SGC/Kinoshita quasi-periodic meander math with
+// per-bend hashed λ/amplitude jitter and the R_c ≥ 2W realism clamp (28-B);
+// junctions / mouths / dressing (28-C — confluence Y-merge width law, delta
+// distributaries at ≈72°, estuary exponential flare, point-bar/oxbow/glyph
+// dressing); canal preset regression-checked.
+//
+// 28-C live checks (below, boxes (k)–(n)): a two-spine CONFLUENCE fixture
+// (tributary meeting a main stem → river-confluence gusset, width law, no
+// inland fork), a DELTA river (river-distributary arms at ≈72°, read from the
+// unclipped network), an ESTUARY (a river ending in a sketched water polygon →
+// river-estuary flare), and glyph rendering (the generated-river-glyph SYMBOL
+// layer + registered river-ford/rapids/falls SDF images + emitted river-glyph
+// point features on a windy reach). All 28-C features stay INSIDE the existing
+// corridor (the additive containment guard — riverMaxOffset is unchanged).
 //
 // Live against dev-vault via the obsidian CLI (headless twin createSpineForTest
 // — modals hang CLI — runs the FULL commit path). Extends procgen44's checks:
@@ -65,6 +76,21 @@ const MEANDER_WIDTH_M = 20;
 const DELTA_WIDTH_M = 22;
 const MIN_ISLAND_WIDTH_FRAC = 0.4; // keep in sync with src/gen/river.ts
 const RC_MIN_WIDTHS = 2; // keep in sync with src/gen/river.ts (plan 028 §1.2)
+// 28-C fixtures (display units, 1 = 50 m). West of the delta, clear of the
+// windy/canal/straight rows and the migrated Vespergate district.
+// Confluence: a tributary TRIB whose head shares the MAINR mouth [-40,-20].
+const MAINR = "[[-44,-30],[-40,-20]]";
+const TRIB = "[[-40,-20],[-34,-13]]";
+const MAINR_PARAMS = "{ windiness: 0.5, braiding: 0, width: 24, widthGrowth: 0.6, braidBias: 0 }";
+const TRIB_PARAMS = "{ windiness: 0.5, braiding: 0, width: 16, widthGrowth: 0, braidBias: 0 }";
+// Estuary: a river ESTR ending inside a sketched WATER polygon (the mouth
+// signal). Far east, south of the canal.
+const ESTR = "[[44,-36],[44,-28]]";
+// braidBias 1 so that WITHOUT the water polygon this mouth would delta-split —
+// the water signal must REPLACE the split with a flare (plan 028 §1.4).
+const ESTR_PARAMS = "{ windiness: 0.5, braiding: 1, width: 22, widthGrowth: 0.5, braidBias: 1 }";
+const ESTUARY_WATER = "[[40,-32],[48,-32],[48,-24],[40,-24]]";
+// (28-C dressing turns on at windiness ≥ 0.7 — the windy fixture `id` is 0.85.)
 
 function viewExpr(): string {
   return `app.workspace.getLeavesOfType('campaign-map-view').map(function(l){return l.view;}).find(function(v){return v&&v.campaign&&v.campaign.id==='${CAMPAIGN}'})`;
@@ -359,6 +385,115 @@ async function main(): Promise<void> {
       }
     }
     console.log(`     [g] ${islands.length} island(s); narrowest cross-section ${minWidth.toFixed(2)} m ≥ ${floor.toFixed(2)} m`);
+  });
+
+  await gate.try("(k) 28-C CONFLUENCE: a tributary meeting a main stem emits a Y-merge gusset (width law, contained, no fork)", async () => {
+    // Create the tributary first, then the main stem ending at the shared
+    // junction; regenerate the main so its generation sees the tributary in the
+    // sketch layer (raw-sketch read, plan 028 §1.4).
+    const tribId = await newRiver(TRIB, TRIB_PARAMS);
+    const mainId = await newRiver(MAINR, MAINR_PARAMS);
+    await evalAsync(`function(v){ return v.regenerateRegionById(${JSON.stringify(mainId)}); }`);
+    if (containment(mainId).outside > 0) throw new Error("confluence spilled outside the corridor");
+    const network = regionNetwork(mainId);
+    const gussets = network.filter((f) => (f.properties as { generatorId?: string })?.generatorId === "river-confluence");
+    if (gussets.length === 0) throw new Error("no river-confluence gusset — tributary junction not detected");
+    // A confluence is a MERGE, never a fork: no distributary emitted inland.
+    if (network.some((f) => (f.properties as { generatorId?: string })?.generatorId === "river-distributary")) {
+      throw new Error("confluence emitted an inland distributary fork");
+    }
+    // Width law W₃ = √(W₁²+W₂²): the widest gusset cross-section.
+    const w1 = 24 * (1 + 0.6); // main mouth width (2·halfWidthAt(f=1))
+    const w3 = Math.sqrt(w1 * w1 + 16 * 16); // partner (tributary) base width 16
+    let maxCross = 0;
+    for (const g of gussets) {
+      const open = ((g.geometry as GeoJSON.Polygon).coordinates[0] as [number, number][]).slice(0, -1);
+      const n = open.length / 2;
+      const a = open.slice(0, n);
+      const b = open.slice(n).reverse();
+      for (let j = 0; j < n; j++) maxCross = Math.max(maxCross, Math.hypot(a[j][0] - b[j][0], a[j][1] - b[j][1]));
+    }
+    if (Math.abs(maxCross - w3) > 2) throw new Error(`confluence width ${maxCross.toFixed(1)} m ≠ √(W₁²+W₂²) ${w3.toFixed(1)} m`);
+    console.log(`     [k] ${gussets.length} gusset(s); junction width ${maxCross.toFixed(1)} m ≈ W₃ ${w3.toFixed(1)} m; no fork`);
+    void tribId;
+  });
+
+  await gate.try("(l) 28-C DELTA: the delta river's terminal mouth fans two distributaries at ≈72°", async () => {
+    const network = regionNetwork(deltaId);
+    const arms = network.filter((f) => (f.properties as { generatorId?: string })?.generatorId === "river-distributary");
+    if (arms.length !== 2) throw new Error(`expected 2 distributary arms at the delta mouth, got ${arms.length}`);
+    const axis = (f: GeoJSON.Feature): number => {
+      const open = ((f.geometry as GeoJSON.Polygon).coordinates[0] as [number, number][]).slice(0, -1);
+      const n = open.length / 2;
+      const a = open.slice(0, n);
+      const b = open.slice(n).reverse();
+      const tip: [number, number] = [(a[n - 1][0] + b[n - 1][0]) / 2, (a[n - 1][1] + b[n - 1][1]) / 2];
+      const M: [number, number] = [a[0][0], a[0][1]]; // arm root ≈ the mouth
+      return Math.atan2(tip[1] - M[1], tip[0] - M[0]);
+    };
+    let deg = (Math.abs(axis(arms[0]) - axis(arms[1])) * 180) / Math.PI;
+    if (deg > 180) deg = 360 - deg;
+    if (deg < 72 - 8 || deg > 72 + 8) throw new Error(`delta bifurcation ${deg.toFixed(1)}° outside 72°±8°`);
+    console.log(`     [l] 2 bird's-foot arms; bifurcation ${deg.toFixed(1)}° ≈ 72°`);
+  });
+
+  let estId = "";
+  await gate.try("(m) 28-C ESTUARY: a river mouth inside a sketched water polygon flares (monotone), contained", async () => {
+    await evalAsync(`function(v){ return v.createFabricForTest('water', ${ESTUARY_WATER}, '${TEST_NAME}'); }`);
+    estId = await newRiver(ESTR, ESTR_PARAMS);
+    if (containment(estId).outside > 0) throw new Error("estuary spilled outside the corridor");
+    const network = regionNetwork(estId);
+    const est = network.filter((f) => (f.properties as { generatorId?: string })?.generatorId === "river-estuary");
+    if (est.length === 0) throw new Error("no river-estuary flare — mouth-in-water signal not detected");
+    if (network.some((f) => (f.properties as { generatorId?: string })?.generatorId === "river-distributary")) {
+      throw new Error("estuary and delta both emitted — the tidal mouth must REPLACE the split");
+    }
+    // Monotone flare toward the mouth.
+    const open = ((est[0].geometry as GeoJSON.Polygon).coordinates[0] as [number, number][]).slice(0, -1);
+    const n = open.length / 2;
+    const a = open.slice(0, n);
+    const b = open.slice(n).reverse();
+    const widths = a.map((p, j) => Math.hypot(p[0] - b[j][0], p[1] - b[j][1]));
+    for (let j = 1; j < widths.length; j++) if (widths[j] < widths[j - 1] - 0.05) throw new Error("estuary flare not monotone toward the mouth");
+    console.log(`     [m] estuary flare ${widths[0].toFixed(1)} → ${Math.max(...widths).toFixed(1)} m (monotone), no split`);
+  });
+
+  await gate.try("(n) 28-C GLYPHS: generated-river-glyph symbol layer + registered SDF images + emitted symbols on a windy reach", () => {
+    const raw = sync(
+      "(function(){var ls=v.map.getStyle().layers.map(function(l){return l.id});var gl=v.map.getLayer('generated-river-glyph');return JSON.stringify({glyphIdx:ls.indexOf('generated-river-glyph'),channelIdx:ls.indexOf('generated-river-channel'),glyphType:gl?gl.type:null,ford:v.map.hasImage('river-ford'),rapids:v.map.hasImage('river-rapids'),falls:v.map.hasImage('river-falls')})})()"
+    );
+    const r = (typeof raw === "string" ? JSON.parse(raw) : raw) as {
+      glyphIdx: number;
+      channelIdx: number;
+      glyphType: string | null;
+      ford: boolean;
+      rapids: boolean;
+      falls: boolean;
+    };
+    if (r.glyphIdx < 0) throw new Error("generated-river-glyph layer missing from the live style");
+    if (r.glyphType !== "symbol") throw new Error(`generated-river-glyph is ${r.glyphType}, expected symbol`);
+    if (!(r.glyphIdx > r.channelIdx)) throw new Error("river-glyph must draw ABOVE the channel fill");
+    // Requires MapView to register the river glyphs (installRiverGlyphProvider +
+    // registerRiverGlyphs — the 28-C MapView integration step, mirroring the
+    // 026-C tree-glyph wiring). A missing image ⇒ the orchestrator hasn't wired it.
+    if (!(r.ford && r.rapids && r.falls)) throw new Error("river-ford/rapids/falls SDF images not registered (MapView 28-C wiring?)");
+    // The windy river `id` (windiness 0.85 ≥ DRESS_WINDINESS) emits water symbols.
+    const glyphs = featureCount(id, "river-glyph");
+    if (glyphs < 1) throw new Error("no river-glyph features on the windy reach (dressing gate?)");
+    console.log(`     [n] glyph layer #${r.glyphIdx} (symbol) > channel #${r.channelIdx}; images ford/rapids/falls ✓; ${glyphs} symbols`);
+  });
+
+  await gate.try("screenshot: confluence Y-merge + estuary flare (close zoom)", async () => {
+    sync("(function(){v.map.fitBounds([[-46,-32],[-32,-12]],{animate:false,padding:30});return 'ok';})()");
+    await new Promise((r) => setTimeout(r, 2500));
+    front();
+    await new Promise((r) => setTimeout(r, 800));
+    screenshot(`${REVIEW}/procgen49-river-confluence.png`);
+    sync("(function(){v.map.fitBounds([[38,-38],[50,-22]],{animate:false,padding:30});return 'ok';})()");
+    await new Promise((r) => setTimeout(r, 2500));
+    front();
+    await new Promise((r) => setTimeout(r, 800));
+    screenshot(`${REVIEW}/procgen49-river-estuary.png`);
   });
 
   await gate.try("(h) pan/zoom never generates (explicit-only preserved)", async () => {

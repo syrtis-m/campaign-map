@@ -94,11 +94,13 @@
  *    `clipNetworkToTile`'s `Number(id)` sort/clip stays deterministic.
  */
 import { hashSeed, mulberry32 } from "./rng";
-import { q } from "./waterEmit";
+import { q, harmonicBlobRing, blobFeature } from "./waterEmit";
 import type { ProcgenRegion } from "./region";
 import type { GenerationConstraints } from "./types";
 import { elevationFieldFromFabric } from "./fields/mountainField";
 import type { ElevationField } from "./fields/elevation";
+import { distanceToPolyline } from "./fields/sdf";
+import type { FabricFeature } from "../model/fabric";
 
 type Pt = [number, number];
 
@@ -197,6 +199,54 @@ const JOINT_WELD_M = 0.5;
 const FILLET_MAX_M = 60;
 const FILLET_FRAC = 0.35; // ≤ this fraction of each adjacent segment
 const FILLET_ALLOWANCE_M = FILLET_MAX_M / 2;
+
+// ── Junctions, mouths, dressing (plan 028 §1.4, box 28-C) ────────────────────
+// EVERYTHING below is emitted APPENDED to the 28-B output (steps 1–4 of
+// `generateRiver` are byte-untouched), and every appended vertex is verified
+// INSIDE the EXISTING corridor (`riverMaxOffset` unchanged) before it leaves —
+// so the additive rule is exact: a lone river with no partner spine, no
+// water-polygon mouth, and windiness < DRESS_WINDINESS emits nothing here and
+// is byte-identical to 28-B. `constraints` are read as the RAW DURABLE SKETCH
+// LAYER only (other river spines + water polygons — never another generator's
+// OUTPUT; that is plan 024's cascade), the same stage-legality as 23-E's slope
+// coupling. The mouth signal (plan 028 §1.4) is a terminal spine endpoint
+// near/inside a sketched WATER polygon.
+/** A spine endpoint within this distance of ANOTHER sketched river spine is a
+ * confluence junction; a mouth within it of a sketched water polygon is a
+ * tidal mouth. Absolute-world meters (position-keyed, no float-hash). */
+export const CONFLUENCE_SNAP_M = 30;
+/** braidBias at/above this on a river with a land mouth triggers a delta split
+ * (no new preset-id branch — braidBias is the whole truth, plan 028 §1.4). */
+export const DELTA_BIAS_THRESHOLD = 0.8;
+/** Delta bifurcation: two arms at ≈72° between them (Coffey & Rothman 2017
+ * 70.4°±2.6°), the whole fan jittered ±DELTA_ANGLE_JITTER so the inter-arm
+ * angle is 72°±5° (hashed on the mouth position). */
+const DELTA_HALF_ANGLE = (36 * Math.PI) / 180;
+const DELTA_ANGLE_JITTER = (5 * Math.PI) / 180;
+/** Distributary arm length in channel widths (bird's-foot; short at map scale,
+ * 1 split → 2 arms, each width W/√2 = W/√N). */
+const DELTA_LEN_WIDTHS = 4;
+/** Estuary flare: mouth width = ESTUARY_FLARE × base width, W(x)=Wm·e^(−x/Lc)
+ * decaying upstream (Langbein estuary flare, plan 028 §0). */
+const ESTUARY_FLARE = 2.4;
+const ESTUARY_LEN_WIDTHS = 6; // flare length upstream of the mouth, in widths
+const ESTUARY_LIP_WIDTHS = 2; // trumpet lip length beyond the mouth, in widths
+/** Dressing (point bars, oxbows, ford/rapids/falls glyphs) turns on at/above
+ * this windiness (plan 028 §1.4 + OQ#2 plan-default ≈0.7); rapids/falls also
+ * turn on wherever the slope field is steep, regardless of windiness. Below
+ * both, a lone river is byte-identical to 28-B. */
+export const DRESS_WINDINESS = 0.7;
+const POINT_BAR_PROB = 0.5; // hashed per-segment emission chance
+const OXBOW_PROB = 0.28; // sparser — the "old river" story cue
+const GLYPH_PROB = 0.4; // hashed per-segment river-symbol chance
+const POINT_BAR_LEN_WIDTHS = 3;
+/** Slope (m/m) thresholds for the water-symbol glyph classification. */
+const RAPIDS_SLOPE_MPM = 0.5;
+const FALLS_SLOPE_MPM = 1.5;
+/** Corridor safety epsilon: a 28-C feature is DROPPED (degradation ladder) if
+ * any vertex sits outside (maxOffset − eps) of the spine — the additive
+ * containment guard that keeps `riverMaxOffset` a pure f(params). */
+const C28_CORRIDOR_EPS = 0.5;
 
 /** Base channel half-width at downstream fraction `f` (0 = source, 1 = mouth).
  * The ONE global-arc quantity (plan 022 §3.1); its sub-meter drift on an
@@ -696,6 +746,340 @@ export function generateRiver(
         secInner.slice(best[0], best[1] + 1)
       )
     );
+  }
+
+  // 5. Plan 028 §1.4 (box 28-C): junctions, mouths, dressing — APPENDED to the
+  //    28-B output, each feature verified inside the EXISTING corridor. Reads
+  //    the raw sketch layer (other river spines + water polygons) for the
+  //    confluence/estuary topology; delta activates on braidBias; point bars /
+  //    oxbows / water-symbol glyphs are the per-bend dressing.
+  const maxOffset = region.corridorMaxOffset ?? riverMaxOffset(params);
+  for (const f of dressRiver(seed, spine, pts, params, center, normals, sampleSeg, sampleS, constraints, elev)) {
+    if (containedInCorridor(f, spine.points, maxOffset)) out.push(f);
+  }
+  return out;
+}
+
+// ─── Plan 028 §1.4 (box 28-C) helpers ────────────────────────────────────────
+
+/** Every emitted coordinate within (maxOffset − eps) of the spine — the
+ * additive containment guard (`distanceToSpine` is 1-Lipschitz, so this is the
+ * same metric `regionContainmentReport` uses). A feature that would spill is
+ * dropped whole (degradation ladder), so `riverMaxOffset` stays a pure
+ * f(params) and 28-C never widens the corridor. */
+function containedInCorridor(f: GeoJSON.Feature, spinePts: Pt[], maxOffset: number): boolean {
+  const limit = maxOffset - C28_CORRIDOR_EPS;
+  let ok = true;
+  const scan = (c: unknown): void => {
+    if (!ok || !Array.isArray(c)) return;
+    if (typeof c[0] === "number" && typeof c[1] === "number") {
+      if (distanceToPolyline(spinePts, c[0] as number, c[1] as number) > limit) ok = false;
+      return;
+    }
+    for (const x of c) scan(x);
+  };
+  scan((f.geometry as { coordinates: unknown }).coordinates);
+  return ok;
+}
+
+function normalOf(u: Pt): Pt {
+  return [-u[1], u[0]];
+}
+function add(p: Pt, d: Pt, s: number): Pt {
+  return [p[0] + d[0] * s, p[1] + d[1] * s];
+}
+
+/** Nearest point on segment a→b to p, and its distance. */
+function nearestOnSeg(p: Pt, a: Pt, b: Pt): { pt: Pt; d: number } {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy || 1;
+  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const pt: Pt = [a[0] + t * dx, a[1] + t * dy];
+  return { pt, d: Math.hypot(pt[0] - p[0], pt[1] - p[1]) };
+}
+
+/** Even-odd point-in-ring (open or closed ring). */
+function pointInRing(ring: Pt[], p: Pt): boolean {
+  let inside = false;
+  const n = ring.length;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+interface RiverPartner {
+  tangent: Pt;
+  width: number;
+}
+
+/** The base channel width a sketched river carries (its persisted procgen
+ * params.width, the raw sketch layer — never generated output), defaulting to
+ * the schema default when unset/malformed. */
+function readRiverWidth(f: FabricFeature): number {
+  const p = f.properties.procgen?.params as Record<string, unknown> | undefined;
+  const w = p && typeof p.width === "number" ? p.width : 12;
+  return w > 0 ? w : 12;
+}
+
+/** Is endpoint `p` a confluence junction — within CONFLUENCE_SNAP_M of ANOTHER
+ * sketched river spine? Returns that river's local flow tangent + base width
+ * (the nearer partner wins; ties broken by feature-id order for determinism).
+ * `selfId` excludes this very river (constraints carry the whole sketch layer,
+ * including self). */
+function partnerRiverAt(selfId: string, feats: FabricFeature[] | undefined, p: Pt): RiverPartner | null {
+  if (!feats) return null;
+  const rivers = feats
+    .filter((f) => f.properties.kind === "river" && f.geometry.type === "LineString" && String(f.id) !== selfId)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  let best: RiverPartner | null = null;
+  let bestD = CONFLUENCE_SNAP_M;
+  for (const f of rivers) {
+    const line = (f.geometry as GeoJSON.LineString).coordinates as Pt[];
+    for (let i = 0; i + 1 < line.length; i++) {
+      const { d } = nearestOnSeg(p, line[i], line[i + 1]);
+      if (d < bestD) {
+        bestD = d;
+        best = { tangent: unit(line[i + 1][0] - line[i][0], line[i + 1][1] - line[i][1]), width: readRiverWidth(f) };
+      }
+    }
+  }
+  return best;
+}
+
+/** Is mouth `p` at open water — inside, or within CONFLUENCE_SNAP_M of, a
+ * sketched WATER polygon (the plan 028 §1.4 mouth signal)? */
+function mouthAtWater(feats: FabricFeature[] | undefined, p: Pt): boolean {
+  if (!feats) return false;
+  for (const f of feats) {
+    if (f.properties.kind !== "water" || f.geometry.type !== "Polygon") continue;
+    const ring = (f.geometry as GeoJSON.Polygon).coordinates[0] as Pt[];
+    if (ring.length < 3) continue;
+    if (pointInRing(ring, p)) return true;
+    if (distanceToPolyline(ring, p[0], p[1]) <= CONFLUENCE_SNAP_M) return true;
+  }
+  return false;
+}
+
+/** A ribbon polygon from a left chain (forward) + right chain (reversed), id
+ * position-hashed on the two anchor points + role — the shared 28-C emitter. */
+function dressRibbon(seed: number, gid: string, anchorA: Pt, anchorB: Pt, role: number, left: Pt[], right: Pt[]): GeoJSON.Feature {
+  return ribbonFeature(seed, gid, anchorA, anchorB, role, left, right);
+}
+
+/** A position-hashed point feature (glyphs). */
+function pointFeature(seed: number, gid: string, at: Pt, props: Record<string, unknown>): GeoJSON.Feature {
+  return {
+    type: "Feature",
+    id: hashSeed(seed, gid, q(at[0]), q(at[1])),
+    geometry: { type: "Point", coordinates: [q(at[0]), q(at[1])] },
+    properties: { generatorId: gid, type: gid, ...props },
+  };
+}
+
+/**
+ * Confluence Y-merge gusset at junction `J` (plan 028 §1.4): a water ribbon
+ * over the last `Lc` of this river's approach that swings its INNER bank out to
+ * meet the partner, widening the junction cross-section to the derived law
+ * W₃ = √(W₁²+W₂²) (flagged-derived; W∝√Q, Q additive) — the smooth Y, never a
+ * T. Position-keyed on `J`, so it is edit-local to the endpoint. Never a fork:
+ * a single merge polygon, emitted only at a terminal endpoint.
+ */
+function confluenceGusset(seed: number, J: Pt, thisTangent: Pt, w1: number, partner: RiverPartner): GeoJSON.Feature {
+  const w3 = Math.sqrt(w1 * w1 + partner.width * partner.width);
+  const n0 = normalOf(thisTangent);
+  // Inner side = toward the partner's flow; outer bank stays put, inner swings.
+  const innerSign = n0[0] * partner.tangent[0] + n0[1] * partner.tangent[1] >= 0 ? 1 : -1;
+  const innerN: Pt = [n0[0] * innerSign, n0[1] * innerSign];
+  const Lc = 2 * w1;
+  const steps = 8;
+  const outer: Pt[] = [];
+  const inner: Pt[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const ramp = i / steps; // 0 upstream → 1 at the junction
+    const center = add(J, thisTangent, -(Lc * (1 - ramp)));
+    outer.push(add(center, innerN, -(w1 / 2)));
+    inner.push(add(center, innerN, w1 / 2 + ramp * (w3 - w1)));
+  }
+  return dressRibbon(seed, "river-confluence", J, add(J, thisTangent, -Lc), 0, outer, inner);
+}
+
+/** Delta distributaries at mouth `M` (plan 028 §1.4): two bird's-foot arms at
+ * ≈72° (jittered), each width W/√2, tapering to a point — the ONLY downstream
+ * fork the generator ever emits, and only at the terminal mouth. */
+function deltaArms(seed: number, M: Pt, uM: Pt, params: RiverParams, maxOffset: number): GeoJSON.Feature[] {
+  const W = params.width;
+  const hw0 = W / (2 * Math.SQRT2); // per-arm half-width (N = 2 → W/√N = W/√2)
+  const L = Math.min(DELTA_LEN_WIDTHS * W, maxOffset - C28_CORRIDOR_EPS - hw0);
+  if (L <= hw0) return [];
+  const rng = mulberry32(hashSeed(seed, "delta", q(M[0]), q(M[1])));
+  const jitter = (2 * rng() - 1) * DELTA_ANGLE_JITTER; // whole-fan jitter ⇒ inter-arm 72°±5°
+  const half = DELTA_HALF_ANGLE + jitter / 2;
+  const base = Math.atan2(uM[1], uM[0]);
+  const out: GeoJSON.Feature[] = [];
+  for (const armSign of [-1, 1]) {
+    const ang = base + armSign * half;
+    const dir: Pt = [Math.cos(ang), Math.sin(ang)];
+    const n = normalOf(dir);
+    const steps = 8;
+    const left: Pt[] = [];
+    const right: Pt[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const u = (i / steps) * L;
+      const hw = hw0 * (1 - u / L);
+      const c = add(M, dir, u);
+      left.push(add(c, n, hw));
+      right.push(add(c, n, -hw));
+    }
+    out.push(dressRibbon(seed, "river-distributary", M, add(M, dir, L), armSign < 0 ? 0 : 1, left, right));
+  }
+  return out;
+}
+
+/** Estuary trumpet at mouth `M` (plan 028 §1.4): an exponential flare
+ * W(x)=Wm·e^(−x/Lc) along the mouth axis, monotonically widening toward and
+ * past the mouth into open water — replaces the delta split at a tidal mouth. */
+function estuaryTrumpet(seed: number, M: Pt, uM: Pt, params: RiverParams, maxOffset: number): GeoJSON.Feature | null {
+  const W = params.width;
+  const Wm = ESTUARY_FLARE * W;
+  const budget = maxOffset - C28_CORRIDOR_EPS - Wm / 2;
+  if (budget <= W) return null;
+  const L = Math.min(ESTUARY_LEN_WIDTHS * W, budget);
+  const lip = Math.min(ESTUARY_LIP_WIDTHS * W, budget);
+  const Lc = L / Math.log(ESTUARY_FLARE); // width = W exactly at x = L upstream
+  const n = normalOf(uM);
+  const steps = 12;
+  const left: Pt[] = [];
+  const right: Pt[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = -L + (i / steps) * (L + lip); // upstream(−L) → mouth(0) → lip(+lip)
+    const x = -t; // distance upstream of the mouth
+    const w = Math.min(1.15 * Wm, Wm * Math.exp(-x / Lc));
+    const c = add(M, uM, t);
+    left.push(add(c, n, w / 2));
+    right.push(add(c, n, -w / 2));
+  }
+  return dressRibbon(seed, "river-estuary", M, add(M, uM, lip), 0, left, right);
+}
+
+/**
+ * Per-bend dressing (plan 028 §1.4): point-bar sand crescents on inner bends,
+ * oxbow-lake blobs beside the tightest bends, and USGS-style water-symbol
+ * glyphs (ford / rapids / falls) at hashed candidates. All keyed on the
+ * ORIGINAL segment's endpoints (identity-local); point bars/oxbows/glyphs gate
+ * on windiness ≥ DRESS_WINDINESS (rapids/falls also fire on steep slope, so a
+ * mountain torrent gets them at any windiness). Placement never reads the
+ * elevation field (only glyph CLASSIFICATION does), so a slope-uncoupled river
+ * dresses byte-identically whether coupling is off or the mountain is absent.
+ */
+function dressRiver(
+  seed: number,
+  spine: { points: Pt[]; id: string },
+  pts: Pt[],
+  params: RiverParams,
+  center: CenterPoint[],
+  normals: Pt[],
+  sampleSeg: number[],
+  sampleS: number[],
+  constraints: GenerationConstraints,
+  elev: ElevationField | null
+): GeoJSON.Feature[] {
+  const out: GeoJSON.Feature[] = [];
+  const feats = constraints.fabricFeatures;
+  const maxOffset = riverMaxOffset(params);
+  const nPts = pts.length;
+  const M = pts[nPts - 1];
+  const H = pts[0];
+  const uM = unit(M[0] - pts[nPts - 2][0], M[1] - pts[nPts - 2][1]);
+  const uH = unit(pts[1][0] - H[0], pts[1][1] - H[1]);
+
+  // ── Mouth topology: estuary (tidal mouth) XOR delta (land mouth + high
+  //    braidBias). The mouth signal is a water polygon at the terminal point.
+  const mouthWater = mouthAtWater(feats, M);
+  if (mouthWater) {
+    const e = estuaryTrumpet(seed, M, uM, params, maxOffset);
+    if (e) out.push(e);
+  } else if (params.braidBias >= DELTA_BIAS_THRESHOLD) {
+    out.push(...deltaArms(seed, M, uM, params, maxOffset));
+  }
+
+  // ── Confluence gussets at either endpoint that meets another river spine.
+  const mouthPartner = partnerRiverAt(spine.id, feats, M);
+  if (mouthPartner) out.push(confluenceGusset(seed, M, uM, 2 * halfWidthAt(params, 1), mouthPartner));
+  const headPartner = partnerRiverAt(spine.id, feats, H);
+  if (headPartner) out.push(confluenceGusset(seed, H, [-uH[0], -uH[1]], 2 * halfWidthAt(params, 0), headPartner));
+
+  // ── Per-bend dressing, per ORIGINAL segment (identity keying = braid keying).
+  const dressOn = params.windiness >= DRESS_WINDINESS;
+  const W = params.width;
+  for (let k = 0; k + 1 < nPts; k++) {
+    const a = pts[k];
+    const b = pts[k + 1];
+    const uSeg = unit(b[0] - a[0], b[1] - a[1]);
+    const nSeg = normalOf(uSeg);
+    // Samples of this ORIGINAL segment on the (filleted) global centerline.
+    const idx: number[] = [];
+    for (let i = 0; i < center.length; i++) if (sampleSeg[i] === k) idx.push(i);
+    if (idx.length < 3) continue;
+    // Bend apex = the largest signed lateral deviation from the straight spine.
+    let apex = idx[0];
+    let apexLat = 0;
+    for (const i of idx) {
+      const sp = add(a, uSeg, sampleS[i]);
+      const lat = (center[i].x - sp[0]) * nSeg[0] + (center[i].y - sp[1]) * nSeg[1];
+      if (Math.abs(lat) > Math.abs(apexLat)) {
+        apexLat = lat;
+        apex = i;
+      }
+    }
+    const rng = mulberry32(hashSeed(seed, "dress", q(a[0]), q(a[1]), q(b[0]), q(b[1])));
+    const rBar = rng();
+    const rOx = rng();
+    const rGlyph = rng();
+    const gAt = rng();
+    const hwApex = halfWidthAt(params, center[apex].f);
+    const innerSign = apexLat >= 0 ? -1 : 1; // toward the spine (the bend's inner bank)
+    const innerN: Pt = [nSeg[0] * innerSign, nSeg[1] * innerSign];
+
+    // Point bar: a small sand crescent hugging the inner bank at the apex.
+    if (dressOn && Math.abs(apexLat) > 0.3 * W && rBar < POINT_BAR_PROB) {
+      const barLen = Math.min(POINT_BAR_LEN_WIDTHS * W, 0.6 * (sampleS[idx[idx.length - 1]] - sampleS[idx[0]]));
+      const barW = 0.35 * W;
+      const mid = add([center[apex].x, center[apex].y], innerN, hwApex * 0.5);
+      const ring: Pt[] = [];
+      const steps = 10;
+      for (let s = 0; s < steps; s++) {
+        const th = (s / steps) * Math.PI * 2;
+        ring.push([q(mid[0] + uSeg[0] * Math.cos(th) * (barLen / 2) + innerN[0] * Math.sin(th) * (barW / 2)),
+          q(mid[1] + uSeg[1] * Math.cos(th) * (barLen / 2) + innerN[1] * Math.sin(th) * (barW / 2))]);
+      }
+      ring.push([ring[0][0], ring[0][1]]);
+      out.push(blobFeature(seed, "river-point-bar", ring));
+    }
+
+    // Oxbow lake: a hashed-sparse harmonic blob just inside the tightest bends
+    // (placed toward the spine, where the corridor has budget).
+    if (dressOn && Math.abs(apexLat) > 0.45 * W && rOx < OXBOW_PROB) {
+      const blobR = 0.55 * W;
+      const c = add([center[apex].x, center[apex].y], innerN, hwApex + 0.4 * W + blobR);
+      const ring = harmonicBlobRing(hashSeed(seed, "oxbowseed", q(a[0]), q(a[1]), q(b[0]), q(b[1])), "oxbow", c[0], c[1], blobR, 0.5);
+      out.push(blobFeature(seed, "river-oxbow", ring));
+    }
+
+    // Water-symbol glyph at a hashed candidate: ford (calm) / rapids / falls
+    // (steep), classified by the sketch-derived slope field.
+    const gi = idx[Math.min(idx.length - 1, Math.floor(gAt * idx.length))];
+    const gp: Pt = [center[gi].x, center[gi].y];
+    const slope = elev ? Math.hypot(elev(gp[0], gp[1]).dx, elev(gp[0], gp[1]).dy) : 0;
+    const glyph = slope >= FALLS_SLOPE_MPM ? "falls" : slope >= RAPIDS_SLOPE_MPM ? "rapids" : "ford";
+    if ((dressOn || slope >= RAPIDS_SLOPE_MPM) && rGlyph < GLYPH_PROB) {
+      const tan = normals[gi]; // across-stream normal; the symbol is drawn across the channel
+      out.push(pointFeature(seed, "river-glyph", gp, { glyph, rotation: q((Math.atan2(tan[1], tan[0]) * 180) / Math.PI) }));
+    }
   }
   return out;
 }

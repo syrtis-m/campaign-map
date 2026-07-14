@@ -2,23 +2,27 @@
 
 exports[`river generator — determinism > matches the seeded snapshot fixture (delta — braid/island drift tripwire) 1`] = `
 {
-  "sha256": "8dca85cd356bd21f31a9196f014e7a38d0db999182eb1e2c96be584a1d212d3d",
+  "sha256": "2fe75f49db0776d98a09205a813587ec709fab1988475def7289171c71b200d1",
   "summary": {
     "river-bank": 10,
     "river-channel": 5,
+    "river-distributary": 2,
     "river-island": 1,
-    "total": 16,
+    "total": 18,
   },
 }
 `;
 
 exports[`river generator — determinism > matches the seeded snapshot fixture (windy + braided — golden drift tripwire) 1`] = `
 {
-  "sha256": "4bd03a2038397665443c37344be13a5a28e963e307003217af0375eacce7bba5",
+  "sha256": "7aa488052a36d0ec63b27d9fc4fc8407cd15476fac1d68d39ed882a50758d1c1",
   "summary": {
     "river-bank": 8,
     "river-channel": 4,
-    "total": 12,
+    "river-glyph": 2,
+    "river-oxbow": 2,
+    "river-point-bar": 1,
+    "total": 17,
   },
 }
 `;

@@ -7,6 +7,9 @@ import {
   MIN_ISLAND_WIDTH_FRAC,
   MEANDER_WAVELENGTH_WIDTHS,
   RC_MIN_WIDTHS,
+  DRESS_WINDINESS,
+  DELTA_BIAS_THRESHOLD,
+  CONFLUENCE_SNAP_M,
   type RiverParams,
 } from "./river";
 import { makeSpine, makeCorridorRegion, distanceToSpine, type ProcgenRegion } from "./region";
@@ -89,6 +92,11 @@ function digest(features: GeoJSON.Feature[]): { sha256: string; summary: Record<
 
 describe("river generator — determinism", () => {
   it("matches the seeded snapshot fixture (windy + braided — golden drift tripwire)", () => {
+    // Golden DELIBERATELY regenerated for box 28-C: windiness 0.85 ≥
+    // DRESS_WINDINESS appends point-bar / oxbow / ford dressing; braidBias 0.2 <
+    // DELTA_BIAS_THRESHOLD and no partner spine / water polygon in CONSTRAINTS,
+    // so NO delta / confluence / estuary — the additive 28-C dressing is the
+    // only change from 28-B.
     const p = PARAMS({ windiness: 0.85, braiding: 0.6, width: 26, widthGrowth: 0.7, braidBias: 0.2 });
     expect(digest(generateRiver(4242, regionFor(LINE, p), p, CONSTRAINTS))).toMatchSnapshot();
   });
@@ -97,6 +105,9 @@ describe("river generator — determinism", () => {
     // The windy+braided golden above carries no braids post-028 (its 26 m
     // channel can't afford a legible island — degradation ladder, plan 028
     // §1.3), so this second golden pins the braid + island emission path.
+    // Golden DELIBERATELY regenerated for box 28-C: braidBias 1 ≥
+    // DELTA_BIAS_THRESHOLD on a LAND mouth appends two bird's-foot
+    // distributaries (river-distributary) at ≈72°.
     const p = PARAMS({ windiness: 0.4, braiding: 1, width: 20, widthGrowth: 1, braidBias: 1 });
     const d = digest(generateRiver(8, regionFor(LINE, p), p, CONSTRAINTS));
     expect(d.summary["river-island"]).toBeGreaterThan(0);
@@ -738,5 +749,295 @@ describe("river generator — slope coupling (box 23-E)", () => {
       JSON.stringify(feats.filter((f) => allCoords([f]).every(([x]) => x >= 3100)));
     expect(seg2(coupled)).toBe(seg2(bare));
     expect(JSON.stringify(coupled)).not.toBe(JSON.stringify(bare));
+  });
+});
+
+// ─── Plan 028 §1.4 (box 28-C): junctions, mouths, dressing ───────────────────
+// Confluences/deltas/estuaries are RELATIONSHIPS read from the RAW SKETCH LAYER
+// (other river spines + water polygons on constraints.fabricFeatures — never
+// another generator's output). Everything is APPENDED to the 28-B output and
+// verified inside the EXISTING corridor, so a lone plain river is byte-
+// identical to 28-B (additive rule).
+
+type FF = NonNullable<GenerationConstraints["fabricFeatures"]>[number];
+
+/** A sketched partner river spine (a LineString) with a persisted width param. */
+function partnerRiver(id: string, line: Pt[], width = 18): FF {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "LineString", coordinates: line },
+    properties: { kind: "river", procgen: { algorithm: "river", seed: 1, version: 1, params: { width } } },
+  } as FF;
+}
+
+/** A sketched WATER polygon (the estuary mouth signal). */
+function waterPoly(id: string, ring: Pt[]): FF {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "Polygon", coordinates: [ring] },
+    properties: { kind: "water" },
+  } as FF;
+}
+
+/** A sketched alpine MOUNTAIN for slope-driven glyph classification. */
+function steepMountain(id: string, ring: Pt[]): FF {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "Polygon", coordinates: [ring] },
+    properties: {
+      kind: "mountain",
+      procgen: { algorithm: "mountain", seed: 5, version: 1, params: { terrain: "alpine", amplitude: 0.9, roughness: 0.5 } },
+    },
+  } as FF;
+}
+
+const withFabric = (feats: FF[]): GenerationConstraints => ({ worldBounds: CONSTRAINTS.worldBounds, fabricFeatures: feats });
+
+/** Paired cross-section widths of a lozenge/ribbon polygon (main forward,
+ * inner reversed) — the island-test idiom, reused for confluence/estuary. */
+function crossWidths(f: GeoJSON.Feature): number[] {
+  const open = openRing(f);
+  const n = open.length / 2;
+  const a = open.slice(0, n);
+  const b = open.slice(n).reverse();
+  const out: number[] = [];
+  for (let j = 0; j < n; j++) out.push(dist(a[j], b[j]));
+  return out;
+}
+
+describe("river generator — 28-C additive byte-identity (lone river == 28-B)", () => {
+  // Pinned from the 28-B build (pre-28-C): a lone river with windiness below
+  // DRESS_WINDINESS and no partner spine / water polygon fires NO 28-C code
+  // path, so it must stay byte-identical. The canal fixture above pins
+  // windiness 0; this pins a MEANDERING lone river.
+  const LONE_065_SHA = "2b50749b8aa256a21be901408665915938aabe74962d6941d0983e02a9be9dbf";
+  const p = PARAMS({ windiness: 0.65, braiding: 0, width: 20, widthGrowth: 0, braidBias: 0 });
+
+  it("windiness 0.65, no constraints → byte-identical to the pinned 28-B output", () => {
+    expect(p.windiness).toBeLessThan(DRESS_WINDINESS); // below the dressing gate
+    const feats = generateRiver(4242, regionFor(LINE, p), p, CONSTRAINTS);
+    expect(createHash("sha256").update(JSON.stringify(feats)).digest("hex")).toBe(LONE_065_SHA);
+    // No 28-C feature types at all.
+    for (const t of ["river-confluence", "river-distributary", "river-estuary", "river-point-bar", "river-oxbow", "river-glyph"]) {
+      expect(byType(feats, t).length, `unexpected ${t}`).toBe(0);
+    }
+  });
+
+  it("an unrelated mountain-only constraint set does not add 28-C features to a below-threshold river", () => {
+    const bare = generateRiver(4242, regionFor(LINE, p), p, CONSTRAINTS);
+    const withM = generateRiver(4242, regionFor(LINE, p), p, withFabric([steepMountain("m", [[400, -300], [800, -300], [800, 300], [400, 300], [400, -300]])]));
+    // windiness < DRESS and slope-gated glyphs only where the reach is steep;
+    // the reach barely clips the mountain, but any glyph must be slope-driven —
+    // assert no dressing polygons appeared (point bars/oxbows are windiness-gated).
+    expect(byType(withM, "river-point-bar").length).toBe(0);
+    expect(byType(withM, "river-oxbow").length).toBe(0);
+    // The channel/bank geometry is unchanged from bare except where slope
+    // coupling bends it — but with slopeSensitivity default the meander adapts;
+    // that is 23-E, not 28-C. Here just assert no confluence/estuary/delta.
+    for (const t of ["river-confluence", "river-distributary", "river-estuary"]) expect(byType(withM, t).length).toBe(0);
+    void bare;
+  });
+});
+
+describe("river generator — 28-C confluence Y-merge (plan 028 §1.4)", () => {
+  // A partner river ends AT this river's mouth [1200,0], flowing off to the NE.
+  const p = PARAMS({ windiness: 0.5, braiding: 0, width: 26, widthGrowth: 0.7, braidBias: 0 });
+  const partner = partnerRiver("other", [[1200, 0], [1500, 300]], 18);
+  const feats = generateRiver(4242, regionFor(LINE, p), p, withFabric([partner]));
+  const gussets = byType(feats, "river-confluence");
+
+  it("emits a confluence gusset at the shared mouth, and it stays inside the corridor", () => {
+    expect(gussets.length).toBe(1);
+    const spine = regionFor(LINE, p).spine!;
+    const maxOffset = riverMaxOffset(p);
+    for (const [x, y] of allCoords(gussets)) expect(distanceToSpine(spine, x, y)).toBeLessThanOrEqual(maxOffset + 1e-3);
+  });
+
+  it("width law: the junction cross-section = √(W₁²+W₂²)", () => {
+    const w1 = p.width * (1 + p.widthGrowth); // 2·halfWidthAt(f=1) — width at the mouth
+    const w3 = Math.sqrt(w1 * w1 + 18 * 18);
+    const widths = crossWidths(gussets[0]);
+    // The gusset widens monotonically to W₃ at the junction (the widest pair).
+    expect(Math.max(...widths)).toBeCloseTo(w3, 1);
+  });
+
+  it("no inland fork: a single merge polygon at the terminal endpoint, no branching channel", () => {
+    // A confluence is a MERGE, never a fork: no distributary, and exactly one
+    // channel ribbon per ORIGINAL segment (no extra forked channels inland).
+    expect(byType(feats, "river-distributary").length).toBe(0);
+    expect(byType(feats, "river-channel").length).toBe(LINE.length - 1);
+    // Anchored at the terminal junction: the gusset touches the mouth vertex.
+    const M: Pt = LINE[LINE.length - 1];
+    let nearest = Infinity;
+    for (const [x, y] of allCoords(gussets)) nearest = Math.min(nearest, dist([x, y], M));
+    expect(nearest).toBeLessThanOrEqual(p.width * (1 + p.widthGrowth)); // ≤ a channel width of the junction
+  });
+
+  it("a partner beyond the snap radius is NOT a junction (byte-identical to no partner)", () => {
+    const far = partnerRiver("far", [[1200 + CONFLUENCE_SNAP_M + 50, 0], [1500, 300]], 18);
+    const a = generateRiver(4242, regionFor(LINE, p), p, withFabric([far]));
+    const b = generateRiver(4242, regionFor(LINE, p), p, CONSTRAINTS);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+describe("river generator — 28-C delta distributaries (plan 028 §1.4)", () => {
+  const p = PARAMS({ windiness: 0.5, braiding: 1, width: 22, widthGrowth: 1.2, braidBias: 1 });
+  const feats = generateRiver(8, regionFor(LINE, p), p, CONSTRAINTS);
+  const arms = byType(feats, "river-distributary");
+  const M: Pt = LINE[LINE.length - 1];
+
+  it("high braidBias on a LAND mouth emits exactly two bird's-foot arms, contained at the mouth", () => {
+    expect(p.braidBias).toBeGreaterThanOrEqual(DELTA_BIAS_THRESHOLD);
+    expect(arms.length).toBe(2);
+    const maxOffset = riverMaxOffset(p);
+    for (const [x, y] of allCoords(arms)) expect(dist([x, y], M)).toBeLessThanOrEqual(maxOffset);
+  });
+
+  it("distributary bifurcation angle ≈ 72° (Coffey & Rothman)", () => {
+    const axisOf = (f: GeoJSON.Feature): number => {
+      const open = openRing(f);
+      const n = open.length / 2;
+      const a = open.slice(0, n);
+      const b = open.slice(n).reverse();
+      const tip: Pt = [(a[n - 1][0] + b[n - 1][0]) / 2, (a[n - 1][1] + b[n - 1][1]) / 2];
+      return Math.atan2(tip[1] - M[1], tip[0] - M[0]);
+    };
+    let deg = (Math.abs(axisOf(arms[0]) - axisOf(arms[1])) * 180) / Math.PI;
+    if (deg > 180) deg = 360 - deg;
+    expect(deg).toBeGreaterThanOrEqual(72 - 8);
+    expect(deg).toBeLessThanOrEqual(72 + 8);
+  });
+
+  it("braidBias below the delta threshold emits no distributaries", () => {
+    const q = PARAMS({ windiness: 0.5, braiding: 1, width: 22, widthGrowth: 1.2, braidBias: 0.5 });
+    expect(byType(generateRiver(8, regionFor(LINE, q), q, CONSTRAINTS), "river-distributary").length).toBe(0);
+  });
+});
+
+describe("river generator — 28-C estuary flare (plan 028 §1.4)", () => {
+  const p = PARAMS({ windiness: 0.5, braiding: 1, width: 22, widthGrowth: 0.5, braidBias: 1 });
+  // A water polygon straddling the mouth [1200,0] is the tidal-mouth signal.
+  const sea = waterPoly("sea", [[1180, -220], [1700, -220], [1700, 220], [1180, 220], [1180, -220]]);
+  const feats = generateRiver(8, regionFor(LINE, p), p, withFabric([sea]));
+  const est = byType(feats, "river-estuary");
+
+  it("a mouth at open water flares (estuary), and REPLACES the delta split", () => {
+    expect(est.length).toBe(1);
+    expect(byType(feats, "river-distributary").length).toBe(0); // estuary XOR delta
+  });
+
+  it("the flare widens monotonically toward the mouth (exponential flare)", () => {
+    const widths = crossWidths(est[0]); // emission order: upstream → mouth → lip
+    // Monotone non-decreasing; the tolerance absorbs mm-quantization jitter on
+    // the flat trumpet lip (a real regression would dip by meters, not ≤2 mm).
+    for (let i = 1; i < widths.length; i++) expect(widths[i]).toBeGreaterThanOrEqual(widths[i - 1] - 0.01);
+    // And the mouth is meaningfully wider than the base channel.
+    expect(Math.max(...widths)).toBeGreaterThan(p.width * 1.5);
+  });
+
+  it("estuary stays inside the corridor", () => {
+    const spine = regionFor(LINE, p).spine!;
+    const maxOffset = riverMaxOffset(p);
+    for (const [x, y] of allCoords(est)) expect(distanceToSpine(spine, x, y)).toBeLessThanOrEqual(maxOffset + 1e-3);
+  });
+});
+
+describe("river generator — 28-C dressing: point bars, oxbows, glyphs (plan 028 §1.4)", () => {
+  it("windiness ≥ DRESS_WINDINESS emits point bars, oxbows and ford glyphs; a lowland river's glyphs are fords", () => {
+    const p = PARAMS({ windiness: 0.85, braiding: 0, width: 26, widthGrowth: 0.3, braidBias: 0 });
+    const feats = generateRiver(4242, regionFor(LINE, p), p, CONSTRAINTS);
+    expect(byType(feats, "river-point-bar").length).toBeGreaterThan(0);
+    expect(byType(feats, "river-oxbow").length).toBeGreaterThan(0);
+    const glyphs = byType(feats, "river-glyph");
+    expect(glyphs.length).toBeGreaterThan(0);
+    // No mountains → slope 0 everywhere → every water symbol is a calm ford.
+    for (const g of glyphs) expect((g.properties as { glyph?: string }).glyph).toBe("ford");
+  });
+
+  it("steep ground classifies the glyphs as rapids/falls (slope-driven), even below DRESS_WINDINESS", () => {
+    const p = PARAMS({ windiness: 0.15, braiding: 0, width: 8, widthGrowth: 0.2, braidBias: 0 });
+    const mtn = steepMountain("m1", [[-500, -2000], [2000, -2000], [2000, 2000], [-500, 2000], [-500, -2000]]);
+    const glyphs = byType(generateRiver(7, regionFor(LINE, p), p, withFabric([mtn])), "river-glyph");
+    expect(glyphs.length).toBeGreaterThan(0);
+    // Steep alpine relief → the whitewater symbols, never a calm ford.
+    for (const g of glyphs) expect(["rapids", "falls"]).toContain((g.properties as { glyph?: string }).glyph);
+  });
+
+  it("all dressing stays inside the corridor and ids are integers (clip-stable)", () => {
+    const p = PARAMS({ windiness: 0.9, braiding: 0, width: 24, widthGrowth: 0.4, braidBias: 0 });
+    const feats = generateRiver(99, regionFor(LINE, p), p, CONSTRAINTS);
+    const spine = regionFor(LINE, p).spine!;
+    const maxOffset = riverMaxOffset(p);
+    for (const f of feats) {
+      expect(typeof f.id).toBe("number");
+      for (const [x, y] of allCoords([f])) expect(distanceToSpine(spine, x, y)).toBeLessThanOrEqual(maxOffset + 1e-3);
+    }
+  });
+});
+
+describe("river generator — 28-C determinism + edit-locality (plan 028 §1.4)", () => {
+  const p = PARAMS({ windiness: 0.85, braiding: 1, width: 22, widthGrowth: 0.8, braidBias: 1 });
+  const partner = partnerRiver("trib", [[1200, 0], [1450, 260]], 16);
+  const cons = withFabric([partner]);
+
+  it("byte-identical across two runs with confluence + delta + dressing all live", () => {
+    const region = regionFor(LINE, p);
+    const a = generateRiver(321, region, p, cons);
+    const b = generateRiver(321, region, p, cons);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    // All three 28-C surfaces are present in this fixture.
+    expect(byType(a, "river-confluence").length).toBe(1);
+    expect(byType(a, "river-distributary").length).toBe(2);
+    expect(byType(a, "river-point-bar").length + byType(a, "river-oxbow").length + byType(a, "river-glyph").length).toBeGreaterThan(0);
+  });
+
+  it("mouth features are keyed on the mouth: an EARLY-vertex edit leaves delta + dressing there byte-identical", () => {
+    const base = generateRiver(321, regionFor(LINE, p), p, cons);
+    // Move the FIRST vertex only — the mouth [1200,0] and its inflow tangent
+    // (from [900,50]) are untouched, so the delta arms are byte-identical.
+    const moved: Pt[] = [[20, -20], ...LINE.slice(1)];
+    const edited = generateRiver(321, regionFor(moved, p), p, cons);
+    const delta = (fs: GeoJSON.Feature[]): string => JSON.stringify(byType(fs, "river-distributary"));
+    expect(delta(edited)).toBe(delta(base));
+    const conf = (fs: GeoJSON.Feature[]): string => JSON.stringify(byType(fs, "river-confluence"));
+    expect(conf(edited)).toBe(conf(base));
+  });
+});
+
+describe("river generator — 28-C 2×2 seam with junction/dressing present", () => {
+  it("clips deterministically and keeps every 28-C coordinate inside its tile", () => {
+    const p = PARAMS({ windiness: 0.85, braiding: 1, width: 24, widthGrowth: 0.6, braidBias: 1 });
+    const cons = withFabric([partnerRiver("t2", [[1200, 0], [1500, 280]], 18)]);
+    const region = regionFor(LINE, p);
+    const network = generateRiver(21, region, p, cons);
+    // Sanity: the network actually carries 28-C features to clip.
+    expect(byType(network, "river-distributary").length + byType(network, "river-confluence").length).toBeGreaterThan(0);
+    const min = tileXYForPoint(region.bbox.minX, region.bbox.minY);
+    const max = tileXYForPoint(region.bbox.maxX, region.bbox.maxY);
+    let clipped = 0;
+    for (let ty = min.tileY; ty <= max.tileY; ty++) {
+      for (let tx = min.tileX; tx <= max.tileX; tx++) {
+        const bb = tileBBox(tx, ty);
+        const a = clipNetworkToTile(network, bb);
+        const b = clipNetworkToTile(network, bb);
+        expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+        for (const gid of Object.keys(a)) {
+          for (const f of a[gid]) {
+            for (const [x, y] of allCoords([f])) {
+              expect(x).toBeGreaterThanOrEqual(bb.minX - 1e-3);
+              expect(x).toBeLessThanOrEqual(bb.maxX + 1e-3);
+              expect(y).toBeGreaterThanOrEqual(bb.minY - 1e-3);
+              expect(y).toBeLessThanOrEqual(bb.maxY + 1e-3);
+              clipped++;
+            }
+          }
+        }
+      }
+    }
+    expect(clipped).toBeGreaterThan(0);
   });
 });

@@ -9,7 +9,25 @@ import { assertLayerOrder } from "./layerOrder";
  * entry means invisible output that passes every non-visual gate (plan 022 §4
  * new-feature-type checklist). This is the coverage guard for the river types
  * added in plan 022-B. */
-const RIVER_LAYER_IDS = ["generated-river-bank", "generated-river-channel", "generated-river-island"] as const;
+// Water-hued fills that must stay EXACTLY fabricRiver (hue discipline, plan 028
+// §1.1/§1.4): channel + the 28-C junction/mouth features + oxbow lakes.
+const RIVER_WATER_FILL_IDS = [
+  "generated-river-channel",
+  "generated-river-confluence",
+  "generated-river-distributary",
+  "generated-river-estuary",
+  "generated-river-oxbow",
+] as const;
+// All river layers needing paint in every theme (plan 022 §4 + plan 028
+// §1.1/§1.4): bank casing (line) + water fills + island/point-bar (land/silt
+// fills) + the ford/rapids/falls glyph (symbol).
+const RIVER_LAYER_IDS = [
+  "generated-river-bank",
+  ...RIVER_WATER_FILL_IDS,
+  "generated-river-island",
+  "generated-river-point-bar",
+  "generated-river-glyph",
+] as const;
 /** Every emitted park feature type (plan 022 §3.3) needs paint in every theme —
  * ground (lawn/bed), path web, water (pond/island/bridge), gravel court, and the
  * rock + tree stipples. Coverage guard for the park types added in plan 022-D. */
@@ -50,14 +68,16 @@ function bankLineColor(layer: LayerSpecification): string {
   return (c as string).toLowerCase();
 }
 
-describe("generatedLayers — river bank/channel/island paint coverage (plan 022 §4 + plan 028 §1.1)", () => {
-  it("all three river layers exist on the generated source, filter on generatorId, no zoom LOD", () => {
+describe("generatedLayers — river bank/channel/island/junction/dressing paint coverage (plan 022 §4 + plan 028 §1.1/§1.4)", () => {
+  it("all river layers exist on the generated source, filter on generatorId, no zoom LOD", () => {
     const layers = generatedLayers(PARCHMENT);
     for (const id of RIVER_LAYER_IDS) {
       const layer = layers.find((l) => l.id === id);
       expect(layer, `${id} missing from generatedLayers`).toBeDefined();
-      // Bank casing is a LINE layer; channel + island stay fills.
-      expect(layer!.type).toBe(id === "generated-river-bank" ? "line" : "fill");
+      // Bank casing is a LINE layer; the ford/rapids/falls glyph is a SYMBOL
+      // layer; every other river feature stays a fill.
+      const expected = id === "generated-river-bank" ? "line" : id === "generated-river-glyph" ? "symbol" : "fill";
+      expect(layer!.type, `${id} layer type`).toBe(expected);
       expect((layer as { source?: string }).source).toBe("generated");
       const filter = JSON.stringify((layer as { filter?: unknown }).filter);
       expect(filter).toContain('"generatorId"');
@@ -65,10 +85,14 @@ describe("generatedLayers — river bank/channel/island paint coverage (plan 022
     }
   });
 
-  it("depth idiom order: bank casing UNDER channel, island ABOVE channel (plan 028 §1.1)", () => {
+  it("depth idiom order: bank UNDER channel; island, point-bar and glyph ABOVE channel (plan 028 §1.1/§1.4)", () => {
     const ids = generatedLayers(PARCHMENT).map((l) => l.id);
-    expect(ids.indexOf("generated-river-bank")).toBeLessThan(ids.indexOf("generated-river-channel"));
-    expect(ids.indexOf("generated-river-island")).toBeGreaterThan(ids.indexOf("generated-river-channel"));
+    const channel = ids.indexOf("generated-river-channel");
+    expect(ids.indexOf("generated-river-bank")).toBeLessThan(channel);
+    expect(ids.indexOf("generated-river-island")).toBeGreaterThan(channel);
+    expect(ids.indexOf("generated-river-point-bar")).toBeGreaterThan(channel);
+    // The water-symbol glyph draws on top of every river fill.
+    expect(ids.indexOf("generated-river-glyph")).toBe(Math.max(...RIVER_LAYER_IDS.map((id) => ids.indexOf(id))));
   });
 
   it("river layers keep the generated- prefix so the z-order stack holds", () => {
@@ -78,7 +102,7 @@ describe("generatedLayers — river bank/channel/island paint coverage (plan 022
   });
 
   for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
-    it(`${id}: bank, channel and island all paint (existing tokens only)`, () => {
+    it(`${id}: bank, channel, junction/mouth water, island, point-bar and glyph all paint (existing tokens only)`, () => {
       const layers = generatedLayers(tokens);
       // Channel water and island land must read differently.
       const channel = fillColor(layers.find((l) => l.id === "generated-river-channel")!);
@@ -89,10 +113,22 @@ describe("generatedLayers — river bank/channel/island paint coverage (plan 022
       const bank = bankLineColor(layers.find((l) => l.id === "generated-river-bank")!);
       expect(bank.length).toBeGreaterThan(0);
       expect(bank, `${id}: bank casing must differ from the channel fill`).not.toBe(channel);
-      // Channel fill must stay EXACTLY the theme's river token (hue
-      // discipline, plan 028 §1.1: water-hued paint never drifts, so
-      // fill/line overlaps never artifact).
-      expect(channel).toBe(tokens.fabricRiver.toLowerCase());
+      // Every water-hued fill (channel + confluence/distributary/estuary/oxbow)
+      // stays EXACTLY the theme's river token (hue discipline, plan 028
+      // §1.1/§1.4: water-hued paint never drifts, so overlaps never artifact).
+      for (const wid of RIVER_WATER_FILL_IDS) {
+        expect(fillColor(layers.find((l) => l.id === wid)!), `${id}: ${wid} must be fabricRiver`).toBe(
+          tokens.fabricRiver.toLowerCase()
+        );
+      }
+      // Point bar = a silt tone distinct from BOTH the channel water and the
+      // land island (a warm beach, not water, not plain ground).
+      const bar = fillColor(layers.find((l) => l.id === "generated-river-point-bar")!);
+      expect(bar, `${id}: point bar must differ from the channel`).not.toBe(channel);
+      expect(bar, `${id}: point bar must differ from the island land`).not.toBe(island);
+      // Glyph symbol layer tints with an icon-color string.
+      const glyph = layers.find((l) => l.id === "generated-river-glyph")! as { paint?: Record<string, unknown> };
+      expect(typeof glyph.paint?.["icon-color"], `${id}: glyph needs an icon-color`).toBe("string");
     });
   }
 

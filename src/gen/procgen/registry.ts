@@ -185,7 +185,17 @@ const RIVER_PRESETS: readonly ProcgenPreset[] = [
 /** River tile-generator ids = the emitted feature buckets (plan 022 §3.1 +
  * plan 028 §1.1): channel water + bank casing lines + island land. Cache keys
  * + paint layers key on these. */
-export const RIVER_TILE_GENERATOR_IDS: readonly string[] = ["river-channel", "river-bank", "river-island"];
+export const RIVER_TILE_GENERATOR_IDS: readonly string[] = [
+  "river-channel",
+  "river-bank",
+  "river-island",
+  "river-confluence",
+  "river-distributary",
+  "river-estuary",
+  "river-oxbow",
+  "river-point-bar",
+  "river-glyph",
+];
 
 const riverAlgorithm: ProcgenAlgorithm = {
   id: "river",
