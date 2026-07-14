@@ -42,4 +42,36 @@ export interface GenerationConstraints {
    * angle in radians. Read only by `src/gen/citynet/` — never by tile-scoped
    * generators. */
   routeHints?: { x: number; y: number; bearing: number }[];
+  /**
+   * Plan 024 §3 — the cross-layer cascade's upstream context: the GENERATED
+   * output of STRICTLY-LOWER-stage regions that this region's algorithm reads.
+   *
+   * This is where output→output coupling lives (as opposed to the sketch-
+   * derived `elevation` field, which every generator already reaches through
+   * `fabricFeatures` — box 23-E). What crosses the worker boundary is DATA, not
+   * `Field` closures (they don't survive structured clone, plan 024 §3): plain
+   * GeoJSON feature lists that the consumer rebuilds into an SDF/index on its
+   * own side via the pure `buildUpstreamConstraints` (both host and worker share
+   * that function). Absent/empty ⇒ byte-identical to a run with no cascade
+   * (back-compat). The host populates this from the fresh lower-stage artifacts
+   * once a consumer wires it in (24-C); the DATA channel, its serialization, and
+   * its rebuild are in place and tested at 24-B.
+   */
+  upstream?: UpstreamArtifacts;
+}
+
+/**
+ * Plan 024 §3 — the serialized, worker-safe upstream artifacts. Plain GeoJSON
+ * feature lists (structured-clone-safe): the consumer rebuilds fields/indices
+ * from them via `buildUpstreamConstraints`. Grouped by the ConstraintKind they
+ * carry so a consumer takes only the field it declared it `consumes`.
+ */
+export interface UpstreamArtifacts {
+  /** Generated stage-1 hydrology — the meandered river CHANNEL polygons
+   * (`river-channel` features). The city bridges/quays and the forest canopy
+   * gap read THIS (the real bank), not the original sketched spine. */
+  water?: GeoJSON.Feature[];
+  /** Generated stage-2 vegetation — forest/park canopy polygons. The city's
+   * growth cost bumps inside these. */
+  vegetation?: GeoJSON.Feature[];
 }

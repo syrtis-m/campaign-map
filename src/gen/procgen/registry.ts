@@ -16,6 +16,7 @@ import { z } from "zod";
 import type { FabricKind } from "../../model/fabric";
 import type { GenerationConstraints } from "../types";
 import type { ProcgenRegion } from "../region";
+import type { Stage, ConstraintKind } from "./dag";
 import { generateRiver, riverMaxOffset } from "../river";
 import { generateForest, FOREST_VARIETIES } from "../forest";
 import { generatePark, PARK_VARIETIES } from "../park";
@@ -46,6 +47,24 @@ export interface ProcgenAlgorithm {
   id: string; // "city"
   label: string; // "City"
   appliesTo: readonly FabricKind[]; // ["district"]
+  /** Plan 024 §2: the fixed stage this algorithm occupies in the cross-layer
+   * regen cascade. An algorithm consumes only from STRICTLY LOWER stages, so
+   * the global partial order `(stage, regionId)` is cycle-free by construction
+   * and drives both replay and cascade order (see `dag.ts`). */
+  stage: Stage;
+  /** Plan 024 §3: the constraint FIELD(s) this algorithm's output supplies to
+   * higher stages (river → `water`; forest/park → `vegetation`; mountain →
+   * `elevation`; city → `settlement`; wall → `detail`). `[]` for a terminal
+   * producer nothing downstream reads (e.g. farmland). */
+  produces: readonly ConstraintKind[];
+  /** Plan 024 §3: the constraint FIELD(s) this algorithm reads from lower
+   * stages. Declares the DESIGN's intended coupling (river consumes
+   * `elevation`; city consumes `water`+`vegetation`; wall consumes
+   * `settlement`) — the DAG edge machinery keys on it; a declared-but-not-yet-
+   * wired consumption merely triggers a byte-identical downstream recompute
+   * (perf-only), so declaring intent here keeps 24-C purely about wiring
+   * consumption, never re-touching the DAG. */
+  consumes: readonly ConstraintKind[];
   paramsSchema: z.ZodType<Record<string, unknown>>;
   /** Named templates (plan 022 §1). Every algorithm has ≥1; the host renders
    * these as a dropdown, seeding the param controls from the chosen preset's
@@ -115,6 +134,13 @@ const cityAlgorithm: ProcgenAlgorithm = {
   id: "city",
   label: "City",
   appliesTo: ["district"],
+  // Stage 3 (settlement): bridges over the meandered channel + a growth-cost
+  // bump from canopy → consumes water + vegetation (plan 024 §3; the actual
+  // channel/canopy consumption wires in 24-C with the windiness gate). Produces
+  // `settlement` for the stage-4 wall elaboration (§7).
+  stage: 3,
+  produces: ["settlement"],
+  consumes: ["water", "vegetation"],
   paramsSchema: cityParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: CITY_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -201,6 +227,12 @@ const riverAlgorithm: ProcgenAlgorithm = {
   id: "river",
   label: "River",
   appliesTo: ["river"],
+  // Stage 1 (hydrology): reads the sketched mountains' `elevation` field
+  // (slope straightens the meander — box 23-E, already wired); produces the
+  // `water` channel the city/forest read.
+  stage: 1,
+  produces: ["water"],
+  consumes: ["elevation"],
   paramsSchema: riverParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: RIVER_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -262,6 +294,14 @@ const forestAlgorithm: ProcgenAlgorithm = {
   id: "forest",
   label: "Forest",
   appliesTo: ["forest"],
+  // Stage 2 (vegetation): no canopy in the river → consumes `water` (plan 024
+  // §3; consumption wires in 24-C). Produces `vegetation` for the city's
+  // growth-cost bump. NEVER consumes `settlement` — the reverse (city clips
+  // canopy) is rejected outright (§3, it breaks cycle-freedom); the town reads
+  // as a clearing because city fabric paints above canopy within layer 1.
+  stage: 2,
+  produces: ["vegetation"],
+  consumes: ["water"],
   paramsSchema: forestParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: FOREST_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -325,6 +365,11 @@ const parkAlgorithm: ProcgenAlgorithm = {
   id: "park",
   label: "Park",
   appliesTo: ["park"],
+  // Stage 2 (vegetation), same band as forest: a park pond sits away from a
+  // river channel → consumes `water`; produces `vegetation`.
+  stage: 2,
+  produces: ["vegetation"],
+  consumes: ["water"],
   paramsSchema: parkParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: PARK_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -372,6 +417,15 @@ const wallAlgorithm: ProcgenAlgorithm = {
   id: "wall",
   label: "Wall",
   appliesTo: ["wall"],
+  // Stage 4 (detail): the procgen wall ELABORATION (towers/gates/moat) consumes
+  // stage-3 `settlement` (plan 024 §7 resolution; consumption wires later). The
+  // raw wall SKETCH stays a stage-agnostic constraint every stage reads
+  // (`fabricConstraints.wallLines`) — that is unchanged and orthogonal to this
+  // stage. The cascade never carries stage-4 output downward (produces `detail`,
+  // which nothing consumes).
+  stage: 4,
+  produces: ["detail"],
+  consumes: ["settlement"],
   paramsSchema: wallParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: WALL_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -440,6 +494,14 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   id: "farmland",
   label: "Farmland",
   appliesTo: ["farmland"],
+  // Stage 2 (grouped with vegetation): paddy-terraces follow the sketched
+  // mountains' `elevation` contours (box 23-E, already wired) → consumes
+  // `elevation`. Produces NOTHING downstream — the city reads a raw farmland
+  // SKETCH (`fabricConstraints.farmlandRings`) to suppress its outskirts, not
+  // farmland's generated OUTPUT, so there is no farmland → city output edge.
+  stage: 2,
+  produces: [],
+  consumes: ["elevation"],
   paramsSchema: farmlandParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: FARMLAND_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -496,6 +558,12 @@ const mountainAlgorithm: ProcgenAlgorithm = {
   id: "mountain",
   label: "Mountain",
   appliesTo: ["mountain"],
+  // Stage 0 (elevation): the base FIELD. Produces `elevation` (the river's
+  // slope coupling + farmland's paddy terraces read it via the sketch-derived
+  // `elevationFieldFromFabric`, box 23-E). Consumes nothing.
+  stage: 0,
+  produces: ["elevation"],
+  consumes: [],
   paramsSchema: mountainParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: MOUNTAIN_PRESETS,
   defaultPresetId(themeId: string): string {

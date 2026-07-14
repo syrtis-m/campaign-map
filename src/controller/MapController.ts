@@ -93,6 +93,7 @@ import {
   type RingValidation,
 } from "../gen/region";
 import { algorithmById, algorithmForKind, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
+import { cascadeOrder, downstreamClosure, upstreamEdges, type DagNode } from "../gen/procgen/dag";
 import { regionFingerprint } from "../gen/cache/fingerprint";
 import { mountainHeightField, type MountainTerrain } from "../gen/mountain";
 import { unionFields, demVerticalScale, type ElevationField } from "../gen/fields";
@@ -568,7 +569,7 @@ export class MapController {
    */
   private async generateRegion(
     feature: FabricFeature,
-    opts: { force?: boolean; preloadedCache?: Map<string, CachedTile> } = {}
+    opts: { force?: boolean; preloadedCache?: Map<string, CachedTile>; fingerprints?: Map<string, string> } = {}
   ): Promise<GeoJSON.Feature[]> {
     if (!this.campaign) return [];
     const campaign = this.campaign;
@@ -598,19 +599,23 @@ export class MapController {
     const ctx = this.generationContext();
     const worker = await this.host.gen.getWorker();
     const compute = this.regionCompute(worker, feature);
-    // Plan 024 §5.1: the durable-input fingerprint stamped on every record this
-    // run writes, and compared on replay to catch an external Fabric.geojson
-    // edit. Computed ONCE per region (identical for all its tiles) from the
-    // persisted block + quantized region geometry + the raw-sketch constraints
-    // the generators consume.
-    const fingerprint = regionFingerprint({
-      algorithm: block.algorithm,
-      seed: block.seed,
-      version: block.version,
-      params: block.params,
-      region,
-      fabricFeatures: ctx.fabricFeatures,
-    });
+    // Plan 024 §5.1 + 24-B: the durable-input fingerprint stamped on every
+    // record this run writes, compared on replay to catch an external edit.
+    // Now DAG-aware — it folds in this region's strictly-lower-stage upstream
+    // fingerprints (`computeRegionFingerprints`), so an upstream edit (e.g. a
+    // mountain a river's slope reads) invalidates this region on replay too.
+    // Fallback to a no-upstream fingerprint if the region isn't in the current
+    // collection yet (a just-built feature mid-attach).
+    const fingerprint =
+      (opts.fingerprints ?? this.computeRegionFingerprints(ctx)).get(feature.id) ??
+      regionFingerprint({
+        algorithm: block.algorithm,
+        seed: block.seed,
+        version: block.version,
+        params: block.params,
+        region,
+        fabricFeatures: ctx.fabricFeatures,
+      });
     this.pendingGenerations++;
     this.host.render.loadingChanged();
     const all: GeoJSON.Feature[] = [];
@@ -633,6 +638,168 @@ export class MapController {
     }
     this.host.render.repaintGenerated();
     return all;
+  }
+
+  // ─── Cross-layer regen cascade (plan 024 §2/§4) ────────────────────────
+
+  /** Build a `DagNode` per procgen region from the registry (stage + the
+   * produces/consumes constraint kinds) and its gen-space bbox. The pure
+   * `dag.ts` graph math runs over these — the controller is the only place
+   * that reaches the registry, keeping `dag.ts` a host-agnostic leaf. */
+  private regionDagNodes(): DagNode[] {
+    const nodes: DagNode[] = [];
+    for (const f of this.regionFeatures()) {
+      const block = f.properties.procgen;
+      const algo = block ? algorithmById(block.algorithm) : undefined;
+      const region = this.buildRegionFromFeature(f);
+      if (!block || !algo || !region) continue;
+      nodes.push({ id: f.id, stage: algo.stage, produces: algo.produces, consumes: algo.consumes, bbox: region.bbox });
+    }
+    return nodes;
+  }
+
+  /**
+   * Every region's staleness fingerprint (plan 024 §5.1), computed in
+   * `(stage, regionId)` order so an upstream's fingerprint is in hand before a
+   * downstream folds it in (`upstreamFingerprints`). A pure function of the
+   * durable data (blocks + geometry + raw constraints + the DAG), independent
+   * of feature enumeration order (D2). Callers doing a batch (replay, cascade,
+   * flush) compute it once and thread it through `generateRegion` to avoid the
+   * O(n²) recompute.
+   */
+  private computeRegionFingerprints(ctx: ControllerGenContext): Map<string, string> {
+    const nodes = this.regionDagNodes();
+    const regionById = new Map<string, ProcgenRegion>();
+    const blockById = new Map<string, ProcgenBlock>();
+    for (const f of this.regionFeatures()) {
+      const block = f.properties.procgen;
+      const region = this.buildRegionFromFeature(f);
+      if (block && region) {
+        regionById.set(f.id, region);
+        blockById.set(f.id, block);
+      }
+    }
+    const upstream = upstreamEdges(nodes, MapController.CONSTRAINT_REACH);
+    const fpMap = new Map<string, string>();
+    for (const node of cascadeOrder(nodes)) {
+      const region = regionById.get(node.id);
+      const block = blockById.get(node.id);
+      if (!region || !block) continue;
+      const upFps = (upstream.get(node.id) ?? [])
+        .map((id) => fpMap.get(id))
+        .filter((x): x is string => x !== undefined);
+      fpMap.set(
+        node.id,
+        regionFingerprint({
+          algorithm: block.algorithm,
+          seed: block.seed,
+          version: block.version,
+          params: block.params,
+          region,
+          fabricFeatures: ctx.fabricFeatures,
+          upstreamFingerprints: upFps,
+        })
+      );
+    }
+    return fpMap;
+  }
+
+  /** Threshold above which a cascade asks before regenerating (plan 024 §4 cost
+   * control — a continental river's knob must not silently redraw 100 cities).
+   * Non-modal: a Notice + the `applyPendingCascade` command/test-API (no modal —
+   * they hang CLI automation, docs/05). */
+  private static readonly CASCADE_CONFIRM_THRESHOLD = 10;
+  private pendingCascadeRoots: string[] | null = null;
+  /** The downstream region ids the MOST RECENT cascade regenerated (excludes
+   * the edited root), in cascade order. A DAG-deterministic, seed-INDEPENDENT
+   * signal for gates/tests: "editing an upstream regenerated exactly these
+   * dependents" holds regardless of the (feature-id-derived) region seed, where
+   * an output-byte-diff would be seed-flaky (mm quantization can round a small
+   * meander shift away). Reset at the start of every cascade. */
+  private lastCascadeRegenerated: string[] = [];
+  /** Test/gate observability for the last cascade's regenerated dependents. */
+  get cascadeRegeneratedIds(): readonly string[] {
+    return this.lastCascadeRegenerated;
+  }
+  /** Test/command bypass for the confirm cap — set true to auto-apply large
+   * cascades (headless gates run the FULL commit path; modals hang CLI). */
+  cascadeAutoConfirm = false;
+
+  /**
+   * The cascade proper (plan 024 §4): after the edited region(s) `rootIds` are
+   * regenerated, regenerate their transitive DOWNSTREAM closure in
+   * `(stage, regionId)` order — upstream before downstream, each once. `done`
+   * carries the roots (and anything already regenerated this pass) so nothing
+   * runs twice. Returns the ids it regenerated (for the summary Notice). A
+   * cascade is the COMPLETION of an explicit edit — never a new trigger class
+   * (explicit-only stands): it only ever RE-generates regions the GM already
+   * requested, never first-time-generates.
+   */
+  private async cascadeDownstream(rootIds: string[], done: Set<string>): Promise<string[]> {
+    this.lastCascadeRegenerated = [];
+    if (!this.campaign) return [];
+    const campaign = this.campaign;
+    const nodes = this.regionDagNodes();
+    const closure = downstreamClosure(nodes, MapController.CONSTRAINT_REACH, rootIds).filter((n) => !done.has(n.id));
+    if (closure.length === 0) return [];
+    if (closure.length > MapController.CASCADE_CONFIRM_THRESHOLD && !this.cascadeAutoConfirm) {
+      this.pendingCascadeRoots = [...rootIds];
+      this.host.notices.notify(
+        `Campaign Map: that edit affects ${closure.length} downstream regions — run "Apply pending cross-layer cascade" to regenerate them`,
+        8000
+      );
+      return [];
+    }
+    const regenerated: string[] = [];
+    for (const node of closure) {
+      if (this.campaign?.id !== campaign.id) break;
+      const feature = this.regionFeatures().find((f) => f.id === node.id);
+      if (!feature) continue;
+      await this.generateRegion(feature, { force: true });
+      done.add(node.id);
+      regenerated.push(node.id);
+    }
+    this.lastCascadeRegenerated = regenerated;
+    if (regenerated.length > 0) this.notifyCascade(regenerated);
+    return regenerated;
+  }
+
+  /** One summary Notice for a cascade ("River updated — regenerated 1 city,
+   * 2 forests", plan 024 §4). Counts by algorithm label. */
+  private notifyCascade(regeneratedIds: string[]): void {
+    const counts = new Map<string, number>();
+    for (const id of regeneratedIds) {
+      const f = this.regionFeatures().find((x) => x.id === id);
+      const algo = f?.properties.procgen ? algorithmById(f.properties.procgen.algorithm) : undefined;
+      const label = algo?.label ?? "region";
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    const parts = [...counts.entries()].map(([label, n]) => `${n} ${label.toLowerCase()}${n === 1 ? "" : "s"}`);
+    this.host.notices.notify(`Campaign Map: cascade regenerated ${parts.join(", ")}`);
+  }
+
+  /** Apply a cascade the confirm cap deferred (plan 024 §4). Command + test API
+   * (the non-modal "confirm above N" affordance). */
+  async applyPendingCascade(): Promise<void> {
+    if (!this.pendingCascadeRoots) {
+      this.host.notices.notify("Campaign Map: no pending cascade to apply");
+      return;
+    }
+    const roots = this.pendingCascadeRoots;
+    this.pendingCascadeRoots = null;
+    const prev = this.cascadeAutoConfirm;
+    this.cascadeAutoConfirm = true;
+    try {
+      await this.loadFabric();
+      const done = new Set<string>(roots);
+      for (const id of roots) {
+        const feature = this.regionFeatures().find((f) => f.id === id);
+        if (feature) await this.generateRegion(feature, { force: true });
+      }
+      await this.cascadeDownstream(roots, done);
+    } finally {
+      this.cascadeAutoConfirm = prev;
+    }
   }
 
   /**
@@ -831,7 +998,21 @@ export class MapController {
         data: { featureId: feature.id, before, after: block, feature: updated } as unknown as Record<string, unknown>,
       });
     }
-    return this.generateRegion(updated, { force });
+    const feats = await this.generateRegion(updated, { force });
+    // Cross-layer cascade (plan 024 §4): a param/re-roll/center/attach edit to an
+    // UPSTREAM region regenerates its downstream dependents. `force` marks a
+    // GM-driven edit (setRegionParams/rerollRegion/setRegionCenter/undo pass
+    // true) vs. a first-attach on create — but creating a new upstream over an
+    // existing downstream should also adapt it, so cascade in both cases (a
+    // no-edge region set makes this a no-op).
+    await this.cascadeFromRoot(updated.id);
+    return feats;
+  }
+
+  /** Regenerate the transitive downstream DAG closure of one just-regenerated
+   * region root (the immediate, non-debounced edit paths). */
+  private async cascadeFromRoot(rootId: string): Promise<void> {
+    await this.cascadeDownstream([rootId], new Set([rootId]));
   }
 
   /** Strip a region's procgen block (drop its cache records + unpaint). */
@@ -1157,9 +1338,20 @@ export class MapController {
       }
       // Region tier: regenerate each region from the sketch layer, sharing the
       // one cache read (cache-hit per-tile clips, else recompute network once).
-      for (const feature of regions) {
+      // Plan 024 §5: walk in `(stage, regionId)` order — one fixed,
+      // data-independent sequence — so a stage-1 recompute lands before a
+      // stage-3 read of its output (byte-neutral until a consumer wires upstream
+      // in 24-C, but correct-by-construction now). Fingerprints (incl. upstream
+      // DAG deps) precomputed ONCE and threaded, avoiding an O(n²) recompute.
+      const fpMap = this.computeRegionFingerprints(ctx);
+      const stageOf = (f: FabricFeature): number =>
+        algorithmById(f.properties.procgen?.algorithm ?? "")?.stage ?? 99;
+      const orderedRegions = [...regions].sort((a, b) =>
+        stageOf(a) !== stageOf(b) ? stageOf(a) - stageOf(b) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+      );
+      for (const feature of orderedRegions) {
         if (this.campaign?.id !== campaign.id) return;
-        await this.generateRegion(feature, { preloadedCache: cached });
+        await this.generateRegion(feature, { preloadedCache: cached, fingerprints: fpMap });
       }
     } finally {
       this.pendingGenerations--;
@@ -1213,14 +1405,23 @@ export class MapController {
     await this.loadFabric();
     if (this.campaign?.id !== campaign.id) return;
     const done = new Set<string>();
+    const roots: string[] = [];
     for (const id of regionIds) {
       const feature = this.regionFeatures().find((f) => f.id === id);
       if (!feature) continue;
       await this.generateRegion(feature, { force: true });
       done.add(id);
+      roots.push(id);
       if (this.campaign?.id !== campaign.id) return;
     }
     if (edited.length > 0) await this.regenerateAffectedTiles(edited, done);
+    // Cross-layer cascade (plan 024 §4): ONE coalesced walk downstream of every
+    // region regenerated by a queued procgen-region edit this flush (a drag
+    // storm coalesced into one cascade). Raw-sketch constraint edits already
+    // fan out to their direct consumers via bbox reach above.
+    if (roots.length > 0 && this.campaign?.id === campaign.id) {
+      await this.cascadeDownstream(roots, done);
+    }
   }
 
   private async regenerateAffectedTiles(edited: FabricFeature[], done: Set<string>): Promise<void> {
@@ -1268,6 +1469,7 @@ export class MapController {
       if (done.has(feature.id)) continue; // already force-regenerated this flush
       if (this.campaign?.id !== campaign.id) return;
       await this.generateRegion(feature, { force: true });
+      done.add(feature.id); // let the cross-layer cascade skip what we just did
     }
   }
 
@@ -1391,7 +1593,10 @@ export class MapController {
         this.host.notices.notify("Campaign Map: city center is outside the district — using automatic center", 6000);
       }
       if (opts.debounce) this.queueRegionRegen(after.id);
-      else await this.generateRegion(after, { force: true });
+      else {
+        await this.generateRegion(after, { force: true });
+        await this.cascadeFromRoot(after.id); // plan 024 §4: geometry edit → cascade
+      }
     } else {
       if (opts.debounce) this.queueConstraintRegen(after);
       else await this.regenerateAffectedTiles([after], new Set());
@@ -1754,8 +1959,12 @@ export class MapController {
       await this.host.vault.saveFabric(this.campaign, this.fabricCollection);
       this.host.render.repaintFabric();
       this.host.render.featureChanged(before.id, { reselect: true });
-      if (isProcgenRegion(before)) await this.generateRegion(before, { force: true });
-      else this.queueConstraintRegen(before);
+      if (isProcgenRegion(before)) {
+        // Undo re-runs the SAME cascade with the restored inputs (plan 024 §4):
+        // deterministic → the downstream output is restored byte-identically.
+        await this.generateRegion(before, { force: true });
+        await this.cascadeFromRoot(before.id);
+      } else this.queueConstraintRegen(before);
       this.host.notices.notify(`Campaign Map: undid ${before.properties.kind} edit`);
     } else if (last.type === "generate-area") {
       const entry = ManifestEntrySchema.safeParse(last.data);

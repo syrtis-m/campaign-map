@@ -540,3 +540,142 @@ describe("MapController — forest polygon-kind procgen (plan 022 §3.2)", () =>
     ).rejects.toThrow();
   });
 });
+
+// ─── Cross-layer regen cascade (plan 024-B §4) ──────────────────────────────
+// The suite feels like one world: editing an UPSTREAM procgen region (a
+// mountain, stage 0) regenerates the DOWNSTREAM regions that read its output
+// (a river's slope coupling, stage 1 — box 23-E), and leaves non-dependents
+// byte-identical. Fabric is in display units (1 unit = 50 m); worldBounds are
+// [-48,-36,48,36] so every fixture must fit inside.
+describe("MapController — cross-layer cascade (plan 024-B)", () => {
+  // A mountain, lower-left; a river spine crossing its interior; a city far
+  // top-right (no shared field, no bbox overlap → a clean non-dependent).
+  const MTN_RING: [number, number][] = [
+    [-34, -22],
+    [-14, -22],
+    [-14, -4],
+    [-34, -4],
+  ];
+  const RIVER_LINE: [number, number][] = [
+    [-40, -26],
+    [-24, -13],
+    [-8, 0],
+  ];
+  const FAR_CITY_RING: [number, number][] = [
+    [20, 18],
+    [36, 18],
+    [36, 32],
+    [20, 32],
+  ];
+
+  it("editing a mountain regenerates the river that reads its elevation; a far city is byte-identical", async () => {
+    const host = new FakeHost({ zoom: 10 });
+    host.begin();
+    const mtn = await host.controller.createRegionForTest(
+      MTN_RING,
+      "mountain",
+      { terrain: "alpine", amplitude: 0.3, roughness: 0.4 },
+      "__casc_mtn__",
+      "mountain"
+    );
+    const river = await host.controller.createSpineForTest(
+      RIVER_LINE,
+      "river",
+      "river",
+      { windiness: 0.85, braiding: 0, width: 20, widthGrowth: 0, braidBias: 0, slopeSensitivity: 1 },
+      "__casc_river__"
+    );
+    const city = await host.controller.createRegionForTest(
+      FAR_CITY_RING,
+      "city",
+      { profile: "euro-medieval" },
+      "__casc_city__",
+      "district"
+    );
+    expect(river.count).toBeGreaterThan(0);
+    expect(city.count).toBeGreaterThan(0);
+
+    const cityBefore = host.controller.regionFeatureIds(city.featureId);
+    const runsBefore = host.controller.generatorRunCount;
+
+    // Edit the UPSTREAM mountain's relief (amplitude) — pre-024-B this only
+    // regenerated the mountain; the cascade now re-runs the river too.
+    await host.controller.setRegionParams(mtn.featureId, { terrain: "alpine", amplitude: 0.95, roughness: 0.6 });
+
+    // The cascade regenerated exactly the DEPENDENTS (the river reads the
+    // mountain's elevation field, box 23-E) — a DAG-deterministic, seed-
+    // independent claim (an output-byte-diff would be seed-flaky: mm
+    // quantization can round a small meander shift away). The mountain itself is
+    // the edited ROOT (regenerated separately, not part of the downstream set).
+    expect(host.controller.generatorRunCount).toBeGreaterThan(runsBefore);
+    expect(host.controller.cascadeRegeneratedIds).toContain(river.featureId);
+    // The far city consumes water/vegetation, not elevation, and is out of
+    // range — a true non-dependent: NOT in the cascade, and byte-identical.
+    expect(host.controller.cascadeRegeneratedIds).not.toContain(city.featureId);
+    expect(host.controller.regionFeatureIds(city.featureId)).toEqual(cityBefore);
+  });
+
+  it("a city overlapping a mountain is NOT a dependent (produces/consumes edge gate)", async () => {
+    const host = new FakeHost({ zoom: 10 });
+    host.begin();
+    const mtn = await host.controller.createRegionForTest(
+      MTN_RING,
+      "mountain",
+      { terrain: "alpine", amplitude: 0.4, roughness: 0.4 },
+      "__casc2_mtn__",
+      "mountain"
+    );
+    // A district overlapping the mountain (different algorithms may overlap).
+    const city = await host.controller.createRegionForTest(
+      [
+        [-30, -18],
+        [-18, -18],
+        [-18, -8],
+        [-30, -8],
+      ],
+      "city",
+      { profile: "euro-medieval" },
+      "__casc2_city__",
+      "district"
+    );
+    const cityBefore = host.controller.regionFeatureIds(city.featureId);
+
+    await host.controller.setRegionParams(mtn.featureId, { terrain: "alpine", amplitude: 0.95, roughness: 0.6 });
+
+    // The city does not consume `elevation`, so despite the bbox overlap there
+    // is no DAG edge mountain→city — the city is untouched (the §3-refined edge
+    // rule, integration-proven).
+    expect(host.controller.regionFeatureIds(city.featureId)).toEqual(cityBefore);
+  });
+
+  it("undo of a mountain edit restores the cascaded river byte-identically", async () => {
+    const host = new FakeHost({ zoom: 10 });
+    host.begin();
+    const mtn = await host.controller.createRegionForTest(
+      MTN_RING,
+      "mountain",
+      { terrain: "alpine", amplitude: 0.3, roughness: 0.4 },
+      "__casc3_mtn__",
+      "mountain"
+    );
+    const river = await host.controller.createSpineForTest(
+      RIVER_LINE,
+      "river",
+      "river",
+      { windiness: 0.85, braiding: 0, width: 20, widthGrowth: 0, braidBias: 0, slopeSensitivity: 1 },
+      "__casc3_river__"
+    );
+    const riverBefore = host.controller.regionFeatureIds(river.featureId).slice().sort();
+
+    await host.controller.setRegionParams(mtn.featureId, { terrain: "alpine", amplitude: 0.95, roughness: 0.6 });
+    // The cascade regenerated the river (deterministic — an output diff would be
+    // seed-flaky).
+    expect(host.controller.cascadeRegeneratedIds).toContain(river.featureId);
+
+    // Undo re-runs the same cascade with the restored inputs → deterministic →
+    // the river returns byte-identically (plan 024 §4).
+    await host.controller.undoLastEdit();
+    expect(host.controller.cascadeRegeneratedIds).toContain(river.featureId);
+    expect(host.controller.regionFeatureIds(river.featureId).slice().sort()).toEqual(riverBefore);
+  });
+});

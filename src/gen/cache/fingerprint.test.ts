@@ -113,6 +113,40 @@ describe("regionFingerprint — invariances (no false staleness)", () => {
   });
 });
 
+describe("regionFingerprint — upstream artifact fingerprints (plan 024 §5.1, 24-B)", () => {
+  const ref = regionFingerprint(base());
+
+  it("BACK-COMPAT: no upstream ⇒ byte-identical to the 24-A composition (no version bump, no storm)", () => {
+    // A region with no cross-region dependency hashes exactly as before 24-B —
+    // opening such a campaign triggers NO recompute (DoD #6). Empty AND absent
+    // both collapse to the no-upstream string.
+    expect(regionFingerprint({ ...base(), upstreamFingerprints: [] })).toBe(ref);
+    expect(regionFingerprint({ ...base(), upstreamFingerprints: undefined })).toBe(ref);
+  });
+
+  it("gaining an upstream flips the fingerprint (the new coupling is real)", () => {
+    expect(regionFingerprint({ ...base(), upstreamFingerprints: ["deadbeef"] })).not.toBe(ref);
+  });
+
+  it("a CHANGED upstream fingerprint flips it (an upstream edit invalidates the downstream)", () => {
+    const before = regionFingerprint({ ...base(), upstreamFingerprints: ["aaaa"] });
+    const after = regionFingerprint({ ...base(), upstreamFingerprints: ["bbbb"] });
+    expect(after).not.toBe(before);
+  });
+
+  it("is invariant to upstream fingerprint order (defensive sort)", () => {
+    const a = regionFingerprint({ ...base(), upstreamFingerprints: ["a1", "b2"] });
+    const b = regionFingerprint({ ...base(), upstreamFingerprints: ["b2", "a1"] });
+    expect(a).toBe(b);
+  });
+
+  it("adding a second upstream flips it (a new dependency joined)", () => {
+    const one = regionFingerprint({ ...base(), upstreamFingerprints: ["a1"] });
+    const two = regionFingerprint({ ...base(), upstreamFingerprints: ["a1", "a2"] });
+    expect(two).not.toBe(one);
+  });
+});
+
 describe("isCacheRecordFresh — back-compat grandfathering", () => {
   it("a record with no stored fingerprint is fresh (pre-024 grandfathering)", () => {
     expect(isCacheRecordFresh(undefined, "fpNow")).toBe(true);

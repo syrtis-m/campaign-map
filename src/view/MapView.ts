@@ -927,6 +927,19 @@ export class MapView extends ItemView {
     return this.controller.undoLastEdit();
   }
 
+  /** Apply a cross-layer cascade the confirm cap deferred (plan 024 §4) — the
+   * non-modal affordance for the "that edit affects N downstream regions" Notice
+   * (a command, not a modal — modals hang CLI automation, docs/05). */
+  async applyPendingCascade(): Promise<void> {
+    return this.controller.applyPendingCascade();
+  }
+
+  /** The downstream regions the most recent cascade regenerated (plan 024-B
+   * gate observability) — DAG-deterministic, seed-independent. */
+  cascadeRegeneratedIds(): string[] {
+    return [...this.controller.cascadeRegeneratedIds];
+  }
+
   /** Note-file undo (create / move) — Obsidian TFile ops the controller can't
    * do (it's host-agnostic). Called back through the controller's `notes`
    * gateway from `undoLastEdit`. */

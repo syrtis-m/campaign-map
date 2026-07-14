@@ -290,6 +290,17 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "apply-pending-cascade",
+      name: "Apply pending cross-layer cascade",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        if (!view?.campaign) return false;
+        if (!checking) void view.applyPendingCascade();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "test-generation-worker",
       name: "Test generation worker (smoke test)",
       callback: async () => {
