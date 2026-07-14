@@ -123,15 +123,18 @@ function containment(id: string): { count: number; outside: number } {
 function treeCount(id: string): number {
   return sync(`v.regionFeatureIds(${JSON.stringify(id)}, 'forest-tree').length`) as number;
 }
-/** Rendered tree features from the base circle layer (real pipeline probe). */
+/** Rendered tree features from the base tree layer (real pipeline probe). Plan
+ * 026-C turned this into a SYMBOL layer (`generated-forest-tree`) — sizeN/rank/
+ * forestType still ride on the features either way. */
 function renderedTrees(): { forestType: string; sizeN: number; rank: number }[] {
-  const code = `(function(){var v=${viewExpr()};var fs=v.map.queryRenderedFeatures({layers:['generated-forest-tree-base']})||[];return JSON.stringify(fs.map(function(f){return {forestType:f.properties.forestType,sizeN:f.properties.sizeN,rank:f.properties.rank};}));})()`;
+  const code = `(function(){var v=${viewExpr()};var fs=v.map.queryRenderedFeatures({layers:['generated-forest-tree']})||[];return JSON.stringify(fs.map(function(f){return {forestType:f.properties.forestType,sizeN:f.properties.sizeN,rank:f.properties.rank};}));})()`;
   const r = evalJs(code);
   return (typeof r === "string" ? JSON.parse(r) : r) as { forestType: string; sizeN: number; rank: number }[];
 }
-/** Resolve the base tree layer's circle-color match for a given forestType. */
+/** Resolve the base tree layer's per-variety tint match for a given forestType
+ * (plan 026-C: `icon-color` on the SDF glyph symbol layer, was `circle-color`). */
 function variantColor(forestType: string): string {
-  const code = `(function(){var v=${viewExpr()};var expr=v.map.getPaintProperty('generated-forest-tree-base','circle-color');if(!Array.isArray(expr))return String(expr);for(var i=2;i+1<expr.length;i+=2){if(expr[i]===${JSON.stringify(forestType)})return String(expr[i+1]);}return String(expr[expr.length-1]);})()`;
+  const code = `(function(){var v=${viewExpr()};var expr=v.map.getPaintProperty('generated-forest-tree','icon-color');if(!Array.isArray(expr))return String(expr);for(var i=2;i+1<expr.length;i+=2){if(expr[i]===${JSON.stringify(forestType)})return String(expr[i+1]);}return String(expr[expr.length-1]);})()`;
   return String(evalJs(code));
 }
 function regionCacheRecords(regionId: string): Map<string, string> {

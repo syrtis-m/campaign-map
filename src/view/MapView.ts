@@ -35,6 +35,7 @@ import {
 } from "../map/campaignDemProtocol";
 import { demVerticalScale } from "../gen/fields";
 import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
+import { registerTreeGlyphs, installTreeGlyphProvider } from "../map/treeGlyphs";
 import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
 import type { BBox } from "../gen/spatialHash";
@@ -277,6 +278,7 @@ export class MapView extends ItemView {
       if (switched) this.terrainEnabled = false; // terrain is per-session, never carried across campaigns
       this.map.setStyle(this.buildStyle(campaign));
       this.map.once("styledata", () => {
+        registerTreeGlyphs(this.map!);
         this.refreshSource();
         this.refreshGeneratedSource();
         this.applyFocusReveal();
@@ -502,6 +504,14 @@ export class MapView extends ItemView {
       renderWorldCopies: false,
     });
 
+    // Tree glyph SDF images (plan 026-C) — `installTreeGlyphProvider` wires a
+    // `styleimagemissing` handler that lazily supplies any tree glyph the style
+    // asks for. It lives on the map (not the style), so it survives every
+    // setStyle (theme switch, css-change) and campaign switch with no per-callsite
+    // bookkeeping; `registerTreeGlyphs` below is the proactive companion that
+    // registers them up front so there's no first-paint flash.
+    installTreeGlyphProvider(this.map);
+
     this.map.on("load", () => {
       // Fallback only, for the one case setCampaign()'s own synchronous
       // applyCampaign() call can't cover: a campaign already set on this
@@ -516,6 +526,7 @@ export class MapView extends ItemView {
       // reset the camera mid-flight, discarding whatever the dispatcher had
       // already started fetching for the jumped-to viewport.
       if (this.campaign && !this.campaignAppliedOnce) this.applyCampaign();
+      registerTreeGlyphs(this.map!);
       this.refreshSource();
       this.refreshGeneratedSource();
       this.applyFocusReveal();
@@ -1906,6 +1917,7 @@ export class MapView extends ItemView {
     if (!this.map || !this.campaign || isHandcraftedTheme(this.campaign.config.theme)) return;
     this.map.setStyle(this.buildStyle(this.campaign));
     this.map.once("styledata", () => {
+      registerTreeGlyphs(this.map!);
       this.refreshSource();
       this.applyFocusReveal();
       // css-change setStyle also resets hillshade/terrain — restore the toggle.

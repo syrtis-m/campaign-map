@@ -120,15 +120,13 @@ function anyColor(layer: LayerSpecification): string {
   return (c as string).toLowerCase();
 }
 
-describe("generatedLayers — forest canopy/clearing/stacked-tree paint coverage (plan 026-A §1.3)", () => {
-  // Local id lists: plan 026-A split the flat `generated-forest-tree` circle
-  // into a shadow/base/highlight stack.
+describe("generatedLayers — forest canopy/clearing/glyph-tree paint coverage (plan 026-C §1.3)", () => {
+  // Local id lists: plan 026-C replaced the 026-A shadow/base/highlight CIRCLE
+  // stack with TWO SYMBOL layers drawing per-variety SDF tree glyphs — a dark
+  // `icon-translate` shadow below, and the variety-tinted base with an
+  // `icon-halo` rim above (highlight folds into the halo).
   const FOREST_FILL_IDS = ["generated-forest-canopy", "generated-forest-clearing"] as const;
-  const FOREST_TREE_IDS = [
-    "generated-forest-tree-shadow",
-    "generated-forest-tree-base",
-    "generated-forest-tree-highlight",
-  ] as const;
+  const FOREST_TREE_IDS = ["generated-forest-tree-shadow", "generated-forest-tree"] as const;
   const FOREST_RIM_ID = "generated-forest-rim"; // plan 026-B: canopy outline line
   const FOREST_ALL_IDS = [...FOREST_FILL_IDS, FOREST_RIM_ID, ...FOREST_TREE_IDS];
 
@@ -153,22 +151,41 @@ describe("generatedLayers — forest canopy/clearing/stacked-tree paint coverage
     }
   });
 
-  it("the three tree layers are circles; the two ground layers are fills; the rim is a line", () => {
+  it("the two tree layers are symbols; the two ground layers are fills; the rim is a line", () => {
     const layers = generatedLayers(PARCHMENT);
-    for (const id of FOREST_TREE_IDS) expect(layers.find((l) => l.id === id)!.type).toBe("circle");
+    for (const id of FOREST_TREE_IDS) expect(layers.find((l) => l.id === id)!.type).toBe("symbol");
     for (const id of FOREST_FILL_IDS) expect(layers.find((l) => l.id === id)!.type).toBe("fill");
     expect(layers.find((l) => l.id === FOREST_RIM_ID)!.type).toBe("line");
   });
 
-  it("z-stack order: canopy < rim < clearing < tree shadow < base < highlight", () => {
+  it("tree glyph symbol layers skip collision detection and y-sort (allow-overlap/ignore-placement/viewport-y), no minzoom", () => {
+    const layers = generatedLayers(PARCHMENT);
+    for (const id of FOREST_TREE_IDS) {
+      const layout = (layers.find((l) => l.id === id)! as { layout?: Record<string, unknown> }).layout!;
+      expect(layout["icon-allow-overlap"], `${id} must allow overlap`).toBe(true);
+      expect(layout["icon-ignore-placement"], `${id} must ignore placement`).toBe(true);
+      expect(layout["symbol-z-order"], `${id} must y-sort`).toBe("viewport-y");
+      // icon-image is the data-driven tree-<forestType>-<variant> expression.
+      expect(Array.isArray(layout["icon-image"]), `${id} icon-image must be an expression`).toBe(true);
+    }
+  });
+
+  it("tree opacity fades by rank via a step (no minzoom gate; density is paint)", () => {
+    const base = generatedLayers(PARCHMENT).find((l) => l.id === "generated-forest-tree")!;
+    const opacity = JSON.stringify((base as { paint?: Record<string, unknown> }).paint!["icon-opacity"]);
+    expect(opacity).toContain('"step"');
+    expect(opacity).toContain('"rank"');
+    expect(opacity).not.toContain('"minzoom"');
+  });
+
+  it("z-stack order: canopy < rim < clearing < tree shadow < base", () => {
     const ids = generatedLayers(PARCHMENT).map((l) => l.id);
     const order = [
       "generated-forest-canopy",
       "generated-forest-rim",
       "generated-forest-clearing",
       "generated-forest-tree-shadow",
-      "generated-forest-tree-base",
-      "generated-forest-tree-highlight",
+      "generated-forest-tree",
     ];
     for (let i = 1; i < order.length; i++) {
       expect(ids.indexOf(order[i]), `${order[i]} must paint above ${order[i - 1]}`).toBeGreaterThan(
@@ -180,7 +197,7 @@ describe("generatedLayers — forest canopy/clearing/stacked-tree paint coverage
   it("forest layers sit after river and before park, keeping the generated- prefix z-stack", () => {
     const ids = generatedLayers(PARCHMENT).map((l) => l.id);
     expect(ids.indexOf("generated-forest-canopy")).toBeGreaterThan(ids.indexOf("generated-river-channel"));
-    expect(ids.indexOf("generated-forest-tree-highlight")).toBeLessThan(ids.indexOf("generated-park-lawn"));
+    expect(ids.indexOf("generated-forest-tree")).toBeLessThan(ids.indexOf("generated-park-lawn"));
     expect(() => assertLayerOrder(generatedLayers(PARCHMENT))).not.toThrow();
   });
 
@@ -206,28 +223,29 @@ describe("generatedLayers — forest canopy/clearing/stacked-tree paint coverage
       const clearing = fillColor(layers.find((l) => l.id === "generated-forest-clearing")!);
       expect(canopy, `${id}: canopy and clearing share a colour`).not.toBe(clearing);
 
-      // Every tree layer is a data-driven per-variety match on forestType.
+      // Every tree glyph layer tints via a data-driven per-variety `icon-color`
+      // match on forestType (SDF glyphs are tinted at draw time, plan 026-C).
       for (const treeId of FOREST_TREE_IDS) {
         const color = (layers.find((l) => l.id === treeId)! as { paint?: Record<string, unknown> }).paint![
-          "circle-color"
+          "icon-color"
         ];
-        expect(Array.isArray(color), `${id}:${treeId} circle-color must be a match expression`).toBe(true);
+        expect(Array.isArray(color), `${id}:${treeId} icon-color must be a match expression`).toBe(true);
         expect((color as unknown[])[0]).toBe("match");
       }
 
       // The base tint must be visibly distinct across the varieties (hue carries
       // the read before glyphs do). Derived by relative moves from fabricForest,
       // so this must hold in the dark themes too, not just parchment.
-      const baseColor = (layers.find((l) => l.id === "generated-forest-tree-base")! as {
+      const baseColor = (layers.find((l) => l.id === "generated-forest-tree")! as {
         paint?: Record<string, unknown>;
-      }).paint!["circle-color"];
+      }).paint!["icon-color"];
       const variants = ["broadleaf", "conifer", "swamp", "dead-wood"].map((v) => matchColor(baseColor, v));
       for (const c of variants) expect(c, `${id}: a variety tint failed to resolve`).toBeDefined();
       expect(new Set(variants).size, `${id}: variety tints collapsed to the same colour`).toBe(variants.length);
     });
   }
 
-  it("obsidian-native runtime style paints all six forest layers", () => {
+  it("obsidian-native runtime style paints all forest layers", () => {
     const css: ObsidianCssTokens = {
       backgroundPrimary: "#1e1e1e",
       backgroundSecondary: "#262626",

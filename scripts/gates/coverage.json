@@ -275,6 +275,21 @@
         "src/map/theme.ts"
       ]
     },
+    "procgen51-glyphs": {
+      "script": "scripts/gates/procgen51-glyphs.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/forest.ts",
+        "src/gen/rng.ts",
+        "src/controller/MapController.ts",
+        "src/view/MapView.ts",
+        "src/map/generation/generationService.ts",
+        "src/map/treeGlyphs.ts",
+        "src/map/themes/generatedLayers.ts",
+        "src/map/themes/generated/forest.ts",
+        "src/map/theme.ts"
+      ]
+    },
     "vo27-park": {
       "script": "scripts/gates/vo27-park.ts",
       "globs": [
