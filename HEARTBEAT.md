@@ -171,7 +171,7 @@ wave box commits on T1 only.
       (byte-identical city snapshot gate) (023 §2)
 - [x] 3aed982 23-B elevation model + `mountain` kind + presets (heightAt untouched —
       023 §3 compatibility rule)
-- [ ] 23-C contour lines (marching squares, seam gate, no new request
+- [x] a5d9fbf 23-C contour lines (marching squares, seam gate, no new request
       surface) (023 §4.1)
 - [ ] 23-D hillshade + 3D terrain (raw-lattice cache, PNG at serve; heights
       compared in gates, never PNG bytes) (023 §4.2) ⛳ full board
@@ -243,6 +243,14 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 6 cont.): 23-C via Opus 4.8 phase subagent, T1
+  green first try — reusable fields/marchingSquares (026-B will consume it) +
+  mountain-contour on existing-mountain regen (no new request surface);
+  additive byte-identity pinned (23-B output digests unchanged). contours23c
+  11/11; mesa terracing finally visible (its 23-B flag resolves). Deferred
+  per §4.1 OQ#1: major-contour TEXT labels (index+elevation props emitted;
+  pure paint add later — flagged for Jonah). Committed a5d9fbf. Fast 589.
+  Next: 23-D hillshade + 3D terrain (⛳ full board).
 - 2026-07-14 (arc run, session 6 cont.): 23-B via Opus 4.8 phase subagent, T1
   green — elevation noise (analytic derivative + eroded fBm) + mountain kind
   end-to-end (elevation23b 13/13, screenshots eyeballed). Key judgment calls

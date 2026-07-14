@@ -236,8 +236,20 @@
   preset contrast) · screenshots eyeballed · dev-vault byte-clean. Flags for
   Jonah: dark-theme relief subtlety, massif opacity, mesa awaits 23-C
   contours. See DECISIONS "23-B".
-- Next: 23-C contour lines (marching squares, seam gate, no new request
-  surface).
+- **23-C DONE** (`a5d9fbf`): CONTOURS — reusable `fields/marchingSquares.ts`
+  (world-aligned lattice, saddle-safe, canonicalized closed loops; geometry
+  only, caller assigns ids — exactly the shape 026-B's canopy needs) tracing
+  the mountain elevation field into `mountain-contour` LineStrings on
+  existing-mountain regen (NO new request surface). Adaptive round-ladder
+  interval, minor/major weights, paint derived from fabricMountain. Additive
+  byte-identity pinned: 23-B's massif/hachure/peak digests unchanged. Mesa's
+  terracing now visible (23-B flag resolved). TEXT labels on majors deferred
+  (§4.1 OQ#1 — props emitted, paint-only add). Gate: fast 589/589 · fuzz 3/3
+  · tsc+build · contours23c 11/11 (9-tile seam continuity, byte-identical
+  regen) · screenshots eyeballed · dev-vault byte-clean. See DECISIONS
+  "23-C".
+- Next: 23-D hillshade + 3D terrain (raw-lattice cache, PNG at serve;
+  heights compared in gates, never PNG bytes) ⛳ full board.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

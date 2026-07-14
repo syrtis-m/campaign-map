@@ -845,3 +845,25 @@
   reads as classic hand-drawn); massif wash opacity 0.45 on neon/ink is a
   muted slate — tunable; erosion damping >0 gradient is a documented
   approximation (exact at damping 0).
+
+## 2026-07-14 — Plan 023 phase C (contours, Opus 4.8 phase subagent)
+- **Marching squares is a FIELDS module, not mountain-private:** returns
+  geometry only ({level, points, closed}, canonically sorted; closed loops
+  rotated to lex-min start + fixed winding so bytes are walk-order-free);
+  callers assign feature ids. 026-B's forest canopy consumes it next.
+- **"No new request surface" reading:** contours emit inside the existing
+  mountain generate path — the §4.1 world-manifest/field-tier contour case
+  generalizes at plan 024 when a campaign-base elevation field exists (23-B
+  deferred it there). A plain regenerate of a pre-023-C mountain now also
+  emits contours; the pre-existing gids' bytes are pinned unchanged.
+- **Major-contour TEXT labels deferred (spec deviation, flag for Jonah):**
+  §4.1 says "labeled major every 5th"; label cadence is the plan's own Open
+  Question #1 and collision-free contour-label layout is a real task.
+  Shipped: major/minor line weights + `index`/`elevation` on every feature —
+  labels become a pure paint/symbol add.
+- **Adaptive contour interval** (amplitude/15 snapped to a round ladder),
+  deterministic per region — fixed 50 m reads dense on gentle rolling hills
+  and sparse on alpine.
+- **Paint note for Jonah:** contours over water (mountain sketched across a
+  shoreline) are contained/correct but low-contrast on dark themes — a paint
+  tweak if it ever matters, not a generation change.
