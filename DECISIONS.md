@@ -1089,3 +1089,18 @@
   heightAt's falloff so the 4 existing gate cities re-rendered slightly
   (in-band, gate-cosmetic; hard unit bands + cityGolden use fixed bounds,
   unaffected; district geometry/seeds byte-unchanged).
+
+## 2026-07-14 — Plan 025 phase C (3 presets + chamfer, phase subagent)
+- **Chamfer operator: convex corners only, per-edge 0.45× clamp** (adjacent
+  chamfers can never cross → always a simple polygon); reflex corners kept
+  so concave blocks don't invert. Applied BEFORE parcel subdivision so
+  footprints front the chaflán. chamfer:0 is exactly byte-neutral.
+- **Chamfer bumped 16→22 m for gallery legibility** — reads on close
+  inspection; low-contrast because obsidian-native barely fills blocks.
+  Flag: a block-filling theme would make the chaflán pop (theme territory).
+- **Tartan warns in the live gate** (int 1023 vs band [560,900]) while
+  hard-passing the fixed unit ring (718) — the campaign worldBounds
+  height-falloff difference OQ#1's warn-only design anticipated; working as
+  intended.
+- **Flag for 25-D:** 10 presets crosses the flat-dropdown threshold —
+  RegionProcgenModal grouping/preview ergonomics should be decided there.

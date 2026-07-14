@@ -354,7 +354,14 @@
   towers-in-plot; neon-sprawl fresh default) + width-driven paint in all
   themes + gallery 1×5. Gate: fast 795/795 · fuzz 24/24 · presetGallery 8/8
   · eyeballed. See DECISIONS "25-B".
-- Next: 25-C tartan-grid + ward-grid + eixample + chamfer operator (025 §2).
+- **25-C DONE** (`d5056c8`): tartan-grid + ward-grid + eixample presets +
+  chamfer operator (convex-only clamp-safe corner cut wired before parcels)
+  + uniformGrid flag; all additive (existing goldens byte-identical);
+  gallery 1×8. Flags: eixample chaflán contrast (theme), modal grouping at
+  10 presets. Gate: fast 813/813 · fuzz ×8 profiles · presetGallery 8/8 ×2 ·
+  eyeballed. See DECISIONS "25-C".
+- Next: 25-D axial-breakthrough operator → haussmann + baroque-axial (025
+  §3.2).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 
