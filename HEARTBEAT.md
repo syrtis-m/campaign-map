@@ -209,7 +209,7 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
 **Plan 025 — street-pattern presets + benchmarks** (`plans/025-street-pattern-presets-and-benchmarks.md`)
 - [x] 6ccafc4 25-A metrics.ts + benchmark gates for 4 existing presets + PRESET
       GALLERY campaign & gate (025 §3.1, §3.5)
-- [ ] 25-B width system + superblock preset (025 §3.3, §2.6)
+- [x] 967bcb8 25-B width system + superblock preset (025 §3.3, §2.6)
 - [ ] 25-C tartan-grid + ward-grid + eixample + chamfer operator (025 §2)
 - [ ] 25-D axial-breakthrough operator → haussmann + baroque-axial (025 §3.2)
 - [ ] 25-E canal-rings + radial-star + seam boulevards + growth rings +
@@ -255,6 +255,11 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 7 cont.): 25-B via phase subagent, T1 green —
+  explicit width on every street (legacy profiles byte-stable in metrics,
+  goldens gain the prop only), superblock preset (neon-sprawl fresh default),
+  width-driven line paint, gallery 1×5. Committed 967bcb8. Fast 795. Next:
+  25-C tartan/ward/eixample + chamfer.
 - 2026-07-14 (arc run, session 7 cont.): 25-A via phase subagent, T1 green —
   pure metrics.ts + research-anchored benchmark bands (hard in unit suite,
   warn-only in the live gallery gate — OQ#1 decided: bands encode taste) +

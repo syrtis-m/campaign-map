@@ -348,7 +348,13 @@
   metrics table + contact sheet (eyeballed — 4 genres identifiable in 3s).
   Generator byte-unchanged. Gate: fast 788/788 · presetGallery 8/8 ·
   Vespergate untouched. See DECISIONS "25-A".
-- Next: 25-B width system + superblock preset (025 §3.3, §2.6).
+- **25-B DONE** (`967bcb8`): width system (StreetWidths per profile,
+  explicit width on every street; legacy metrics byte-identical, goldens
+  gain the prop only) + superblock preset (arterial canyons, megablocks,
+  towers-in-plot; neon-sprawl fresh default) + width-driven paint in all
+  themes + gallery 1×5. Gate: fast 795/795 · fuzz 24/24 · presetGallery 8/8
+  · eyeballed. See DECISIONS "25-B".
+- Next: 25-C tartan-grid + ward-grid + eixample + chamfer operator (025 §2).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

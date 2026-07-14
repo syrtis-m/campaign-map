@@ -1078,3 +1078,14 @@
 - **Finding for §3.4:** na-suburb's dead-end SHARE is diluted by its high
   node count; the true cul-de-sac signature is raw deadEndCount (asserted >
   na-grid). Relevant to the permeability-floor/superblock work.
+
+## 2026-07-14 — Plan 025 phase B (widths + superblock, phase subagent)
+- **Legacy widths = the pre-025 class mapping** (§3.3's additive rule
+  verbatim): the four presets' metrics are byte-identical to 25-A; only
+  golden BYTES gain the width prop. Land-share tightening deferred to §3.4.
+- **neon-sprawl fresh-district default → superblock** (§2.6 pairing);
+  prefill only, existing regions never re-roll.
+- **Gallery bounds widen east on preset append** — worldBounds feeds
+  heightAt's falloff so the 4 existing gate cities re-rendered slightly
+  (in-band, gate-cosmetic; hard unit bands + cityGolden use fixed bounds,
+  unaffected; district geometry/seeds byte-unchanged).
