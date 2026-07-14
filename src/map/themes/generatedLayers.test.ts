@@ -10,7 +10,6 @@ import { assertLayerOrder } from "./layerOrder";
  * new-feature-type checklist). This is the coverage guard for the river types
  * added in plan 022-B. */
 const RIVER_LAYER_IDS = ["generated-river-bank", "generated-river-channel", "generated-river-island"] as const;
-const FOREST_LAYER_IDS = ["generated-forest-canopy", "generated-forest-clearing", "generated-forest-tree"] as const;
 /** Every emitted park feature type (plan 022 §3.3) needs paint in every theme —
  * ground (lawn/bed), path web, water (pond/island/bridge), gravel court, and the
  * rock + tree stipples. Coverage guard for the park types added in plan 022-D. */
@@ -122,11 +121,8 @@ function anyColor(layer: LayerSpecification): string {
 }
 
 describe("generatedLayers — forest canopy/clearing/stacked-tree paint coverage (plan 026-A §1.3)", () => {
-  // Local id lists (the top-of-file FOREST_LAYER_IDS is superseded by plan 026-A
-  // — the flat `generated-forest-tree` circle became a shadow/base/highlight
-  // stack — but that const lives outside this block, so it is left for the
-  // orchestrator to prune post-merge; the ∥-P1 file protocol keeps every forest
-  // edit inside this describe block).
+  // Local id lists: plan 026-A split the flat `generated-forest-tree` circle
+  // into a shadow/base/highlight stack.
   const FOREST_FILL_IDS = ["generated-forest-canopy", "generated-forest-clearing"] as const;
   const FOREST_TREE_IDS = [
     "generated-forest-tree-shadow",
