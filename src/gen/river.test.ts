@@ -16,6 +16,8 @@ import { makeSpine, makeCorridorRegion, distanceToSpine, type ProcgenRegion } fr
 import type { GenerationConstraints } from "./types";
 import { clipNetworkToTile } from "./citynet";
 import { tileBBox, tileXYForPoint } from "./cache/tileGrid";
+import { expectGeneratorInvariants, expectDeterministic } from "./testkit/invariants";
+import { computeRiverMetrics, riverBandViolations } from "./riverMetrics";
 
 type Pt = [number, number];
 
@@ -101,25 +103,22 @@ describe("river generator — determinism", () => {
     expect(digest(generateRiver(4242, regionFor(LINE, p), p, CONSTRAINTS))).toMatchSnapshot();
   });
 
-  it("matches the seeded snapshot fixture (delta — braid/island drift tripwire)", () => {
-    // The windy+braided golden above carries no braids post-028 (its 26 m
-    // channel can't afford a legible island — degradation ladder, plan 028
-    // §1.3), so this second golden pins the braid + island emission path.
-    // Golden DELIBERATELY regenerated for box 28-C: braidBias 1 ≥
-    // DELTA_BIAS_THRESHOLD on a LAND mouth appends two bird's-foot
-    // distributaries (river-distributary) at ≈72°.
+  it("exercises the braid/island/distributary emission path (delta)", () => {
+    // The windy+braided golden above carries no braids (its 26 m channel can't
+    // afford a legible island — the degradation ladder), so this case pins the
+    // braid + island path structurally: braidBias 1 on a LAND mouth appends
+    // islands and two bird's-foot distributaries at ≈72°. Kept as a STRUCTURAL
+    // assertion, not a second byte-golden — the one river golden is windy+braided;
+    // the counts here catch a regression that stops emitting braids/distributaries.
     const p = PARAMS({ windiness: 0.4, braiding: 1, width: 20, widthGrowth: 1, braidBias: 1 });
     const d = digest(generateRiver(8, regionFor(LINE, p), p, CONSTRAINTS));
     expect(d.summary["river-island"]).toBeGreaterThan(0);
-    expect(d).toMatchSnapshot();
+    expect(d.summary["river-distributary"]).toBeGreaterThan(0);
   });
 
   it("is byte-identical across two runs (same seed/region/params)", () => {
     const region = regionFor(LINE, PARAMS());
-    const a = generateRiver(1234, region, PARAMS(), CONSTRAINTS);
-    const b = generateRiver(1234, region, PARAMS(), CONSTRAINTS);
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    expect(a.length).toBeGreaterThan(0);
+    expectDeterministic(() => generateRiver(1234, region, PARAMS(), CONSTRAINTS));
   });
 
   it("hashes feature ids on position, not emission order (integer ids)", () => {
@@ -141,13 +140,12 @@ describe("river generator — corridor containment (plan 022 §2)", () => {
   ]) {
     it(`all output within maxOffset of the spine — ${preset.name}`, () => {
       const region = regionFor(LINE, preset.p);
-      const spine = region.spine!;
-      const maxOffset = riverMaxOffset(preset.p);
-      const feats = generateRiver(99, region, preset.p, CONSTRAINTS);
-      expect(feats.length).toBeGreaterThan(0);
-      let worst = 0;
-      for (const [x, y] of allCoords(feats)) worst = Math.max(worst, distanceToSpine(spine, x, y));
-      expect(worst).toBeLessThanOrEqual(maxOffset + 1e-3);
+      // Corridor containment is exact by construction, so keep the tight 1e-3 m
+      // bound (distanceToBoundary = maxOffset − distanceToSpine); the helper adds
+      // closed-ring + mm-lattice on top.
+      expectGeneratorInvariants(generateRiver(99, region, preset.p, CONSTRAINTS), region, {
+        containmentTolerance: 1e-3,
+      });
     });
   }
 });
@@ -1039,5 +1037,25 @@ describe("river generator — 28-C 2×2 seam with junction/dressing present", ()
       }
     }
     expect(clipped).toBeGreaterThan(0);
+  });
+});
+
+describe("river generator — metric bands (regression net)", () => {
+  // The band is the tunable safety net that replaces byte-eternity for tuning:
+  // it survives a meander/width retune but catches a channel gone dead-straight
+  // or a width collapsed/blown up. Measured on the committed golden (seed 4242).
+  it("golden fixture (windy + braided) lands inside its metric band", () => {
+    const p = PARAMS({ windiness: 0.85, braiding: 0.6, width: 26, widthGrowth: 0.7, braidBias: 0.2 });
+    const region = regionFor(LINE, p);
+    const v = riverBandViolations(computeRiverMetrics(generateRiver(4242, region, p, CONSTRAINTS), region));
+    expect(v, v.join("; ")).toEqual([]);
+  });
+
+  it("a wider channel param yields a larger mean channel width (same spine/seed)", () => {
+    const wide = PARAMS({ width: 40, widthGrowth: 0 });
+    const narrow = PARAMS({ width: 10, widthGrowth: 0 });
+    const w = computeRiverMetrics(generateRiver(5, regionFor(LINE, wide), wide, CONSTRAINTS), regionFor(LINE, wide));
+    const n = computeRiverMetrics(generateRiver(5, regionFor(LINE, narrow), narrow, CONSTRAINTS), regionFor(LINE, narrow));
+    expect(w.meanChannelWidth).toBeGreaterThan(n.meanChannelWidth);
   });
 });

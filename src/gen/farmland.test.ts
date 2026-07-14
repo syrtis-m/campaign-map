@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import { generateFarmland, type FarmlandParams } from "./farmland";
 import { makeRegion, distanceToBoundary, type ProcgenRegion } from "./region";
+import { expectGeneratorInvariants, expectDeterministic } from "./testkit/invariants";
+import { computeFarmlandMetrics, farmlandBandViolations } from "./farmlandMetrics";
 import { elevationFieldFromFabric } from "./fields/mountainField";
 import type { FabricFeature } from "../model/fabric";
 import type { GenerationConstraints } from "./types";
@@ -128,10 +130,7 @@ describe("farmland generator — determinism", () => {
 
   it("is byte-identical across two runs (same seed/region/params)", () => {
     const region = regionFor(SQUARE);
-    const a = generateFarmland(1234, region, PARAMS(), CONSTRAINTS);
-    const b = generateFarmland(1234, region, PARAMS(), CONSTRAINTS);
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    expect(a.length).toBeGreaterThan(0);
+    expectDeterministic(() => generateFarmland(1234, region, PARAMS(), CONSTRAINTS));
   });
 
   it("hashes feature ids on position, not emission order (integer ids)", () => {
@@ -210,25 +209,17 @@ describe("farmland generator — preset semantics", () => {
   });
 });
 
-describe("farmland generator — containment (every coordinate inside the ring)", () => {
+describe("farmland generator — structural invariants (containment · closed rings · mm lattice)", () => {
   for (const fieldType of ["open-field-strips", "enclosed-patchwork", "grid-quarters", "orchard"] as const) {
     it(`all output inside the ring — ${fieldType}`, () => {
       const region = regionFor(SQUARE);
-      const feats = generateFarmland(99, region, PARAMS({ fieldType }), CONSTRAINTS);
-      expect(feats.length).toBeGreaterThan(0);
-      for (const [x, y] of allCoords(feats)) {
-        expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1);
-      }
+      expectGeneratorInvariants(generateFarmland(99, region, PARAMS({ fieldType }), CONSTRAINTS), region);
     });
   }
 
   it("stays inside a strongly concave (L-shaped) region — no field bridges the notch", () => {
     const region = regionFor(L_SHAPE);
-    const feats = generateFarmland(42, region, PARAMS(), CONSTRAINTS);
-    expect(feats.length).toBeGreaterThan(0);
-    for (const [x, y] of allCoords(feats)) {
-      expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1);
-    }
+    expectGeneratorInvariants(generateFarmland(42, region, PARAMS(), CONSTRAINTS), region);
   });
 });
 
@@ -460,5 +451,23 @@ describe("farmland generator — 2x2 seam via whole-artifact clip", () => {
       }
     }
     expect(clipped).toBeGreaterThan(0);
+  });
+});
+
+describe("farmland generator — metric bands (regression net)", () => {
+  // The band is the tunable safety net that replaces byte-eternity for tuning:
+  // it survives a field/lane retune but catches a field split or lane network
+  // that collapses. Measured on the committed golden (enclosed-patchwork, 4242).
+  it("golden fixture (enclosed-patchwork) lands inside its metric band", () => {
+    const region = regionFor(SQUARE);
+    const v = farmlandBandViolations(computeFarmlandMetrics(generateFarmland(4242, region, PARAMS(), CONSTRAINTS), region));
+    expect(v, v.join("; ")).toEqual([]);
+  });
+
+  it("a smaller fieldSize splits the land into more fields (same region/seed)", () => {
+    const region = regionFor(SQUARE);
+    const small = computeFarmlandMetrics(generateFarmland(3, region, PARAMS({ fieldSize: 0.15 }), CONSTRAINTS), region);
+    const big = computeFarmlandMetrics(generateFarmland(3, region, PARAMS({ fieldSize: 0.9 }), CONSTRAINTS), region);
+    expect(small.fieldCount).toBeGreaterThan(big.fieldCount);
   });
 });

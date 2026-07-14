@@ -1,40 +1,29 @@
 /**
- * BIT-EXACT city golden (plan 023 §2 retrofit gate — fast tier).
+ * City byte golden + structural path coverage.
  *
- * The city generator has no committed `.snap` (unlike forest/farmland/park/
- * river/wall), so before plan 023-A there was no stored byte reference for
- * `generateCityNetwork` — only in-process `a === b` determinism. This golden
- * fills exactly that gap: it pins the emitted bytes of a representative set of
- * cities so the `interiorT`/constraint retrofit onto `src/gen/fields/` is
- * provably output-preserving.
+ * ONE byte-golden per algorithm (versioned-determinism policy): a single
+ * representative fixture asserts "the current generator version reproduces the
+ * committed bytes" — the digest below is the SHA-256 of `JSON.stringify(network)`
+ * (the cache emit surface: mm-quantized coords, canonical order) plus byte length
+ * and feature count, so one flipped bit changes the digest. It is re-accepted on
+ * a deliberate version bump via `npm run goldens:accept -- city`, never casually.
  *
- * CAPTURE DISCIPLINE (do not casually `-u`): these digests were captured on the
- * PRE-retrofit source. A diff here after the retrofit is a PHASE FAILURE — the
- * whole point is bit-exactness — never a snapshot update. THE ONE SANCTIONED
- * EXCEPTION SO FAR: plan 025-B (§3.3 form-based width) DELIBERATELY regenerated
- * all four digests — every `city-street` feature gained an explicit `width`
- * property (metres, from the profile's width table), so the emitted BYTES grew
- * while the feature COUNT and every coordinate stayed identical (a property
- * added, geometry untouched — the regenerate-on-upgrade minor-version note in
- * §3.3, same additive-output precedent as 24-C's footprint drop). If a diff
- * here is NOT that, it is still a phase failure. The golden is the
- * SHA-256 of `JSON.stringify(network)` (the cache emit surface: mm-quantized
- * coords, canonical feature order) plus the byte length and feature count, so
- * the golden IS the determinism surface the `.mapcache/` relies on — a full-JSON
- * snapshot would be ~10 MB of repo bloat for the same bit-exact detection (a
- * single flipped bit changes the digest).
- *
- * Coverage is deliberate (advisor 2026-07-13): a BARE region proves the
- * `interiorT`/`distanceToBoundary` polygon path (cityness falloff), and a
- * CONSTRAINED region (river line + water polygon + road) proves the
- * fabricConstraints water/river predicate path — a bit-shift there would
- * silently re-roll every city with a sketched river on upgrade, the exact
- * cross-version identity break §2 guards against.
+ * The three other code paths this file used to byte-pin are now covered WITHOUT
+ * a second golden — bytes are no longer the regression net, structure and bands
+ * are:
+ *  - a SECOND profile (na-grid, different skeleton) → determinism + emits streets
+ *    here, and its metric bands in `citynet/metrics.test.ts`;
+ *  - the concave `distanceToBoundary` path → the shared structural invariants on
+ *    an irregular concave hexagon;
+ *  - the fabricConstraints water/river predicate path → the "constraints bite"
+ *    behavioural assertion (a constrained city has fewer features than the bare
+ *    one, because footprints in the sketched water/river are dropped).
  */
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { generateCityNetwork, makeDomain, discToRing, citySeedFor, type ProfileId } from "../citynet/index";
 import { makeRegion } from "../region";
+import { expectGeneratorInvariants, expectDeterministic } from "../testkit/invariants";
 import type { BBox } from "../spatialHash";
 import type { GenerationConstraints } from "../types";
 import { hashSeed } from "../rng";
@@ -91,16 +80,20 @@ function digest(network: GeoJSON.Feature[]): { features: number; bytes: number; 
   return { features: network.length, bytes: json.length, sha256: createHash("sha256").update(json).digest("hex") };
 }
 
-describe("city byte golden (plan 023-A bit-exact retrofit reference)", () => {
-  it("bare disc region — euro-medieval (interiorT/cityness falloff path)", () => {
+describe("city byte golden (current-version fixture + structural path coverage)", () => {
+  it("bare disc region — euro-medieval reproduces the committed bytes", () => {
     expect(digest(cityAt(600, 600, "euro-medieval"))).toMatchSnapshot();
   });
 
-  it("bare disc region — na-grid (second profile, different skeleton)", () => {
-    expect(digest(cityAt(600, 600, "na-grid"))).toMatchSnapshot();
+  it("bare disc region — na-grid is deterministic and emits a street network (second skeleton)", () => {
+    const domain = makeDomain(600, 600, 900, "na-grid", 0);
+    const region = makeRegion(`dom-shim:${domain.id}`, discToRing(domain));
+    const seed = citySeedFor(CAMPAIGN_SEED, domain);
+    const net = expectDeterministic(() => generateCityNetwork(seed, region, "na-grid", { worldBounds: WORLD_BOUNDS }));
+    expect(net.some((f) => f.properties?.generatorId === "city-street")).toBe(true);
   });
 
-  it("irregular concave hexagon region — euro-medieval (concave distanceToBoundary path)", () => {
+  it("irregular concave hexagon region — euro-medieval stays inside the concave ring (structural)", () => {
     const hex: [number, number][] = [
       [1200, -300],
       [700, 700],
@@ -112,22 +105,19 @@ describe("city byte golden (plan 023-A bit-exact retrofit reference)", () => {
     ];
     const region = makeRegion("hex-golden", hex);
     const seed = hashSeed(CAMPAIGN_SEED, "hex", 1);
-    expect(digest(generateCityNetwork(seed, region, "euro-medieval", { worldBounds: WORLD_BOUNDS }))).toMatchSnapshot();
+    expectGeneratorInvariants(generateCityNetwork(seed, region, "euro-medieval", { worldBounds: WORLD_BOUNDS }), region);
   });
 
-  it("constrained region — river + lake + road (fabricConstraints water/river predicate path)", () => {
+  it("constrained region — river + lake + road: the water/river predicate bites (fewer features than bare)", () => {
     const cy = 600;
+    const bare = cityAt(600, cy, "euro-medieval");
     const net = cityAt(600, cy, "euro-medieval", {
       fabricFeatures: [riverThrough(cy), lakeAt(600, cy), roadThrough(600, cy)],
     });
-    // Sanity: the constraints must actually bite (fewer features than the bare
-    // city), else this fixture would silently stop covering the predicate path.
-    // NOTE (plan 024-C): this golden was DELIBERATELY regenerated — the new
-    // "buildings don't swim" filter drops footprints whose centroid falls in the
-    // sketched river/lake (39 fewer features). The BARE (no-water) golden above
-    // is byte-identical (the filter is a strict no-op without water), so the
-    // 23-A retrofit reference still stands for every no-water city.
+    // The "buildings don't swim" filter drops footprints whose centroid falls in
+    // the sketched river/lake, so the constrained city has strictly fewer
+    // features — proving the fabricConstraints predicate path is exercised.
     expect(net.length).toBeGreaterThan(0);
-    expect(digest(net)).toMatchSnapshot();
+    expect(net.length).toBeLessThan(bare.length);
   });
 });

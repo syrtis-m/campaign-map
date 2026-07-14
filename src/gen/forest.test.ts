@@ -5,6 +5,8 @@ import { makeRegion, distanceToBoundary, type ProcgenRegion } from "./region";
 import type { GenerationConstraints } from "./types";
 import { clipNetworkToTile } from "./citynet";
 import { tileBBox, tileXYForPoint } from "./cache/tileGrid";
+import { expectGeneratorInvariants, expectDeterministic } from "./testkit/invariants";
+import { computeForestMetrics, forestBandViolations } from "./forestMetrics";
 
 type Pt = [number, number];
 
@@ -123,10 +125,7 @@ describe("forest generator — determinism", () => {
 
   it("is byte-identical across two runs (same seed/region/params)", () => {
     const region = regionFor(SQUARE);
-    const a = generateForest(1234, region, PARAMS(), CONSTRAINTS);
-    const b = generateForest(1234, region, PARAMS(), CONSTRAINTS);
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    expect(a.length).toBeGreaterThan(0);
+    expectDeterministic(() => generateForest(1234, region, PARAMS(), CONSTRAINTS));
   });
 
   it("hashes feature ids on position, not emission order (integer ids)", () => {
@@ -150,7 +149,7 @@ describe("forest generator — determinism", () => {
   });
 });
 
-describe("forest generator — containment (every coordinate inside the ring)", () => {
+describe("forest generator — structural invariants (containment · closed rings · mm lattice)", () => {
   for (const preset of [
     { name: "broadleaf", p: PARAMS({ variety: "broadleaf", density: 0.7, clearings: 0.12, edgeRaggedness: 0.45 }) },
     { name: "conifer", p: PARAMS({ variety: "conifer", density: 0.8, clearings: 0.08, edgeRaggedness: 0.3 }) },
@@ -159,21 +158,13 @@ describe("forest generator — containment (every coordinate inside the ring)", 
   ]) {
     it(`all output inside the ring — ${preset.name}`, () => {
       const region = regionFor(SQUARE);
-      const feats = generateForest(99, region, preset.p, CONSTRAINTS);
-      expect(feats.length).toBeGreaterThan(0);
-      for (const [x, y] of allCoords(feats)) {
-        expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1);
-      }
+      expectGeneratorInvariants(generateForest(99, region, preset.p, CONSTRAINTS), region);
     });
   }
 
   it("stays inside a strongly concave (L-shaped) region", () => {
     const region = regionFor(L_SHAPE);
-    const feats = generateForest(42, region, PARAMS(), CONSTRAINTS);
-    expect(feats.length).toBeGreaterThan(0);
-    for (const [x, y] of allCoords(feats)) {
-      expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1);
-    }
+    expectGeneratorInvariants(generateForest(42, region, PARAMS(), CONSTRAINTS), region);
   });
 });
 
@@ -421,5 +412,25 @@ describe("forest generator — tree property carry (plan 026-A §1.1)", () => {
     );
     expect(ranks.has(0)).toBe(true);
     expect(ranks.has(1)).toBe(true);
+  });
+});
+
+describe("forest generator — metric bands (regression net)", () => {
+  // The band is the tunable safety net that replaces byte-eternity for tuning:
+  // it survives a canopy/clearing retune but catches a gross regression (a
+  // canopy that collapses, a tree scatter that vanishes). Measured on the
+  // committed golden fixture (broadleaf, seed 4242).
+  it("golden fixture (broadleaf) lands inside its metric band", () => {
+    const region = regionFor(SQUARE);
+    const p = PARAMS({ variety: "broadleaf", density: 0.7, clearings: 0.15, edgeRaggedness: 0.45 });
+    const v = forestBandViolations(computeForestMetrics(generateForest(4242, region, p, CONSTRAINTS), region));
+    expect(v, v.join("; ")).toEqual([]);
+  });
+
+  it("a denser preset covers a greater canopy area fraction than a sparse one (same region/seed)", () => {
+    const region = regionFor(SQUARE);
+    const dense = computeForestMetrics(generateForest(3, region, PARAMS({ density: 0.9, clearings: 0.05 }), CONSTRAINTS), region);
+    const sparse = computeForestMetrics(generateForest(3, region, PARAMS({ density: 0.3, clearings: 0.05 }), CONSTRAINTS), region);
+    expect(dense.canopyCoverFrac).toBeGreaterThan(sparse.canopyCoverFrac);
   });
 });

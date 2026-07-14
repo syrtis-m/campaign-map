@@ -6,6 +6,8 @@ import type { GenerationConstraints } from "./types";
 import type { FabricFeature } from "../model/fabric";
 import { clipNetworkToTile } from "./citynet";
 import { tileBBox, tileXYForPoint } from "./cache/tileGrid";
+import { expectGeneratorInvariants, expectDeterministic } from "./testkit/invariants";
+import { computeParkMetrics, parkBandViolations } from "./parkMetrics";
 
 type Pt = [number, number];
 
@@ -106,10 +108,7 @@ describe("park generator — determinism", () => {
 
   it("is byte-identical across two runs (same seed/region/params)", () => {
     const region = regionFor(SQUARE);
-    const a = generatePark(1234, region, PARAMS(), CONSTRAINTS);
-    const b = generatePark(1234, region, PARAMS(), CONSTRAINTS);
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    expect(a.length).toBeGreaterThan(0);
+    expectDeterministic(() => generatePark(1234, region, PARAMS(), CONSTRAINTS));
   });
 
   it("hashes feature ids on position, not emission order (integer ids)", () => {
@@ -144,30 +143,33 @@ describe("park generator — determinism", () => {
   });
 });
 
-describe("park generator — containment (every coordinate inside the ring)", () => {
+describe("park generator — structural invariants (containment · closed rings · mm lattice)", () => {
+  // KNOWN GAP (flagged for Jonah): `blobFeature` in waterEmit.ts emits its ring
+  // verbatim without re-quantizing, unlike `quad`/`spanQuad`. Two park callers
+  // pass a rotated, non-mm ring — the formal-garden broderie BED and the
+  // japanese zigzag BRIDGE — so those two varieties carry sub-mm coordinates and
+  // opt out of the mm-lattice check here (containment + closed rings still hold).
+  // The other varieties, and every other generator, satisfy the full invariant.
   for (const preset of [
-    { name: "formal-garden", p: PARAMS({ variety: "formal-garden", pond: false }) },
-    { name: "city-park", p: PARAMS({ variety: "city-park", pond: true }) },
-    { name: "wild-common", p: PARAMS({ variety: "wild-common", pond: false }) },
-    { name: "japanese-garden", p: PARAMS({ variety: "japanese-garden", pond: true }) },
+    { name: "formal-garden", p: PARAMS({ variety: "formal-garden", pond: false }), mm: false },
+    { name: "city-park", p: PARAMS({ variety: "city-park", pond: true }), mm: true },
+    { name: "wild-common", p: PARAMS({ variety: "wild-common", pond: false }), mm: true },
+    { name: "japanese-garden", p: PARAMS({ variety: "japanese-garden", pond: true }), mm: false },
   ]) {
     it(`all output inside the ring — ${preset.name}`, () => {
       const region = regionFor(SQUARE);
-      const feats = generatePark(99, region, preset.p, CONSTRAINTS);
-      expect(feats.length).toBeGreaterThan(0);
-      for (const [x, y] of allCoords(feats)) {
-        expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1);
-      }
+      expectGeneratorInvariants(generatePark(99, region, preset.p, CONSTRAINTS), region, {
+        checkMmQuantization: preset.mm,
+      });
     });
   }
 
   it("stays inside a strongly concave (L-shaped) region", () => {
     const region = regionFor(L_SHAPE);
-    const feats = generatePark(42, region, PARAMS({ variety: "japanese-garden" }), CONSTRAINTS);
-    expect(feats.length).toBeGreaterThan(0);
-    for (const [x, y] of allCoords(feats)) {
-      expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1);
-    }
+    // japanese-garden → zigzag bridge → the flagged blobFeature mm gap above.
+    expectGeneratorInvariants(generatePark(42, region, PARAMS({ variety: "japanese-garden" }), CONSTRAINTS), region, {
+      checkMmQuantization: false,
+    });
   });
 });
 
@@ -568,5 +570,24 @@ describe("park generator — 2x2 seam via whole-artifact clip", () => {
       }
     }
     expect(clipped).toBeGreaterThan(0);
+  });
+});
+
+describe("park generator — metric bands (regression net)", () => {
+  // The band is the tunable safety net that replaces byte-eternity for tuning:
+  // it survives a path/water retune but catches paths or water that vanish.
+  // Measured on the committed golden (japanese-garden, seed 4242).
+  it("golden fixture (japanese-garden) lands inside its metric band", () => {
+    const region = regionFor(SQUARE);
+    const p = PARAMS({ variety: "japanese-garden", pathDensity: 0.4, pond: true });
+    const v = parkBandViolations(computeParkMetrics(generatePark(4242, region, p, CONSTRAINTS), region));
+    expect(v, v.join("; ")).toEqual([]);
+  });
+
+  it("a city-park is more path-threaded than the restrained wild-common (same region/seed)", () => {
+    const region = regionFor(SQUARE);
+    const city = computeParkMetrics(generatePark(9, region, PARAMS({ variety: "city-park", pond: true }), CONSTRAINTS), region);
+    const wild = computeParkMetrics(generatePark(9, region, PARAMS({ variety: "wild-common", pond: false }), CONSTRAINTS), region);
+    expect(city.pathLengthPerSpan).toBeGreaterThan(wild.pathLengthPerSpan);
   });
 });

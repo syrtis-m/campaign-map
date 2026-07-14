@@ -6,6 +6,8 @@ import type { GenerationConstraints } from "./types";
 import { clipNetworkToTile } from "./citynet";
 import { tileBBox, tileXYForPoint } from "./cache/tileGrid";
 import { heightAt } from "./world/heightmap";
+import { expectGeneratorInvariants, expectDeterministic } from "./testkit/invariants";
+import { computeMountainMetrics, mountainBandViolations } from "./mountainMetrics";
 
 type Pt = [number, number];
 
@@ -102,10 +104,8 @@ describe("mountain generator — determinism", () => {
 
   it("is byte-identical across two runs (same seed/region/params)", () => {
     const region = regionFor(SQUARE);
-    const a = generateMountain(1234, region, PARAMS(), CONSTRAINTS);
-    const b = generateMountain(1234, region, PARAMS(), CONSTRAINTS);
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    expect(a.length).toBeGreaterThan(1);
+    const a = expectDeterministic(() => generateMountain(1234, region, PARAMS(), CONSTRAINTS));
+    expect(a.length).toBeGreaterThan(1); // a mountain always emits many layers, never a lone feature
   });
 
   it("hashes feature ids on position, not emission order (integer ids)", () => {
@@ -312,25 +312,17 @@ describe("mountain — terrace transform (mesa signature is LIVE, not a no-op)",
   });
 });
 
-describe("mountain generator — containment (every coordinate inside the ring)", () => {
+describe("mountain generator — structural invariants (containment · closed rings · mm lattice)", () => {
   for (const terrain of ["alpine", "mesa", "rolling-hills"] as const) {
     it(`all output inside the ring — ${terrain}`, () => {
       const region = regionFor(SQUARE);
-      const feats = generateMountain(99, region, PARAMS({ terrain }), CONSTRAINTS);
-      expect(feats.length).toBeGreaterThan(0);
-      for (const [x, y] of allCoords(feats)) {
-        expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1);
-      }
+      expectGeneratorInvariants(generateMountain(99, region, PARAMS({ terrain }), CONSTRAINTS), region);
     });
   }
 
   it("stays inside a strongly concave (L-shaped) region — no tick bridges the notch", () => {
     const region = regionFor(L_SHAPE);
-    const feats = generateMountain(42, region, PARAMS(), CONSTRAINTS);
-    expect(feats.length).toBeGreaterThan(0);
-    for (const [x, y] of allCoords(feats)) {
-      expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1);
-    }
+    expectGeneratorInvariants(generateMountain(42, region, PARAMS(), CONSTRAINTS), region);
   });
 });
 
@@ -404,5 +396,23 @@ describe("plan 023 §3 compatibility — world-tier heightAt is UNTOUCHED", () =
       heightAt(987654, x, y, bounds)
     );
     expect(samples).toMatchSnapshot();
+  });
+});
+
+describe("mountain generator — metric bands (regression net)", () => {
+  // The band is the tunable safety net that replaces byte-eternity for tuning:
+  // it survives a terrain retune but catches contours or hachures that thin out.
+  // Measured on the committed golden (alpine, seed 4242).
+  it("golden fixture (alpine) lands inside its metric band", () => {
+    const region = regionFor(SQUARE);
+    const v = mountainBandViolations(computeMountainMetrics(generateMountain(4242, region, PARAMS(), CONSTRAINTS), region));
+    expect(v, v.join("; ")).toEqual([]);
+  });
+
+  it("a high-amplitude alpine massif draws more contour rings than low rolling hills (same region/seed)", () => {
+    const region = regionFor(SQUARE);
+    const alpine = computeMountainMetrics(generateMountain(3, region, PARAMS({ terrain: "alpine", amplitude: 0.9 }), CONSTRAINTS), region);
+    const rolling = computeMountainMetrics(generateMountain(3, region, PARAMS({ terrain: "rolling-hills", amplitude: 0.3 }), CONSTRAINTS), region);
+    expect(alpine.contourCount).toBeGreaterThan(rolling.contourCount);
   });
 });

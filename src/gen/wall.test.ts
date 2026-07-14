@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import { generateWall, wallMaxOffset, type WallParams } from "./wall";
-import { makeSpine, makeCorridorRegion, distanceToBoundary, type ProcgenRegion } from "./region";
+import { makeSpine, makeCorridorRegion, type ProcgenRegion } from "./region";
 import type { GenerationConstraints } from "./types";
 import type { FabricFeature } from "../model/fabric";
 import { clipNetworkToTile } from "./citynet";
 import { tileBBox, tileXYForPoint } from "./cache/tileGrid";
+import { expectGeneratorInvariants, expectDeterministic } from "./testkit/invariants";
+import { computeWallMetrics, wallBandViolations } from "./wallMetrics";
 
 type Pt = [number, number];
 
@@ -102,10 +104,7 @@ describe("wall generator — determinism", () => {
 
   it("is byte-identical across two runs (same seed/region/params)", () => {
     const region = regionFor(LINE, PARAMS());
-    const a = generateWall(1234, region, PARAMS(), CONSTRAINTS);
-    const b = generateWall(1234, region, PARAMS(), CONSTRAINTS);
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    expect(a.length).toBeGreaterThan(0);
+    expectDeterministic(() => generateWall(1234, region, PARAMS(), CONSTRAINTS));
   });
 
   it("hashes feature ids on position, not emission order (integer ids)", () => {
@@ -176,7 +175,7 @@ describe("wall generator — gates at road crossings (plan 022 §3.4)", () => {
   });
 });
 
-describe("wall generator — containment (every coordinate inside the corridor)", () => {
+describe("wall generator — structural invariants (corridor containment · closed rings · mm lattice)", () => {
   for (const preset of [
     { name: "curtain-wall", p: PARAMS({ style: "curtain-wall" }) },
     { name: "palisade", p: PARAMS({ style: "palisade" }) },
@@ -184,11 +183,7 @@ describe("wall generator — containment (every coordinate inside the corridor)"
   ]) {
     it(`all output inside the corridor — ${preset.name}`, () => {
       const region = regionFor(LINE, preset.p);
-      const feats = generateWall(99, region, preset.p, roadConstraints());
-      expect(feats.length).toBeGreaterThan(0);
-      for (const [x, y] of allCoords(feats)) {
-        expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1);
-      }
+      expectGeneratorInvariants(generateWall(99, region, preset.p, roadConstraints()), region);
     });
   }
 
@@ -248,5 +243,25 @@ describe("wall generator — 2x2 seam via whole-artifact clip", () => {
       }
     }
     expect(clipped).toBeGreaterThan(0);
+  });
+});
+
+describe("wall generator — metric bands (regression net)", () => {
+  // The band is the tunable safety net that replaces byte-eternity for tuning:
+  // it survives a spacing retune but catches towers or gates that vanish.
+  // Measured on the committed golden (bastioned + moat, one crossing, seed 4242).
+  it("golden fixture (bastioned + moat) lands inside its metric band", () => {
+    const p = PARAMS({ style: "bastioned", towerSpacing: 90, moat: true, gatehouseScale: 1.4 });
+    const region = regionFor(LINE, p);
+    const v = wallBandViolations(computeWallMetrics(generateWall(4242, region, p, roadConstraints()), region));
+    expect(v, v.join("; ")).toEqual([]);
+  });
+
+  it("a tighter towerSpacing yields a smaller mean tower spacing (denser towers)", () => {
+    const tight = PARAMS({ towerSpacing: 25 });
+    const loose = PARAMS({ towerSpacing: 120 });
+    const t = computeWallMetrics(generateWall(3, regionFor(LINE, tight), tight, CONSTRAINTS), regionFor(LINE, tight));
+    const l = computeWallMetrics(generateWall(3, regionFor(LINE, loose), loose, CONSTRAINTS), regionFor(LINE, loose));
+    expect(t.meanTowerSpacing).toBeLessThan(l.meanTowerSpacing);
   });
 });
