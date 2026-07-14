@@ -999,3 +999,19 @@
   at close zoom (aesthetic polish candidate); this run's hashed bridge came
   up arch-only (zigzag unit-covered); Surface-Pro throttled perf numbers
   still owed for glyph layers (26-C flag stands).
+
+## 2026-07-14 — Plan 024 phase A (staleness fingerprints, phase subagent)
+- **Grandfather, don't migrate:** records without a fingerprint (pre-024 or
+  synced) stay fresh on a blind key match — opening an existing campaign
+  never triggers a regen storm; records self-heal to fingerprinted on their
+  next natural regen. rm .mapcache remains harmless (release-blocker rule).
+- **Canon excluded from the fingerprint:** generationService documents that
+  cache hits don't re-check canon; fingerprinting it would silently change
+  that contract (plan-024 OQ#3 — still Jonah's call).
+- **Global (not bbox-scoped) constraint hashing:** a far river edit
+  over-invalidates a distant city — correct + deterministic, purely a perf
+  cost; the bbox-relevance filter is 24-B's cascade edge machinery, where
+  influence radii (corridorMaxOffset) exist.
+- **Upstream generated-artifact fingerprints deferred to 24-B** (nothing
+  consumes another region's output until stages land); FP_VERSION makes the
+  composition forward-compatible.

@@ -311,8 +311,16 @@
   `.lastgreenboard` → 27ca5fe. Fast suite 714. Flags for Jonah: confluence
   gusset reads blocky (numerically exact), timestamp-seed gate fixtures
   need pinning (chip open). See DECISIONS "wave-2 P3".
-- Next: plan 024 cross-layer cascade — 24-A input fingerprints +
-  stale-replay detection; then 24-B stage DAG; 24-C ⛳ board.
+- **24-A DONE** (`5597cd4`): staleness fingerprints — canonical FNV-1a-64
+  input hash (seed/version/sorted params/quantized geometry/raw-sketch
+  constraints) stamped on region cache records (additive); a key hit with a
+  mismatched fingerprint replays as a MISS, catching out-of-band
+  Fabric.geojson edits (hardens plan 020). Pre-024 records grandfathered
+  fresh; canon excluded (OQ#3); upstream-artifact fps + bbox-relevance to
+  24-B. Gate: fast 734/734 · staleness24a 10/10 · dev-vault byte-intact.
+  See DECISIONS "24-A".
+- Next: 24-B stage DAG + upstream-as-data worker interface + cascade regen
+  on edit; then 24-C ⛳ board.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

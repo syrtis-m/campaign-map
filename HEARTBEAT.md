@@ -199,7 +199,7 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
       (Jonah 2026-07-13); 26-B/26-C/27-C commit on T1 only
 
 **Plan 024 — cross-layer cascade** (`plans/024-cross-layer-regen-cascade.md`)
-- [ ] 24-A input fingerprints on cache records + stale-replay detection
+- [x] 5597cd4 24-A input fingerprints on cache records + stale-replay detection
       (024 §5.1 — hardens plan 020 too)
 - [ ] 24-B stage DAG + upstream-as-data worker interface + cascade regen on
       edit (024 §2–§4)
@@ -255,6 +255,14 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 7 cont.): 24-A via phase subagent, T1 green
+  first try — canonical input fingerprints on cache records (additive field;
+  pre-024 grandfathered fresh, no regen storm), stale-replay = fingerprint
+  mismatch treated as MISS (catches external Fabric.geojson edits). Canon
+  excluded per today's contract (OQ#3 open); upstream-artifact fps deferred
+  to 24-B; global constraint hashing over-invalidates far regions
+  (perf-only, bbox-relevance is 24-B). staleness24a 10/10. Committed
+  5597cd4. Fast 734. Next: 24-B stage DAG + cascade regen.
 - 2026-07-14 (arc run, session 7 cont.): ∥ P3 concurrent worktrees, serial
   integration — 27-C 9e510d6 (vo27-park 23/23 after the c8 investigation
   found a REAL host bug: rebuildTheme's styledata handler missed
