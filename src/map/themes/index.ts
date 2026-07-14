@@ -6,6 +6,7 @@ import { generatedLayers } from "./generatedLayers";
 import { connectionLayers } from "./connectionLayers";
 import { sessionPathLayers } from "./sessionPathLayers";
 import { fabricLayers, FABRIC_SOURCE_SPEC } from "./fabricLayers";
+import { hillshadeLayer, hillshadeSourceSpec } from "./hillshadeLayer";
 import { assertLayerOrder } from "./layerOrder";
 
 export { HANDCRAFTED_THEMES, type ThemeTokens };
@@ -23,7 +24,8 @@ export function isHandcraftedTheme(id: string): id is keyof typeof HANDCRAFTED_T
 export function buildThemeStyle(
   tokens: ThemeTokens,
   glyphsUrl: string,
-  basemap?: { sourceId: string; url: string }
+  basemap?: { sourceId: string; url: string },
+  dem?: { sourceId: string; url: string }
 ): StyleSpecification {
   return {
     version: 8,
@@ -38,12 +40,15 @@ export function buildThemeStyle(
       ...(basemap
         ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } }
         : {}),
+      ...(dem ? { [dem.sourceId]: hillshadeSourceSpec(dem.url) } : {}),
     },
     // Z-order invariant (plan 019 / layerOrder.ts): Locations always above
-    // fabric; sketched fabric above generated (the GM's hand wins).
+    // fabric; sketched fabric above generated (the GM's hand wins). Hillshade
+    // relief (plan 023 §4.2) sits below the vector fabric, default-hidden.
     layers: assertOrdered([
       { id: "background", type: "background", paint: { "background-color": tokens.land } },
       ...(basemap ? basemapLayers(basemap.sourceId, tokens) : []),
+      ...(dem ? [hillshadeLayer(tokens, dem.sourceId)] : []),
       ...generatedLayers(tokens),
       ...fabricLayers(tokens),
       ...connectionLayers({ lineColor: tokens.accent }),

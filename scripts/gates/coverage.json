@@ -344,6 +344,23 @@
         "src/map/theme.ts",
         "src/view/MapView.ts"
       ]
+    },
+    "hillshade23d": {
+      "script": "scripts/gates/hillshade23d.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/mountain.ts",
+        "src/gen/fields/**",
+        "src/model/demCache.ts",
+        "src/map/campaignDemProtocol.ts",
+        "src/map/themes/hillshadeLayer.ts",
+        "src/map/themes/layerOrder.ts",
+        "src/map/themes/index.ts",
+        "src/map/themes/tokens.ts",
+        "src/map/theme.ts",
+        "src/controller/MapController.ts",
+        "src/view/MapView.ts"
+      ]
     }
   }
 }

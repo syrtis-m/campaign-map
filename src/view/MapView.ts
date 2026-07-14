@@ -27,6 +27,13 @@ import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
 import { obsidianNativeStyle, readObsidianCssTokens } from "../map/theme";
 import { glyphsUrlTemplate, createTransformRequest } from "../map/glyphs";
 import { registerVaultBasemap, vaultBasemapBounds } from "../map/pmtilesVaultProtocol";
+import {
+  registerDemProvider,
+  unregisterDemProvider,
+  campaignDemUrlTemplate,
+  resolveDemTileForTest,
+} from "../map/campaignDemProtocol";
+import { demVerticalScale } from "../gen/fields";
 import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
 import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
@@ -140,6 +147,7 @@ export class MapView extends ItemView {
    * state on it (plan 016: re-click to exit is only discoverable if the button
    * looks toggled). */
   private pencilBtnEl: HTMLButtonElement | null = null;
+  private terrainBtnEl: HTMLButtonElement | null = null;
   /** Debounce for regenerating manifest tiles a sketch edit touches (plan
    * 019 Phase 3: "sketch a river, streets adapt" is one gesture) — cleared
    * on mode exit / onClose so it can never fire after teardown. The debounce
@@ -261,13 +269,22 @@ export class MapView extends ItemView {
     this.campaign = campaign;
     void this.controller.loadFabric();
     this.refreshHeaderTitle();
+    // The terrain toggle is crs-dependent (fictional only) and the toolbar may
+    // have been built before the campaign arrived — rebuild it now. Guarded:
+    // setCampaign can run before onOpen has created the toolbar element.
+    if (this.toolbarEl) this.buildToolbar();
     if (this.map && (isFirstApply || themeChanged)) {
+      if (switched) this.terrainEnabled = false; // terrain is per-session, never carried across campaigns
       this.map.setStyle(this.buildStyle(campaign));
       this.map.once("styledata", () => {
         this.refreshSource();
         this.refreshGeneratedSource();
         this.applyFocusReveal();
+        // setStyle rebuilds the hillshade layer default-hidden and drops the 3D
+        // terrain mesh — re-apply the GM's toggle across a theme change.
+        if (this.terrainEnabled) this.setTerrainEnabled(true);
       });
+      this.updateTerrainButton();
     }
     if (this.map) this.applyCampaign();
     // Plan 019: the ONLY generation on open is replaying the GM's own past
@@ -288,6 +305,100 @@ export class MapView extends ItemView {
     }).open();
   }
 
+  // ─── Terrain: hillshade relief + 3D (plan 023 §4.2) ────────────────────────
+  /** 3D-mesh vertical exaggeration. The encoded DEM already scales heights by K
+   * (terrarium-capped, `demVerticalScale`); the 3D mesh raises vertices in
+   * mercator-meters, so a fictional mountain (tiny in campaign meters, huge on
+   * the mercator canvas) needs a multiplier on top to read as relief when
+   * pitched. Tunable (default-off); verified by screenshot. */
+  private static readonly TERRAIN_EXAGGERATION = 6;
+  private terrainEnabled = false;
+  private terrainPitchHandler: (() => void) | null = null;
+
+  isTerrainEnabled(): boolean {
+    return this.terrainEnabled;
+  }
+
+  /** The single terrain toggle (button + headless twin, plan 023 §4.2). ON is
+   * PITCH-ADAPTIVE (applyTerrainMode): top-down → the hillshade layer (2D
+   * shaded relief); pitched → the 3D terrain mesh with hillshade hidden. The
+   * two never render together: maplibre-gl 4.7.1 misrenders the hillshade
+   * layer while a terrain mesh is active (the draped hillshade texture smears/
+   * stretches past the relief — verified live 2026-07-14, hillshade-only and
+   * mesh-only are both clean), so each mode uses the one that renders
+   * correctly, and the draped hachures/contours carry the relief read in 3D.
+   * VISIBILITY + mesh only — never generation (explicit-only survives: DEM
+   * tiles are field evaluation, generatorRunCount stays flat). Fictional
+   * campaigns only (the DEM source exists only there). */
+  setTerrainEnabled(on: boolean): boolean {
+    if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return false;
+    if (!this.map.getLayer("hillshade")) return false;
+    this.terrainEnabled = on;
+    // Re-point the provider at the current mountain set + bust MapLibre's raster
+    // cache so an edit made while terrain was off is picked up on (re)enable.
+    this.registerDemProviderFor(this.campaign);
+    if (on) {
+      this.bustDemTileCache(`dem-${this.campaign.id}`);
+      if (!this.terrainPitchHandler) {
+        this.terrainPitchHandler = () => this.applyTerrainMode();
+        this.map.on("pitch", this.terrainPitchHandler);
+      }
+    } else if (this.terrainPitchHandler) {
+      this.map.off("pitch", this.terrainPitchHandler);
+      this.terrainPitchHandler = null;
+    }
+    this.applyTerrainMode();
+    this.updateTerrainButton();
+    return true;
+  }
+
+  /** Apply the current relief mode (see setTerrainEnabled): OFF → no hillshade,
+   * no mesh; ON + top-down → hillshade; ON + pitched → mesh, hillshade hidden. */
+  private applyTerrainMode(): void {
+    if (!this.map || !this.campaign) return;
+    const pitched = this.map.getPitch() > 0.5;
+    const wantMesh = this.terrainEnabled && pitched;
+    const wantHillshade = this.terrainEnabled && !pitched;
+    if (this.map.getLayer("hillshade")) {
+      this.map.setLayoutProperty("hillshade", "visibility", wantHillshade ? "visible" : "none");
+    }
+    try {
+      const current = this.map.getTerrain();
+      if (wantMesh && !current) {
+        this.map.setTerrain({ source: `dem-${this.campaign.id}`, exaggeration: MapView.TERRAIN_EXAGGERATION });
+      } else if (!wantMesh && current) {
+        this.map.setTerrain(null);
+      }
+    } catch {
+      /* setTerrain can throw if the source isn't ready yet — visibility already set */
+    }
+  }
+
+  /** Force MapLibre to refetch DEM tiles (their URL is stable, so a mountain
+   * edit wouldn't otherwise invalidate already-cached raster tiles). */
+  private bustDemTileCache(sourceId: string): void {
+    const src = this.map?.getSource(sourceId) as { setTiles?: (t: string[]) => void } | undefined;
+    if (src?.setTiles) {
+      try {
+        src.setTiles([campaignDemUrlTemplate(this.campaign!.id)]);
+      } catch {
+        /* best-effort cache bust */
+      }
+    }
+  }
+
+  /** Re-point + refresh the DEM after a mountain region changed, but only if
+   * terrain is currently on (otherwise the next enable rebuilds it anyway). */
+  private refreshTerrainIfEnabled(): void {
+    if (!this.terrainEnabled || !this.map || !this.campaign) return;
+    this.registerDemProviderFor(this.campaign);
+    this.bustDemTileCache(`dem-${this.campaign.id}`);
+  }
+
+  private updateTerrainButton(): void {
+    this.terrainBtnEl?.toggleClass("is-active", this.terrainEnabled);
+  }
+
   private buildStyle(campaign: ParsedCampaign): StyleSpecification {
     const { config } = campaign;
     let basemap: { sourceId: string; url: string } | undefined;
@@ -297,10 +408,34 @@ export class MapView extends ItemView {
         url: registerVaultBasemap(this.app, config.basemap),
       };
     }
-    if (isHandcraftedTheme(config.theme)) {
-      return buildThemeStyle(HANDCRAFTED_THEMES[config.theme], glyphsUrlTemplate(), basemap);
+    // DEM/hillshade/terrain (plan 023 §4.2) is fictional-campaign-only in v1
+    // (§5 OQ#2 — real-city elevation is a later plan). The hillshade layer +
+    // raster-dem source are always PRESENT in a fictional style but default
+    // hidden (layout visibility "none"); the terrain toggle flips them on.
+    let dem: { sourceId: string; url: string } | undefined;
+    if (config.crs === "fictional") {
+      dem = { sourceId: `dem-${campaign.id}`, url: campaignDemUrlTemplate(campaign.id) };
+      this.registerDemProviderFor(campaign);
     }
-    return obsidianNativeStyle(readObsidianCssTokens(this.containerEl), glyphsUrlTemplate(), basemap);
+    if (isHandcraftedTheme(config.theme)) {
+      return buildThemeStyle(HANDCRAFTED_THEMES[config.theme], glyphsUrlTemplate(), basemap, dem);
+    }
+    return obsidianNativeStyle(readObsidianCssTokens(this.containerEl), glyphsUrlTemplate(), basemap, dem);
+  }
+
+  /** Point the `campaigndem` protocol at this campaign's live elevation field
+   * (plan 023 §4.2). The provider re-reads the composed field + digest on every
+   * tile request, so a mountain edit is reflected once the source is refreshed
+   * (refreshTerrain). Serving is off the region-generation path — it never moves
+   * generatorRunCount (DEM tiles are field evaluation, not procgen). */
+  private registerDemProviderFor(campaign: ParsedCampaign): void {
+    registerDemProvider(campaign.id, {
+      app: this.app,
+      campaignFolder: campaignFolderFromConfigPath(campaign.path),
+      scaleMetersPerUnit: campaign.config.scaleMetersPerUnit,
+      k: demVerticalScale(campaign.config.scaleMetersPerUnit),
+      snapshot: () => this.controller.campaignElevationSnapshot() ?? { field: () => ({ v: 0, dx: 0, dy: 0 }), digest: "empty" },
+    });
   }
 
   /**
@@ -441,6 +576,16 @@ export class MapView extends ItemView {
     this.pencilBtnEl.toggleClass("is-active", this.sketchMode);
     btn("search", "Search locations", () => this.openSearch());
     btn("palette", "Switch map theme", () => this.switchTheme());
+    // Terrain toggle (plan 023 §4.2) — fictional campaigns only (DEM/hillshade
+    // is fictional-only in v1). Next to the theme switcher; flips hillshade
+    // relief + 3D terrain on/off (visibility only, never generation).
+    this.terrainBtnEl = null;
+    if (this.campaign?.config.crs === "fictional") {
+      this.terrainBtnEl = btn("mountain", "Toggle terrain relief (hillshade + 3D)", () =>
+        this.setTerrainEnabled(!this.terrainEnabled)
+      );
+      this.updateTerrainButton();
+    }
     btn("settings", "Campaign settings (generate, export live here)", () => this.plugin.openControlPanel());
   }
 
@@ -522,6 +667,7 @@ export class MapView extends ItemView {
       window.removeEventListener("keydown", this.sketchKeyHandler, true);
       this.sketchKeyHandler = null;
     }
+    if (this.campaign) unregisterDemProvider(this.campaign.id);
     this.map?.remove();
     this.map = null;
   }
@@ -1624,13 +1770,16 @@ export class MapView extends ItemView {
   /** Re-roll a region: a NEW seed (`hashSeed(seed, "reroll")`) — the city
    * re-rolls rather than adapting. Logged as `sketch-procgen-set`, force-regen. */
   async rerollRegion(featureId: string): Promise<void> {
-    return this.controller.rerollRegion(featureId);
+    await this.controller.rerollRegion(featureId);
+    this.refreshTerrainIfEnabled(); // a re-rolled mountain reshapes the DEM
   }
 
   /** Regenerate a region against CURRENT constraints (drop records + recompute,
    * no block change, no log — idempotent). */
   async regenerateRegionById(featureId: string): Promise<GeoJSON.Feature[]> {
-    return this.controller.regenerateRegionById(featureId);
+    const feats = await this.controller.regenerateRegionById(featureId);
+    this.refreshTerrainIfEnabled(); // pick up any mountain change in the DEM
+    return feats;
   }
 
   /** Remove a region's generated city (strip the block; shape stays inert). */
@@ -1705,6 +1854,34 @@ export class MapView extends ItemView {
     return this.controller.regionElevationReport(regionId);
   }
 
+  /** DEM tile report for the terrain gate (plan 023 §4.2): resolves one raster-
+   * DEM tile through the FULL protocol path (digest-checked cache read → compute
+   * → persisted append — exactly a MapLibre fetch minus the PNG encode) and
+   * returns compact numeric stats over the raw int lattice. HEIGHTS are the
+   * determinism surface — the FNV-1a hash lets a gate compare lattices across
+   * regenerate / cache delete without hauling 65k ints through an eval. */
+  async demTileReport(
+    z: number,
+    x: number,
+    y: number
+  ): Promise<{ res: number; min: number; max: number; nonZero: number; hash: string }> {
+    if (!this.campaign) throw new Error("no campaign");
+    const heights = await resolveDemTileForTest(this.campaign.id, z, x, y);
+    let min = Infinity;
+    let max = -Infinity;
+    let nonZero = 0;
+    let h = 0x811c9dc5;
+    for (const v of heights) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+      if (v !== 0) nonZero++;
+      // FNV-1a over the int stream (byte-order-free — ints, not bytes).
+      h ^= v & 0xffff;
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return { res: Math.sqrt(heights.length), min, max, nonZero, hash: h.toString(16) };
+  }
+
   /** Set (or clear, with `null`) a region's persisted generation center
    * (params.center, gen-space meters) via the full commit path — the
    * draggable-plaza feature (Addendum 2). `centerDisplay` is in DISPLAY units. */
@@ -1731,6 +1908,8 @@ export class MapView extends ItemView {
     this.map.once("styledata", () => {
       this.refreshSource();
       this.applyFocusReveal();
+      // css-change setStyle also resets hillshade/terrain — restore the toggle.
+      if (this.terrainEnabled) this.setTerrainEnabled(true);
     });
   }
 

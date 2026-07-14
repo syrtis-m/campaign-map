@@ -5,6 +5,7 @@ import { generatedLayers } from "./themes/generatedLayers";
 import { connectionLayers } from "./themes/connectionLayers";
 import { sessionPathLayers } from "./themes/sessionPathLayers";
 import { fabricLayers, FABRIC_SOURCE_SPEC } from "./themes/fabricLayers";
+import { hillshadeLayer, hillshadeSourceSpec } from "./themes/hillshadeLayer";
 import { assertOrdered } from "./themes";
 import type { ThemeTokens } from "./themes/tokens";
 
@@ -127,7 +128,8 @@ function obsidianTokensAsThemeTokens(tokens: ObsidianCssTokens): ThemeTokens {
 export function obsidianNativeStyle(
   tokens: ObsidianCssTokens,
   glyphsUrl: string,
-  basemap?: { sourceId: string; url: string }
+  basemap?: { sourceId: string; url: string },
+  dem?: { sourceId: string; url: string }
 ): StyleSpecification {
   const t = obsidianTokensAsThemeTokens(tokens);
   return {
@@ -141,11 +143,13 @@ export function obsidianNativeStyle(
       "session-path": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       fabric: { ...FABRIC_SOURCE_SPEC },
       ...(basemap ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } } : {}),
+      ...(dem ? { [dem.sourceId]: hillshadeSourceSpec(dem.url) } : {}),
     },
     // Same z-order contract as buildThemeStyle (plan 019 / layerOrder.ts).
     layers: assertOrdered([
       { id: "background", type: "background", paint: { "background-color": t.land } },
       ...(basemap ? basemapLayers(basemap.sourceId, t) : []),
+      ...(dem ? [hillshadeLayer(t, dem.sourceId)] : []),
       ...generatedLayers(t),
       ...fabricLayers(t),
       ...connectionLayers({ lineColor: t.accent }),

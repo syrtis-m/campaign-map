@@ -50,3 +50,15 @@ export {
   // reusable machinery behind mountain contours (23-C) and forest canopy (026-B).
   marchingSquares,
 } from "./marchingSquares";
+export {
+  // DEM raster support for hillshade + 3D terrain (plan 023 §4.2): campaign
+  // field composition, slippy-tile → gen-space sampling, raw-lattice
+  // quantization + terrarium RGBA packing (the pure/numeric half — PNG encoding
+  // is a host concern in campaignDemProtocol.ts).
+  TERRARIUM_BASE,
+  demVerticalScale,
+  tileLngLatBounds,
+  unionFields,
+  demTileLattice,
+  latticeToRGBA,
+} from "./dem";

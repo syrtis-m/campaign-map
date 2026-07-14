@@ -15,6 +15,7 @@ import { assertLayerOrder, layerGroupOf, LAYER_GROUP_ORDER } from "./layerOrder"
 
 const GLYPHS = "http://localhost/glyphs/{fontstack}/{range}.pbf";
 const BASEMAP = { sourceId: "basemap", url: "pmtiles://basemap.pmtiles" };
+const DEM = { sourceId: "dem-test", url: "campaigndem://test/{z}/{x}/{y}" };
 const OBSIDIAN_TOKENS: ObsidianCssTokens = {
   backgroundPrimary: "#1e1e1e",
   backgroundSecondary: "#262626",
@@ -33,10 +34,12 @@ function allStyles(): [string, StyleSpecification][] {
   const out: [string, StyleSpecification][] = [
     ["obsidian-native", obsidianNativeStyle(OBSIDIAN_TOKENS, GLYPHS)],
     ["obsidian-native+basemap", obsidianNativeStyle(OBSIDIAN_TOKENS, GLYPHS, BASEMAP)],
+    ["obsidian-native+dem", obsidianNativeStyle(OBSIDIAN_TOKENS, GLYPHS, undefined, DEM)],
   ];
   for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
     out.push([id, buildThemeStyle(tokens, GLYPHS)]);
     out.push([`${id}+basemap`, buildThemeStyle(tokens, GLYPHS, BASEMAP)]);
+    out.push([`${id}+dem`, buildThemeStyle(tokens, GLYPHS, undefined, DEM)]);
   }
   return out;
 }

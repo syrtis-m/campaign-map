@@ -9,16 +9,20 @@ import type { LayerSpecification } from "maplibre-gl";
  * order. (Introduced two-layer in plan 019, Phase 4; plan 020 inserted the
  * generated layer BELOW the sketch layer to make the three-layer model named.)
  *
- * background < basemap < generated (layer 1) < fabric/sketch (layer 2)
+ * background < basemap < hillshade < generated (layer 1) < fabric/sketch (layer 2)
  * < connections < session-path < location dots < location labels (layer 3)
  *
  * (Generated below sketch: the GM's hand beats the generator's where they
  * overlap. Connections/session-path are location-derived, so they ride above
- * all fabric but below the dots/labels they connect.)
+ * all fabric but below the dots/labels they connect. Hillshade — the generated
+ * DEM relief shading, plan 023 §4.2 — sits below the vector fabric so the
+ * massif/hachures/contours read ON TOP of the shaded ground, and above basemap
+ * so real-city relief would overlay the tiles.)
  */
 export const LAYER_GROUP_ORDER = [
   "background",
   "basemap",
+  "hillshade",
   "generated",
   "fabric",
   "connections",
@@ -33,6 +37,7 @@ export type LayerGroup = (typeof LAYER_GROUP_ORDER)[number];
 export function layerGroupOf(id: string): LayerGroup {
   if (id === "background") return "background";
   if (id.startsWith("basemap-")) return "basemap";
+  if (id === "hillshade" || id.startsWith("hillshade-")) return "hillshade";
   if (id.startsWith("generated-")) return "generated";
   if (id.startsWith("fabric-")) return "fabric";
   if (id.startsWith("connection")) return "connections";

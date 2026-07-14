@@ -32,6 +32,9 @@ import { buildThemeStyle, HANDCRAFTED_THEMES } from "./themes";
 // validator never fetches (validateStyleMin is purely static) is enough.
 const GLYPHS = "http://localhost/glyphs/{fontstack}/{range}.pbf";
 const BASEMAP = { sourceId: "basemap", url: "pmtiles://basemap.pmtiles" };
+// Fictional campaigns now carry the generated raster-DEM source + hillshade
+// layer (plan 023 §4.2) — validate that shape too.
+const DEM = { sourceId: "dem-test", url: "campaigndem://test/{z}/{x}/{y}" };
 
 // Stand-in for readObsidianCssTokens() — obsidianNativeStyle only reads color
 // strings off this, so concrete hex values exercise the same layer assembly the
@@ -62,6 +65,9 @@ describe("built styles pass MapLibre validateStyleMin (013/014 regression)", () 
     it("real-city (with basemap)", () => {
       expectValid("obsidian-native + basemap", obsidianNativeStyle(OBSIDIAN_TOKENS, GLYPHS, BASEMAP));
     });
+    it("fictional with DEM (hillshade, plan 023 §4.2)", () => {
+      expectValid("obsidian-native + dem", obsidianNativeStyle(OBSIDIAN_TOKENS, GLYPHS, undefined, DEM));
+    });
   });
 
   for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
@@ -71,6 +77,9 @@ describe("built styles pass MapLibre validateStyleMin (013/014 regression)", () 
       });
       it("real-city (with basemap)", () => {
         expectValid(`${id} + basemap`, buildThemeStyle(tokens, GLYPHS, BASEMAP));
+      });
+      it("fictional with DEM (hillshade, plan 023 §4.2)", () => {
+        expectValid(`${id} + dem`, buildThemeStyle(tokens, GLYPHS, undefined, DEM));
       });
     });
   }

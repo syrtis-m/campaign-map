@@ -94,6 +94,7 @@ import {
 } from "../gen/region";
 import { algorithmById, algorithmForKind, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import { mountainHeightField, type MountainTerrain } from "../gen/mountain";
+import { unionFields, demVerticalScale, type ElevationField } from "../gen/fields";
 import type { GeneratorId } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
 import { hashSeed } from "../gen/rng";
@@ -1575,6 +1576,53 @@ export class MapController {
       }
     }
     return out;
+  }
+
+  /**
+   * Per-campaign DEM vertical scale K (encoded-terrarium-meters per campaign-
+   * meter) — the fictional-CRS reconciliation for hillshade (plan 023 §4.2).
+   * A pure function of `scaleMetersPerUnit`, so it is constant across tiles
+   * (seam-safe). 0 when no campaign is loaded.
+   */
+  demVerticalScale(): number {
+    if (!this.campaign) return 0;
+    return demVerticalScale(this.campaign.config.scaleMetersPerUnit);
+  }
+
+  /**
+   * Campaign-wide elevation field for the DEM (plan 023 §4.2): the UNION of every
+   * sketched mountain region's height field (masked to its ring), rebuilt from
+   * persisted seeds/params — so it is a pure function of the durable sketch layer
+   * (point-evaluable, deterministic). Base continental terrain + water carve are
+   * plan 024 (§3); `heightAt` stays untouched (§3 compatibility rule). Returns
+   * the field plus a `digest` fingerprinting the mountain set (id + seed + params
+   * + ring geometry): the DEM cache treats a record with a different digest as a
+   * stale miss, so a mountain edit/re-roll is picked up without reactive tile
+   * invalidation. `null` when no campaign is loaded.
+   */
+  campaignElevationSnapshot(): { field: ElevationField; digest: string } | null {
+    if (!this.campaign) return null;
+    const fields: ElevationField[] = [];
+    const parts: string[] = [];
+    // Deterministic order (feature id) so the digest is stable across enumerations.
+    const mountains = this.regionFeatures()
+      .filter((f) => f.properties.procgen?.algorithm === "mountain")
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    for (const feature of mountains) {
+      const block = feature.properties.procgen!;
+      const region = this.buildRegionFromFeature(feature);
+      if (!region) continue;
+      const p = block.params as Record<string, unknown>;
+      const terrain = (typeof p.terrain === "string" ? p.terrain : "alpine") as MountainTerrain;
+      const amplitude = typeof p.amplitude === "number" ? p.amplitude : 0.6;
+      const roughness = typeof p.roughness === "number" ? p.roughness : 0.5;
+      fields.push(mountainHeightField(block.seed, region, { terrain, amplitude, roughness }));
+      parts.push(
+        JSON.stringify({ id: feature.id, seed: block.seed, terrain, amplitude, roughness, ring: region.ring })
+      );
+    }
+    const digest = `k${this.demVerticalScale()}|${parts.join("|")}`;
+    return { field: unionFields(fields), digest };
   }
 
   /** Set (or clear, with `null`) a region's persisted generation center. */
