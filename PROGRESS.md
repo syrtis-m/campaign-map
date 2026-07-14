@@ -115,7 +115,26 @@
   0→730 cells, undo) · both screenshots eyeballed (broadleaf woodland,
   dead-wood stipple) · dev-vault byte-clean · Jonah confirmed the kind works
   via the real sketch GUI. See DECISIONS "phase C".
-- Next: 22-D PARK incl. japanese-garden (022 §3.3).
+- **22-D DONE** (`ab320f4`): PARK — wires up the inert `park` polygon kind via
+  a closed-form garden generator (`src/gen/park.ts`): jittered lawn lattice
+  ground + small path web + per-variety dressing; 4 presets (formal-garden,
+  city-park, wild-common, japanese-garden). Japanese-garden per 022 §3.3:
+  harmonic-radius pond blob (pre-023 SDF fallback) as composition anchor,
+  island + bridge, 2–3–5 position-hashed rock clusters weighted to pond edge
+  and path bends, specimen trees at viewpoints, optional karesansui court —
+  with graceful degradation court→island→pond as the region shrinks
+  (thresholds: court maxInteriorDist ≥200 m, island ≥130 m — see DECISIONS).
+  Island/bridge emitters extracted from the river generator into shared
+  `src/gen/waterEmit.ts` (river re-uses it; no cross-generator import).
+  Registry binds park→park; park paint for all 9 feature types in
+  generatedLayers + all-themes coverage test. Resumed from a killed session's
+  dirty tree (wake protocol): fixed the degradation-ladder thresholds,
+  refreshed the stale registry test. Gate: fast 427/427 · park fuzz 3/3 ·
+  tsc+build · procgen46 11/11 (composition/containment/determinism,
+  edit-locality 100% vs re-roll 32.9%, undo, explicit-only) · both screenshots
+  eyeballed (japanese asymmetric-with-pond; formal axial symmetric) ·
+  dev-vault byte-clean. See DECISIONS "phase D".
+- Next: 22-E WALL elaboration + raw-sketch double-wall suppression (022 §3.4).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

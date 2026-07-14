@@ -121,7 +121,7 @@ exists to make that true.
       per-segment meander, corridor containment) (022 §2, §3.1)
 - [x] c012975 22-C FOREST (new kind, masked-noise canopy — cell-fill fallback,
       marching squares deferred to 023; theme paint in ALL themes) (022 §3.2)
-- [ ] 22-D PARK incl. japanese-garden (022 §3.3)
+- [x] ab320f4 22-D PARK incl. japanese-garden (022 §3.3)
 - [ ] 22-E WALL elaboration + raw-sketch double-wall suppression (022 §3.4)
 - [ ] 22-F FARMLAND incl. outskirt-field suppression (022 §3.5) ⛳ full board
 
@@ -170,6 +170,14 @@ exists to make that true.
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-13 (arc run, session 6): resumed on dirty tree — a prior session died
+  mid 22-D with park.ts/waterEmit.ts code-complete but 2 tests red. Per wake
+  protocol, finished via an Opus 4.8 phase subagent: degradation-ladder
+  thresholds fixed (court 200/island 130), stale registry test updated, park
+  theme-coverage tests + procgen46 live gate written. T1 green (fast 427/427,
+  park fuzz 3/3, tsc+build, procgen46 11/11 standalone, screenshots eyeballed,
+  dev-vault clean); orchestrator re-verified fast+tsc+build independently.
+  22-D committed ab320f4. Next: 22-E WALL.
 - 2026-07-13 (arc run, session 5): 22-B river follow-ups (Jonah live: natural
   bends via global centerline + fillets, no spine double-paint, "Remove"
   button) committed 31e973d. Then 22-C FOREST: the phase subagent died on

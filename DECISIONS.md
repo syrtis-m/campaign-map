@@ -613,3 +613,29 @@
 - **Real-GUI confirmation:** Jonah sketched + generated a forest through the
   actual sketch UI mid-review (the manual stray he then deleted) — the new kind
   works end-to-end interactively, not just via the headless twin.
+
+## 2026-07-13 — Plan 022 phase D (PARK, Opus 4.8 phase subagent)
+- **Resumed a killed session's dirty tree per wake protocol** — park.ts /
+  waterEmit.ts / tests / registry / theme edits were code-complete but red on
+  two tests; the phase subagent finished it rather than restarting clean
+  (remaining work was clear from diff + plan §3.3).
+- **Degradation-ladder thresholds: court ≥200 m, island ≥130 m
+  maxInteriorDistance (pond ≥25 m).** Plan §3.3 mandates the court→island→pond
+  ladder but not values; the killed session's thresholds (130/80) didn't
+  actually rung the ladder at the test's region sizes. Values picked mid-range
+  of the constraints the degradation test encodes; only japanese-garden output
+  in small regions moves; the maxD-500 golden snapshot passed UNCHANGED.
+  **Flag for Jonah**: rung sizes are tunable if gardens drop their court/island
+  too eagerly (or not eagerly enough) in real sketches.
+- **`waterEmit.ts` extraction (per plan §3.3 "extract to a shared module"):**
+  island/bridge blob emitters now live in `src/gen/waterEmit.ts`; river.ts and
+  park.ts both import it — park never imports the river generator. Pond
+  pre-023 fallback = seeded harmonic-radius blob (same closed-form trick as
+  the river meander); upgrades to smooth-min SDFs with plan 023 fields.
+- **procgen46 gate composition counts are per-tile-clipped** (pond:2 bridge:3
+  court:2 across tiles) — features spanning tile boundaries appear in each
+  tile's records; NOT a duplication bug. Single-artifact truth is the unit
+  snapshot (pond:1 island:1 bridge:1 court:1 rock:10 specimen:6). The gate
+  asserts ≥1 per element.
+- **Stale registry test updated, not preserved:** `algorithmForKind("park")`
+  now resolves (that IS the phase); `road` still has no algorithm.
