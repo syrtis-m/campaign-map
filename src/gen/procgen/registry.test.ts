@@ -14,10 +14,11 @@ import { THEME_IDS } from "../../model/campaignConfig";
 const WORLD_BOUNDS: BBox = { minX: -4000, minY: -4000, maxX: 4000, maxY: 4000 };
 
 describe("procgen registry (plan 020 §5)", () => {
-  it("binds district → city and resolves by id; other kinds have no algorithm", () => {
+  it("binds district → city and park → park (plan 022 §3.3); road has no algorithm", () => {
     expect(algorithmForKind("district")?.id).toBe("city");
     expect(algorithmById("city")?.label).toBe("City");
-    expect(algorithmForKind("park")).toBeUndefined();
+    // Park is no longer inert — plan 022 §3.3 binds it to the park generator.
+    expect(algorithmForKind("park")?.id).toBe("park");
     expect(algorithmForKind("road")).toBeUndefined();
     expect(algorithmById("nope")).toBeUndefined();
   });

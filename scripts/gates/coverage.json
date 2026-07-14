@@ -170,6 +170,26 @@
         "src/view/SketchController.ts"
       ]
     },
+    "procgen46": {
+      "script": "scripts/gates/procgen46.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/**",
+        "src/gen/procgen/**",
+        "src/gen/park.ts",
+        "src/gen/waterEmit.ts",
+        "src/controller/MapController.ts",
+        "src/controller/FakeHost.ts",
+        "src/model/fabric.ts",
+        "src/map/themes/generatedLayers.ts",
+        "src/map/themes/fabricLayers.ts",
+        "src/map/themes/tokens.ts",
+        "src/map/theme.ts",
+        "src/view/MapView.ts",
+        "src/view/RegionProcgenModal.ts",
+        "src/view/SketchController.ts"
+      ]
+    },
     "styleLoad": {
       "script": "scripts/gates/styleLoad.ts",
       "globs": [

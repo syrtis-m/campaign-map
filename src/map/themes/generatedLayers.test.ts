@@ -11,6 +11,20 @@ import { assertLayerOrder } from "./layerOrder";
  * added in plan 022-B. */
 const RIVER_LAYER_IDS = ["generated-river-channel", "generated-river-island"] as const;
 const FOREST_LAYER_IDS = ["generated-forest-canopy", "generated-forest-clearing", "generated-forest-tree"] as const;
+/** Every emitted park feature type (plan 022 §3.3) needs paint in every theme —
+ * ground (lawn/bed), path web, water (pond/island/bridge), gravel court, and the
+ * rock + tree stipples. Coverage guard for the park types added in plan 022-D. */
+const PARK_LAYER_IDS = [
+  "generated-park-lawn",
+  "generated-park-bed",
+  "generated-park-court",
+  "generated-park-path",
+  "generated-park-pond",
+  "generated-park-island",
+  "generated-park-bridge",
+  "generated-park-rock",
+  "generated-park-tree",
+] as const;
 
 function fillColor(layer: LayerSpecification): string {
   const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
@@ -135,5 +149,70 @@ describe("generatedLayers — forest canopy/clearing/tree paint coverage (plan 0
     const style = obsidianNativeStyle(css, "http://localhost/glyphs/{fontstack}/{range}.pbf");
     const ids = style.layers.map((l) => l.id);
     for (const id of FOREST_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
+  });
+});
+
+describe("generatedLayers — park paint coverage (plan 022 §3.3)", () => {
+  it("all nine park layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
+    const layers = generatedLayers(PARCHMENT);
+    for (const id of PARK_LAYER_IDS) {
+      const layer = layers.find((l) => l.id === id);
+      expect(layer, `${id} missing from generatedLayers`).toBeDefined();
+      expect((layer as { source?: string }).source).toBe("generated");
+      const filter = JSON.stringify((layer as { filter?: unknown }).filter);
+      expect(filter).toContain('"generatorId"');
+      expect(filter).not.toContain('"zoom"'); // NO zoom LOD (Jonah 2026-07-12)
+    }
+  });
+
+  it("layers the composition top-down: lawn under everything, water/rocks above the ground", () => {
+    const ids = generatedLayers(PARCHMENT).map((l) => l.id);
+    const lawn = ids.indexOf("generated-park-lawn");
+    const path = ids.indexOf("generated-park-path");
+    const pond = ids.indexOf("generated-park-pond");
+    const island = ids.indexOf("generated-park-island");
+    const bridge = ids.indexOf("generated-park-bridge");
+    const court = ids.indexOf("generated-park-court");
+    const rock = ids.indexOf("generated-park-rock");
+    // Ground first; path above ground; pond above path; island above pond water;
+    // bridge above the island; a rock reads on top of its gravel court.
+    expect(path).toBeGreaterThan(lawn);
+    expect(pond).toBeGreaterThan(path);
+    expect(island).toBeGreaterThan(pond);
+    expect(bridge).toBeGreaterThan(island);
+    expect(rock).toBeGreaterThan(court);
+  });
+
+  it("park layers keep the generated- prefix so the z-order stack holds", () => {
+    expect(() => assertLayerOrder(generatedLayers(PARCHMENT))).not.toThrow();
+  });
+
+  for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
+    it(`${id}: every park layer paints a color`, () => {
+      const layers = generatedLayers(tokens);
+      for (const layerId of PARK_LAYER_IDS) {
+        const layer = layers.find((l) => l.id === layerId)!;
+        expect(anyColor(layer).length, `${id}: ${layerId} paints no color`).toBeGreaterThan(0);
+      }
+      // Lawn (open greensward) and pond (water) must read as different things.
+      const lawn = anyColor(layers.find((l) => l.id === "generated-park-lawn")!);
+      const pond = anyColor(layers.find((l) => l.id === "generated-park-pond")!);
+      expect(lawn, `${id}: lawn and pond share a color`).not.toBe(pond);
+    });
+  }
+
+  it("obsidian-native runtime style paints all nine park layers", () => {
+    const css: ObsidianCssTokens = {
+      backgroundPrimary: "#1e1e1e",
+      backgroundSecondary: "#262626",
+      backgroundModifierBorder: "#4d4d4d",
+      textMuted: "#999999",
+      textNormal: "#dcddde",
+      interactiveAccent: "#7c3aed",
+      fontText: "sans-serif",
+    };
+    const style = obsidianNativeStyle(css, "http://localhost/glyphs/{fontstack}/{range}.pbf");
+    const ids = style.layers.map((l) => l.id);
+    for (const id of PARK_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
   });
 });

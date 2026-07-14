@@ -18,6 +18,7 @@ import type { GenerationConstraints } from "../types";
 import type { ProcgenRegion } from "../region";
 import { generateRiver, riverMaxOffset } from "../river";
 import { generateForest, FOREST_VARIETIES } from "../forest";
+import { generatePark, PARK_VARIETIES } from "../park";
 import {
   DOMAIN_TILE_GENERATOR_IDS,
   generateCityNetwork,
@@ -246,9 +247,68 @@ const forestAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-/** v1 registers `city` + `forest` (polygon) + `river` (line). Order matters for
- * `algorithmForKind` (first match wins) — keep the list explicit and small. */
-const REGISTRY: readonly ProcgenAlgorithm[] = [cityAlgorithm, riverAlgorithm, forestAlgorithm];
+// ─── Park (plan 022 §3.3) — the second consumer of the ground-cell + harmonic
+// blob primitives; wires up the previously-inert `park` polygon kind ──────────
+
+/** Park params v1 (plan 022 §3.3). All knobs have defaults so a bare `{}`
+ * validates to a reasonable city park (additive-params rule §1). `variety`
+ * drives layout (like the city algorithm's `profile`), never a preset-id
+ * branch; `pond` is a bool, `pathDensity` 0–1. */
+const parkParamsSchema = z.object({
+  variety: z.enum(PARK_VARIETIES).default("city-park"),
+  pathDensity: z.number().min(0).max(1).default(0.5),
+  pond: z.boolean().default(false),
+});
+
+/** Park presets (plan 022 §3.3) — the four templates. Params are the whole
+ * truth; `japanese-garden` forces `pond: true` (its composition anchor). */
+const PARK_PRESETS: readonly ProcgenPreset[] = [
+  { id: "formal-garden", label: "Formal garden — axial paths, symmetric beds", params: { variety: "formal-garden", pathDensity: 0.6, pond: false } },
+  { id: "city-park", label: "City park — curved paths, lawns, a pond", params: { variety: "city-park", pathDensity: 0.5, pond: true } },
+  { id: "wild-common", label: "Wild common — sparse paths, scattered trees", params: { variety: "wild-common", pathDensity: 0.3, pond: false } },
+  { id: "japanese-garden", label: "Japanese garden — winding circuit, pond, island, rocks", params: { variety: "japanese-garden", pathDensity: 0.4, pond: true } },
+];
+
+/** Park tile-generator ids = the emitted feature buckets (plan 022 §3.3):
+ * ground fabric + path web + water (pond/island/bridge) + gravel court + rock +
+ * tree points. Cache keys + paint layers key on these. */
+export const PARK_TILE_GENERATOR_IDS: readonly string[] = [
+  "park-lawn",
+  "park-bed",
+  "park-path",
+  "park-pond",
+  "park-island",
+  "park-bridge",
+  "park-court",
+  "park-rock",
+  "park-tree",
+];
+
+const parkAlgorithm: ProcgenAlgorithm = {
+  id: "park",
+  label: "Park",
+  appliesTo: ["park"],
+  paramsSchema: parkParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
+  presets: PARK_PRESETS,
+  defaultPresetId(themeId: string): string {
+    // Fantasy parchment/ink-soot read best as a formal garden; the clean
+    // modern/neon themes default to a city park. Every returned id is a member.
+    return themeId === "modern-clean" || themeId === "neon-sprawl" ? "city-park" : "formal-garden";
+  },
+  defaultParams(themeId: string): Record<string, unknown> {
+    const preset = presetById(this, this.defaultPresetId(themeId));
+    return preset ? { ...preset.params } : { ...PARK_PRESETS[1].params };
+  },
+  tileGeneratorIds: PARK_TILE_GENERATOR_IDS,
+  generate(seed, region, params, constraints): GeoJSON.Feature[] {
+    return generatePark(seed, region, parkParamsSchema.parse(params), constraints);
+  },
+};
+
+/** v1 registers `city` + `forest` + `park` (polygon) + `river` (line). Order
+ * matters for `algorithmForKind` (first match wins) — keep the list explicit
+ * and small. */
+const REGISTRY: readonly ProcgenAlgorithm[] = [cityAlgorithm, riverAlgorithm, forestAlgorithm, parkAlgorithm];
 
 export function algorithmForKind(kind: FabricKind): ProcgenAlgorithm | undefined {
   return REGISTRY.find((a) => a.appliesTo.includes(kind));

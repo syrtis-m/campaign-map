@@ -26,6 +26,7 @@
  *    deterministic.
  */
 import { hashSeed, mulberry32 } from "./rng";
+import { q, quad } from "./waterEmit";
 import type { ProcgenRegion } from "./region";
 import type { GenerationConstraints } from "./types";
 
@@ -65,10 +66,6 @@ const MIN_BRAID_SEG_LEN_M = 60;
 const FILLET_MAX_M = 60;
 const FILLET_FRAC = 0.35; // ≤ this fraction of each adjacent segment
 const FILLET_ALLOWANCE_M = FILLET_MAX_M / 2;
-
-function q(v: number): number {
-  return Math.round(v * 1000) / 1000;
-}
 
 /** Base channel half-width at downstream fraction `f` (0 = source, 1 = mouth).
  * The ONE global-arc quantity (plan 022 §3.1); its sub-meter drift on an
@@ -186,24 +183,6 @@ function centerlineNormal(center: CenterPoint[], i: number): Pt {
   const next = center[Math.min(center.length - 1, i + 1)];
   const [ux, uy] = unit(next.x - prev.x, next.y - prev.y);
   return [-uy, ux];
-}
-
-function quad(seed: number, gid: string, a: Pt, b: Pt, c: Pt, d: Pt): GeoJSON.Feature {
-  const ring: Pt[] = [
-    [q(a[0]), q(a[1])],
-    [q(b[0]), q(b[1])],
-    [q(c[0]), q(c[1])],
-    [q(d[0]), q(d[1])],
-    [q(a[0]), q(a[1])],
-  ];
-  return {
-    type: "Feature",
-    // Position-hashed integer id (the quad's two centerline endpoints) — never
-    // emission order; integer so clipNetworkToTile's Number(id) is stable.
-    id: hashSeed(seed, gid, q(a[0]), q(a[1]), q(c[0]), q(c[1])),
-    geometry: { type: "Polygon", coordinates: [ring] },
-    properties: { generatorId: gid, type: gid },
-  };
 }
 
 /**

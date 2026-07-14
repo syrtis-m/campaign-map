@@ -1,0 +1,19 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`park generator — determinism > matches the seeded snapshot fixture (japanese garden — golden drift tripwire) 1`] = `
+{
+  "sha256": "bc552968daaf54b16595932eb31ce8f74967d0ceff374018ccbf14d66ffd15ee",
+  "summary": {
+    "park-bed": 10,
+    "park-bridge": 1,
+    "park-court": 1,
+    "park-island": 1,
+    "park-lawn": 1926,
+    "park-path": 86,
+    "park-pond": 1,
+    "park-rock": 10,
+    "park-tree": 6,
+    "total": 2042,
+  },
+}
+`;
