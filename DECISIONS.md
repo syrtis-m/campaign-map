@@ -802,3 +802,25 @@
   27-B rebased over it cleanly. The overnight-run assumption "only this
   session pushes" is false when Jonah is live — push failures get a fetch +
   inspect before any rebase.
+
+## 2026-07-14 — Plan 023 phase A (fields core, Opus 4.8 phase subagent)
+- **Bit-exactness by construction, not by testing alone:** the retrofit moved
+  the distance/containment primitives VERBATIM (character-identical
+  arithmetic, same evaluation order) from region.ts/fabricConstraints.ts into
+  src/gen/fields/sdf.ts and imported them back one-way — region.ts's diff
+  reads as a pure move. The corridor-vs-polygon dispatch and the two distinct
+  even-odd closure conventions were deliberately NOT unified: unifying
+  reorders floats. Proof stack: every pre-existing .snap byte-unchanged +
+  fuzz double-run byte-identity + a NEW city SHA-256 digest golden captured
+  on clean HEAD before any source edit (closes the §2 gap that the city had
+  no committed golden) + live regenerate byte-compare on the real migrated
+  Vespergate district (fields23a 7/7).
+- **§2's elevation-noise entries (valueNoise2DWithDeriv, fbmEroded) deferred
+  to 23-B** — zero consumer in 23-A; shipping them here would be
+  untested-in-anger surface. RATIFIED by the orchestrator; they land with
+  their first consumer (the elevation model). Combinators/transforms DID ship
+  ahead of consumers (unit-tested; 23-B/C masked-noise needs them) — the
+  difference is they're pure math with exhaustive unit tests, not a
+  tuned-by-eye noise surface.
+- **City golden = SHA-256 digests** of the serialized network, not full JSON
+  (~10 MB) — identical bit-exact detection, no repo bloat.

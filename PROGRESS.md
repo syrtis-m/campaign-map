@@ -208,8 +208,21 @@
   20/20 · procgen49 17/17 · screenshots eyeballed · dev-vault byte-clean.
   Third per-tile-clip gate-bug instance fixed (closed-loop → endpoint-degree
   circuit test). See DECISIONS "wave-1 P2".
-- Next: plan 023 — 23-A `src/gen/fields/` core + BIT-EXACT interiorT
-  retrofit (byte-identical city snapshot gate); then 23-B mountain/elevation.
+- **23-A DONE** (`725c996`): `src/gen/fields/` — the reusable SDF core
+  (sdfPolygon/sdfPolyline + combinators + transforms) with the existing
+  interiorT/constraint math retrofitted BIT-EXACTLY: the distance primitives
+  were moved VERBATIM out of region.ts/fabricConstraints.ts into fields and
+  imported back one-way (bit-exactness by construction — no arithmetic
+  reordering; the two even-odd conventions deliberately NOT unified). City
+  SHA-256 digest golden captured on clean HEAD pre-retrofit closes §2's
+  missing-city-golden gap. Elevation noise deferred to 23-B (ratified — zero
+  consumer in A). Gate: fast 539/539 (every pre-existing .snap byte-
+  unchanged) · fuzz 16/16 · tsc+build · fields23a 7/7 (real migrated district
+  + constrained city byte-identical across live regenerate) · dev-vault
+  byte-intact. See DECISIONS "23-A".
+- Next: 23-B elevation model + `mountain` kind + presets (heightAt untouched
+  — 023 §3 compatibility rule); includes the deferred fields noise
+  (valueNoise2DWithDeriv, fbmEroded).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

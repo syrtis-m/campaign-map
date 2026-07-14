@@ -167,7 +167,7 @@ one Obsidian process); subagents never commit. Board cadence (Jonah
 wave box commits on T1 only.
 
 **Plan 023 — constraint fields + elevation** (`plans/023-constraint-fields-and-elevation.md`)
-- [ ] 23-A `src/gen/fields/` core + BIT-EXACT interiorT/constraints retrofit
+- [x] 725c996 23-A `src/gen/fields/` core + BIT-EXACT interiorT/constraints retrofit
       (byte-identical city snapshot gate) (023 §2)
 - [ ] 23-B elevation model + `mountain` kind + presets (heightAt untouched —
       023 §3 compatibility rule)
@@ -243,6 +243,13 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 6 cont.): 23-A via Opus 4.8 phase subagent, T1
+  green first try — fields SDF core + verbatim-move retrofit (bit-exactness by
+  construction: character-identical arithmetic relocated, one-way import);
+  city SHA-256 digest golden added pre-retrofit; fields23a 7/7 (55 records
+  byte-identical across live regenerate). Judgment ratified: §2's elevation
+  noise deferred to 23-B (zero consumer in A). Committed 725c996. Fast suite
+  539. Next: 23-B elevation model + mountain kind.
 - 2026-07-14 (arc run, session 6 cont.): ∥ group P2 (27-B cd21d30, 28-B
   0699e01) — same concurrent-worktree fan-out, serial integration. WAVE 1
   COMPLETE. 27-B: vo27-park 20/20 after one integration fix in the GATE
