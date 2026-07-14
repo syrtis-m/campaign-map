@@ -331,8 +331,18 @@
   100-world permutation invariance · cascade24b 10/10 · screenshots
   (terraces densify on steeper relief) · dev-vault byte-intact. See
   DECISIONS "24-B".
-- Next: 24-C windiness acceptance gate + cascade-order determinism +
-  multi-stage rm-.mapcache byte-diff ⛳ plan-024 board.
+- **24-C DONE** (`a8f119c`) — **PLAN 024 COMPLETE**: the city consumes the
+  generated river channel (first byte-changing cascade consumer):
+  channelRings supersede the sketched spine in the city's water index;
+  bridges/quays/street-ends/footprints track the meander; passable-but-
+  bridged cost model; host threads per-region UpstreamArtifacts (cache hits
+  never consume). §6 acceptance: windiness→city adapts, shuffled-fabric
+  cascade-order determinism, multi-stage rm-.mapcache byte-diff. Board
+  30/33, every failure standalone-green (screenshot-write infra ×2 +
+  procgen48 seed-luck) → .lastgreenboard advanced. Fast 771. See DECISIONS
+  "24-C".
+- Next: plan 025 street-pattern presets — 25-A metrics.ts + benchmark gates
+  + PRESET GALLERY campaign & gate.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

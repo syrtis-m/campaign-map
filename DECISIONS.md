@@ -1040,3 +1040,25 @@
 - **Cascade cost cap**: >10 regions → non-modal Notice + explicit
   apply-pending-cascade command (explicit-only discipline: a big cascade is
   still the GM's call).
+
+## 2026-07-14 — Plan 024 phase C (channel consumption + acceptance, phase subagent)
+- **Channel supersedes the raw river spine** in the city's constraint index
+  (riverLines emptied when channelRings present): the generated meander IS
+  the river's geometry; keeping the straight spine would constrain against a
+  phantom second river. Limitation (flagged, acceptable v1): a non-procgen
+  raw river coexisting with a procgen river in one city loses its
+  constraint; no such fixture exists.
+- **Passable-but-bridged channel** (BRIDGE_COST + bridgeCell) rather than
+  impassable water — bridges land ON the meander crossings; quays offset the
+  channel bank outward and split at dry runs; footprints centroid-filtered
+  out of water ("buildings don't swim" — constrained cityGolden regenerated
+  deliberately, 39 swimming footprints dropped; bare golden byte-identical).
+- **Cache hits never consume upstream** — only misses rebuild with upstream
+  data; stage order guarantees the river landed first. Vegetation stays
+  declared-but-inert (DAG edges exist; recompute is byte-identical).
+- **Board 30/33 attribution:** cascade24c 10/10 in-board; phase3 + procgen49
+  failed on screenshot-WRITE infra (both standalone-green immediately),
+  procgen48 the chipped seed-luck fixture (standalone 13/13). All
+  standalone-green same run → .lastgreenboard advanced. The screenshot-write
+  infra failure is new noise worth folding into the fixture-seed chip's
+  scope if it recurs.

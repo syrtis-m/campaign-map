@@ -203,7 +203,7 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
       (024 §5.1 — hardens plan 020 too)
 - [x] af5166c 24-B stage DAG + upstream-as-data worker interface + cascade regen on
       edit (024 §2–§4)
-- [ ] 24-C windiness acceptance gate + cascade-order determinism + multi-
+- [x] a8f119c 24-C windiness acceptance gate + cascade-order determinism + multi-
       stage rm-.mapcache byte-diff (024 §6) ⛳ full board
 
 **Plan 025 — street-pattern presets + benchmarks** (`plans/025-street-pattern-presets-and-benchmarks.md`)
@@ -255,6 +255,15 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 7 cont.): 24-C via phase subagent, T1 green —
+  city consumes the generated river channel (channelRings supersede the
+  sketched spine; bridges/quays/streets/footprints track the meander;
+  no-upstream cities byte-identical); §6 acceptance all green incl.
+  shuffled-fabric cascade-order determinism + multi-stage rm-.mapcache
+  byte-diff. PLAN-024 BOARD 30/33, all 3 failures standalone-green same run
+  (phase3+procgen49 screenshot-write infra, procgen48 seed-luck) →
+  .lastgreenboard advanced (4e4a1af). Committed a8f119c. **PLAN 024
+  COMPLETE.** Fast 771. Next: plan 025 (25-A metrics + preset gallery).
 - 2026-07-14 (arc run, session 7 cont.): 24-B via phase subagent, T1 green —
   stage DAG (produces∩consumes edges refine §4's bbox-only rule; farmland
   slotted stage 2), upstream-as-data worker interface (built + tested; citynet
