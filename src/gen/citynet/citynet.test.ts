@@ -780,3 +780,61 @@ describe("generation center override (plan 020 Addendum 2)", () => {
     expect(JSON.stringify(noArg)).toBe(JSON.stringify(undef));
   });
 });
+
+describe("double-wall suppression (plan 022 §3.4)", () => {
+  type Pt = [number, number];
+  const isBand = (f: GeoJSON.Feature): boolean =>
+    (f.properties as { generatorId?: string; type?: string })?.generatorId === "city-landmark" &&
+    (f.properties as { type?: string })?.type === "wall";
+  function bandCount(network: GeoJSON.Feature[]): number {
+    return network.filter(isBand).length;
+  }
+  function polyCentroid(f: GeoJSON.Feature): Pt {
+    const ring = (f.geometry as GeoJSON.Polygon).coordinates[0] as Pt[];
+    let x = 0;
+    let y = 0;
+    const n = ring.length - 1; // drop the closing vertex
+    for (let i = 0; i < n; i++) {
+      x += ring[i][0];
+      y += ring[i][1];
+    }
+    return [x / n, y / n];
+  }
+  /** Trace the base city's ACTUAL wall band: its band-quad centroids sorted by
+   * angle around the center form a polyline that runs exactly where the band
+   * sits — a self-calibrating "GM drew a wall along the rim" fixture. */
+  function wallSketchTracing(network: GeoJSON.Feature[], cx: number, cy: number): FabricFeature {
+    const pts = network.filter(isBand).map(polyCentroid);
+    pts.sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
+    pts.push(pts[0]); // close the loop back to the start
+    return {
+      type: "Feature",
+      id: "wall-sketch-1",
+      geometry: { type: "LineString", coordinates: pts },
+      properties: { kind: "wall" },
+    };
+  }
+
+  it("a raw wall sketch tracing the rim suppresses the city's own wall band", () => {
+    const cx = 600;
+    const cy = 600;
+    const base = net(cx, cy, "euro-medieval");
+    const baseBand = bandCount(base);
+    expect(baseBand).toBeGreaterThan(4); // euro-medieval always walls
+    const { region } = fixtureAt(cx, cy, "euro-medieval", 900);
+    const wall = wallSketchTracing(base, region.centroid[0], region.centroid[1]);
+    const suppressed = net(cx, cy, "euro-medieval", { fabricFeatures: [wall] });
+    const suppBand = bandCount(suppressed);
+    // The GM's drawn wall owns the rim: the city's own band is largely gone.
+    expect(suppBand).toBeLessThan(baseBand * 0.5);
+  });
+
+  it("is a strict no-op when there are no wall sketches (existing cities byte-identical)", () => {
+    const a = net(600, 600, "euro-medieval");
+    const b = net(600, 600, "euro-medieval", { fabricFeatures: [] });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    // A river-only constraint set (no wall kind) is also untouched by suppression.
+    const c = net(600, 600, "euro-medieval", { fabricFeatures: [riverThrough(9999)] });
+    expect(bandCount(c)).toBeGreaterThan(4);
+  });
+});

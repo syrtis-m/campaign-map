@@ -19,6 +19,7 @@ import type { ProcgenRegion } from "../region";
 import { generateRiver, riverMaxOffset } from "../river";
 import { generateForest, FOREST_VARIETIES } from "../forest";
 import { generatePark, PARK_VARIETIES } from "../park";
+import { generateWall, wallMaxOffset, WALL_STYLES } from "../wall";
 import {
   DOMAIN_TILE_GENERATOR_IDS,
   generateCityNetwork,
@@ -305,10 +306,61 @@ const parkAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-/** v1 registers `city` + `forest` + `park` (polygon) + `river` (line). Order
- * matters for `algorithmForKind` (first match wins) — keep the list explicit
- * and small. */
-const REGISTRY: readonly ProcgenAlgorithm[] = [cityAlgorithm, riverAlgorithm, forestAlgorithm, parkAlgorithm];
+// ─── Wall (plan 022 §3.4) — the second LINE-kind algorithm (after river) ─────
+
+/** Wall params v1 (plan 022 §3.4). All knobs have defaults so a bare `{}`
+ * validates to a plain curtain wall (additive-params rule §1). `style` drives
+ * layout (like the city `profile` / park `variety`), never a preset-id branch. */
+const wallParamsSchema = z.object({
+  style: z.enum(WALL_STYLES).default("curtain-wall"),
+  towerSpacing: z.number().min(15).max(400).default(60),
+  moat: z.boolean().default(false),
+  gatehouseScale: z.number().min(0.2).max(3).default(1),
+});
+
+/** Wall presets (plan 022 §3.4) — the three templates Jonah named. Params are
+ * the whole truth; `palisade` carries `towerSpacing` too (harmless — the
+ * generator emits no towers for a palisade), so switching style keeps the knob. */
+const WALL_PRESETS: readonly ProcgenPreset[] = [
+  { id: "curtain-wall", label: "Curtain wall — stone, regular towers", params: { style: "curtain-wall", towerSpacing: 60, moat: false, gatehouseScale: 1 } },
+  { id: "palisade", label: "Palisade — timber stockade, no towers", params: { style: "palisade", towerSpacing: 60, moat: false, gatehouseScale: 0.8 } },
+  { id: "bastioned", label: "Bastioned — angular star-fort trace, moat", params: { style: "bastioned", towerSpacing: 90, moat: true, gatehouseScale: 1.4 } },
+];
+
+/** Wall tile-generator ids = the emitted feature buckets (plan 022 §3.4): the
+ * outboard moat, the masonry band, the towers, and the gate markers. Cache keys
+ * + paint layers key on these. */
+export const WALL_TILE_GENERATOR_IDS: readonly string[] = ["wall-moat", "wall-quad", "wall-tower", "wall-gate"];
+
+const wallAlgorithm: ProcgenAlgorithm = {
+  id: "wall",
+  label: "Wall",
+  appliesTo: ["wall"],
+  paramsSchema: wallParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
+  presets: WALL_PRESETS,
+  defaultPresetId(themeId: string): string {
+    // Fantasy parchment/ink-soot read best as a stone curtain wall; the clean
+    // modern/neon themes default to a bastioned trace (its angular geometry
+    // suits their palette). Every returned id is a member of WALL_PRESETS.
+    return themeId === "modern-clean" || themeId === "neon-sprawl" ? "bastioned" : "curtain-wall";
+  },
+  defaultParams(themeId: string): Record<string, unknown> {
+    const preset = presetById(this, this.defaultPresetId(themeId));
+    return preset ? { ...preset.params } : { ...WALL_PRESETS[0].params };
+  },
+  tileGeneratorIds: WALL_TILE_GENERATOR_IDS,
+  corridorMaxOffset(params: Record<string, unknown>): number {
+    return wallMaxOffset(wallParamsSchema.parse(params));
+  },
+  generate(seed, region, params, constraints): GeoJSON.Feature[] {
+    return generateWall(seed, region, wallParamsSchema.parse(params), constraints);
+  },
+};
+
+/** v1 registers `city` + `forest` + `park` (polygon) + `river` + `wall` (line).
+ * Order matters for `algorithmForKind` (first match wins) — keep the list
+ * explicit and small. */
+const REGISTRY: readonly ProcgenAlgorithm[] = [cityAlgorithm, riverAlgorithm, forestAlgorithm, parkAlgorithm, wallAlgorithm];
 
 export function algorithmForKind(kind: FabricKind): ProcgenAlgorithm | undefined {
   return REGISTRY.find((a) => a.appliesTo.includes(kind));

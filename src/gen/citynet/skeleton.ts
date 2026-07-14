@@ -51,7 +51,9 @@ import { chaikinSmooth } from "../city/corridor";
 import {
   blockedByWater,
   indexFabricConstraints,
+  nearestOnLine,
   RIVER_HALF_WIDTH,
+  type FabricConstraintIndex,
 } from "../fabricConstraints";
 
 type Pt = [number, number];
@@ -69,6 +71,15 @@ export const BRIDGE_SHARE_DIST_M = 40;
 export const WALL_HALF_WIDTH_M = 3;
 /** Wall-band gap either side of a gate point, meters (the door opening). */
 export const GATE_GAP_M = 10;
+/** Double-wall resolution (plan 022 §3.4): a city wall-band segment whose
+ * midpoint runs within this distance of a RAW `wall`-kind sketch line is
+ * suppressed — the GM's drawn wall (which stage-4 elaboration decorates with
+ * towers/gates) owns that stretch, so the city never double-paints a second
+ * wall alongside it. The signal is the raw sketch (readable by every stage),
+ * NOT the stage-4 output (that would be the forbidden reverse cascade). A
+ * strict no-op when there are no wall sketches — every existing city is
+ * byte-identical. */
+export const SKETCHED_WALL_SUPPRESS_DIST_M = 28;
 /** Hashed chance a landmark beyond the first two places at all (v3.3 pass). */
 export const EXTRA_LANDMARK_P = 0.7;
 
@@ -482,12 +493,24 @@ function firstRingCrossing(arterial: Pt[], ring: Pt[]): GateHit | null {
  * Degenerate insets (concave rings, oversized insets) come back [] from
  * insetRing and mean "no wall" — never a throw.
  */
+/** Does (x,y) run alongside a RAW `wall`-kind sketch line (plan 022 §3.4
+ * double-wall resolution)? True ⇒ the city suppresses its own wall band here.
+ * Strict `false` when there are no sketched walls, so cities without a hand-
+ * drawn wall are byte-identical to before this feature. */
+function suppressedBySketchedWall(idx: FabricConstraintIndex, x: number, y: number): boolean {
+  for (const wall of idx.wallLines) {
+    if (wall.length >= 2 && nearestOnLine(wall, x, y).dist < SKETCHED_WALL_SUPPRESS_DIST_M) return true;
+  }
+  return false;
+}
+
 function buildWall(
   citySeed: number,
   region: ProcgenRegion,
   profile: CityProfile,
   arterials: ArterialPath[],
-  blockedAt: (x: number, y: number) => boolean
+  blockedAt: (x: number, y: number) => boolean,
+  suppressedAt: (x: number, y: number) => boolean
 ): WallOutput | null {
   const wantWall =
     profile.hasWall || (profile.wallChance > 0 && mulberry32(hashSeed(citySeed, "wall"))() < profile.wallChance);
@@ -538,6 +561,7 @@ function buildWall(
     const my = (a[1] + b[1]) / 2;
     if (gatePts.some(([gx, gy]) => Math.hypot(gx - mx, gy - my) < GATE_GAP_M)) continue; // gate opening
     if (blockedAt(mx, my)) continue; // wall band segmented at water (river gap)
+    if (suppressedAt(mx, my)) continue; // plan 022 §3.4: a raw wall sketch owns this stretch
     const dx = b[0] - a[0];
     const dy = b[1] - a[1];
     const len = Math.hypot(dx, dy) || 1;
@@ -641,8 +665,13 @@ export function buildSkeleton(
   // 4) Wall / ring / gates (plan 020 §6: the wall traces the sketch). Water
   // test reuses the fabric index so the wall band is segmented at rivers.
   const wallIdx = indexFabricConstraints(constraints.fabricFeatures);
-  const wall = buildWall(citySeed, region, profile, arterials, (x, y) =>
-    blockedByWater(wallIdx, x, y)
+  const wall = buildWall(
+    citySeed,
+    region,
+    profile,
+    arterials,
+    (x, y) => blockedByWater(wallIdx, x, y),
+    (x, y) => suppressedBySketchedWall(wallIdx, x, y)
   );
 
   return { arterials, bridges, waterfront, plaza, landmarks, wall, center };

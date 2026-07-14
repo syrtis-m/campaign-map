@@ -26,6 +26,16 @@ const PARK_LAYER_IDS = [
   "generated-park-tree",
 ] as const;
 
+/** Every emitted wall feature type (plan 022 §3.4) needs paint in every theme:
+ * the outboard moat, the masonry band, the tower/bastion footprints and the
+ * gate markers. Coverage guard for the wall types added in plan 022-E. */
+const WALL_LAYER_IDS = [
+  "generated-wall-moat",
+  "generated-wall-quad",
+  "generated-wall-tower",
+  "generated-wall-gate",
+] as const;
+
 function fillColor(layer: LayerSpecification): string {
   const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
   const c = paint["fill-color"];
@@ -214,5 +224,61 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3)", () => {
     const style = obsidianNativeStyle(css, "http://localhost/glyphs/{fontstack}/{range}.pbf");
     const ids = style.layers.map((l) => l.id);
     for (const id of PARK_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
+  });
+});
+
+describe("generatedLayers — wall moat/band/tower/gate paint coverage (plan 022 §3.4)", () => {
+  it("all four wall layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
+    const layers = generatedLayers(PARCHMENT);
+    for (const id of WALL_LAYER_IDS) {
+      const layer = layers.find((l) => l.id === id);
+      expect(layer, `${id} missing from generatedLayers`).toBeDefined();
+      expect((layer as { source?: string }).source).toBe("generated");
+      const filter = JSON.stringify((layer as { filter?: unknown }).filter);
+      expect(filter).toContain('"generatorId"');
+      expect(filter).not.toContain('"zoom"'); // NO zoom LOD (Jonah 2026-07-12)
+    }
+  });
+
+  it("layers the wall bottom-up: moat under the band, band under the towers", () => {
+    const ids = generatedLayers(PARCHMENT).map((l) => l.id);
+    const moat = ids.indexOf("generated-wall-moat");
+    const quad = ids.indexOf("generated-wall-quad");
+    const tower = ids.indexOf("generated-wall-tower");
+    expect(quad).toBeGreaterThan(moat);
+    expect(tower).toBeGreaterThan(quad);
+  });
+
+  it("wall layers keep the generated- prefix so the z-order stack holds", () => {
+    expect(() => assertLayerOrder(generatedLayers(PARCHMENT))).not.toThrow();
+  });
+
+  for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
+    it(`${id}: every wall layer paints a color`, () => {
+      const layers = generatedLayers(tokens);
+      for (const layerId of WALL_LAYER_IDS) {
+        const layer = layers.find((l) => l.id === layerId)!;
+        expect(anyColor(layer).length, `${id}: ${layerId} paints no color`).toBeGreaterThan(0);
+      }
+      // The masonry band (stone) and the moat (water) must read as different things.
+      const band = anyColor(layers.find((l) => l.id === "generated-wall-quad")!);
+      const moat = anyColor(layers.find((l) => l.id === "generated-wall-moat")!);
+      expect(band, `${id}: band and moat share a color`).not.toBe(moat);
+    });
+  }
+
+  it("obsidian-native runtime style paints all four wall layers", () => {
+    const css: ObsidianCssTokens = {
+      backgroundPrimary: "#1e1e1e",
+      backgroundSecondary: "#262626",
+      backgroundModifierBorder: "#4d4d4d",
+      textMuted: "#999999",
+      textNormal: "#dcddde",
+      interactiveAccent: "#7c3aed",
+      fontText: "sans-serif",
+    };
+    const style = obsidianNativeStyle(css, "http://localhost/glyphs/{fontstack}/{range}.pbf");
+    const ids = style.layers.map((l) => l.id);
+    for (const id of WALL_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
   });
 });

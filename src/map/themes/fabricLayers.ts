@@ -136,6 +136,12 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
         "line-color": tokens.fabricWall,
         "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.5, 16, 3],
         "line-dasharray": [4, 1.5],
+        // A wall carrying a procgen block paints as its GENERATED masonry band +
+        // towers (plan 022 §3.4) — the sketch line goes invisible to avoid a
+        // dashed line double-painted over the band (same mechanism as the river
+        // spine / forest fill). Corridor selection still hits via the line-kind
+        // fallback (MapController.regionForSpinePoint).
+        "line-opacity": ["case", ["has", "procgen"], 0, 1],
       },
     },
   };

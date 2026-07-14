@@ -1,0 +1,14 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`wall generator — determinism > matches the seeded snapshot fixture (bastioned + moat — golden drift tripwire) 1`] = `
+{
+  "sha256": "ce9df1264b2a4fca4bd0a78025bada2683cc76fa166a92c6913bc1c2bf7389fe",
+  "summary": {
+    "total": 667,
+    "wall-gate": 1,
+    "wall-moat": 323,
+    "wall-quad": 323,
+    "wall-tower": 20,
+  },
+}
+`;
