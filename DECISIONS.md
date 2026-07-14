@@ -824,3 +824,24 @@
   tuned-by-eye noise surface.
 - **City golden = SHA-256 digests** of the serialized network, not full JSON
   (~10 MB) — identical bit-exact detection, no repo bloat.
+
+## 2026-07-14 — Plan 023 phase B (elevation + mountain kind, Opus 4.8 phase subagent)
+- **Per-REGION seed, not campaign-wide:** §3 phrases elevation as
+  f(campaignSeed,…) but the region-generator signature hands the persisted
+  region seed; campaign-wide terrain composition is 024 stage 0.
+  mountainHeightField is exported in the ElevationField shape 024 composes.
+- **Field scale = fixed absolute-world constants (BASE_CELL_M 320):** a
+  region-derived scale (effectiveRadius) re-rolls the whole interior on any
+  area-changing vertex edit — CAUGHT LIVE (edit-locality collapsed to 13%).
+  Relief wavelength is a real-world constant anyway.
+- **Hachures orient on a smooth 2–3-octave gradient**, not the full fBm ∇
+  (equal per-octave gradient contributions ⇒ scratchy noise; first
+  screenshots were mud). Resolves §3's hachure-orientation open question.
+- **Mesa's terrace shapes height/peaks only** — its cliff-band look arrives
+  with 23-C contours (scope boundary; terrace() unit-tested as live).
+- **Luminance-aware hachure/peak contrast**: derived from fabricMountain but
+  pushed away from t.land luma so relief survives near-black themes.
+- **Flags for Jonah:** dark-theme relief is legible but subtle (parchment
+  reads as classic hand-drawn); massif wash opacity 0.45 on neon/ink is a
+  muted slate — tunable; erosion damping >0 gradient is a documented
+  approximation (exact at damping 0).

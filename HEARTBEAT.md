@@ -169,7 +169,7 @@ wave box commits on T1 only.
 **Plan 023 — constraint fields + elevation** (`plans/023-constraint-fields-and-elevation.md`)
 - [x] 725c996 23-A `src/gen/fields/` core + BIT-EXACT interiorT/constraints retrofit
       (byte-identical city snapshot gate) (023 §2)
-- [ ] 23-B elevation model + `mountain` kind + presets (heightAt untouched —
+- [x] 3aed982 23-B elevation model + `mountain` kind + presets (heightAt untouched —
       023 §3 compatibility rule)
 - [ ] 23-C contour lines (marching squares, seam gate, no new request
       surface) (023 §4.1)
@@ -243,6 +243,14 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 6 cont.): 23-B via Opus 4.8 phase subagent, T1
+  green — elevation noise (analytic derivative + eroded fBm) + mountain kind
+  end-to-end (elevation23b 13/13, screenshots eyeballed). Key judgment calls
+  (DECISIONS): per-REGION seed not campaign-wide (024 stage-0 composes);
+  absolute-world field scale (region-derived scale broke edit-locality at 13%,
+  caught live); hachures on the smooth low-octave gradient; dark-theme relief
+  subtlety + massif opacity flagged for Jonah. Committed 3aed982. Fast 575.
+  Next: 23-C contour lines.
 - 2026-07-14 (arc run, session 6 cont.): 23-A via Opus 4.8 phase subagent, T1
   green first try — fields SDF core + verbatim-move retrofit (bit-exactness by
   construction: character-identical arithmetic relocated, one-way import);

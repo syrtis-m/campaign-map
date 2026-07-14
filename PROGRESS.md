@@ -220,9 +220,24 @@
   unchanged) · fuzz 16/16 · tsc+build · fields23a 7/7 (real migrated district
   + constrained city byte-identical across live regenerate) · dev-vault
   byte-intact. See DECISIONS "23-A".
-- Next: 23-B elevation model + `mountain` kind + presets (heightAt untouched
-  — 023 §3 compatibility rule); includes the deferred fields noise
-  (valueNoise2DWithDeriv, fbmEroded).
+- **23-B DONE** (`3aed982`): ELEVATION + `mountain` kind. fields/elevation.ts:
+  valueNoise2DWithDeriv (quintic, analytic C1 gradient) + fbmEroded
+  (gradient-damped, optional ridged) — the §2 noise deferred from 23-A, with
+  its first consumer. src/gen/mountain.ts: massif wash + downslope hachures
+  oriented by the SMOOTH low-octave gradient (full-detail ∇ is scratch noise)
+  + lattice-peak summits; alpine/mesa/rolling presets; mountainHeightField
+  exported as the ElevationField 024 will compose. heightAt untouched
+  (snapshot tripwire). Full new-kind checklist (fabricMountain token,
+  generated/mountain.ts base-terrain slot, inert fill, coverage tests,
+  TILE_GENERATOR_IDS). Field scale = absolute-world constants — the
+  region-derived alternative broke edit-locality (13%, caught live). Gate:
+  fast 575/575 · mountain fuzz 3/3 · tsc+build · elevation23b 13/13 (edit
+  89.5% vs re-roll 21.1%, height samples byte-identical, hachure-density
+  preset contrast) · screenshots eyeballed · dev-vault byte-clean. Flags for
+  Jonah: dark-theme relief subtlety, massif opacity, mesa awaits 23-C
+  contours. See DECISIONS "23-B".
+- Next: 23-C contour lines (marching squares, seam gate, no new request
+  surface).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 
