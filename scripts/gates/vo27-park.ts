@@ -1,5 +1,18 @@
 #!/usr/bin/env tsx
-// VO wave-1 gate — plan 027-A/-B: PARK figure-ground + REAL skeletons.
+// VO wave-1/2 gate — plan 027-A/-B/-C: PARK figure-ground + REAL skeletons +
+// organic water/canopy + SDF glyph dressing.
+//
+// 027-C extends this gate (checks c6–c8): the pond upgrades to an ORGANIC
+// marching-squares shoreline (MultiPolygon) with its shore casing as SEPARATE
+// seam-safe `park-pond-shore` LineStrings; the city-park canopy becomes ONE
+// merged organic MultiPolygon (the 027-A per-clump double-darkening fixed) with a
+// `park-canopy-rim` outline; a karesansui `park-court-rake` texture and arch/
+// zigzag bridge styling land; and rocks/trees/landmark points render as SDF
+// glyphs (parkGlyphs.ts — point dressing + boulders; park trees reuse the 026-C
+// tree glyphs) that survive a hard setStyle via the shared styleimagemissing
+// provider. The new gids (`park-canopy-rim`, `park-pond-shore`, `park-court-rake`)
+// PASS only once the orchestrator adds them to PARK_TILE_GENERATOR_IDS (uncached
+// gids are dropped) — those registry lines are the documented integration step.
 //
 // 027-B extends this gate (checks c2–c5 + formal/wild screenshots): per-variety
 // skeletons hung off boundary ENTRANCES (sketched-road crossings + hashed
@@ -66,9 +79,21 @@ const COMPOSITION: readonly string[] = ["park-pond", "park-island", "park-bridge
 // The paint layers plan 027-A adds/changes — all must exist on the live style.
 const NEW_PAINT_LAYERS: readonly string[] = [
   "generated-park-canopy",
+  "generated-park-canopy-rim", // plan 027-C: seam-safe organic-canopy outline
+  "generated-park-court-rake", // plan 027-C: karesansui raked-gravel furrows
   "generated-park-path-casing",
   "generated-park-pond-shore",
   "generated-park-point", // plan 027-B point dressing (fountain/bandstand/monument/lantern/teahouse)
+];
+// Park SDF glyph image ids (plan 027-C) that must be registered on the map (point
+// dressing + boulders + the REUSED forest tree glyphs for park trees).
+const GLYPH_IMAGES: readonly string[] = [
+  "park-point-fountain",
+  "park-point-lantern",
+  "park-point-teahouse",
+  "park-rock-0",
+  "tree-broadleaf-0",
+  "tree-conifer-0",
 ];
 // Plan 027-B rings. FORMAL is a wide rectangle (2:1) so the principal axis is
 // unambiguously horizontal; WILD is a modest square (restraint reads at any size).
@@ -185,6 +210,25 @@ function parkStyleLayers(): { id: string; type: string }[] {
   const code = `JSON.stringify((v.map.getStyle().layers||[]).filter(function(l){return l.id.indexOf('generated-park')===0;}).map(function(l){return {id:l.id,type:l.type};}))`;
   const r = sync(code);
   return (typeof r === "string" ? JSON.parse(r) : r) as { id: string; type: string }[];
+}
+// Plan 027-C glyph helpers — mirror the procgen51 (26-C) SDF-image checks.
+function hasImage(imgId: string): boolean {
+  return sync(`v.map.hasImage(${JSON.stringify(imgId)})`) === true;
+}
+function renderedCount(layer: string): number {
+  return sync(`(v.map.queryRenderedFeatures({layers:[${JSON.stringify(layer)}]})||[]).length`) as number;
+}
+// The geometry type of the first feature of `gid` in a region's loaded tiles.
+function firstGeomType(id: string, gid: string): string | null {
+  return sync(
+    `(function(){var pre='region:'+${JSON.stringify(id)}+':';var t=null;v.loadedTiles.forEach(function(feats,k){if(k.indexOf(pre)!==0)return;feats.forEach(function(f){if(f.properties&&f.properties.generatorId===${JSON.stringify(gid)}&&!t)t=f.geometry.type;});});return t;})()`
+  ) as string | null;
+}
+// The set of `park-bridge` styles present in a region's loaded tiles.
+function bridgeStyles(id: string): string[] {
+  const code = `(function(){var pre='region:'+${JSON.stringify(id)}+':';var s=new Set();v.loadedTiles.forEach(function(feats,k){if(k.indexOf(pre)!==0)return;feats.forEach(function(f){if(f.properties&&f.properties.generatorId==='park-bridge'&&f.properties.style)s.add(f.properties.style);});});return JSON.stringify(Array.from(s));})()`;
+  const r = sync(code);
+  return (typeof r === "string" ? JSON.parse(r) : r) as string[];
 }
 function regionCacheRecords(regionId: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -395,6 +439,73 @@ async function main(): Promise<void> {
     if (featureCount(wildId, "park-canopy") !== 0) throw new Error("wild-common should have no manicured canopy masses");
     if (containment(wildId).outside > 0) throw new Error("wild-common coords outside the ring");
     console.log(`     [c5] paths ${path}, landmarks ${point}, no canopy, contained`);
+  });
+
+  await gate.try("(c6) 027-C organic water/canopy: pond is a MultiPolygon w/ seam-safe shore; canopy is ONE merged mass + rim; rake emitted", () => {
+    // Japanese pond upgraded to a marching-squares shoreline (MultiPolygon), with
+    // its shore casing as SEPARATE seam-safe park-pond-shore LineStrings.
+    const pondGeom = firstGeomType(japId, "park-pond");
+    if (pondGeom !== "MultiPolygon") throw new Error(`park-pond geometry is ${pondGeom}, expected an organic MultiPolygon`);
+    if (featureCount(japId, "park-pond-shore") < 1) throw new Error("no park-pond-shore rim LineStrings (seam-safe shore)");
+    if (firstGeomType(japId, "park-pond-shore") !== "LineString") throw new Error("park-pond-shore is not a LineString (seam-safe rim)");
+    // Karesansui rake furrows over the court.
+    if (featureCount(japId, "park-court-rake") < 3) throw new Error("no karesansui park-court-rake furrows on a large japanese garden");
+    // Bridge styling: every bridge carries an arch|zigzag style tag.
+    const styles = bridgeStyles(japId);
+    if (styles.length === 0 || !styles.every((s) => s === "arch" || s === "zigzag")) {
+      throw new Error(`park-bridge styles unexpected: {${styles.join(",")}} (want arch|zigzag)`);
+    }
+    // City-park canopy is now ONE merged organic MultiPolygon (027-A double-
+    // darkening fixed), with a seam-safe rim.
+    if (featureCount(id, "park-canopy") !== 1) throw new Error("city-park canopy is not ONE merged MultiPolygon (blob-union)");
+    if (firstGeomType(id, "park-canopy") !== "MultiPolygon") throw new Error("park-canopy is not a MultiPolygon");
+    if (featureCount(id, "park-canopy-rim") < 1) throw new Error("no park-canopy-rim outline LineStrings");
+    console.log(`     [c6] pond MultiPolygon + ${featureCount(japId, "park-pond-shore")} shore lines, ${featureCount(japId, "park-court-rake")} rake lines, bridge styles {${styles.join(",")}}, canopy union+rim`);
+  });
+
+  await gate.try("(c7) 027-C glyphs: park SDF images registered + landmark/rock/tree symbols RENDER", async () => {
+    for (const img of GLYPH_IMAGES) {
+      if (!hasImage(img)) throw new Error(`park glyph image ${img} not registered (registerParkGlyphs / provider)`);
+    }
+    // Frame the japanese garden (pond + lanterns + rocks + trees) then paint.
+    sync("(function(){v.map.fitBounds([[-42,-30],[-18,-6]],{animate:false,padding:40});return 'ok';})()");
+    await new Promise((r) => setTimeout(r, 1800));
+    front();
+    await new Promise((r) => setTimeout(r, 1000));
+    if (renderedCount("generated-park-point") < 1) throw new Error("no park-point landmark glyphs rendered");
+    if (renderedCount("generated-park-rock") < 1) throw new Error("no park-rock boulder glyphs rendered");
+    if (renderedCount("generated-park-tree") < 1) throw new Error("no park-tree glyphs rendered");
+    console.log(`     [c7] ${GLYPH_IMAGES.length} glyph images registered; point/rock/tree symbols rendered`);
+  });
+
+  await gate.try("(c8) 027-C glyph images SURVIVE a hard setStyle (styleimagemissing provider restores them)", async () => {
+    if (!hasImage("park-point-lantern")) throw new Error("precondition: park-point-lantern not registered before restyle");
+    // A raw setStyle (what a theme switch / css-change does) rebuilds the style
+    // with buildStyle's EMPTY `generated` source and may drop every runtime
+    // image. In the app, every setStyle callsite (setCampaign / rebuildTheme)
+    // follows with a once('styledata') handler that re-registers glyphs AND
+    // re-pushes the generated data (refreshGeneratedSource — added to
+    // rebuildTheme in 027-C after this very check caught its absence). A raw
+    // eval setStyle bypasses that handler, so the gate performs the host's own
+    // follow-up itself — the same pattern as procgen51-glyphs (c). What this
+    // check PROVES is the image half: the styleimagemissing provider (on the
+    // map, not the style) re-supplies the park glyphs, and symbol placement
+    // then renders them with no per-callsite bookkeeping.
+    sync("(function(){v.map.setStyle(v.buildStyle(v.campaign));return 'restyled';})()");
+    await new Promise((r) => setTimeout(r, 1500));
+    // The host's post-restyle contract (data re-push) + frame the japanese garden.
+    sync("(function(){v.refreshGeneratedSource();v.map.fitBounds([[-42,-30],[-18,-6]],{animate:false,padding:40});return 'ok';})()");
+    front();
+    // The survival net is styleimagemissing-driven: symbol placement requests
+    // the icon, the provider re-adds it, and the NEXT render pass places the
+    // glyphs — a fixed sleep races that pipeline after a full style rebuild,
+    // so poll for the rendered symbols instead (image restore is checked on
+    // the way).
+    await waitFor(() => hasImage("park-point-lantern"), 15000, "park glyph image restored after setStyle");
+    await waitFor(() => renderedCount("generated-park-point") >= 1, 20000, "park-point glyphs rendered after setStyle");
+    const errs = devErrors();
+    if (!errs.includes("No errors")) throw new Error(`missing-image / restyle errors: ${errs}`);
+    console.log("     [c8] park glyph images restored + symbols rendered after setStyle, no errors");
   });
 
   await gate.try("(d) vertex edit adapts the tree scatter far less than a re-roll (locality) + stays contained", async () => {

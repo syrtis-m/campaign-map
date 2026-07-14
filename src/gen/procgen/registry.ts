@@ -306,6 +306,9 @@ export const PARK_TILE_GENERATOR_IDS: readonly string[] = [
   "park-rock",
   "park-tree",
   "park-point",
+  "park-canopy-rim",
+  "park-pond-shore",
+  "park-court-rake",
 ];
 
 const parkAlgorithm: ProcgenAlgorithm = {

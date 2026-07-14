@@ -36,6 +36,7 @@ import {
 import { demVerticalScale } from "../gen/fields";
 import { buildThemeStyle, isHandcraftedTheme, HANDCRAFTED_THEMES } from "../map/themes";
 import { registerTreeGlyphs, installTreeGlyphProvider } from "../map/treeGlyphs";
+import { registerParkGlyphs, installParkGlyphProvider } from "../map/parkGlyphs";
 import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
 import type { BBox } from "../gen/spatialHash";
@@ -279,6 +280,7 @@ export class MapView extends ItemView {
       this.map.setStyle(this.buildStyle(campaign));
       this.map.once("styledata", () => {
         registerTreeGlyphs(this.map!);
+        registerParkGlyphs(this.map!);
         this.refreshSource();
         this.refreshGeneratedSource();
         this.applyFocusReveal();
@@ -511,6 +513,7 @@ export class MapView extends ItemView {
     // bookkeeping; `registerTreeGlyphs` below is the proactive companion that
     // registers them up front so there's no first-paint flash.
     installTreeGlyphProvider(this.map);
+    installParkGlyphProvider(this.map);
 
     this.map.on("load", () => {
       // Fallback only, for the one case setCampaign()'s own synchronous
@@ -527,6 +530,7 @@ export class MapView extends ItemView {
       // already started fetching for the jumped-to viewport.
       if (this.campaign && !this.campaignAppliedOnce) this.applyCampaign();
       registerTreeGlyphs(this.map!);
+      registerParkGlyphs(this.map!);
       this.refreshSource();
       this.refreshGeneratedSource();
       this.applyFocusReveal();
@@ -1918,7 +1922,14 @@ export class MapView extends ItemView {
     this.map.setStyle(this.buildStyle(this.campaign));
     this.map.once("styledata", () => {
       registerTreeGlyphs(this.map!);
+      registerParkGlyphs(this.map!);
       this.refreshSource();
+      // setStyle bakes an EMPTY `generated` source (buildStyle's baseline), so
+      // the generated fabric must be re-pushed here exactly as setCampaign's and
+      // load's styledata handlers do — without this, a css-change on the
+      // obsidian-native theme blanked every generated feature until the next
+      // explicit generation (found via vo27-park c8, plan 027-C).
+      this.refreshGeneratedSource();
       this.applyFocusReveal();
       // css-change setStyle also resets hillshade/terrain — restore the toggle.
       if (this.terrainEnabled) this.setTerrainEnabled(true);

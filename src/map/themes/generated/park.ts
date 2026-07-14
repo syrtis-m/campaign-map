@@ -1,28 +1,58 @@
 import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "../tokens";
+import { parkPointIconExpr, parkRockIconExpr, parkTreeIconExpr } from "../../parkGlyphs";
 
 /**
- * Park fabric (procgen v4.7 → plan 027-A figure-ground overhaul). Composed
- * bottom-up: the merged lawn ground first, then the darker CANOPY (the second
- * green — lawn vs wooded blocks, the #1 legibility fix), then beds/court, then
- * the CASED path lines (a darker casing line UNDER a lighter fill line — round
- * joins fix the old notch), then pond water + a shore-casing rim + island +
- * bridge, then the rock + tree stipples on top. NO zoom LOD in any FILTER
- * (Jonah 2026-07-12) — the size/width ramps below key on zoom in PAINT only,
- * which is the endorsed density fix, never a zoom gate.
+ * Park fabric (procgen v4.7 → plan 027-A figure-ground → 027-C organic dressing).
+ * Composed bottom-up: the merged lawn ground, then the darker CANOPY (the second
+ * green — now ONE organic marching-squares MultiPolygon with a seam-safe rim, so
+ * overlapping clumps no longer double-darken), then beds/court + karesansui rake,
+ * then the CASED path lines (casing under fill), then the organic pond + a
+ * seam-safe shore-casing rim + island + bridge, then the rock + tree + landmark
+ * SDF-glyph symbols on top. NO zoom LOD in any FILTER (Jonah 2026-07-12) — the
+ * size/width/opacity ramps below key on zoom in PAINT only, the endorsed density
+ * fix, never a zoom gate.
+ *
+ * Plan 027-C changes (all theme-side — generators emit typed features only):
+ *  - CANOPY is a single organic MultiPolygon (`fill-antialias:false` kills the
+ *    per-polygon hairline) + a `park-canopy-rim` LineString outline (seam-safe:
+ *    a separate line feature, never a line layer on the fill — plan 026-B).
+ *  - POND shore casing filters the SEPARATE `park-pond-shore` LineStrings (the
+ *    027-A line-on-fill shore would stroke tile-clip seams on a pond straddling
+ *    a tile edge).
+ *  - `park-court-rake` = raked-gravel furrow lines over the karesansui court.
+ *  - Rocks / trees / landmark points are SDF-glyph SYMBOL layers (shared
+ *    `treeGlyphs.ts` machinery via `parkGlyphs.ts`): tinted per theme by
+ *    `icon-color`, rimmed by `icon-halo`, zoom-ramped size/opacity (halo→0 at the
+ *    overview so the downscaled SDF AA doesn't smear into a box, 026-C note).
  */
 export function parkLayers(t: ThemeTokens): LayerSpecification[] {
   // Casing tokens are additive (plan 027-A) — fall back to stony/water hues so
   // the layers always paint even against an older ThemeTokens literal.
   const pathCasing = t.fabricPathCasing ?? t.fabricWall;
   const waterShore = t.fabricWaterShore ?? t.fabricRiver;
+
+  // Shared symbol layout for the greenery/landmark glyphs: allow-overlap +
+  // ignore-placement skip collision detection (the symbol perf cliff), and the
+  // glyphs render at every zoom (icon-size only ramps the footprint — NOT a
+  // minzoom gate).
+  const glyphLayout = (iconImage: unknown, anchor: "bottom" | "center", sizeStops: [number, number][]) => ({
+    "icon-image": iconImage,
+    "icon-size": ["interpolate", ["linear"], ["zoom"], ...sizeStops.flatMap(([z, s]) => [z, s])],
+    "icon-anchor": anchor,
+    "icon-allow-overlap": true,
+    "icon-ignore-placement": true,
+    "icon-padding": 0,
+    "symbol-z-order": "viewport-y",
+  });
+  // Halo ramps to ~0 toward the fictional overview (~z4.5) so the SDF downscale
+  // AA doesn't read as a pale box (plan 026-C). Pure `["zoom"]` = paint.
+  const haloWidth: unknown = ["interpolate", ["linear"], ["zoom"], 5.5, 0, 9, 1.6];
+
   return [
     {
       // Ground: ONE merged lawn polygon (= the sketched ring) in the per-theme
-      // `fabricPark` green (F2: a generated park and a sketched park read as the
-      // same class of thing). Paints FIRST so everything layers above it. The
-      // merged polygon has no interior seams — this replaces the old 22 m cell
-      // lattice that produced the antialiasing hairline grid. NO zoom LOD.
+      // `fabricPark` green. Paints FIRST so everything layers above it. NO zoom LOD.
       id: "generated-park-lawn",
       type: "fill",
       source: "generated",
@@ -30,15 +60,25 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricPark, "fill-opacity": 0.6 },
     } as unknown as LayerSpecification,
     {
-      // Canopy: the second green — wooded blocks in the DEEPER `fabricForest`
-      // green, above the lawn so the park reads as figure (canopy) vs ground
-      // (lawn). High opacity so overlapping clumps read as one wooded mass
-      // (real polygon union lands in 27-C).
+      // Canopy: the second green — ONE organic MultiPolygon (plan 027-C) in the
+      // deeper `fabricForest` green, above the lawn so the park reads as figure
+      // (canopy) vs ground (lawn). `fill-antialias:false` removes the per-polygon
+      // hairline. A blob-UNION now, so overlapping clumps paint one flat mass.
       id: "generated-park-canopy",
       type: "fill",
       source: "generated",
       filter: ["==", ["get", "generatorId"], "park-canopy"],
-      paint: { "fill-color": t.fabricForest, "fill-opacity": 0.85 },
+      paint: { "fill-color": t.fabricForest, "fill-opacity": 0.85, "fill-antialias": false },
+    } as unknown as LayerSpecification,
+    {
+      // Canopy RIM (plan 027-C): a darker line tracing the canopy outline (+ any
+      // hole) so the wooded mass reads as a drawn shape. Filters the SEPARATE
+      // `park-canopy-rim` LineStrings (seam-safe — never a line on the fill). No LOD.
+      id: "generated-park-canopy-rim",
+      type: "line",
+      source: "generated",
+      filter: ["==", ["get", "generatorId"], "park-canopy-rim"],
+      paint: { "line-color": pathCasing, "line-width": 0.8, "line-opacity": 0.55 },
     } as unknown as LayerSpecification,
     {
       // Planting beds: denser cultivation than the lawn — the deeper woodland
@@ -51,7 +91,7 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
     } as unknown as LayerSpecification,
     {
       // Karesansui raked-gravel court (japanese-garden): pale stony ground in
-      // the sandstone `fabricWall` hue, a low wash so the rocks read on top.
+      // the sandstone `fabricWall` hue, a low wash so the rocks + rake read on top.
       id: "generated-park-court",
       type: "fill",
       source: "generated",
@@ -59,10 +99,23 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricWall, "fill-opacity": 0.4 },
     } as unknown as LayerSpecification,
     {
+      // Karesansui RAKE (plan 027-C): the gravel furrow lines, ABOVE the court
+      // wash. A darker stony hue so the raked texture reads. Seam-safe LineStrings.
+      id: "generated-park-court-rake",
+      type: "line",
+      source: "generated",
+      filter: ["==", ["get", "generatorId"], "park-court-rake"],
+      layout: { "line-cap": "round" },
+      paint: {
+        "line-color": pathCasing,
+        "line-opacity": 0.5,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.4, 15, 1.2],
+      },
+    } as unknown as LayerSpecification,
+    {
       // Path CASING: the darker under-line of a cased path, drawn FIRST (below
       // the fill line) and wider so it reads as an edge. Class-differentiated
-      // width (a formal `axis` is grander than a `walk`), zoom-interpolated so
-      // paths thin out on the overview and thicken on approach.
+      // width, zoom-interpolated so paths thin out on the overview.
       id: "generated-park-path-casing",
       type: "line",
       source: "generated",
@@ -71,9 +124,6 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: {
         "line-color": pathCasing,
         "line-opacity": 0.85,
-        // A single top-level zoom interpolate (MapLibre requires zoom to be the
-        // direct input to interpolate) whose per-stop output is a zoom-free
-        // class match — grander for a formal `axis`, thinnest for a `walk`.
         "line-width": [
           "interpolate",
           ["linear"],
@@ -94,8 +144,6 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: {
         "line-color": t.fabricRoad,
         "line-opacity": 0.95,
-        // Narrower than the casing at every zoom so a casing rim shows on both
-        // banks; same top-level-zoom / class-match shape as the casing above.
         "line-width": [
           "interpolate",
           ["linear"],
@@ -106,8 +154,8 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       },
     } as unknown as LayerSpecification,
     {
-      // Pond: the composition anchor — water hue (F2: reads as the same water
-      // as a sketched pond). Above the ground + paths so it reads as a pool.
+      // Pond: the composition anchor — an organic MultiPolygon (plan 027-C) in
+      // the water hue. Above the ground + paths so it reads as a pool.
       id: "generated-park-pond",
       type: "fill",
       source: "generated",
@@ -115,13 +163,13 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricWater, "fill-opacity": 0.9 },
     } as unknown as LayerSpecification,
     {
-      // Pond SHORE casing: a thin rim line on the pond boundary, drawn ABOVE the
-      // pond fill so the water edge reads crisply (a shore is a rim, not an
-      // under-casing — hence above its fill, unlike the path casing).
+      // Pond SHORE casing (plan 027-C): the SEPARATE `park-pond-shore` LineStrings
+      // (seam-safe) — a thin rim on the water edge, ABOVE the pond fill so the
+      // shore reads crisply (a rim, not an under-casing).
       id: "generated-park-pond-shore",
       type: "line",
       source: "generated",
-      filter: ["==", ["get", "generatorId"], "park-pond"],
+      filter: ["==", ["get", "generatorId"], "park-pond-shore"],
       layout: { "line-join": "round" },
       paint: {
         "line-color": waterShore,
@@ -139,8 +187,9 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.land, "fill-opacity": 0.95 },
     } as unknown as LayerSpecification,
     {
-      // Bridges: short decks where the path crosses to the island — the stone
-      // `fabricWall` hue, ABOVE the pond + island so the span reads over water.
+      // Bridges: short decks (arch or yatsuhashi zigzag) where the path crosses
+      // to the island — the stone `fabricWall` hue, ABOVE the pond + island so the
+      // span reads over water.
       id: "generated-park-bridge",
       type: "fill",
       source: "generated",
@@ -148,47 +197,61 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricWall, "fill-opacity": 0.95 },
     } as unknown as LayerSpecification,
     {
-      // Rock groupings (japanese-garden): solid stones — the stone hue at full
-      // opacity, ABOVE the gravel court so a karesansui reads rocks-on-gravel.
-      // Bigger than v4.7's flat 2.2 px and zoom-ramped so they read on approach
-      // without cluttering the z4.5 overview.
-      id: "generated-park-rock",
-      type: "circle",
-      source: "generated",
-      filter: ["==", ["get", "generatorId"], "park-rock"],
-      paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 1.4, 14, 3.2],
-        "circle-color": t.fabricWall,
-        "circle-opacity": 0.95,
-      },
-    } as unknown as LayerSpecification,
-    {
-      // Park trees: specimen/scatter trees in the deeper canopy green, painted
-      // ABOVE everything so the greenery keeps a legible stipple. Zoom-ramped
-      // (smaller on the overview) so a wooded park is not a field of dots at z4.5.
+      // Park trees (plan 027-C): specimen/scatter trees as SDF tree GLYPHS (shared
+      // 026-C set, keyed on treeFamily+variant), tinted the deeper canopy green,
+      // painted ABOVE the greenery. Zoom-ramped footprint so a wooded park is not
+      // a field of dots at z4.5; a lighter `icon-halo` rim (park green) lifts each
+      // crown off the same-family canopy, ramped to 0 at the overview.
       id: "generated-park-tree",
-      type: "circle",
+      type: "symbol",
       source: "generated",
       filter: ["==", ["get", "generatorId"], "park-tree"],
+      layout: glyphLayout(parkTreeIconExpr(), "bottom", [
+        [4, 0.16],
+        [8, 0.5],
+        [12, 0.85],
+      ]),
       paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 1.2, 14, 2.6],
-        "circle-color": t.fabricForest,
-        "circle-opacity": 0.95,
+        "icon-color": t.fabricForest,
+        "icon-halo-color": t.fabricPark,
+        "icon-halo-width": haloWidth,
+        "icon-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.85, 8, 1],
       },
     } as unknown as LayerSpecification,
     {
-      // Park point dressing (plan 027-B): fountain / bandstand / monument /
-      // lantern / teahouse — landmark markers, painted ON TOP of the greenery so
-      // the composition's focal points read. One layer, tinted per `pointKind`
-      // (water-blue fountains, stony lanterns/monuments, accent bandstands).
-      // Circle markers now; 27-C upgrades these to per-kind SDF symbols.
+      // Rock groupings (japanese-garden): SDF boulder GLYPHS (horizontal-dominant,
+      // 3 hashed variants) in the stone hue at full opacity, ABOVE the gravel court
+      // so a karesansui reads rocks-on-gravel. Anchored center (a stone lies flat).
+      id: "generated-park-rock",
+      type: "symbol",
+      source: "generated",
+      filter: ["==", ["get", "generatorId"], "park-rock"],
+      layout: glyphLayout(parkRockIconExpr(), "center", [
+        [6, 0.2],
+        [14, 0.6],
+      ]),
+      paint: {
+        "icon-color": t.fabricWall,
+        "icon-halo-color": pathCasing,
+        "icon-halo-width": haloWidth,
+        "icon-opacity": 1,
+      },
+    } as unknown as LayerSpecification,
+    {
+      // Park point dressing (plan 027-C): fountain / bandstand / monument /
+      // lantern / teahouse as per-kind SDF landmark GLYPHS (parkGlyphs.ts),
+      // painted ON TOP so the composition's focal points read. Tinted per
+      // `pointKind` (water fountains, stony lanterns/monuments, accent bandstands).
       id: "generated-park-point",
-      type: "circle",
+      type: "symbol",
       source: "generated",
       filter: ["==", ["get", "generatorId"], "park-point"],
+      layout: glyphLayout(parkPointIconExpr(), "bottom", [
+        [5, 0.35],
+        [14, 1],
+      ]),
       paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 1.6, 14, 4],
-        "circle-color": [
+        "icon-color": [
           "match",
           ["get", "pointKind"],
           "fountain",
@@ -203,9 +266,9 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
           t.fabricWall,
           t.accent,
         ],
-        "circle-opacity": 1,
-        "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 6, 0.3, 14, 1],
-        "circle-stroke-color": pathCasing,
+        "icon-halo-color": t.land,
+        "icon-halo-width": haloWidth,
+        "icon-opacity": 1,
       },
     } as unknown as LayerSpecification,
   ];

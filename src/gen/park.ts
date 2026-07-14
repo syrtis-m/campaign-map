@@ -63,6 +63,16 @@ import { hashSeed, mulberry32 } from "./rng";
 import { distanceToBoundary, insetRing, clipPolylineToRegion, type ProcgenRegion } from "./region";
 import { q, harmonicBlobRing, blobFeature, spanQuad } from "./waterEmit";
 import { indexFabricConstraints } from "./fabricConstraints";
+import { fractalNoise2D } from "./world/noise";
+import {
+  signedDistancePolygon,
+  fDomainWarp,
+  metaballField,
+  chaikinClosed,
+  contoursToMultiPolygon,
+  marchingSquares,
+  type Field,
+} from "./fields";
 import type { GenerationConstraints } from "./types";
 
 type Pt = [number, number];
@@ -91,6 +101,15 @@ const ENTRANCE_DEDUPE_M = 25; // two entrances closer than this collapse to one
 const MIN_ENTRANCE_EDGE_M = 18; // a ring edge shorter than this hosts no midpoint entrance
 const ENTRANCE_MID_PROB = 0.55; // per-edge fallback-entrance inclusion probability (local, edit-safe)
 const MAX_ENTRANCES = 6; // restraint cap (roads + fallbacks)
+
+// ── Organic water / canopy (plan 027-C) — marching-squares pipeline, shared
+//    with the 026-B forest canopy (fields/{metaball,smoothing,polygons}.ts) ────
+const ORGANIC_LATTICE_M = 5; // marching-squares sampling step (world-aligned, fine for a smooth shore)
+const ORGANIC_CONTAIN_M = 2; // hard containment floor: shape stays ≥ this inside the ring
+const ORGANIC_CHAIKIN_PASSES = 2; // corner-cutting rounds (staircase → hand-drawn outline)
+const ORGANIC_WARP_CELL_M = 90; // domain-warp noise scale (organic wobble of the outline)
+const CANOPY_METABALL_RADIUS_M = 72; // canopy-clump bump radius (~clump-cell scale)
+const CANOPY_CANOPY_LATTICE_M = 8; // coarser lattice for the (larger) canopy union
 
 /** Per-variety layout profile (a pure lookup on the `variety` param — like the
  * city algorithm switching on `profile`; never reads a presetId). */
@@ -278,6 +297,118 @@ function rot(p: Pt, ang: number, ox: number, oy: number): Pt {
   return [ox + dx * c - dy * s, oy + dx * s + dy * c];
 }
 
+/** |signed shoelace area| of a closed ring (for picking the largest exterior). */
+function ringAreaAbs(ring: Pt[]): number {
+  let a = 0;
+  const n = ring.length - 1; // closed ring: last === first
+  for (let i = 0; i < n; i++) a += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+  return Math.abs(a) / 2;
+}
+
+/**
+ * Organic blob(s) via the shared marching-squares pipeline (plan 027-C, same
+ * machinery as the 026-B forest canopy): a metaball potential around `anchors`
+ * (peak 1 at each, threshold 0.5 ⇒ blob radius ≈ 0.54·`radius`) is domain-warped
+ * (organic wobble) then HARD-capped by a signed-distance containment floor so the
+ * outline can never sit closer than `ORGANIC_CONTAIN_M` to the ring. The zero
+ * iso-line is traced, Chaikin-smoothed (inward-only → the containment margin
+ * survives), and assembled into MultiPolygon coordinates with holes. Pure/headless
+ * + deterministic (D1–D6): the field is `f(x,y)` from durable inputs, the lattice
+ * is world-aligned (seam-stable), and the output is canonically ordered.
+ *
+ * Returns the MultiPolygon `polys` (fill geometry) and the flattened `rings`
+ * (every exterior + hole ring — the seam-safe rim/shore LineStrings). `[]` when
+ * nothing crosses the threshold (a shape too small to trace).
+ */
+function buildOrganic(
+  seed: number,
+  salt: string,
+  region: ProcgenRegion,
+  anchors: Pt[],
+  radius: number,
+  warpAmp: number,
+  lattice: number
+): { polys: Pt[][][]; rings: Pt[][] } {
+  if (anchors.length === 0 || !(radius > 0)) return { polys: [], rings: [] };
+  const meta = metaballField(anchors, radius, 1);
+  const warpOpts = { octaves: 2, baseCellSize: ORGANIC_WARP_CELL_M, persistence: 0.5 };
+  const wx: Field = (x, y) => (fractalNoise2D(seed, x, y, `${salt}-wx`, warpOpts) - 0.5) * 2 * warpAmp;
+  const wy: Field = (x, y) => (fractalNoise2D(seed, x, y, `${salt}-wy`, warpOpts) - 0.5) * 2 * warpAmp;
+  const warped = fDomainWarp(meta, wx, wy);
+  const ring = region.ring;
+  // F(p): (warped metaball − 0.5) capped by the containment floor. Where the
+  // floor governs (near/outside the inset) it returns ≤0 so the blob can't spill;
+  // deeper in, the warped potential shapes the organic outline (sd is LOCAL, so a
+  // rim edit stays local — edit-locality preserved).
+  const field: Field = (x, y) => {
+    const contain = signedDistancePolygon(ring, x, y) - ORGANIC_CONTAIN_M;
+    if (contain <= 0) return contain;
+    return Math.min(warped(x, y) - 0.5, contain);
+  };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [ax, ay] of anchors) {
+    if (ax < minX) minX = ax;
+    if (ay < minY) minY = ay;
+    if (ax > maxX) maxX = ax;
+    if (ay > maxY) maxY = ay;
+  }
+  const pad = radius + warpAmp + lattice;
+  const grown = { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
+  const contours = marchingSquares(field, { bbox: grown, step: lattice, levels: [0] });
+  const smoothed: Pt[][] = [];
+  for (const c of contours) {
+    if (!c.closed) continue; // an open line can't bound a filled region
+    smoothed.push(chaikinClosed(c.points, ORGANIC_CHAIKIN_PASSES));
+  }
+  const polys = contoursToMultiPolygon(smoothed);
+  const rings: Pt[][] = [];
+  for (const poly of polys) for (const r of poly) rings.push(r);
+  return { polys, rings };
+}
+
+/** Buffer a polyline centerline into a closed deck polygon of half-width `hw`
+ * (per-vertex normal = the average of adjacent segment normals — good enough for
+ * a short bridge deck). Returns a closed ring. */
+function bufferCenterline(center: Pt[], hw: number): Pt[] {
+  const n = center.length;
+  const normals: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = center[Math.max(0, i - 1)];
+    const b = center[Math.min(n - 1, i + 1)];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const l = Math.hypot(dx, dy) || 1;
+    normals.push([-dy / l, dx / l]);
+  }
+  const left: Pt[] = [];
+  const right: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    left.push([center[i][0] + normals[i][0] * hw, center[i][1] + normals[i][1] * hw]);
+    right.push([center[i][0] - normals[i][0] * hw, center[i][1] - normals[i][1] * hw]);
+  }
+  const ring = [...left, ...right.reverse()];
+  ring.push(ring[0]);
+  return ring;
+}
+
+/** The largest-area exterior ring across MultiPolygon `polys` (the representative
+ * shoreline for island/avoidance logic), or null when empty. */
+function largestExterior(polys: Pt[][][]): Pt[] | null {
+  let best: Pt[] | null = null;
+  let bestA = -1;
+  for (const poly of polys) {
+    const a = ringAreaAbs(poly[0]);
+    if (a > bestA) {
+      bestA = a;
+      best = poly[0];
+    }
+  }
+  return best;
+}
+
 /**
  * Generate a park inside a sketched polygon region (plan 022 §3.3 / 027-A/-B).
  * `constraints.fabricFeatures` are consumed for the SKETCHED-road entrances
@@ -292,6 +423,10 @@ export function generatePark(
 ): GeoJSON.Feature[] {
   const { variety, pathDensity, pond } = params;
   const L = layoutFor(variety);
+  // Park-tree glyph family (plan 027-C): japanese gardens read as pine/conifer,
+  // every other park as broadleaf shade. Declared here (not by emitTreeAt) so it
+  // is initialized before the hoisted skeleton builders call emitTreeAt.
+  const treeFamily = variety === "japanese-garden" ? "conifer" : "broadleaf";
   const out: GeoJSON.Feature[] = [];
   const bbox = region.bbox;
   const [cx, cy] = region.interiorPole; // stable anchor (lattice argmax)
@@ -364,6 +499,40 @@ export function generatePark(
     return pts;
   };
 
+  // Seam-safe rim/shore: emit a ring as its OWN LineString (never a line layer on
+  // the fill) so the per-tile clip runs it through `clipPolylineToBBox` — which
+  // cuts a boundary at a tile edge WITHOUT synthesizing a segment along the seam
+  // (a `line` on the MultiPolygon would instead stroke the clip-induced tile
+  // edges as visible grid lines — plan 026-B DECISIONS). id hashes the ring's
+  // first vertex (position, never emission order).
+  const emitRingLine = (gid: string, ring: Pt[]): void => {
+    if (ring.length < 2) return;
+    out.push({
+      type: "Feature",
+      id: hashSeed(seed, gid, q(ring[0][0]), q(ring[0][1]), ring.length),
+      geometry: { type: "LineString", coordinates: ring.map((p) => [q(p[0]), q(p[1])]) },
+      properties: { generatorId: gid, type: gid, parkType: variety },
+    });
+  };
+  // An organic pond at `center` of effective radius `effR`, wobble `warpAmp`
+  // (small ⇒ near-circular formal basin; large ⇒ irregular strolling pond). Emits
+  // the `park-pond` MultiPolygon fill + `park-pond-shore` rim LineStrings and
+  // returns the representative shoreline ring (largest exterior) or null. The
+  // marching-squares containment floor guarantees the pond stays inside the ring.
+  const emitOrganicPond = (salt: string, center: Pt, effR: number, warpAmp: number): Pt[] | null => {
+    if (effR < ORGANIC_LATTICE_M * 1.5) return null;
+    const { polys, rings } = buildOrganic(seed, salt, region, [center], effR / 0.54, warpAmp, ORGANIC_LATTICE_M);
+    if (polys.length === 0) return null;
+    out.push({
+      type: "Feature",
+      id: hashSeed(seed, "park-pond", q(center[0]), q(center[1]), Math.round(effR)),
+      geometry: { type: "MultiPolygon", coordinates: polys },
+      properties: { generatorId: "park-pond", type: "park-pond", parkType: variety },
+    });
+    for (const r of rings) emitRingLine("park-pond-shore", r);
+    return largestExterior(polys);
+  };
+
   // ── Ground: ONE merged lawn polygon = the region ring. `meadow` for the
   //    wild-common (rougher tone), `formal` inverts figure-ground in themes. ──
   out.push(
@@ -374,14 +543,19 @@ export function generatePark(
     })
   );
 
-  // ── Canopy: the second green (city-park). Harmonic-blob clumps at hashed
-  //    absolute-lattice anchors — sparse, contained by shrink-to-fit. ─────────
+  // ── Canopy: the second green (city-park). ONE merged organic MultiPolygon
+  //    (plan 027-C) traced by marching squares over a metaball union of the
+  //    hashed clump anchors — the 027-A per-clump blobFeature stack double-
+  //    darkened where clumps overlapped; a single union polygon paints ONE
+  //    figure-ground green. A seam-safe `park-canopy-rim` LineString traces every
+  //    ring (outer belt + any hole) so the wooded mass reads as a drawn shape. ──
   if (L.canopy) {
     const cjit = CANOPY_CELL_M * CANOPY_JITTER_FRAC;
     const cix0 = Math.floor(bbox.minX / CANOPY_CELL_M) - 1;
     const cix1 = Math.ceil(bbox.maxX / CANOPY_CELL_M) + 1;
     const ciy0 = Math.floor(bbox.minY / CANOPY_CELL_M) - 1;
     const ciy1 = Math.ceil(bbox.maxY / CANOPY_CELL_M) + 1;
+    const anchors: Pt[] = [];
     for (let ix = cix0; ix <= cix1; ix++) {
       for (let iy = ciy0; iy <= ciy1; iy++) {
         if (hash01(seed, "park-canopy-place", ix, iy) >= 0.3) continue;
@@ -389,34 +563,34 @@ export function generatePark(
         const ax = (ix + 0.5) * CANOPY_CELL_M + dx;
         const ay = (iy + 0.5) * CANOPY_CELL_M + dy;
         if (pond && Math.hypot(ax - cx, ay - cy) < maxD * 0.42) continue; // off open water
-        const salt = `park-canopy-${ix}-${iy}`;
-        for (let base = CANOPY_CELL_M * 0.5; base >= MIN_FEATURE_M; base *= 0.78) {
-          const ring = harmonicBlobRing(seed, salt, ax, ay, base, 0.35, 3, 40);
-          if (ringContained(region, ring, MARGIN_M)) {
-            out.push(blobFeature(seed, "park-canopy", ring, { parkType: variety }));
-            break;
-          }
-        }
+        anchors.push([ax, ay]);
       }
+    }
+    const warpAmp = CANOPY_METABALL_RADIUS_M * 0.3;
+    const { polys, rings } = buildOrganic(seed, "park-canopy", region, anchors, CANOPY_METABALL_RADIUS_M, warpAmp, CANOPY_CANOPY_LATTICE_M);
+    if (polys.length > 0) {
+      out.push({
+        type: "Feature",
+        id: hashSeed(seed, "park-canopy", region.id),
+        geometry: { type: "MultiPolygon", coordinates: polys },
+        properties: { generatorId: "park-canopy", type: "park-canopy", parkType: variety },
+      });
+      for (const r of rings) emitRingLine("park-canopy-rim", r);
     }
   }
 
-  // ── Pond / basin footprint decided up front (paths route around it) ────────
+  // ── Pond / basin footprint decided up front (paths route around it). Plan
+  //    027-C: an organic marching-squares shoreline (not a harmonic blob circle).
+  //    A formal basin stays near-circular (tiny wobble — Versailles); city and
+  //    japanese ponds get a strongly irregular shore. The duck pond (wild-common)
+  //    sits OFF-centre (built in buildWildCommon). ────────────────────────────
   const wantPond = pond || variety === "japanese-garden" || variety === "formal-garden";
   let pondRing: Pt[] | null = null;
-  // A formal basin is a small, near-circular central pool; other ponds are
-  // larger, irregular. The wild-common duck pond sits OFF-centre (see below).
   if (wantPond && maxD >= 25 && variety !== "wild-common") {
-    const irregular = variety === "formal-garden" ? 0.12 : 0.5;
-    const startFrac = variety === "formal-garden" ? 0.3 : 0.45;
-    for (let base = maxD * startFrac; base >= maxD * 0.12; base *= 0.8) {
-      const ring = harmonicBlobRing(seed, "park-pond", cx, cy, base, irregular, 3, 48);
-      if (ringContained(region, ring, MARGIN_M)) {
-        pondRing = ring;
-        break;
-      }
-    }
-    if (pondRing) out.push(blobFeature(seed, "park-pond", pondRing, { parkType: variety }));
+    const formal = variety === "formal-garden";
+    const effR = Math.min(maxD * (formal ? 0.16 : 0.32), maxD - ORGANIC_CONTAIN_M - MARGIN_M);
+    const warpAmp = effR * (formal ? 0.05 : 0.4);
+    pondRing = emitOrganicPond("park-pond", [cx, cy], effR, warpAmp);
   }
 
   // ── Per-variety skeleton (plan 027-B §2) ───────────────────────────────────
@@ -517,21 +691,16 @@ export function generatePark(
   //    a duck pond + ONE landmark. ──────────────────────────────────────────
   function buildWildCommon(): void {
     connectEntranceDiagonals(false, 2); // at most 2 desire-line crossings
-    // Duck pond: small, irregular, OFF-centre (deterministic offset from pole).
+    // Duck pond: small, organic, OFF-centre (deterministic offset from pole).
     if (maxD >= 25) {
       const orng = mulberry32(hashSeed(seed, "park-duckpond"));
       const oth = orng() * Math.PI * 2;
       const orad = maxD * 0.35;
       const px = cx + Math.cos(oth) * orad;
       const py = cy + Math.sin(oth) * orad;
-      for (let base = maxD * 0.22; base >= MIN_FEATURE_M * 0.6; base *= 0.8) {
-        const ring = harmonicBlobRing(seed, "park-pond", px, py, base, 0.55, 3, 40);
-        if (ringContained(region, ring, MARGIN_M)) {
-          pondRing = ring;
-          out.push(blobFeature(seed, "park-pond", ring, { parkType: variety }));
-          break;
-        }
-      }
+      const effR = Math.min(maxD * 0.16, maxD - orad - ORGANIC_CONTAIN_M - MARGIN_M);
+      const duck = emitOrganicPond("park-duckpond", [px, py], effR, effR * 0.45);
+      if (duck) pondRing = duck;
     }
     // ONE landmark (monument/maypole) near the pole.
     emitPoint(cx, cy, "monument", "park-point-monument", 0);
@@ -564,8 +733,31 @@ export function generatePark(
           const theta = (bI / nBridges) * Math.PI * 2 + brng() * 0.7;
           const inner: Pt = [cx + Math.cos(theta) * islandBase * 1.05, cy + Math.sin(theta) * islandBase * 1.05];
           const outer: Pt = [cx + Math.cos(theta) * maxD * 0.42, cy + Math.sin(theta) * maxD * 0.42];
-          if (clearOf(region, outer[0], outer[1], L.pathHalfM + MARGIN_M)) {
-            out.push(spanQuad(seed, "park-bridge", inner, outer, Math.max(1.4, L.pathHalfM), { parkType: variety, style: "arch" }));
+          if (!clearOf(region, outer[0], outer[1], L.pathHalfM + MARGIN_M)) continue;
+          const hw = Math.max(1.4, L.pathHalfM);
+          // Plan 027-C bridge styling: a hashed choice between an arch (straight
+          // deck) and a yatsuhashi ZIGZAG (a kinked plank walk). Both carry `style`
+          // for theme paint; the zigzag deck is a buffered zigzag centerline.
+          const zig = hash01(seed, "park-bridge-style", bI) < 0.5;
+          if (zig) {
+            const dx = outer[0] - inner[0];
+            const dy = outer[1] - inner[1];
+            const len = Math.hypot(dx, dy) || 1;
+            const perp: Pt = [-dy / len, dx / len];
+            const amp = Math.min(len * 0.14, 6);
+            const offs = [0, amp, -amp, amp, 0]; // yatsuhashi kinks
+            const center: Pt[] = offs.map((o, k) => {
+              const t = k / (offs.length - 1);
+              return [inner[0] + dx * t + perp[0] * o, inner[1] + dy * t + perp[1] * o] as Pt;
+            });
+            const deck = bufferCenterline(center, hw);
+            if (ringContained(region, deck, MARGIN_M)) {
+              out.push(blobFeature(seed, "park-bridge", deck, { parkType: variety, style: "zigzag" }));
+            } else {
+              out.push(spanQuad(seed, "park-bridge", inner, outer, hw, { parkType: variety, style: "arch" }));
+            }
+          } else {
+            out.push(spanQuad(seed, "park-bridge", inner, outer, hw, { parkType: variety, style: "arch" }));
           }
         }
       }
@@ -601,12 +793,15 @@ export function generatePark(
           const px = gx + dx;
           const py = gy + dy;
           if (!clearOf(region, px, py, MARGIN_M)) continue;
-          // Horizontal-dominant: sizeN wider than tall (Sakuteiki), for 27-C paint.
+          // Horizontal-dominant: sizeN wider than tall (Sakuteiki). Plan 027-C:
+          // `variant` (0–2) picks a hashed boulder SDF glyph so a 3/5-stone group
+          // doesn't read as stamped copies.
+          const rid = hashSeed(seed, "park-rock", cI, r);
           out.push({
             type: "Feature",
-            id: hashSeed(seed, "park-rock", cI, r),
+            id: rid,
             geometry: { type: "Point", coordinates: [q(px), q(py)] },
-            properties: { generatorId: "park-rock", type: "park-rock", parkType: variety, sizeW: 1.6, sizeH: 1 },
+            properties: { generatorId: "park-rock", type: "park-rock", parkType: variety, sizeW: 1.6, sizeH: 1, variant: ((rid % 3) + 3) % 3 },
           });
         }
       }
@@ -646,7 +841,33 @@ export function generatePark(
         [ex - half, ey + half],
         [ex - half, ey - half],
       ];
-      if (ringContained(region, court, MARGIN_M)) out.push(blobFeature(seed, "park-court", court, { parkType: variety }));
+      if (ringContained(region, court, MARGIN_M)) {
+        out.push(blobFeature(seed, "park-court", court, { parkType: variety }));
+        // Karesansui raked-gravel texture (plan 027-C): parallel `park-court-rake`
+        // LineStrings sweeping the court, each with a low sinusoidal wobble (the
+        // rake's furrows). Seam-safe (LineStrings, never a line on the court fill)
+        // and strictly inside the contained court band. Deterministic (phase
+        // hashes on the row index).
+        const pad = half * 0.12;
+        const x0 = ex - half + pad;
+        const x1 = ex + half - pad;
+        const nLines = 11;
+        const spacing = (2 * half - 2 * pad) / (nLines + 1);
+        const amp = spacing * 0.25;
+        const steps = 12;
+        for (let k = 0; k < nLines; k++) {
+          const baseY = ey - half + pad + (k + 1) * spacing;
+          const ph = hash01(seed, "park-rake", k) * Math.PI * 2;
+          const line: Pt[] = [];
+          for (let s = 0; s <= steps; s++) {
+            const t = s / steps;
+            const x = x0 + (x1 - x0) * t;
+            const y = baseY + amp * Math.sin(t * Math.PI * 2 + ph);
+            line.push([x, y]);
+          }
+          emitRingLine("park-court-rake", line);
+        }
+      }
     }
   }
 
@@ -673,14 +894,20 @@ export function generatePark(
     if (withNeighbors) for (let i = 0; i < m; i++) link(i, (i + 1) % m);
   }
 
-  // Emit a tree point at (px,py) with a stable position-hashed id.
+  // Emit a tree point at (px,py) with a stable position-hashed id. Plan 027-C:
+  // carries a `treeFamily` + hashed `variant` so the park-tree symbol layer draws
+  // a per-park SDF tree glyph from the shared 026-C set (`tree-<family>-<variant>`
+  // — japanese gardens read as pine/conifer, other parks as broadleaf shade).
+  // `treeFamily` is declared at the top of generatePark (the skeleton builders
+  // that call emitTreeAt run before this point in source order).
   function emitTreeAt(px: number, py: number, salt: string, ...ks: number[]): void {
     if (!clearOf(region, px, py, MARGIN_M)) return;
+    const id = hashSeed(seed, salt, ...ks);
     out.push({
       type: "Feature",
-      id: hashSeed(seed, salt, ...ks),
+      id,
       geometry: { type: "Point", coordinates: [q(px), q(py)] },
-      properties: { generatorId: "park-tree", type: "park-tree", parkType: variety },
+      properties: { generatorId: "park-tree", type: "park-tree", parkType: variety, treeFamily, variant: ((id % 4) + 4) % 4 },
     });
   }
 

@@ -2,18 +2,20 @@
 
 exports[`park generator — determinism > matches the seeded snapshot fixture (japanese garden — golden drift tripwire) 1`] = `
 {
-  "sha256": "47378a5cfd90be4c372809d364542e38c64e20ce2feaf5851800a9d1a7fca550",
+  "sha256": "e6d8e022270806a36fc069f943105faf2471951eadbf093396b4845f807dc3da",
   "summary": {
     "park-bridge": 1,
     "park-court": 1,
+    "park-court-rake": 11,
     "park-island": 1,
     "park-lawn": 1,
     "park-path": 2,
     "park-point": 7,
     "park-pond": 1,
+    "park-pond-shore": 1,
     "park-rock": 11,
     "park-tree": 6,
-    "total": 31,
+    "total": 43,
   },
 }
 `;

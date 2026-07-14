@@ -209,13 +209,16 @@ describe("park generator — 027-A figure-ground topology", () => {
     }
   });
 
-  it("city-park emits canopy clumps (the second green) as their own polygons", () => {
+  it("city-park emits the canopy (second green) as ONE merged organic MultiPolygon (027-C blob-union)", () => {
+    // Plan 027-C fixes the 027-A double-darkening: the per-clump blobFeature stack
+    // (multiple overlapping Polygons) becomes ONE marching-squares union polygon,
+    // so overlapping clumps paint a single flat figure-ground green.
     const feats = generatePark(88, regionFor(SQUARE), PARAMS({ variety: "city-park" }), CONSTRAINTS);
-    expect(typeCount(feats, "park-canopy")).toBeGreaterThan(0);
-    for (const f of feats) {
-      if ((f.properties as { generatorId?: string }).generatorId !== "park-canopy") continue;
-      expect(f.geometry.type).toBe("Polygon");
-    }
+    expect(typeCount(feats, "park-canopy")).toBe(1);
+    const canopy = feats.find((f) => (f.properties as { generatorId?: string }).generatorId === "park-canopy")!;
+    expect(canopy.geometry.type).toBe("MultiPolygon");
+    // A seam-safe rim traces every canopy ring (never a line layer on the fill).
+    expect(typeCount(feats, "park-canopy-rim")).toBeGreaterThan(0);
   });
 
   it("re-emits paths as classed LineStrings (cased-path pairing hook), not span quads", () => {
@@ -457,6 +460,84 @@ describe("park generator — 027-B skeleton (entrances + per-variety structure)"
     const movedWalks = new Set(walk(moved));
     // At least one near-side diagonal survives byte-identical across the edit.
     expect(baseWalks.some((w) => movedWalks.has(w)), "no near-side diagonal stayed byte-identical").toBe(true);
+  });
+});
+
+describe("park generator — 027-C organic water/canopy + glyph dressing", () => {
+  type Ring = Pt[];
+  function pondExterior(feats: GeoJSON.Feature[]): Ring {
+    const pond = feats.find((f) => (f.properties as { generatorId?: string }).generatorId === "park-pond")!;
+    expect(pond, "no park-pond").toBeDefined();
+    expect(pond.geometry.type).toBe("MultiPolygon");
+    // Largest exterior ring across the MultiPolygon.
+    const polys = (pond.geometry as unknown as { coordinates: Pt[][][] }).coordinates;
+    let best: Ring = polys[0][0];
+    let bestN = -1;
+    for (const poly of polys) if (poly[0].length > bestN) ((bestN = poly[0].length), (best = poly[0]));
+    return best;
+  }
+  /** Coefficient of variation of a ring's radii about its centroid — a circle
+   * reads ~0, an organic shoreline reads clearly non-zero. */
+  function radiusCV(ring: Ring): number {
+    let cx = 0;
+    let cy = 0;
+    const n = ring.length - 1;
+    for (let i = 0; i < n; i++) ((cx += ring[i][0]), (cy += ring[i][1]));
+    cx /= n;
+    cy /= n;
+    const rs: number[] = [];
+    for (let i = 0; i < n; i++) rs.push(Math.hypot(ring[i][0] - cx, ring[i][1] - cy));
+    const mean = rs.reduce((a, b) => a + b, 0) / rs.length;
+    const varr = rs.reduce((a, b) => a + (b - mean) ** 2, 0) / rs.length;
+    return Math.sqrt(varr) / mean;
+  }
+
+  it("japanese pond is an ORGANIC marching-squares shoreline (many vertices, irregular — not a blob circle)", () => {
+    const feats = generatePark(9, regionFor(SQUARE), PARAMS({ variety: "japanese-garden" }), CONSTRAINTS);
+    const ring = pondExterior(feats);
+    // A marching-squares + Chaikin shoreline has many vertices (a harmonic blob
+    // circle had ~48); its radius clearly varies (miegakure irregularity).
+    expect(ring.length).toBeGreaterThan(40);
+    expect(radiusCV(ring), "pond reads as a circle, not an organic shore").toBeGreaterThan(0.06);
+    // Shore casing is emitted as its OWN seam-safe LineStrings (never line-on-fill).
+    const shores = feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "park-pond-shore");
+    expect(shores.length).toBeGreaterThan(0);
+    for (const s of shores) expect(s.geometry.type).toBe("LineString");
+  });
+
+  it("formal basin stays near-circular (deliberately low irregularity) vs the organic city pond", () => {
+    const formal = generatePark(9, regionFor(SQUARE), PARAMS({ variety: "formal-garden", pond: false }), CONSTRAINTS);
+    const city = generatePark(9, regionFor(SQUARE), PARAMS({ variety: "city-park", pond: true }), CONSTRAINTS);
+    expect(radiusCV(pondExterior(formal))).toBeLessThan(radiusCV(pondExterior(city)));
+  });
+
+  it("emits karesansui rake texture inside the court (LineStrings) on a large japanese garden", () => {
+    const feats = generatePark(9, regionFor(SQUARE), PARAMS({ variety: "japanese-garden" }), CONSTRAINTS);
+    expect(typeCount(feats, "park-court")).toBe(1);
+    const rake = feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "park-court-rake");
+    expect(rake.length).toBeGreaterThan(3);
+    for (const r of rake) expect(r.geometry.type).toBe("LineString");
+  });
+
+  it("bridges carry an arch/zigzag style; rocks + trees carry glyph variant/family props", () => {
+    const feats = generatePark(9, regionFor(SQUARE), PARAMS({ variety: "japanese-garden" }), CONSTRAINTS);
+    for (const b of feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "park-bridge")) {
+      expect(["arch", "zigzag"]).toContain(String((b.properties as { style?: string }).style));
+    }
+    for (const r of feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "park-rock")) {
+      const v = (r.properties as { variant?: number }).variant;
+      expect(v === 0 || v === 1 || v === 2, `rock variant ${v} out of 0..2`).toBe(true);
+    }
+    for (const tr of feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "park-tree")) {
+      const p = tr.properties as { treeFamily?: string; variant?: number };
+      expect(typeof p.treeFamily).toBe("string");
+      expect(p.variant! >= 0 && p.variant! <= 3).toBe(true);
+    }
+  });
+
+  it("canopy union does not double-count: ONE park-canopy feature even with many clump anchors", () => {
+    const feats = generatePark(88, regionFor(SQUARE), PARAMS({ variety: "city-park" }), CONSTRAINTS);
+    expect(typeCount(feats, "park-canopy")).toBe(1);
   });
 });
 

@@ -270,10 +270,21 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3 + 027-A)", () 
   const PARK_IDS = [
     ...PARK_LAYER_IDS,
     "generated-park-canopy",
+    "generated-park-canopy-rim", // plan 027-C: seam-safe organic-canopy outline
+    "generated-park-court-rake", // plan 027-C: karesansui raked-gravel furrows
     "generated-park-path-casing",
     "generated-park-pond-shore",
     "generated-park-point", // plan 027-B point dressing (fountain/bandstand/monument/lantern/teahouse)
   ] as const;
+  // Plan 027-C: rocks / trees / landmark points are now SDF-glyph SYMBOL layers
+  // (icon-image + icon-color), not circles — they colour via `icon-color`, so the
+  // fill/line/circle `hasColor` probe doesn't apply. Split them out.
+  const PARK_SYMBOL_IDS = ["generated-park-tree", "generated-park-rock", "generated-park-point"] as const;
+  const hasIconImage = (layer: LayerSpecification): boolean => {
+    const layout = (layer as { layout?: Record<string, unknown> }).layout ?? {};
+    const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
+    return layer.type === "symbol" && layout["icon-image"] != null && paint["icon-color"] != null;
+  };
 
   it("all park layers exist on the generated source and filter on generatorId (no zoom LOD in filter)", () => {
     const layers = generatedLayers(PARCHMENT);
@@ -330,6 +341,9 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3 + 027-A)", () 
     expect(rock).toBeGreaterThan(court);
     // Point dressing (landmarks) reads on top of the greenery stipple.
     expect(point).toBeGreaterThan(tree);
+    // Plan 027-C: canopy rim above the canopy fill; the rake above the court wash.
+    expect(ids.indexOf("generated-park-canopy-rim")).toBeGreaterThan(canopy);
+    expect(ids.indexOf("generated-park-court-rake")).toBeGreaterThan(court);
   });
 
   it("park layers keep the generated- prefix so the z-order stack holds", () => {
@@ -337,12 +351,16 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3 + 027-A)", () 
   });
 
   for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
-    it(`${id}: every park layer paints a color (fills, cased lines and stipples)`, () => {
+    it(`${id}: every park layer paints a color (fills, cased lines, glyph symbols)`, () => {
       const layers = generatedLayers(tokens);
       for (const layerId of PARK_IDS) {
         const layer = layers.find((l) => l.id === layerId)!;
-        // hasColor reads fill/circle/line color, so the new line layers count.
-        expect(hasColor(layer), `${id}: ${layerId} paints no color`).toBe(true);
+        if ((PARK_SYMBOL_IDS as readonly string[]).includes(layerId)) {
+          // Glyph symbol layers tint via icon-color, not fill/circle/line color.
+          expect(hasIconImage(layer), `${id}: ${layerId} is not a tinted glyph symbol`).toBe(true);
+        } else {
+          expect(hasColor(layer), `${id}: ${layerId} paints no color`).toBe(true);
+        }
       }
       // Lawn (open greensward) and pond (water) must read as different things,
       // and the second-green canopy must read distinct from the lawn.
