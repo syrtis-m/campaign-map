@@ -222,3 +222,119 @@ describe("forest generator — 2x2 seam via whole-artifact clip", () => {
     expect(clipped).toBeGreaterThan(0);
   });
 });
+
+// ── plan 026-A: hashed Thomas-cluster tree placement ─────────────────────────
+
+/** A large region for stable placement statistics. */
+const BIG: Pt[] = [
+  [0, 0],
+  [1600, 0],
+  [1600, 1600],
+  [0, 1600],
+  [0, 0],
+];
+
+type TreeProps = { forestType: string; sizeN: number; rank: number; variant: number };
+function treesOf(feats: GeoJSON.Feature[]): GeoJSON.Feature[] {
+  return feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "forest-tree");
+}
+function treeProps(f: GeoJSON.Feature): TreeProps {
+  return f.properties as unknown as TreeProps;
+}
+
+/** Index of dispersion (variance/mean) of tree counts over a `bin`-metre grid
+ * across the region bbox. ≈1 for a Poisson/uniform-grid process, >1 clumped,
+ * <1 regular. The statistical signature that separates Thomas clusters from the
+ * old stipple grid (plan 026-A §1.1). */
+function dispersionIndex(feats: GeoJSON.Feature[], region: ProcgenRegion, bin: number): number {
+  const counts = new Map<string, number>();
+  for (const f of treesOf(feats)) {
+    const [x, y] = (f.geometry as { coordinates: unknown }).coordinates as Pt;
+    const k = `${Math.floor(x / bin)},${Math.floor(y / bin)}`;
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const { minX, minY, maxX, maxY } = region.bbox;
+  const vals: number[] = [];
+  for (let ix = Math.floor(minX / bin); ix <= Math.floor(maxX / bin); ix++) {
+    for (let iy = Math.floor(minY / bin); iy <= Math.floor(maxY / bin); iy++) {
+      vals.push(counts.get(`${ix},${iy}`) ?? 0);
+    }
+  }
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  if (mean === 0) return 0;
+  const varr = vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length;
+  return varr / mean;
+}
+
+describe("forest generator — tree placement is clumped, not a grid (plan 026-A §1.1)", () => {
+  const BIN = 80; // ~clump-spread scale: a bin catches a clump core or a gap
+
+  it("broadleaf clumps strongly — dispersion ≫ 1 (a uniform grid would sit at ≈1)", () => {
+    const region = regionFor(BIG);
+    const feats = generateForest(4242, region, PARAMS({ variety: "broadleaf", density: 0.7 }), CONSTRAINTS);
+    expect(treesOf(feats).length).toBeGreaterThan(200);
+    expect(dispersionIndex(feats, region, BIN)).toBeGreaterThan(2);
+  });
+
+  it("conifer is more regular than broadleaf (the per-variety clustering knob works)", () => {
+    const region = regionFor(BIG);
+    const broad = dispersionIndex(
+      generateForest(4242, region, PARAMS({ variety: "broadleaf", density: 0.7 }), CONSTRAINTS),
+      region,
+      BIN
+    );
+    const coni = dispersionIndex(
+      generateForest(4242, region, PARAMS({ variety: "conifer", density: 0.7 }), CONSTRAINTS),
+      region,
+      BIN
+    );
+    expect(broad).toBeGreaterThan(coni + 0.5);
+  });
+
+  it("dead-wood is loners only — every tree rank 2, low dispersion (no clumps)", () => {
+    const region = regionFor(BIG);
+    const feats = generateForest(9, region, PARAMS({ variety: "dead-wood", density: 0.5 }), CONSTRAINTS);
+    const trees = treesOf(feats);
+    expect(trees.length).toBeGreaterThan(0);
+    for (const t of trees) expect(treeProps(t).rank).toBe(2);
+    expect(dispersionIndex(feats, region, BIN)).toBeLessThan(1.5);
+  });
+});
+
+describe("forest generator — tree property carry (plan 026-A §1.1)", () => {
+  it("every tree carries forestType/sizeN/rank/variant in range", () => {
+    const region = regionFor(BIG);
+    const trees = treesOf(generateForest(4242, region, PARAMS({ variety: "broadleaf", density: 0.7 }), CONSTRAINTS));
+    expect(trees.length).toBeGreaterThan(0);
+    for (const t of trees) {
+      const p = treeProps(t);
+      expect(p.forestType).toBe("broadleaf");
+      expect(p.sizeN).toBeGreaterThanOrEqual(0);
+      expect(p.sizeN).toBeLessThanOrEqual(1);
+      expect([0, 1, 2]).toContain(p.rank);
+      expect([0, 1, 2, 3]).toContain(p.variant);
+    }
+  });
+
+  it("tree size varies (sizeN spread wide enough for a ≥2× rendered radius)", () => {
+    const region = regionFor(BIG);
+    const sizes = treesOf(
+      generateForest(4242, region, PARAMS({ variety: "broadleaf", density: 0.7 }), CONSTRAINTS)
+    ).map((t) => treeProps(t).sizeN);
+    expect(Math.max(...sizes) - Math.min(...sizes)).toBeGreaterThan(0.4);
+    const mean = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+    const varr = sizes.reduce((a, b) => a + (b - mean) ** 2, 0) / sizes.length;
+    expect(varr).toBeGreaterThan(0);
+  });
+
+  it("clump trees include both cores (rank 0) and fringe (rank 1)", () => {
+    const region = regionFor(BIG);
+    const ranks = new Set(
+      treesOf(generateForest(4242, region, PARAMS({ variety: "broadleaf", density: 0.7 }), CONSTRAINTS)).map(
+        (t) => treeProps(t).rank
+      )
+    );
+    expect(ranks.has(0)).toBe(true);
+    expect(ranks.has(1)).toBe(true);
+  });
+});

@@ -106,10 +106,32 @@ function anyColor(layer: LayerSpecification): string {
   return (c as string).toLowerCase();
 }
 
-describe("generatedLayers — forest canopy/clearing/tree paint coverage (plan 022 §4)", () => {
-  it("all three forest layers exist and filter on generatorId (no zoom LOD)", () => {
+describe("generatedLayers — forest canopy/clearing/stacked-tree paint coverage (plan 026-A §1.3)", () => {
+  // Local id lists (the top-of-file FOREST_LAYER_IDS is superseded by plan 026-A
+  // — the flat `generated-forest-tree` circle became a shadow/base/highlight
+  // stack — but that const lives outside this block, so it is left for the
+  // orchestrator to prune post-merge; the ∥-P1 file protocol keeps every forest
+  // edit inside this describe block).
+  const FOREST_FILL_IDS = ["generated-forest-canopy", "generated-forest-clearing"] as const;
+  const FOREST_TREE_IDS = [
+    "generated-forest-tree-shadow",
+    "generated-forest-tree-base",
+    "generated-forest-tree-highlight",
+  ] as const;
+  const FOREST_ALL_IDS = [...FOREST_FILL_IDS, ...FOREST_TREE_IDS];
+
+  /** Read a variety's colour out of a `["match", ["get","forestType"], …]`. */
+  function matchColor(expr: unknown, variety: string): string | undefined {
+    if (!Array.isArray(expr) || expr[0] !== "match") return undefined;
+    for (let i = 2; i + 1 < expr.length; i += 2) {
+      if (expr[i] === variety) return String(expr[i + 1]).toLowerCase();
+    }
+    return undefined;
+  }
+
+  it("all five forest layers exist, on the generated source, filter on generatorId (no zoom LOD)", () => {
     const layers = generatedLayers(PARCHMENT);
-    for (const id of FOREST_LAYER_IDS) {
+    for (const id of FOREST_ALL_IDS) {
       const layer = layers.find((l) => l.id === id);
       expect(layer, `${id} missing from generatedLayers`).toBeDefined();
       expect((layer as { source?: string }).source).toBe("generated");
@@ -119,34 +141,79 @@ describe("generatedLayers — forest canopy/clearing/tree paint coverage (plan 0
     }
   });
 
-  it("clearing paints ABOVE the canopy, trees ABOVE both (later in the array)", () => {
-    const ids = generatedLayers(PARCHMENT).map((l) => l.id);
-    const canopy = ids.indexOf("generated-forest-canopy");
-    const clearing = ids.indexOf("generated-forest-clearing");
-    const tree = ids.indexOf("generated-forest-tree");
-    expect(clearing).toBeGreaterThan(canopy);
-    expect(tree).toBeGreaterThan(clearing);
+  it("the three tree layers are circles; the two ground layers are fills (stacked glyph)", () => {
+    const layers = generatedLayers(PARCHMENT);
+    for (const id of FOREST_TREE_IDS) expect(layers.find((l) => l.id === id)!.type).toBe("circle");
+    for (const id of FOREST_FILL_IDS) expect(layers.find((l) => l.id === id)!.type).toBe("fill");
   });
 
-  it("forest layers keep the generated- prefix so the z-order stack holds", () => {
+  it("z-stack order: canopy < clearing < tree shadow < base < highlight", () => {
+    const ids = generatedLayers(PARCHMENT).map((l) => l.id);
+    const order = [
+      "generated-forest-canopy",
+      "generated-forest-clearing",
+      "generated-forest-tree-shadow",
+      "generated-forest-tree-base",
+      "generated-forest-tree-highlight",
+    ];
+    for (let i = 1; i < order.length; i++) {
+      expect(ids.indexOf(order[i]), `${order[i]} must paint above ${order[i - 1]}`).toBeGreaterThan(
+        ids.indexOf(order[i - 1])
+      );
+    }
+  });
+
+  it("forest layers sit after river and before park, keeping the generated- prefix z-stack", () => {
+    const ids = generatedLayers(PARCHMENT).map((l) => l.id);
+    expect(ids.indexOf("generated-forest-canopy")).toBeGreaterThan(ids.indexOf("generated-river-channel"));
+    expect(ids.indexOf("generated-forest-tree-highlight")).toBeLessThan(ids.indexOf("generated-park-lawn"));
     expect(() => assertLayerOrder(generatedLayers(PARCHMENT))).not.toThrow();
   });
 
+  it("no forest layer carries a minzoom/maxzoom gate (density is paint, never zoom)", () => {
+    const layers = generatedLayers(PARCHMENT);
+    for (const id of FOREST_ALL_IDS) {
+      const layer = layers.find((l) => l.id === id)! as { minzoom?: number; maxzoom?: number };
+      expect(layer.minzoom, `${id} must not gate on minzoom`).toBeUndefined();
+      expect(layer.maxzoom, `${id} must not gate on maxzoom`).toBeUndefined();
+    }
+  });
+
+  it("canopy disables fill-antialias (kills the per-cell hairline lattice)", () => {
+    const canopy = generatedLayers(PARCHMENT).find((l) => l.id === "generated-forest-canopy")!;
+    expect((canopy as { paint?: Record<string, unknown> }).paint!["fill-antialias"]).toBe(false);
+  });
+
   for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
-    it(`${id}: canopy, clearing and tree all paint a color`, () => {
+    it(`${id}: canopy/clearing read differently; trees tint per variety`, () => {
       const layers = generatedLayers(tokens);
-      for (const layerId of FOREST_LAYER_IDS) {
-        const layer = layers.find((l) => l.id === layerId)!;
-        expect(anyColor(layer).length).toBeGreaterThan(0);
+      // Ground fills: plain token colours, canopy ≠ clearing.
+      const canopy = fillColor(layers.find((l) => l.id === "generated-forest-canopy")!);
+      const clearing = fillColor(layers.find((l) => l.id === "generated-forest-clearing")!);
+      expect(canopy, `${id}: canopy and clearing share a colour`).not.toBe(clearing);
+
+      // Every tree layer is a data-driven per-variety match on forestType.
+      for (const treeId of FOREST_TREE_IDS) {
+        const color = (layers.find((l) => l.id === treeId)! as { paint?: Record<string, unknown> }).paint![
+          "circle-color"
+        ];
+        expect(Array.isArray(color), `${id}:${treeId} circle-color must be a match expression`).toBe(true);
+        expect((color as unknown[])[0]).toBe("match");
       }
-      // Canopy woodland and a clearing (open ground) must read differently.
-      const canopy = anyColor(layers.find((l) => l.id === "generated-forest-canopy")!);
-      const clearing = anyColor(layers.find((l) => l.id === "generated-forest-clearing")!);
-      expect(canopy, `${id}: canopy and clearing share a color`).not.toBe(clearing);
+
+      // The base tint must be visibly distinct across the varieties (hue carries
+      // the read before glyphs do). Derived by relative moves from fabricForest,
+      // so this must hold in the dark themes too, not just parchment.
+      const baseColor = (layers.find((l) => l.id === "generated-forest-tree-base")! as {
+        paint?: Record<string, unknown>;
+      }).paint!["circle-color"];
+      const variants = ["broadleaf", "conifer", "swamp", "dead-wood"].map((v) => matchColor(baseColor, v));
+      for (const c of variants) expect(c, `${id}: a variety tint failed to resolve`).toBeDefined();
+      expect(new Set(variants).size, `${id}: variety tints collapsed to the same colour`).toBe(variants.length);
     });
   }
 
-  it("obsidian-native runtime style paints all three forest layers", () => {
+  it("obsidian-native runtime style paints all five forest layers", () => {
     const css: ObsidianCssTokens = {
       backgroundPrimary: "#1e1e1e",
       backgroundSecondary: "#262626",
@@ -158,7 +225,7 @@ describe("generatedLayers — forest canopy/clearing/tree paint coverage (plan 0
     };
     const style = obsidianNativeStyle(css, "http://localhost/glyphs/{fontstack}/{range}.pbf");
     const ids = style.layers.map((l) => l.id);
-    for (const id of FOREST_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
+    for (const id of FOREST_ALL_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
   });
 });
 
