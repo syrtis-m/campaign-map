@@ -75,6 +75,33 @@ export interface AxialConfig {
   elbow: number;
 }
 
+/**
+ * Concentric-ring composition (plan 025 §2.7 canal-rings / §2.8 radial-star /
+ * §2.10 euro-medieval growth-rings). A profile carrying this drives the
+ * `rings.ts` operator: `count` concentric rings around the generation center,
+ * stepping from `innerFrac` to `outerFrac` of the region's interior radius.
+ *
+ *  • `mode: "roads"` (radial-star, growth-ring) — the rings splice into the
+ *    grown graph as `ring`-class GROWN edges (concentric CONNECTOR rings crossed
+ *    by the radial arterials → wedge blocks), BEFORE faces/parcels.
+ *  • `mode: "canals"` (canal-rings) — the rings are WATER: emitted as visible
+ *    canal features AND folded into the constraints as `river` lines, so the
+ *    shared citynet water machinery gives bridges where radials cross and quays
+ *    along the banks with no new water plumbing (§2.7).
+ *
+ * ADDITIVE-PARAMS (binding): OPTIONAL. Every pre-025-E profile omits it, so the
+ * ring operator never runs for them and their bytes are unchanged.
+ */
+export interface ConcentricConfig {
+  /** Number of concentric rings (radial-star: 3–4; growth-ring inner: 1). */
+  count: number;
+  mode: "roads" | "canals";
+  /** Innermost ring radius as a fraction of `region.maxInteriorDistance`. */
+  innerFrac: number;
+  /** Outermost ring radius as a fraction of `region.maxInteriorDistance`. */
+  outerFrac: number;
+}
+
 /** The pre-025 class→width mapping, shared by every walkable profile so their
  * emitted widths reproduce the metrics stand-in exactly (additive-params). */
 export const LEGACY_STREET_WIDTHS: StreetWidths = {
@@ -187,6 +214,24 @@ export interface CityProfile {
    * faces/parcels (haussmann + baroque-axial). Absent (every pre-025-D profile)
    * ⇒ no boulevards, bytes unchanged. Read in `index.ts` after growth. */
   axial?: AxialConfig;
+
+  // ── Concentric rings + additive upgrades (plan 025-E) ────────────────────
+  /** Optional concentric-ring config (see `ConcentricConfig`). Present ⇒ the
+   * `rings.ts` operator lays concentric ring roads (radial-star) or canals
+   * (canal-rings). Absent (every pre-025-E profile) ⇒ bytes unchanged. */
+  concentric?: ConcentricConfig;
+  /** Seam-boulevard upgrade (plan 025 §2.9 na-grid): promote the per-quadrant
+   * grid-collision seam into ONE wide diagonal boulevard (a Market-Street cut)
+   * across the fabric. Additive, DEFAULT off — na-grid stays byte-identical
+   * unless the GM turns it on (registry param). When on, `index.ts` drives a
+   * single breakthrough boulevard so the seam becomes a feature, not a jog. */
+  seamBoulevard?: boolean;
+  /** Growth-rings upgrade (plan 025 §2.10 euro-medieval): number of successive
+   * WALLS/ring-roads — 1 (default, today's single wall) or 2 (a second, older
+   * inner ring road, the Paris Châtelet reading). Additive: `undefined`/`1`
+   * leaves euro-medieval byte-identical; `2` splices one inner concentric ring
+   * road via `rings.ts`. Exposed as an additive registry param. */
+  growthRings?: number;
 
   // ── Stage C: blocks / parcels / footprints (v3.2 — typed now, unread) ──
   /** Target block area window, m² (§6 "block target"). */
@@ -649,6 +694,107 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     footprintInset: 1.5,
     footprintDepth: 10,
     footprintCoverage: 0.78,
+  },
+  // ── canal-rings (plan 025 §2.7) — Amsterdam 17th-c. concentric canal city ──
+  // Concentric canal ARCS around the generation center, crossed by radial
+  // arterials. The canals emit as WATER (a distinct `city-landmark` type=canal
+  // line, painted with the theme water hue) AND are folded into the constraint
+  // system as `river` lines — so the EXISTING citynet water machinery does the
+  // work with no new plumbing (§2.7 "the machinery already exists"): the radial
+  // arterials BRIDGE each canal (cost-field crossing toll ⇒ shared bridges),
+  // quays line the banks (waterfrontOffsets → the offset-quay path), and grown
+  // streets + footprints stay OUT of the water ⇒ the elongated blocks BETWEEN
+  // the rings. A regular-block base (euro-continental-like) reads as the tidy
+  // burgher fabric between canals. Anchor: Amsterdam 17th-c. ≈195 int/km².
+  "canal-rings": {
+    id: "canal-rings",
+    // Several radials so multiple bridges cross each canal ring (the Amsterdam
+    // radial-street reading); they cast from the center to the rim.
+    arterialCount: 6,
+    // Quays hug each canal bank: a near bank (12 m) and a service lane (34 m).
+    waterfrontOffsets: [12, 34],
+    landmarks: ["church", "market", "temple"],
+    plazaRadius: 22,
+    hasWall: false,
+    wallChance: 0,
+    ringRadiusFrac: 0,
+    segmentLen: 52,
+    branchProb: 0.36,
+    edge: 0.16,
+    branchAngle: Math.PI / 2,
+    branchAngleJitter: (8 * Math.PI) / 180,
+    curvature: (3 * Math.PI) / 180,
+    snapDist: 22,
+    minAngle: (40 * Math.PI) / 180,
+    minEdge: 16,
+    minStub: 22,
+    maxSegments: 3200,
+    alleys: false,
+    culdesacs: false,
+    snapProb: 1,
+    gridAzimuths: [],
+    streetWidths: LEGACY_STREET_WIDTHS,
+    chamfer: 0,
+    uniformGrid: false,
+    // 3 concentric canals from ~0.34 to ~0.9 of the interior radius.
+    concentric: { count: 3, mode: "canals", innerFrac: 0.34, outerFrac: 0.9 },
+    blockAreaMin: 2000,
+    blockAreaMax: 6000,
+    parcelMinArea: 160,
+    parcelMaxAspect: 3.2,
+    parcelMinFrontage: 7,
+    footprintInset: 1.5,
+    footprintDepth: 12,
+    footprintCoverage: 0.74,
+  },
+  // ── radial-star (plan 025 §2.8) — Paris Étoile / baroque star ──────────────
+  // Avenues radiating from a rond-point (the region center) crossed by
+  // concentric CONNECTOR RINGS, wedge blocks subdividing toward the rim. Unlike
+  // baroque-axial (a few axes composed THROUGH organic fabric), here the radial
+  // star + rings ARE the fabric. Realised by (a) a high `arterialCount` — the
+  // star spokes — and (b) the §2.8 concentric ring ROADS (`mode:"roads"`)
+  // spliced into the grown graph, so spokes × rings box the wedge blocks. A
+  // regular-block growth base fills each wedge. Anchor: Paris Étoile ≈133.
+  "radial-star": {
+    id: "radial-star",
+    // The rond-point spokes: many radials fan from the center (the "star").
+    arterialCount: 9,
+    waterfrontOffsets: [],
+    landmarks: ["church", "market", "temple", "keep"],
+    plazaRadius: 30,
+    hasWall: false,
+    wallChance: 0,
+    ringRadiusFrac: 0,
+    segmentLen: 58,
+    branchProb: 0.34,
+    edge: 0.16,
+    branchAngle: Math.PI / 2,
+    branchAngleJitter: (10 * Math.PI) / 180,
+    curvature: (4 * Math.PI) / 180,
+    snapDist: 24,
+    minAngle: (40 * Math.PI) / 180,
+    minEdge: 18,
+    minStub: 24,
+    maxSegments: 3000,
+    alleys: false,
+    culdesacs: false,
+    snapProb: 1,
+    gridAzimuths: [],
+    // The star avenues read as through-avenues (arterial width) — the emitted
+    // ring roads carry `ring` width; the spokes carry `arterial` width.
+    streetWidths: LEGACY_STREET_WIDTHS,
+    chamfer: 0,
+    uniformGrid: false,
+    // 3 concentric connector rings from ~0.3 to ~0.92 of the interior radius.
+    concentric: { count: 3, mode: "roads", innerFrac: 0.3, outerFrac: 0.92 },
+    blockAreaMin: 2000,
+    blockAreaMax: 6000,
+    parcelMinArea: 160,
+    parcelMaxAspect: 3.2,
+    parcelMinFrontage: 8,
+    footprintInset: 2,
+    footprintDepth: 13,
+    footprintCoverage: 0.7,
   },
 };
 

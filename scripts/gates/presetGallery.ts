@@ -56,9 +56,11 @@ const SCALE = 100;
 // bound shifts every preset's height-falloff a hair (warn-only metrics; the hard
 // bands live in the unit suite on a fixed-bounds ring). 025-C appended
 // tartan-grid(56)/ward-grid(72)/eixample(88); 025-D appended haussmann(104)/
-// baroque-axial(120). baroque-axial at x=120 spans 112.9–127.1, so maxX 129
-// fits it with margin.
-const BOUNDS: [number, number, number, number] = [-33, -10, 129, 10];
+// baroque-axial(120). 025-E appends the concentric-ring family — canal-rings(136)/
+// radial-star(152) — plus TWO additive-upgrade VARIANT districts for the eyeball
+// (§2.9 na-grid+seamBoulevard at 168, §2.10 euro-medieval+growthRings:2 at 184).
+// euro-medieval-rings at x=184 spans 176.9–191.1, so maxX 193 fits it.
+const BOUNDS: [number, number, number, number] = [-33, -10, 193, 10];
 const WORLD = { minX: BOUNDS[0] * SCALE, minY: BOUNDS[1] * SCALE, maxX: BOUNDS[2] * SCALE, maxY: BOUNDS[3] * SCALE };
 // Per-preset display-space centres (must match the authored Fabric.geojson) +
 // the district circumradius in display units, for fitBounds framing.
@@ -73,6 +75,8 @@ const CENTERS: Record<string, [number, number]> = {
   eixample: [88, 0],
   haussmann: [104, 0],
   "baroque-axial": [120, 0],
+  "canal-rings": [136, 0],
+  "radial-star": [152, 0],
 };
 const R_UNITS = 7.6; // circumradius 7.09 + margin
 const PRESET_ORDER: ProfileId[] = [
@@ -86,6 +90,16 @@ const PRESET_ORDER: ProfileId[] = [
   "eixample",
   "haussmann",
   "baroque-axial",
+  "canal-rings",
+  "radial-star",
+];
+// Additive-upgrade VARIANT districts (plan 025-E §2.9/§2.10) — NOT presets, so
+// excluded from PRESET_ORDER/metrics/benchmarks (they are benchmarked via their
+// base preset). Included only for the visual eyeball: the seam boulevard cutting
+// diagonally across the na-grid, and the euro-medieval inner growth ring.
+const VARIANTS: { id: string; label: string; center: [number, number] }[] = [
+  { id: "gallery-na-grid-seam", label: "na-grid-seam", center: [168, 0] },
+  { id: "gallery-euro-medieval-rings", label: "euro-medieval-rings", center: [184, 0] },
 ];
 
 interface GalleryFeature {
@@ -143,18 +157,20 @@ async function reopenAndSettle(ids: string[] = []): Promise<void> {
   await issueOpen();
   front();
   await waitFor(() => evalJs(`!!(${viewExpr()})`) === true, 20000, "gallery view");
-  await new Promise((r) => setTimeout(r, 5000)); // replay kickoff
-  // The gallery now holds 10 districts; each generates a full city network
-  // asynchronously, so a fixed sleep races the last presets (baroque-axial is
-  // generated LAST). Poll until EVERY region has features before any digest is
-  // captured — robust to the count growing, not a magic sleep.
+  await new Promise((r) => setTimeout(r, 8000)); // replay kickoff
+  // The gallery now holds 14 districts; each generates a full city network
+  // asynchronously AND writes ~12 tiles × 6 gids to the jsonl cache, sequentially
+  // in the replay loop. From a cleared cache that is ~2 minutes of work, so the
+  // poll budget is generous (the disk cache proves all 14 DO complete — the risk
+  // is under-waiting, never a hang). Poll until EVERY region has features before
+  // any digest is captured — robust to the count growing, not a magic sleep.
   if (ids.length > 0) {
     await waitFor(
       () => ids.every((id) => regionCount(id) > 0),
-      30000,
-      "all gallery presets generated"
+      210000,
+      "all gallery districts generated"
     );
-    await new Promise((r) => setTimeout(r, 1500)); // small quiescence margin
+    await new Promise((r) => setTimeout(r, 2000)); // small quiescence margin
   }
 }
 function fabricDigest(): string {
@@ -214,14 +230,15 @@ function printMetricsTable(gate: Gate): void {
 
 async function main(): Promise<void> {
   const gate = new Gate();
-  console.log("== Plan 025-D gate (preset gallery — the city style catalog) ==\n");
+  console.log("== Plan 025-E gate (preset gallery — the city style catalog) ==\n");
   mkdirSync(REVIEW, { recursive: true });
 
   const gallery = readGallery();
   const fabricBefore = fabricDigest();
 
-  await gate.try(`gallery fixture present (${gallery.length} presets), plugin reloads clean`, () => {
-    if (gallery.length !== 10) throw new Error(`expected 10 gallery presets, found ${gallery.length}`);
+  await gate.try(`gallery fixture present (${gallery.length} districts), plugin reloads clean`, () => {
+    // 12 presets (PRESET_ORDER) + 2 additive-upgrade variant districts = 14.
+    if (gallery.length !== 14) throw new Error(`expected 14 gallery districts, found ${gallery.length}`);
     if (existsSync(CACHE_ABS)) rmSync(CACHE_ABS);
     obsidian("plugin:reload id=campaign-map");
     clearErrors();
@@ -254,7 +271,17 @@ async function main(): Promise<void> {
       await new Promise((r) => setTimeout(r, 1600));
       screenshot(`${REVIEW}/${profile}.png`);
     }
-    // Contact sheet: the whole 1×10 row in one frame.
+    // The two additive-upgrade variants (§2.9 seam boulevard, §2.10 growth ring).
+    for (const v of VARIANTS) {
+      const [cx, cy] = v.center;
+      sync(
+        `(function(){v.map.fitBounds([[${cx - R_UNITS},${cy - R_UNITS}],[${cx + R_UNITS},${cy + R_UNITS}]],{padding:40,animate:false});return 'ok';})()`
+      );
+      front();
+      await new Promise((r) => setTimeout(r, 1600));
+      screenshot(`${REVIEW}/${v.label}.png`);
+    }
+    // Contact sheet: the whole 1×14 row in one frame.
     sync(
       `(function(){v.map.fitBounds([[${BOUNDS[0]},${BOUNDS[1]}],[${BOUNDS[2]},${BOUNDS[3]}]],{padding:20,animate:false});return 'ok';})()`
     );
@@ -264,8 +291,11 @@ async function main(): Promise<void> {
     for (const profile of PRESET_ORDER) {
       if (!existsSync(`${REVIEW}/${profile}.png`)) throw new Error(`missing screenshot for ${profile}`);
     }
+    for (const v of VARIANTS) {
+      if (!existsSync(`${REVIEW}/${v.label}.png`)) throw new Error(`missing screenshot for ${v.label}`);
+    }
     if (!existsSync(`${REVIEW}/_contact-sheet.png`)) throw new Error("missing contact sheet");
-    console.log("     [c] 10 preset shots + contact sheet written to review/gallery/");
+    console.log("     [c] 12 preset shots + 2 variant shots + contact sheet written to review/gallery/");
   });
 
   await gate.try("(e) explicit-only: pan/zoom never generates", async () => {
@@ -302,7 +332,7 @@ async function main(): Promise<void> {
   });
 
   resetLeaves();
-  process.exit(gate.summarize("Plan 025-D"));
+  process.exit(gate.summarize("Plan 025-E"));
 }
 
 main().catch((e) => {

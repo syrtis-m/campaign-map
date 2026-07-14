@@ -7,7 +7,7 @@ scaleMetersPerUnit: 100
 bounds:
   - -33
   - -10
-  - 129
+  - 193
   - 10
 ---
 
@@ -21,6 +21,7 @@ boundary or projection:
 
     euro-medieval(-24)  euro-continental(-8)  na-grid(8)  na-suburb(24)  superblock(40)
     tartan-grid(56)  ward-grid(72)  eixample(88)  haussmann(104)  baroque-axial(120)
+    canal-rings(136)  radial-star(152)  na-grid-seam(168)  euro-medieval-rings(184)
 
 New presets APPEND to the right (fixed x, existing districts never move) and the
 eastern bound widens to fit — so a fixture diff stays localised to the appended
@@ -28,6 +29,11 @@ district + the one bound. superblock landed in 025-B (§2.6); tartan-grid,
 ward-grid and eixample landed in 025-C (§2.2–2.4 + the §3.4 chamfer operator);
 haussmann and baroque-axial landed in 025-D (§2.1 + §2.5, the §3.2 axial-
 breakthrough operator — boulevards cut through the fabric; bound 97→129).
+canal-rings and radial-star landed in 025-E (§2.7 + §2.8, the concentric-ring
+operator; bound 129→193) alongside two additive-upgrade VARIANT districts —
+na-grid-seam (§2.9 seamBoulevard: the quadrant seam promoted to a diagonal
+boulevard) and euro-medieval-rings (§2.10 growthRings: 2, the older inner ring);
+variants are eyeball-only, benchmarked via their base presets.
 
 Committed fixture: this note + Fabric.geojson are durable repo content; the
 .mapcache/ is regenerable and sync-excluded. `scripts/gates/presetGallery.ts`

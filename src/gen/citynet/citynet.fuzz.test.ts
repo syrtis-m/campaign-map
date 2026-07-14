@@ -26,6 +26,8 @@ describe("v3.1/v3.4 200-region fuzz (gate e, anti-Watabou — all five profiles)
       "eixample",
       "haussmann",
       "baroque-axial",
+      "canal-rings",
+      "radial-star",
     ];
     const t0 = Date.now();
     for (let i = 0; i < 200; i++) {
@@ -98,6 +100,8 @@ describe("v4.0 4-profile polygon fuzz (plan 020 gate f)", () => {
     "eixample",
     "haussmann",
     "baroque-axial",
+    "canal-rings",
+    "radial-star",
   ];
 
   it("30 random simple polygons × all profiles: no throw, all output inside", () => {

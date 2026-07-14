@@ -30,13 +30,15 @@ import type { BBox } from "../spatialHash";
 import { clipPolylineToBBox, clipPolygonToBBox, type Vec2 } from "../clip";
 import type { GenerationConstraints } from "../types";
 import { blockedByWater, indexConstraints } from "../fabricConstraints";
-import { regionContains, type ProcgenRegion } from "../region";
-import { PROFILES, type CityProfile } from "./profiles";
+import { generationCenter, regionContains, type ProcgenRegion } from "../region";
+import type { FabricFeature } from "../../model/fabric";
+import { PROFILES, type AxialConfig, type CityProfile } from "./profiles";
 import type { ProfileId } from "./domain";
 import { makeCostField } from "./costField";
 import { buildSkeleton } from "./skeleton";
 import { growNetwork, collectGrownChains, collectCourtTips, COURT_RADIUS_M } from "./growth";
 import { driveBoulevards } from "./axial";
+import { driveRingRoads, concentricCanalRuns } from "./rings";
 import { extractBlocks, chamferRing } from "./faces";
 import { subdivideBlocks } from "./parcels";
 import { buildWards } from "./wards";
@@ -95,6 +97,18 @@ function qLine(coords: Pt[]): Pt[] {
   return coords.map(([x, y]) => [q(x), q(y)]);
 }
 
+/** The generation center canal rings anchor to — MIRRORS `skeleton.ts`'s
+ * `resolveGenerationCenter`: a contained `centerOverride` wins (mm-quantized),
+ * else the computed `generationCenter`. Kept here so canals (built before the
+ * skeleton) share the skeleton's exact center. */
+function resolveCenter(region: ProcgenRegion, override?: [number, number]): Pt {
+  if (override) {
+    const c: Pt = [q(override[0]), q(override[1])];
+    if (regionContains(region, c[0], c[1])) return c;
+  }
+  return generationCenter(region);
+}
+
 /** First coordinate of a feature, for the canonical sort key. */
 function firstCoord(f: GeoJSON.Feature): Pt {
   const g = f.geometry;
@@ -142,16 +156,66 @@ function sortCanonical(features: GeoJSON.Feature[]): void {
  * (plan 020 §5). Coordinates are quantized and the feature list is
  * canonically sorted before return.
  */
+/**
+ * Additive per-run city params (plan 025-E §2.9/§2.10). Supplied by the registry
+ * from the persisted procgen block; OMITTED (undefined) for every pre-025-E
+ * caller, so those runs are byte-identical. `seamBoulevard` promotes the na-grid
+ * quadrant-collision seam into ONE diagonal boulevard; `growthRings` (1 or 2)
+ * adds euro-medieval's older inner ring road.
+ */
+export interface CityParamOverrides {
+  seamBoulevard?: boolean;
+  growthRings?: number;
+}
+
 export function generateCityNetwork(
   citySeed: number,
   region: ProcgenRegion,
   profileId: ProfileId,
   constraints: GenerationConstraints,
-  centerOverride?: [number, number]
+  centerOverride?: [number, number],
+  overrides?: CityParamOverrides
 ): GeoJSON.Feature[] {
-  const profile = PROFILES[profileId];
-  const cost = makeCostField(citySeed, region, constraints);
-  const skel = buildSkeleton(citySeed, region, profile, constraints, cost, centerOverride);
+  // Effective profile: the data-table profile plus the additive per-run params.
+  // A fresh clone (never mutating PROFILES). Absent overrides ⇒ identical to
+  // the base profile, so every pre-025-E preset is byte-for-byte unchanged.
+  const profile: CityProfile = { ...PROFILES[profileId] };
+  if (overrides?.seamBoulevard !== undefined) profile.seamBoulevard = overrides.seamBoulevard;
+  if (overrides?.growthRings !== undefined) profile.growthRings = overrides.growthRings;
+  // Seam boulevard (§2.9): na-grid's collision seam becomes a single diagonal
+  // breakthrough boulevard — reuse the axial operator (a lone hashed-bearing
+  // chord reads diagonal across the cardinal grid — the Market-Street cut).
+  if (!profile.axial && profile.seamBoulevard) {
+    profile.axial = { count: 1, mode: "breakthrough", elbow: 0 } satisfies AxialConfig;
+  }
+
+  // Canal rings (§2.7): build the concentric canals BEFORE the cost field /
+  // skeleton and fold them into the constraints as `river` lines, so the shared
+  // citynet water machinery (bridges where radials cross, quays along banks,
+  // footprints kept out of the water) drives them with no new plumbing. The
+  // center matches the skeleton's (same inputs → `resolveCenter` mirrors
+  // `resolveGenerationCenter`), so canals and radials share one origin.
+  let effConstraints = constraints;
+  let canalRuns: Pt[][] = [];
+  if (profile.concentric?.mode === "canals") {
+    const center = resolveCenter(region, centerOverride);
+    canalRuns = concentricCanalRuns(region, center, profile.concentric);
+    if (canalRuns.length > 0) {
+      const canalFeatures: FabricFeature[] = canalRuns.map((run, i) => ({
+        type: "Feature",
+        id: `canal:${region.id}:${i}`,
+        geometry: { type: "LineString", coordinates: run.map(([x, y]) => [q(x), q(y)]) },
+        properties: { kind: "river" },
+      }));
+      effConstraints = {
+        ...constraints,
+        fabricFeatures: [...(constraints.fabricFeatures ?? []), ...canalFeatures],
+      };
+    }
+  }
+
+  const cost = makeCostField(citySeed, region, effConstraints);
+  const skel = buildSkeleton(citySeed, region, profile, effConstraints, cost, centerOverride);
   const features: GeoJSON.Feature[] = [];
 
   /** Plan-020 containment guard for center-built decorative rings. */
@@ -296,13 +360,26 @@ export function generateCityNetwork(
   // Stage B (v3.1): grow the street web off the skeleton, emit merged chains
   // (roadClass "street" or "alley" — chains never mix classes, v3.4). Chain
   // keys are position-derived (endpoint node keys), never order-derived.
-  const { graph } = growNetwork(citySeed, region, profile, constraints, skel);
+  const { graph } = growNetwork(citySeed, region, profile, effConstraints, skel);
   // Axial breakthrough (plan 025 §3.2): profiles that opt in (haussmann,
-  // baroque-axial) cut wide boulevards THROUGH the grown fabric here — spliced
-  // planar into the graph as `boulevard`-class grown edges BEFORE faces/parcels,
-  // so the blocks they cross re-close and re-parcel fronting the cut with no
-  // reflow pass. A no-op (byte-neutral) for every profile without `axial`.
+  // baroque-axial, and na-grid+seamBoulevard) cut wide boulevards THROUGH the
+  // grown fabric here — spliced planar into the graph as `boulevard`-class grown
+  // edges BEFORE faces/parcels, so the blocks they cross re-close and re-parcel
+  // fronting the cut with no reflow pass. A no-op for every profile without
+  // `axial` (and without the seam upgrade).
   if (profile.axial) driveBoulevards(citySeed, graph, region, profile, skel);
+  // Concentric ring roads (plan 025 §2.8 radial-star): splice the connector
+  // rings into the graph as `ring`-class grown edges so the radial arterials ×
+  // rings box the wedge blocks (BEFORE faces, same stage order as the axial cut).
+  if (profile.concentric?.mode === "roads") {
+    driveRingRoads(graph, region, skel.center, profile.concentric);
+  }
+  // Growth rings (plan 025 §2.10 euro-medieval `growthRings: 2`): one older
+  // inner ring road inside the outer wall — the Paris Châtelet reading. Byte-
+  // neutral for the default (`undefined`/1).
+  if ((profile.growthRings ?? 1) >= 2) {
+    driveRingRoads(graph, region, skel.center, { count: 1, mode: "roads", innerFrac: 0.5, outerFrac: 0.5 });
+  }
   for (const chain of collectGrownChains(graph)) {
     if (chain.coords.length < 2) continue;
     features.push({
@@ -350,7 +427,9 @@ export function generateCityNetwork(
   // Stage C (v3.2): faces → blocks → parcels → footprints, plus wards.
   // Block identity is the face's sorted node keys (position-derived); parcel/
   // footprint identity is (blockKey, split path) — never emission order (D2).
-  const fabricIdx = indexConstraints(constraints);
+  // effConstraints folds in the canal rings (canal-rings §2.7) as water, so
+  // blocks that span a canal are dropped and footprints stay out of the water.
+  const fabricIdx = indexConstraints(effConstraints);
   const { blocks } = extractBlocks(graph, region);
   const dryBlocks = blocks.filter((b) => {
     // A face bounded by two quays can span the river; buildings don't swim.
@@ -473,6 +552,27 @@ export function generateCityNetwork(
       },
     });
   }
+
+  // Canal water (plan 025 §2.7 canal-rings): the concentric canal centerlines
+  // emit as WATER — a distinct `city-landmark` type=`canal` line the theme
+  // paints with the water hue (a fat blue casing ≈ RIVER_HALF_WIDTH×2 wide),
+  // rendered BELOW the streets so the radial bridges read OVER the canals.
+  // Empty (byte-neutral) for every non-canal preset.
+  canalRuns.forEach((run, i) => {
+    if (run.length < 2) return;
+    features.push({
+      type: "Feature",
+      id: hashSeed(citySeed, "canal", i),
+      geometry: { type: "LineString", coordinates: qLine(run) },
+      properties: {
+        generated: true,
+        generatorId: "city-landmark",
+        type: "canal",
+        width: 30,
+        regionId: region.id,
+      },
+    });
+  });
 
   sortCanonical(features);
   return features;

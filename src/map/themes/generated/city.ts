@@ -108,6 +108,29 @@ export function cityLayers(t: ThemeTokens): LayerSpecification[] {
       },
     } as unknown as LayerSpecification,
     {
+      // Canal rings (plan 025 §2.7 canal-rings): the concentric canals emit as
+      // `city-landmark` type=`canal` LINES (the water machinery reads them as
+      // rivers internally; here they read as WATER). A fat blue casing ≈ the
+      // 30 m canal width — same water hue as a sketched river (F2: provenance
+      // invisible per kind), rendered BELOW the streets so the radial bridges
+      // read over the canals. No zoom LOD (standing fabric ruling).
+      id: "generated-canal",
+      type: "line",
+      source: "generated",
+      filter: [
+        "all",
+        ["==", ["get", "generatorId"], "city-landmark"],
+        ["==", ["get", "type"], "canal"],
+        ["==", ["geometry-type"], "LineString"],
+      ],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": t.fabricRiver,
+        "line-opacity": 0.85,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 3, 12, 7, 18, 16],
+      },
+    } as unknown as LayerSpecification,
+    {
       // City gates (v3.3): unnamed fabric points where arterials pierce the
       // wall — small stone-hued dots, never Location pins (I4).
       id: "generated-gate",

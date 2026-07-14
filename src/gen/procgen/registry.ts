@@ -108,10 +108,20 @@ export const CITY_PROFILE_IDS = [
   "eixample",
   "haussmann",
   "baroque-axial",
+  "canal-rings",
+  "radial-star",
 ] as const satisfies readonly ProfileId[];
 
 const cityParamsSchema = z.object({
   profile: z.enum(CITY_PROFILE_IDS),
+  /** Plan 025 §2.9 (na-grid): promote the quadrant-collision seam into ONE wide
+   * diagonal boulevard (Market Street). Additive — DEFAULT off, so na-grid stays
+   * byte-identical unless the GM opts in. Read only by the `city` generator. */
+  seamBoulevard: z.boolean().optional(),
+  /** Plan 025 §2.10 (euro-medieval): number of successive walls/ring-roads —
+   * 1 (default, today) or 2 (a second, older inner ring, the Paris Châtelet
+   * reading). Additive — absent/1 leaves euro-medieval byte-identical. */
+  growthRings: z.union([z.literal(1), z.literal(2)]).optional(),
   /** Optional GM-placed generation center (plan 020 Addendum 2), gen-space
    * meters, mm-quantized by the host. Present ⇒ the plaza + arterial star
    * anchor here instead of the computed `generationCenter(region)`, so a
@@ -140,6 +150,8 @@ const CITY_PRESETS: readonly ProcgenPreset[] = [
   { id: "eixample", label: "Eixample — uniform blocks, chamfered octagon corners (Barcelona)", params: { profile: "eixample" } },
   { id: "haussmann", label: "Haussmann — boulevards cut through a medieval warren, star plazas (Paris)", params: { profile: "haussmann" } },
   { id: "baroque-axial", label: "Baroque axial — a straight trident of grand corsi from a gate piazza (Rome/Turin)", params: { profile: "baroque-axial" } },
+  { id: "canal-rings", label: "Canal rings — concentric canals crossed by radial bridges (Amsterdam)", params: { profile: "canal-rings" } },
+  { id: "radial-star", label: "Radial star — avenues from a rond-point, concentric connector rings (Paris Étoile)", params: { profile: "radial-star" } },
 ];
 
 const cityAlgorithm: ProcgenAlgorithm = {
@@ -167,8 +179,11 @@ const cityAlgorithm: ProcgenAlgorithm = {
   },
   tileGeneratorIds: DOMAIN_TILE_GENERATOR_IDS,
   generate(seed, region, params, constraints): GeoJSON.Feature[] {
-    const { profile, center } = cityParamsSchema.parse(params);
-    return generateCityNetwork(seed, region, profile, constraints, center);
+    const { profile, center, seamBoulevard, growthRings } = cityParamsSchema.parse(params);
+    // Additive per-run params (plan 025-E §2.9/§2.10) — undefined ⇒ byte-identical.
+    const overrides =
+      seamBoulevard !== undefined || growthRings !== undefined ? { seamBoulevard, growthRings } : undefined;
+    return generateCityNetwork(seed, region, profile, constraints, center, overrides);
   },
 };
 

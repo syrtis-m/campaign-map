@@ -32,7 +32,9 @@ export type ProfileId =
   | "ward-grid"
   | "eixample"
   | "haussmann"
-  | "baroque-axial";
+  | "baroque-axial"
+  | "canal-rings"
+  | "radial-star";
 
 export interface CityDomain {
   /** `dom:<anchorCellX>:<anchorCellY>` — stable, position-keyed. */

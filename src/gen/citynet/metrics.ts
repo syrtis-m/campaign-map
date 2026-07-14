@@ -214,6 +214,36 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [1.3, 1.62],
     anchor: "Roma Trident · Turin Via Po — a straight trident of corsi from a gate piazza",
   },
+  // ── plan 025-E presets: the concentric-ring pattern family (§1.3 "concentric
+  // grids", distinct from grid + organic). Measured on the gallery ring (pinned
+  // seed) and widened to research windows (25-A methodology).
+  //
+  // canal-rings (§2.7): Amsterdam 17th-c. — concentric CANALS crossed by radial
+  // bridges, the fabric knit into elongated blocks BETWEEN the rings. The canals
+  // (water) fragment the street web, so permeability runs LOW (<1: streets
+  // dead-end at the water where no bridge crosses) — the canal-city signature,
+  // NOT a defect. Land share runs high (dense burgher fabric between canals).
+  // Anchor: Amsterdam 17th-c. ≈195 int/km².
+  "canal-rings": {
+    intersectionsPerKm2: [80, 200],
+    streetKmPerKm2: [30, 56],
+    streetLandShare: [0.4, 0.62],
+    blockGrainP50: [26, 55],
+    permeability: [0.55, 1.05],
+    anchor: "Amsterdam 17th-c. ≈195 — concentric canals, radial bridges, elongated blocks",
+  },
+  // radial-star (§2.8): Paris Étoile — avenues from a rond-point crossed by
+  // concentric CONNECTOR RINGS, wedge blocks toward the rim. The star spokes +
+  // rings are the through-avenue web (high avenueShare); moderate, well-
+  // connected numbers. Anchor: Paris Étoile ≈133 (ours denser).
+  "radial-star": {
+    intersectionsPerKm2: [120, 260],
+    streetKmPerKm2: [20, 40],
+    streetLandShare: [0.28, 0.52],
+    blockGrainP50: [36, 74],
+    permeability: [1.12, 1.5],
+    anchor: "Paris Étoile ≈133 — radial avenues from a rond-point, concentric connector rings",
+  },
 };
 
 /** True when `value` lies within the closed band. */

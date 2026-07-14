@@ -19,6 +19,7 @@ import {
 import { generateCityNetwork, type ProfileId } from "./index";
 import { makeRegion, type ProcgenRegion } from "../region";
 import { hashSeed } from "../rng";
+import { allCoordsInside } from "./citynet.fixtures";
 
 const WORLD = { minX: -8000, minY: -8000, maxX: 8000, maxY: 8000 };
 const GALLERY_SEED = 90210;
@@ -359,6 +360,112 @@ describe("§3.1 benchmark gates — plan 025-D presets (haussmann / baroque-axia
 
   it("both axial presets clear Salat's ≥15 km/km² floor (composed organic fabric, not the anti-pattern)", () => {
     for (const p of AXIAL) expect(M[p].streetKmPerKm2).toBeGreaterThanOrEqual(15);
+  });
+});
+
+describe("§3.1 benchmark gates — plan 025-E presets (canal-rings / radial-star)", () => {
+  const region = galleryRegion();
+  const RINGS: ProfileId[] = ["canal-rings", "radial-star"];
+  const M: Record<string, NetworkMetrics> = {};
+  for (const p of RINGS) M[p] = computeNetworkMetrics(presetNet(p, region), region);
+
+  for (const p of RINGS) {
+    it(`${p} lands inside its §3.1 benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
+      const violations = benchmarkViolations(p, M[p]);
+      expect(violations, violations.join("; ")).toEqual([]);
+    });
+  }
+
+  // ── canal-rings (§2.7): concentric canals crossed by radial bridges ─────────
+  it("canal-rings emits concentric CANAL water lines (city-landmark type=canal)", () => {
+    const net = presetNet("canal-rings", region);
+    const canals = net.filter(
+      (f) => f.properties?.generatorId === "city-landmark" && f.properties?.type === "canal"
+    );
+    // 3 concentric canals authored (a concave clip could split one, so ≥3).
+    expect(canals.length).toBeGreaterThanOrEqual(3);
+    // No OTHER preset emits a canal (the water is the canal-rings signature).
+    for (const p of ["euro-medieval", "radial-star"] as ProfileId[]) {
+      const other = presetNet(p, region).filter((f) => f.properties?.type === "canal");
+      expect(other.length, `${p} canals`).toBe(0);
+    }
+  });
+
+  it("canal-rings BRIDGES its canals: radial arterials cross the water as bridge features", () => {
+    const net = presetNet("canal-rings", region);
+    const bridges = net.filter((f) => f.properties?.type === "bridge");
+    // 6 radials × 3 canals ⇒ many bridges (the Amsterdam radial-bridge read).
+    expect(bridges.length).toBeGreaterThan(6);
+  });
+
+  // ── radial-star (§2.8): star spokes + concentric connector rings ───────────
+  it("radial-star splices concentric connector RINGS: many ring-class street chains", () => {
+    const net = presetNet("radial-star", region);
+    const ringChains = net.filter(
+      (f) => f.properties?.generatorId === "city-street" && f.properties?.roadClass === "ring"
+    );
+    expect(ringChains.length).toBeGreaterThan(10);
+    // radial-star has NO canals (roads, not water).
+    expect(net.filter((f) => f.properties?.type === "canal").length).toBe(0);
+  });
+
+  it("radial-star is a through-avenue web: high avenueShare (spokes + rings), well-connected", () => {
+    expect(M["radial-star"].avenueShare).toBeGreaterThan(0.2);
+    expect(M["radial-star"].permeability).toBeGreaterThan(1.1);
+  });
+});
+
+describe("plan 025-E additive upgrades — seam boulevards (na-grid) + growth rings (euro-medieval)", () => {
+  const region = galleryRegion();
+  const seed = (p: ProfileId): number => hashSeed(GALLERY_SEED, "gallery", p);
+
+  // Serialize a network to a stable digest (ids + geometry) for byte-comparison.
+  const digest = (net: GeoJSON.Feature[]): string =>
+    JSON.stringify(net.map((f) => [f.id, f.geometry]));
+
+  it("na-grid seamBoulevard is OFF by default → byte-identical; ON → adds a wide diagonal boulevard", () => {
+    const base = generateCityNetwork(seed("na-grid"), region, "na-grid", { worldBounds: WORLD });
+    const off = generateCityNetwork(seed("na-grid"), region, "na-grid", { worldBounds: WORLD }, undefined, {
+      seamBoulevard: false,
+    });
+    // Default and explicit-off are byte-identical (additive-params rule).
+    expect(digest(off)).toBe(digest(base));
+
+    const on = generateCityNetwork(seed("na-grid"), region, "na-grid", { worldBounds: WORLD }, undefined, {
+      seamBoulevard: true,
+    });
+    // The seam adds boulevard-class (30 m) fabric that plain na-grid never has.
+    const baseBlvd = base.filter((f) => f.properties?.roadClass === "boulevard").length;
+    const onBlvd = on.filter((f) => f.properties?.roadClass === "boulevard").length;
+    expect(baseBlvd).toBe(0);
+    expect(onBlvd).toBeGreaterThan(0);
+    // Determinism: same override twice ⇒ byte-identical.
+    const on2 = generateCityNetwork(seed("na-grid"), region, "na-grid", { worldBounds: WORLD }, undefined, {
+      seamBoulevard: true,
+    });
+    expect(digest(on2)).toBe(digest(on));
+    expect(allCoordsInside(on, region)).toBe(true);
+  });
+
+  it("euro-medieval growthRings defaults to 1 (byte-identical); 2 splices an inner ring road", () => {
+    const base = generateCityNetwork(seed("euro-medieval"), region, "euro-medieval", { worldBounds: WORLD });
+    const one = generateCityNetwork(seed("euro-medieval"), region, "euro-medieval", { worldBounds: WORLD }, undefined, {
+      growthRings: 1,
+    });
+    expect(digest(one)).toBe(digest(base));
+
+    const two = generateCityNetwork(seed("euro-medieval"), region, "euro-medieval", { worldBounds: WORLD }, undefined, {
+      growthRings: 2,
+    });
+    // The inner ring road adds ring-class fabric + intersections (denser).
+    const baseRings = base.filter((f) => f.properties?.roadClass === "ring").length;
+    const twoRings = two.filter((f) => f.properties?.roadClass === "ring").length;
+    expect(twoRings).toBeGreaterThan(baseRings);
+    const two2 = generateCityNetwork(seed("euro-medieval"), region, "euro-medieval", { worldBounds: WORLD }, undefined, {
+      growthRings: 2,
+    });
+    expect(digest(two2)).toBe(digest(two));
+    expect(allCoordsInside(two, region)).toBe(true);
   });
 });
 
