@@ -327,6 +327,23 @@
         "src/view/RegionProcgenModal.ts",
         "src/view/SketchController.ts"
       ]
+    },
+    "contours23c": {
+      "script": "scripts/gates/contours23c.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/mountain.ts",
+        "src/gen/fields/**",
+        "src/gen/procgen/**",
+        "src/controller/MapController.ts",
+        "src/model/fabric.ts",
+        "src/model/tileCache.ts",
+        "src/map/themes/generatedLayers.ts",
+        "src/map/themes/generated/mountain.ts",
+        "src/map/themes/tokens.ts",
+        "src/map/theme.ts",
+        "src/view/MapView.ts"
+      ]
     }
   }
 }

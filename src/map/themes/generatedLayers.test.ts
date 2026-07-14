@@ -499,18 +499,19 @@ describe("generatedLayers — farmland field/lane/hedge/building/tree paint cove
   });
 });
 
-/** Every emitted mountain feature type (plan 023 §3) needs paint in every
- * theme: the rocky massif fill, the downslope hachure ticks (LINE) and the
- * summit peak markers (CIRCLE). Coverage guard for the mountain types added in
- * plan 023-B. */
+/** Every emitted mountain feature type (plan 023 §3 + §4.1) needs paint in
+ * every theme: the rocky massif fill, the topographic contour iso-lines (LINE),
+ * the downslope hachure ticks (LINE) and the summit peak markers (CIRCLE).
+ * Coverage guard for the mountain types added in plan 023-B/23-C. */
 const MOUNTAIN_LAYER_IDS = [
   "generated-mountain-massif",
+  "generated-mountain-contour",
   "generated-mountain-hachure",
   "generated-mountain-peak",
 ] as const;
 
-describe("generatedLayers — mountain massif/hachure/peak paint coverage (plan 023 §3)", () => {
-  it("all three mountain layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
+describe("generatedLayers — mountain massif/contour/hachure/peak paint coverage (plan 023 §3 + §4.1)", () => {
+  it("all mountain layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
     const layers = generatedLayers(PARCHMENT);
     for (const id of MOUNTAIN_LAYER_IDS) {
       const layer = layers.find((l) => l.id === id);
@@ -522,16 +523,18 @@ describe("generatedLayers — mountain massif/hachure/peak paint coverage (plan 
     }
   });
 
-  it("massif is a fill, hachure a line, peak a circle", () => {
+  it("massif is a fill, contour + hachure are lines, peak a circle", () => {
     const layers = generatedLayers(PARCHMENT);
     expect(layers.find((l) => l.id === "generated-mountain-massif")!.type).toBe("fill");
+    expect(layers.find((l) => l.id === "generated-mountain-contour")!.type).toBe("line");
     expect(layers.find((l) => l.id === "generated-mountain-hachure")!.type).toBe("line");
     expect(layers.find((l) => l.id === "generated-mountain-peak")!.type).toBe("circle");
   });
 
-  it("layers relief bottom-up: massif under hachure under peak", () => {
+  it("layers relief bottom-up: massif under contour under hachure under peak", () => {
     const ids = generatedLayers(PARCHMENT).map((l) => l.id);
-    expect(ids.indexOf("generated-mountain-hachure")).toBeGreaterThan(ids.indexOf("generated-mountain-massif"));
+    expect(ids.indexOf("generated-mountain-contour")).toBeGreaterThan(ids.indexOf("generated-mountain-massif"));
+    expect(ids.indexOf("generated-mountain-hachure")).toBeGreaterThan(ids.indexOf("generated-mountain-contour"));
     expect(ids.indexOf("generated-mountain-peak")).toBeGreaterThan(ids.indexOf("generated-mountain-hachure"));
   });
 
@@ -569,7 +572,7 @@ describe("generatedLayers — mountain massif/hachure/peak paint coverage (plan 
     });
   }
 
-  it("obsidian-native runtime style paints all three mountain layers", () => {
+  it("obsidian-native runtime style paints all mountain layers", () => {
     const css: ObsidianCssTokens = {
       backgroundPrimary: "#1e1e1e",
       backgroundSecondary: "#262626",

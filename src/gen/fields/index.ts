@@ -44,3 +44,9 @@ export {
   valueNoise2DWithDeriv,
   fbmEroded,
 } from "./elevation";
+export type { Contour, MarchingSquaresOptions } from "./marchingSquares";
+export {
+  // Iso-line / iso-band tracing over any scalar field (plan 023 §4.1) — the
+  // reusable machinery behind mountain contours (23-C) and forest canopy (026-B).
+  marchingSquares,
+} from "./marchingSquares";

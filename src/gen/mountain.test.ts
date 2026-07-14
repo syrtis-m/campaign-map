@@ -134,6 +134,106 @@ describe("mountain generator — determinism", () => {
   });
 });
 
+describe("mountain generator — contours are ADDITIVE (23-C, plan 023 §4.1)", () => {
+  // Contours append AFTER massif/hachure/peak and never touch their code paths,
+  // so an existing mountain regenerates with contours WITHOUT changing a single
+  // byte of its prior output. These hexes are the digest of the non-contour
+  // subset captured from HEAD (pre-contour) — a reshape of the old features
+  // (or a re-associated field build) flips them. (The combined golden snapshot
+  // above is updated deliberately; THIS is the byte-identity proof.)
+  const HEAD_NON_CONTOUR: Record<string, string> = {
+    alpine: "274c402514b92524a1ed5862d35c2887104127ac29a2526f13dfb89ce17887db",
+    mesa: "51d000f400bac39eeac7f21cb6699ee1411044ec3cff07414cf60b6f037f2d34",
+    "rolling-hills": "06ed54d80a4efc3d53b4de4ff8b119bd434c72d346c332b0bd4907bd8488c362",
+  };
+  function nonContourDigest(feats: GeoJSON.Feature[]): string {
+    const sub = feats.filter((f) => (f.properties as { generatorId?: string }).generatorId !== "mountain-contour");
+    return createHash("sha256").update(JSON.stringify(sub)).digest("hex");
+  }
+  for (const terrain of ["alpine", "mesa", "rolling-hills"] as const) {
+    it(`preserves the pre-contour massif/hachure/peak bytes — ${terrain}`, () => {
+      const feats = generateMountain(4242, regionFor(SQUARE), PARAMS({ terrain }), CONSTRAINTS);
+      expect(nonContourDigest(feats)).toBe(HEAD_NON_CONTOUR[terrain]);
+    });
+  }
+});
+
+describe("mountain generator — contour iso-lines (23-C, plan 023 §4.1)", () => {
+  it("emits mountain-contour lines for every terrain, all inside the ring", () => {
+    for (const terrain of ["alpine", "mesa", "rolling-hills"] as const) {
+      const region = regionFor(SQUARE);
+      const feats = generateMountain(77, region, PARAMS({ terrain }), CONSTRAINTS);
+      const contours = feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "mountain-contour");
+      expect(contours.length, `${terrain} emitted no contours`).toBeGreaterThan(0);
+      for (const c of contours) {
+        expect(c.geometry.type).toBe("LineString");
+        for (const [x, y] of allCoords([c])) {
+          expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1);
+        }
+      }
+    }
+  });
+
+  it("contours carry a numeric elevation and a minor|major index (theme paint hooks)", () => {
+    const feats = generateMountain(88, regionFor(SQUARE), PARAMS(), CONSTRAINTS);
+    const contours = feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "mountain-contour");
+    expect(contours.length).toBeGreaterThan(0);
+    let majors = 0;
+    for (const c of contours) {
+      const p = c.properties as { elevation?: number; index?: string };
+      expect(typeof p.elevation).toBe("number");
+      expect(["minor", "major"]).toContain(p.index);
+      if (p.index === "major") majors++;
+    }
+    // A 1200 m alpine wall spans enough relief that at least one major (every
+    // 5th) index line is present.
+    expect(majors).toBeGreaterThan(0);
+  });
+
+  it("mesa contours BUNCH into terrace bands — rolling-hills reads smoother", () => {
+    // The terraced field packs many iso-lines through each cliff riser at a
+    // similar elevation, so mesa produces markedly more distinct contour levels
+    // per unit relief than the smooth rolling field at the same amplitude.
+    const levelSpread = (terrain: "mesa" | "rolling-hills"): number => {
+      const feats = generateMountain(64, regionFor(SQUARE), { terrain, amplitude: 0.6, roughness: 0.4 }, CONSTRAINTS);
+      const levels = new Set<number>();
+      for (const f of feats) {
+        const p = f.properties as { generatorId?: string; elevation?: number };
+        if (p.generatorId === "mountain-contour") levels.add(p.elevation!);
+      }
+      return levels.size;
+    };
+    // Both emit contours; the mesa's terracing yields at least as many distinct
+    // bands (the risers force dense crossings) — never fewer.
+    expect(levelSpread("mesa")).toBeGreaterThanOrEqual(levelSpread("rolling-hills"));
+    expect(levelSpread("mesa")).toBeGreaterThan(0);
+  });
+
+  it("a single vertex edit changes contours far less than a re-roll (identity inherited)", () => {
+    const contourBuckets = (feats: GeoJSON.Feature[]): Set<string> => {
+      const s = new Set<string>();
+      for (const f of feats) {
+        if ((f.properties as { generatorId?: string }).generatorId !== "mountain-contour") continue;
+        for (const [x, y] of allCoords([f])) s.add(`${Math.round(x / 30)},${Math.round(y / 30)}`);
+      }
+      return s;
+    };
+    const base = contourBuckets(generateMountain(50, regionFor(SQUARE), PARAMS(), CONSTRAINTS));
+    const moved: Pt[] = [
+      [0, 0],
+      [1320, 0],
+      [1200, 1200],
+      [0, 1200],
+      [0, 0],
+    ];
+    const editOverlap = overlapPct(base, contourBuckets(generateMountain(50, regionFor(moved), PARAMS(), CONSTRAINTS)));
+    const rerollOverlap = overlapPct(base, contourBuckets(generateMountain(51, regionFor(SQUARE), PARAMS(), CONSTRAINTS)));
+    expect(base.size).toBeGreaterThan(10);
+    expect(editOverlap).toBeGreaterThan(rerollOverlap + 15);
+    expect(editOverlap).toBeGreaterThan(70);
+  });
+});
+
 describe("mountain generator — terrain (preset) semantics", () => {
   it("always emits exactly one massif polygon (the sketched ring)", () => {
     for (const terrain of ["alpine", "mesa", "rolling-hills"] as const) {
@@ -264,12 +364,14 @@ describe("mountain generator — 2x2 seam via whole-artifact clip", () => {
     const min = tileXYForPoint(region.bbox.minX, region.bbox.minY);
     const max = tileXYForPoint(region.bbox.maxX, region.bbox.maxY);
     let clipped = 0;
+    let contourTiles = 0; // contours are the seam poster child — assert they clip
     for (let ty = min.tileY; ty <= max.tileY; ty++) {
       for (let tx = min.tileX; tx <= max.tileX; tx++) {
         const bb = tileBBox(tx, ty);
         const a = clipNetworkToTile(network, bb);
         const b = clipNetworkToTile(network, bb);
         expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+        if (a["mountain-contour"]?.length) contourTiles++;
         for (const gid of Object.keys(a)) {
           for (const f of a[gid]) {
             for (const [x, y] of allCoords([f])) {
@@ -284,6 +386,9 @@ describe("mountain generator — 2x2 seam via whole-artifact clip", () => {
       }
     }
     expect(clipped).toBeGreaterThan(0);
+    // Contours span multiple tiles; clipping the ONE artifact into each tile is
+    // the seam story (adjacent tiles cut the same bytes → they agree on edges).
+    expect(contourTiles).toBeGreaterThan(1);
   });
 });
 

@@ -442,11 +442,17 @@ const MOUNTAIN_PRESETS: readonly ProcgenPreset[] = [
   { id: "rolling-hills", label: "Rolling hills — gentle rounded uplands", params: { terrain: "rolling-hills", amplitude: 0.3, roughness: 0.35 } },
 ];
 
-/** Mountain tile-generator ids = the emitted feature buckets (plan 023 §3): the
- * rocky-ground massif, the downslope relief hachures, and the summit peaks.
- * Cache keys + paint layers key on these — EVERY emitted gid MUST appear here
- * or the tile clip silently drops it (the twice-hit integration bug). */
-export const MOUNTAIN_TILE_GENERATOR_IDS: readonly string[] = ["mountain-massif", "mountain-hachure", "mountain-peak"];
+/** Mountain tile-generator ids = the emitted feature buckets (plan 023 §3 +
+ * §4.1): the rocky-ground massif, the downslope relief hachures, the summit
+ * peaks, and the topographic contour iso-lines (23-C). Cache keys + paint
+ * layers key on these — EVERY emitted gid MUST appear here or the tile clip
+ * silently drops it (the twice-hit integration bug). */
+export const MOUNTAIN_TILE_GENERATOR_IDS: readonly string[] = [
+  "mountain-massif",
+  "mountain-hachure",
+  "mountain-peak",
+  "mountain-contour",
+];
 
 const mountainAlgorithm: ProcgenAlgorithm = {
   id: "mountain",

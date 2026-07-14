@@ -2,10 +2,12 @@ import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "../tokens";
 
 /**
- * Mountain fabric paint (plan 023 §3). Relief drawn bottom-up: the rocky-ground
- * MASSIF wash first, downslope HACHURE ticks above it (a darker stroke of the
- * massif hue — the classic dark-line relief read), then the summit PEAK markers
- * on top. Mountain is BASE TERRAIN, so this block sits EARLY in the emitted
+ * Mountain fabric paint (plan 023 §3 + §4.1). Relief drawn bottom-up: the
+ * rocky-ground MASSIF wash first, faint topographic CONTOUR iso-lines over it
+ * (the base topo read; major index lines heavier than minor), downslope HACHURE
+ * ticks above those (a darker stroke of the massif hue — the classic dark-line
+ * relief read), then the summit PEAK markers on top. Mountain is BASE TERRAIN,
+ * so this block sits EARLY in the emitted
  * array (after world-region, before farm/city) — a town sketched on a mountain
  * paints its footprints on top. NO zoom LOD (Jonah 2026-07-12): density is
  * paint, never a minzoom gate.
@@ -55,6 +57,11 @@ export function mountainLayers(t: ThemeTokens): LayerSpecification[] {
   const hachure = darkMap ? lighten(t.fabricMountain, 0.4) : darken(t.fabricMountain, 0.5);
   const peak = darkMap ? lighten(t.fabricMountain, 0.55) : darken(t.fabricMountain, 0.45);
   const peakRing = darkMap ? darken(t.fabricMountain, 0.4) : lighten(t.fabricMountain, 0.7);
+  // Contours track the stone hue (derived from `fabricMountain`, same discipline
+  // as hachures/peaks — no extra token) but sit a shade FAINTER than the
+  // hachures so the tick-shading still dominates the relief read; on dark maps
+  // they lift toward the land luminance instead of sinking into it.
+  const contour = darkMap ? lighten(t.fabricMountain, 0.3) : darken(t.fabricMountain, 0.6);
   return [
     {
       // Rocky-ground massif: a restrained stony wash so a bare mountain reads as
@@ -66,6 +73,34 @@ export function mountainLayers(t: ThemeTokens): LayerSpecification[] {
       source: "generated",
       filter: ["==", ["get", "generatorId"], "mountain-massif"],
       paint: { "fill-color": t.fabricMountain, "fill-opacity": 0.45, "fill-antialias": false },
+    } as unknown as LayerSpecification,
+    {
+      // Topographic contour iso-lines (plan 023 §4.1) — the base topo read, over
+      // the massif and UNDER the hachures. One layer, data-driven by the feature's
+      // `index`: major index lines paint heavier + more opaque than minor lines
+      // (the standard every-5th cadence). NO zoom LOD gate — width ramps with
+      // zoom for legibility, but the layer renders at every zoom (Jonah 2026-07-12).
+      id: "generated-mountain-contour",
+      type: "line",
+      source: "generated",
+      filter: ["==", ["get", "generatorId"], "mountain-contour"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": contour,
+        // A single TOP-LEVEL zoom interpolate (MapLibre requires zoom there);
+        // each zoom stop's width is data-driven by the feature's index, so major
+        // index lines paint ~2× heavier than minor without a second zoom expr.
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4,
+          ["match", ["get", "index"], "major", 0.9, 0.4],
+          14,
+          ["match", ["get", "index"], "major", 2.2, 1.1],
+        ],
+        "line-opacity": ["match", ["get", "index"], "major", 0.8, 0.5],
+      },
     } as unknown as LayerSpecification,
     {
       // Downslope hachure ticks — a darker stroke of the massif hue (dark-line

@@ -14,9 +14,19 @@
  *                         LENGTH ∝ local slope. Classic relief hachures.
  *  - `mountain-peak`    — summit markers at lattice local-maxima of the field
  *                         above a per-terrain threshold (elevation + sizeN).
+ *  - `mountain-contour` — topographic iso-lines (marching squares, plan 023
+ *                         §4.1) traced over the SAME elevation field on a
+ *                         world-aligned lattice, clipped to the ring. Emitted
+ *                         when an EXISTING mountain (re)generates — NO new
+ *                         request surface, no contour-only trigger: contours
+ *                         derive from the mountain region's elevation field.
+ *                         The campaign-base field is deferred to plan 024, so a
+ *                         sketched mountain is the only elevation source in
+ *                         23-C; §4.1's field-tier world-manifest contours
+ *                         generalize there once that field exists.
  *
- * Contours (marching squares, plan 023 §4.1) and DEM/hillshade/3D (§4.2) are
- * LATER phases; the mountain kind renders self-contained relief now.
+ * DEM/hillshade/3D (§4.2) are a LATER phase; the mountain kind renders
+ * self-contained relief + contours now.
  *
  * Three terrain types (a `terrain` param, never a presetId — mirrors the city
  * algorithm's `profile` / park's `variety` / farmland's `fieldType`): `alpine`
@@ -50,8 +60,13 @@
  * base terrain — it never sees the city, like forest/park/farmland).
  */
 import { hashSeed, mulberry32 } from "./rng";
-import { distanceToBoundary, segmentCrossesBoundary, type ProcgenRegion } from "./region";
-import { sdfPolygon, fMask } from "./fields";
+import {
+  distanceToBoundary,
+  segmentCrossesBoundary,
+  clipPolylineToRegion,
+  type ProcgenRegion,
+} from "./region";
+import { sdfPolygon, fMask, marchingSquares } from "./fields";
 import { fbmEroded, type HeightSample, type ElevationField } from "./fields/elevation";
 import { q } from "./waterEmit";
 import type { GenerationConstraints } from "./types";
@@ -94,6 +109,29 @@ const TICK_MAX_M = 24;
 const TICK_JITTER_M = 5; // hashed per-node start jitter (breaks the grid look)
 // Near-flat gate: skip ticks where the SMOOTH relief is essentially level.
 const FLAT_GATE = 0.00025;
+// ── Contours (plan 023 §4.1) ─────────────────────────────────────────────────
+// World-aligned marching-squares lattice for iso-lines. 20 m per §4.1 — fine
+// enough that terrace risers read as bunched bands, coarse enough to stay cheap
+// (region generation is explicit + cached, never per-frame). ABSOLUTE-world so
+// abutting mountains agree on shared samples (seam rule) and edits stay local.
+const CONTOUR_LATTICE_M = 20;
+// Every MAJOR_EVERY-th contour (counting from the sea-level datum) is a "major"
+// index line — themes paint it heavier. 5 is the standard topographic cadence.
+const MAJOR_EVERY = 5;
+// The contour interval (meters of relief between iso-lines) is chosen per region
+// to yield ~CONTOUR_TARGET_BANDS lines across its amplitude — consistent visual
+// density whatever the amplitude, snapped to a "nice" round number so the datum
+// stays cartographically honest. Pure f(amplitude) ⇒ deterministic.
+const CONTOUR_TARGET_BANDS = 15;
+const CONTOUR_INTERVAL_LADDER = [5, 10, 20, 25, 50, 100, 200, 250, 500, 1000] as const;
+
+/** Nice-round contour interval (meters) for a relief amplitude `A`. Smallest
+ * ladder value giving ≤ CONTOUR_TARGET_BANDS lines; the coarsest as a floor. */
+function contourInterval(A: number): number {
+  const raw = A / CONTOUR_TARGET_BANDS;
+  for (const step of CONTOUR_INTERVAL_LADDER) if (step >= raw) return step;
+  return CONTOUR_INTERVAL_LADDER[CONTOUR_INTERVAL_LADDER.length - 1];
+}
 
 /** Per-terrain relief character. `octavesBase`/`damping`/`ridged`/`terrace`
  * shape the fBm; `peakThreshold` (normalized 0..1) gates summits; `hachureStride`
@@ -306,6 +344,38 @@ export function generateMountain(
         id: hashSeed(seed, "mountain-peak", ix, iy),
         geometry: { type: "Point", coordinates: [q(cx), q(cy)] },
         properties: { generatorId: "mountain-peak", type: "mountain-peak", terrain, elevation, sizeN: q(sizeN) },
+      });
+    }
+  }
+
+  // ── Contours: topographic iso-lines over the SAME elevation field (plan 023
+  //    §4.1). Marching squares on a world-aligned lattice → polylines, each
+  //    clipped to the ring (containment: the mask fades the field to 0 by the
+  //    rim, but the linear lattice interpolant can nick a curved boundary, so
+  //    the clip is load-bearing, not cosmetic). No new request surface — this
+  //    runs whenever the mountain (re)generates. ──────────────────────────────
+  const interval = contourInterval(A);
+  const levels: number[] = [];
+  for (let lv = interval; lv < A; lv += interval) levels.push(lv);
+  const elev = (x: number, y: number): number => field(x, y).v;
+  const contours = marchingSquares(elev, { bbox, step: CONTOUR_LATTICE_M, levels });
+  for (const c of contours) {
+    // Major index line every MAJOR_EVERY-th interval from the datum (level 0).
+    const band = Math.round(c.level / interval);
+    const index = band % MAJOR_EVERY === 0 ? "major" : "minor";
+    const elevation = Math.round(c.level);
+    // Clip each traced line to the ring; a concave region can split it into
+    // several runs, each emitted with a position-derived id (never emission
+    // order): the level + the run's mm first vertex (0.1 m id resolution).
+    for (const run of clipPolylineToRegion(region, c.points)) {
+      if (run.length < 2) continue;
+      const coords = run.map(([x, y]) => [q(x), q(y)] as Pt);
+      const [fx, fy] = coords[0];
+      out.push({
+        type: "Feature",
+        id: hashSeed(seed, "mountain-contour", elevation, Math.round(fx * 10), Math.round(fy * 10)),
+        geometry: { type: "LineString", coordinates: coords },
+        properties: { generatorId: "mountain-contour", type: "mountain-contour", terrain, elevation, index },
       });
     }
   }

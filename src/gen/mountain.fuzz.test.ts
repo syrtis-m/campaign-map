@@ -105,13 +105,23 @@ describe("mountain generator — fuzz (seeded random polygons × 3 terrains × r
     }
   });
 
-  it("is deterministic on random polygons (double-run byte-identical)", () => {
+  it("is deterministic on random polygons across ALL size bands (double-run byte-identical)", () => {
+    // Determinism is size-independent, but the DoD enumerates tiny/degenerate
+    // regions explicitly (contours on a sub-lattice region must still be
+    // byte-stable), so span the small bands here too.
+    const bands: [number, number][] = [
+      [20, 60],
+      [60, 140],
+      [120, 500],
+    ];
     for (let s = 0; s < 60; s++) {
-      const region = makeRegion("fuzz", randomRing(s + 500, 120, 500));
-      const params = PRESETS[s % PRESETS.length];
-      const a = generateMountain(s + 7, region, params, CONSTRAINTS);
-      const b = generateMountain(s + 7, region, params, CONSTRAINTS);
-      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+      for (const [lo, hi] of bands) {
+        const region = makeRegion("fuzz", randomRing(s + 500 + lo, lo, hi));
+        const params = PRESETS[s % PRESETS.length];
+        const a = generateMountain(s + 7, region, params, CONSTRAINTS);
+        const b = generateMountain(s + 7, region, params, CONSTRAINTS);
+        expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+      }
     }
   });
 });
