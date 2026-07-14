@@ -219,6 +219,77 @@ describe("generateRegionTile (procgen v4, plan 020 §3.3)", () => {
   });
 });
 
+describe("generateRegionTile staleness fingerprints (plan 024 §5.1)", () => {
+  const domain = makeDomain(300, 300, 900, "euro-medieval", 1720000000000);
+  const region = makeRegion("fabric-region-1", discToRing(domain));
+  const seed = citySeedFor(4181, domain);
+  const gids = DOMAIN_TILE_GENERATOR_IDS;
+  const directCompute: RegionNetworkCompute = (r, constraints) =>
+    generateCityNetwork(seed, r, "euro-medieval", constraints);
+
+  it("a fingerprint MISMATCH is a MISS: replay recomputes (external Fabric.geojson edit caught)", async () => {
+    const { app } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const compute = vi.fn(directCompute);
+    const first = await generateRegionTile(ctx, region, gids, 0, 0, compute, { fingerprint: "fpA" });
+    expect(compute).toHaveBeenCalledTimes(1);
+    // Same key, but the durable inputs changed behind the cache's back (fpB):
+    // the fast path + network read both treat the record as stale and recompute.
+    const second = await generateRegionTile(ctx, region, gids, 0, 0, compute, { fingerprint: "fpB" });
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(second).toEqual(first); // determinism: same compute → byte-identical
+  });
+
+  it("a fingerprint MATCH is a fast-path HIT: no recompute (non-stale record untouched)", async () => {
+    const { app } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const compute = vi.fn(directCompute);
+    await generateRegionTile(ctx, region, gids, 0, 0, compute, { fingerprint: "fpA" });
+    await generateRegionTile(ctx, region, gids, 0, 0, compute, { fingerprint: "fpA" });
+    expect(compute).toHaveBeenCalledTimes(1);
+  });
+
+  it("BACK-COMPAT: a pre-024 record (no stored fingerprint) is grandfathered fresh — no regen storm", async () => {
+    const { app, files } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const compute = vi.fn(directCompute);
+    // Simulate a pre-024 cache: records written WITHOUT any fingerprint.
+    await generateRegionTile(ctx, region, gids, 0, 0, compute, {});
+    expect(compute).toHaveBeenCalledTimes(1);
+    const path = "Campaigns/Ashfall/.mapcache/generated.jsonl";
+    for (const line of files.get(path)!.split("\n")) {
+      if (line.trim()) expect(JSON.parse(line).fingerprint).toBeUndefined();
+    }
+    // A later run WITH a fingerprint must still treat the un-fingerprinted
+    // records as fresh (opening an upgraded campaign never invalidates cache).
+    await generateRegionTile(ctx, region, gids, 0, 0, compute, { fingerprint: "fpNow" });
+    expect(compute).toHaveBeenCalledTimes(1);
+  });
+
+  it("an undefined expected fingerprint can never invalidate a fingerprinted record", async () => {
+    const { app } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const compute = vi.fn(directCompute);
+    await generateRegionTile(ctx, region, gids, 0, 0, compute, { fingerprint: "fpA" });
+    await generateRegionTile(ctx, region, gids, 0, 0, compute, {}); // no expected fp
+    expect(compute).toHaveBeenCalledTimes(1);
+  });
+
+  it("records written WITH a fingerprint carry it on disk", async () => {
+    const { app, files } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    await generateRegionTile(ctx, region, gids, 0, 0, directCompute, { fingerprint: "fp-xyz" });
+    const path = "Campaigns/Ashfall/.mapcache/generated.jsonl";
+    const records = files
+      .get(path)!
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l));
+    expect(records.length).toBeGreaterThan(0);
+    for (const r of records) expect(r.fingerprint).toBe("fp-xyz");
+  });
+});
+
 describe("removeCachedTiles (plan 019 'clear generated fabric')", () => {
   it("a cleared tile is a true cache MISS: the next generate re-runs the generator (not a blank tombstone)", async () => {
     const { app } = fakeApp();

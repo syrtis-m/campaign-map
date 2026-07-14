@@ -93,6 +93,7 @@ import {
   type RingValidation,
 } from "../gen/region";
 import { algorithmById, algorithmForKind, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
+import { regionFingerprint } from "../gen/cache/fingerprint";
 import { mountainHeightField, type MountainTerrain } from "../gen/mountain";
 import { unionFields, demVerticalScale, type ElevationField } from "../gen/fields";
 import type { GeneratorId } from "../gen/worker/generationWorker";
@@ -169,7 +170,7 @@ export interface GenGateway {
     tileX: number,
     tileY: number,
     computeNetwork: RegionNetworkCompute,
-    opts?: { force?: boolean; preloadedCache?: Map<string, CachedTile> }
+    opts?: { force?: boolean; preloadedCache?: Map<string, CachedTile>; fingerprint?: string }
   ): Promise<GeoJSON.Feature[]>;
 }
 
@@ -597,6 +598,19 @@ export class MapController {
     const ctx = this.generationContext();
     const worker = await this.host.gen.getWorker();
     const compute = this.regionCompute(worker, feature);
+    // Plan 024 §5.1: the durable-input fingerprint stamped on every record this
+    // run writes, and compared on replay to catch an external Fabric.geojson
+    // edit. Computed ONCE per region (identical for all its tiles) from the
+    // persisted block + quantized region geometry + the raw-sketch constraints
+    // the generators consume.
+    const fingerprint = regionFingerprint({
+      algorithm: block.algorithm,
+      seed: block.seed,
+      version: block.version,
+      params: block.params,
+      region,
+      fabricFeatures: ctx.fabricFeatures,
+    });
     this.pendingGenerations++;
     this.host.render.loadingChanged();
     const all: GeoJSON.Feature[] = [];
@@ -607,6 +621,7 @@ export class MapController {
           await this.host.gen.generateRegionTile(ctx, region, algorithm.tileGeneratorIds, t.tileX, t.tileY, compute, {
             force: opts.force,
             preloadedCache: preloaded,
+            fingerprint,
           })
         ).filter((f) => featureTouchesBBox(f, ctx.worldBounds));
         this.loadedTiles.set(this.regionRenderKey(region.id, t.tileX, t.tileY), feats);

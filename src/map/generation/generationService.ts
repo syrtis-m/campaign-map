@@ -8,6 +8,7 @@ import type { ParsedCampaign } from "../../model/campaignConfig";
 import { campaignFolderFromConfigPath } from "../../model/mutationLog";
 import { appendCachedTile, getCachedTile, type CachedTile } from "../../model/tileCache";
 import { GENERATION_ZOOM, tileBBox, tileKey } from "../../gen/cache/tileGrid";
+import { isCacheRecordFresh } from "../../gen/cache/fingerprint";
 import type { BBox } from "../../gen/spatialHash";
 import type { GenerationConstraints } from "../../gen/types";
 import type { FabricFeature } from "../../model/fabric";
@@ -136,17 +137,24 @@ export async function generateRegionTile(
   tileX: number,
   tileY: number,
   computeNetwork: RegionNetworkCompute,
-  opts: { force?: boolean; preloadedCache?: Map<string, CachedTile> } = {}
+  opts: { force?: boolean; preloadedCache?: Map<string, CachedTile>; fingerprint?: string } = {}
 ): Promise<GeoJSON.Feature[]> {
   const campaignFolder = campaignFolderFromConfigPath(ctx.campaign.path);
   const seed = ctx.campaign.config.seed;
   const tileKeys = tileGeneratorIds.map((gid) => regionTileKey(region.id, tileX, tileY, gid));
 
-  const readCached = async (key: string): Promise<CachedTile | undefined> =>
-    opts.preloadedCache ? opts.preloadedCache.get(key) : getCachedTile(ctx.app, campaignFolder, key);
+  // Plan 024 §5.1: a key hit whose stored fingerprint ≠ the caller's current
+  // expected fingerprint is STALE (an external `Fabric.geojson` edit no in-app
+  // commit path observed) — drop it so the miss below recomputes. Pre-024
+  // records (no fingerprint) and callers that pass none are grandfathered fresh.
+  const readCached = async (key: string): Promise<CachedTile | undefined> => {
+    const cached = opts.preloadedCache ? opts.preloadedCache.get(key) : await getCachedTile(ctx.app, campaignFolder, key);
+    if (cached && !isCacheRecordFresh(cached.fingerprint, opts.fingerprint)) return undefined;
+    return cached;
+  };
 
-  // Fast path: every per-tile record already cached (bytes are canonical —
-  // returning them as-is is what keeps delete-and-regen byte-identical).
+  // Fast path: every per-tile record already cached AND fresh (bytes are
+  // canonical — returning them as-is is what keeps delete-and-regen byte-identical).
   if (!opts.force) {
     const hits = await Promise.all(tileKeys.map(readCached));
     if (hits.every((h) => h !== undefined)) {
@@ -171,6 +179,7 @@ export async function generateRegionTile(
       campaignSeed: seed,
       features: network as unknown as Record<string, unknown>[],
       generatedAt: Date.now(),
+      fingerprint: opts.fingerprint,
     };
     await appendCachedTile(ctx.app, campaignFolder, record);
     opts.preloadedCache?.set(netKey, record);
@@ -191,6 +200,7 @@ export async function generateRegionTile(
       campaignSeed: seed,
       features: features as unknown as Record<string, unknown>[],
       generatedAt: Date.now(),
+      fingerprint: opts.fingerprint,
     };
     await appendCachedTile(ctx.app, campaignFolder, record);
     opts.preloadedCache?.set(tileKeys[i], record);

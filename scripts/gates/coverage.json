@@ -412,6 +412,22 @@
         "src/map/theme.ts",
         "src/view/MapView.ts"
       ]
+    },
+    "staleness24a": {
+      "script": "scripts/gates/staleness24a.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/cache/fingerprint.ts",
+        "src/gen/fabricConstraints.ts",
+        "src/gen/region.ts",
+        "src/gen/procgen/**",
+        "src/controller/MapController.ts",
+        "src/controller/FakeHost.ts",
+        "src/map/generation/generationService.ts",
+        "src/model/tileCache.ts",
+        "src/model/fabric.ts",
+        "src/view/MapView.ts"
+      ]
     }
   }
 }
