@@ -1,5 +1,16 @@
 #!/usr/bin/env tsx
-// VO wave-1 gate — plan 027-A: PARK figure-ground + path rendering overhaul.
+// VO wave-1 gate — plan 027-A/-B: PARK figure-ground + REAL skeletons.
+//
+// 027-B extends this gate (checks c2–c5 + formal/wild screenshots): per-variety
+// skeletons hung off boundary ENTRANCES (sketched-road crossings + hashed
+// fallbacks) — city-park perimeter loop + entrance diagonals + bandstand;
+// formal-garden principal-axis composition + central basin + fountain + mirror
+// beds; japanese circuit + roji spur + lanterns + teahouse; wild-common
+// restraint (few paths, one landmark, open meadow). Point dressing is a NEW
+// `park-point` gid — the checks that read pointKinds (bandstand/fountain/
+// lantern/teahouse) PASS only once the orchestrator adds `park-point` to
+// PARK_TILE_GENERATOR_IDS (uncached gids are dropped); that registry line is
+// the documented integration step.
 //
 // Live against dev-vault via the obsidian CLI. Reshapes the shipped v4.7 park
 // (procgen46) without touching the skeleton (that is 27-B): the ground is now
@@ -57,7 +68,14 @@ const NEW_PAINT_LAYERS: readonly string[] = [
   "generated-park-canopy",
   "generated-park-path-casing",
   "generated-park-pond-shore",
+  "generated-park-point", // plan 027-B point dressing (fountain/bandstand/monument/lantern/teahouse)
 ];
+// Plan 027-B rings. FORMAL is a wide rectangle (2:1) so the principal axis is
+// unambiguously horizontal; WILD is a modest square (restraint reads at any size).
+const FORMAL_RING = "[[8,-28],[44,-28],[44,-10],[8,-10]]";
+const WILD_RING = "[[-40,10],[-24,10],[-24,26],[-40,26]]";
+const FORMAL = "{ variety: 'formal-garden', pathDensity: 0.5, pond: false }";
+const WILD = "{ variety: 'wild-common', pathDensity: 0.3, pond: false }";
 
 function viewExpr(): string {
   return `app.workspace.getLeavesOfType('campaign-map-view').map(function(l){return l.view;}).find(function(v){return v&&v.campaign&&v.campaign.id==='${CAMPAIGN}'})`;
@@ -134,6 +152,33 @@ function featureCount(id: string, gid: string): number {
   // sharing one id (same per-tile-clip semantics documented for procgen46,
   // DECISIONS 2026-07-13 phase D). "ONE merged lawn" means one identity.
   return sync(`new Set(v.regionFeatureIds(${JSON.stringify(id)}, ${JSON.stringify(gid)})).size`) as number;
+}
+/** Distinct `class` values across a region's park-path LineStrings (plan 027-B
+ * skeleton: axis/loop/circuit/walk/roji). */
+function pathClasses(id: string): string[] {
+  const code = `(function(){var pre='region:'+${JSON.stringify(id)}+':';var s=new Set();v.loadedTiles.forEach(function(feats,k){if(k.indexOf(pre)!==0)return;feats.forEach(function(f){if(f.properties&&f.properties.generatorId==='park-path'&&f.properties.class)s.add(f.properties.class);});});return JSON.stringify(Array.from(s));})()`;
+  const r = sync(code);
+  return (typeof r === "string" ? JSON.parse(r) : r) as string[];
+}
+/** Distinct `pointKind` values across a region's park-point features (plan
+ * 027-B: fountain/bandstand/monument/lantern/teahouse). Empty until the
+ * orchestrator adds `park-point` to PARK_TILE_GENERATOR_IDS (uncached gids are
+ * dropped) — that registry line is the integration step this gate verifies. */
+function pointKinds(id: string): string[] {
+  const code = `(function(){var pre='region:'+${JSON.stringify(id)}+':';var s=new Set();v.loadedTiles.forEach(function(feats,k){if(k.indexOf(pre)!==0)return;feats.forEach(function(f){if(f.properties&&f.properties.generatorId==='park-point'&&f.properties.pointKind)s.add(f.properties.pointKind);});});return JSON.stringify(Array.from(s));})()`;
+  const r = sync(code);
+  return (typeof r === "string" ? JSON.parse(r) : r) as string[];
+}
+/** Is a region's perimeter loop a CLOSED circuit? The cache stores PER-TILE
+ * clipped segments (one closed loop spanning N tiles = N open polylines), so
+ * "closed" cannot be read off any single record. A closed circuit clipped into
+ * segments has NO odd-degree endpoint: every mm-quantized polyline endpoint
+ * (incl. tile-edge cut points, present in both neighbours) pairs up. An open
+ * path would leave 2 degree-1 endpoints. Same per-tile-clip semantics as the
+ * distinct-id counting above (DECISIONS 2026-07-13 phase D). */
+function hasClosedLoop(id: string): boolean {
+  const code = `(function(){var pre='region:'+${JSON.stringify(id)}+':';var deg={};var n=0;v.loadedTiles.forEach(function(feats,k){if(k.indexOf(pre)!==0)return;feats.forEach(function(f){if(!f.properties||f.properties.generatorId!=='park-path'||f.properties.class!=='loop')return;var c=f.geometry&&f.geometry.coordinates;if(!c||c.length<2)return;n++;[c[0],c[c.length-1]].forEach(function(p){var key=(Math.round(p[0]*1000))+','+(Math.round(p[1]*1000));deg[key]=(deg[key]||0)+1;});});});if(n===0)return false;var odd=0;for(var k2 in deg){if(deg[k2]%2===1)odd++;}return odd===0;})()`;
+  return sync(code) as boolean;
 }
 /** Live style layers under the generated- park stack: {id, type} in paint order. */
 function parkStyleLayers(): { id: string; type: string }[] {
@@ -305,6 +350,53 @@ async function main(): Promise<void> {
     console.log(`     [c] ${COMPOSITION.map((g) => `${g.replace("park-", "")}:${counts[g]}`).join(" ")}`);
   });
 
+  await gate.try("(c2) city-park 027-B skeleton: perimeter loop (closed) + entrance-connected walks + bandstand", () => {
+    const classes = pathClasses(id);
+    if (!classes.includes("loop")) throw new Error(`city-park has no perimeter loop path (classes: ${classes.join(",")})`);
+    if (!classes.includes("walk")) throw new Error(`city-park has no entrance diagonals (classes: ${classes.join(",")})`);
+    if (!hasClosedLoop(id)) throw new Error("city-park perimeter loop is not a closed ring");
+    const kinds = pointKinds(id);
+    // park-point is cached only after the orchestrator adds it to the registry.
+    if (!kinds.includes("bandstand")) throw new Error(`city-park missing the bandstand park-point (kinds: ${kinds.join(",")}) — registry line for park-point landed?`);
+    console.log(`     [c2] path classes {${classes.join(",")}}, closed loop, point kinds {${kinds.join(",")}}`);
+  });
+
+  let formalId = "";
+  await gate.try("(c3) formal-garden 027-B: axial paths + central basin + fountain + ≥4 mirror beds, contained", async () => {
+    formalId = await newPark(FORMAL_RING, FORMAL);
+    const classes = pathClasses(formalId);
+    if (!classes.includes("axis")) throw new Error(`formal-garden has no axis paths (classes: ${classes.join(",")})`);
+    if (featureCount(formalId, "park-pond") !== 1) throw new Error("formal-garden has no central basin (park-pond)");
+    const beds = featureCount(formalId, "park-bed");
+    if (beds < 4) throw new Error(`formal-garden emitted ${beds} beds, expected ≥4 mirror compartments`);
+    const kinds = pointKinds(formalId);
+    if (!kinds.includes("fountain")) throw new Error(`formal-garden missing the basin fountain park-point (kinds: ${kinds.join(",")})`);
+    if (containment(formalId).outside > 0) throw new Error("formal-garden coords outside the ring");
+    console.log(`     [c3] axis paths, basin+fountain, ${beds} beds, contained`);
+  });
+
+  await gate.try("(c4) japanese 027-B: circuit + roji spur + lanterns + teahouse (odd-count rocks)", () => {
+    const classes = pathClasses(japId);
+    if (!classes.includes("circuit")) throw new Error(`japanese-garden has no circuit path (classes: ${classes.join(",")})`);
+    if (!classes.includes("roji")) throw new Error(`japanese-garden has no roji spur (classes: ${classes.join(",")})`);
+    const kinds = pointKinds(japId);
+    if (!kinds.includes("lantern")) throw new Error(`japanese-garden missing lanterns (kinds: ${kinds.join(",")}) — park-point registry line landed?`);
+    if (!kinds.includes("teahouse")) throw new Error(`japanese-garden missing the teahouse (kinds: ${kinds.join(",")})`);
+    console.log(`     [c4] path classes {${classes.join(",")}}, point kinds {${kinds.join(",")}}`);
+  });
+
+  let wildId = "";
+  await gate.try("(c5) wild-common 027-B restraint: ≤4 paths, ONE landmark, no manicured canopy, contained", async () => {
+    wildId = await newPark(WILD_RING, WILD);
+    const path = featureCount(wildId, "park-path");
+    if (path > 4) throw new Error(`wild-common emitted ${path} paths — not restrained (expected ≤4 desire-line runs)`);
+    const point = featureCount(wildId, "park-point");
+    if (point !== 1) throw new Error(`wild-common emitted ${point} landmarks, expected exactly ONE (monument/maypole)`);
+    if (featureCount(wildId, "park-canopy") !== 0) throw new Error("wild-common should have no manicured canopy masses");
+    if (containment(wildId).outside > 0) throw new Error("wild-common coords outside the ring");
+    console.log(`     [c5] paths ${path}, landmarks ${point}, no canopy, contained`);
+  });
+
   await gate.try("(d) vertex edit adapts the tree scatter far less than a re-roll (locality) + stays contained", async () => {
     const base = treeBuckets(id);
     if (base.length === 0) throw new Error("no park-tree buckets — cannot measure locality");
@@ -390,6 +482,24 @@ async function main(): Promise<void> {
     front();
     await new Promise((r) => setTimeout(r, 800));
     screenshot(`${REVIEW}/vo27-park-japanese.png`);
+  });
+
+  await gate.try("screenshot: formal-garden (bilateral axis composition + central basin + mirror beds)", async () => {
+    if (containment(formalId).outside > 0) throw new Error("formal-garden spilled outside its ring");
+    sync("(function(){v.map.fitBounds([[6,-30],[46,-8]],{animate:false,padding:40});return 'ok';})()");
+    await new Promise((r) => setTimeout(r, 2500));
+    front();
+    await new Promise((r) => setTimeout(r, 800));
+    screenshot(`${REVIEW}/vo27-park-formal.png`);
+  });
+
+  await gate.try("screenshot: wild-common (restraint — meadow + a desire line + a duck pond + ONE landmark)", async () => {
+    if (containment(wildId).outside > 0) throw new Error("wild-common spilled outside its ring");
+    sync("(function(){v.map.fitBounds([[-42,8],[-22,28]],{animate:false,padding:40});return 'ok';})()");
+    await new Promise((r) => setTimeout(r, 2500));
+    front();
+    await new Promise((r) => setTimeout(r, 800));
+    screenshot(`${REVIEW}/vo27-park-wild.png`);
   });
 
   await gate.try("(h) dev:errors clean at end", () => {

@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { generatePark, type ParkParams } from "./park";
 import { makeRegion, distanceToBoundary, type ProcgenRegion } from "./region";
 import type { GenerationConstraints } from "./types";
+import type { FabricFeature } from "../model/fabric";
 import { clipNetworkToTile } from "./citynet";
 import { tileBBox, tileXYForPoint } from "./cache/tileGrid";
 
@@ -130,12 +131,16 @@ describe("park generator — determinism", () => {
     expect(typeCount(feats, "park-court")).toBe(1);
   });
 
-  it("formal-garden emits axial paths + symmetric beds + rows of trees, no pond", () => {
+  it("formal-garden emits axial paths + mirror beds + bosquet trees + a central basin (plan 027-B §2)", () => {
     const feats = generatePark(9, regionFor(SQUARE), PARAMS({ variety: "formal-garden", pond: false }), CONSTRAINTS);
     expect(typeCount(feats, "park-path")).toBeGreaterThan(0);
     expect(typeCount(feats, "park-bed")).toBeGreaterThan(0);
-    expect(typeCount(feats, "park-tree")).toBeGreaterThan(0);
-    expect(typeCount(feats, "park-pond")).toBe(0);
+    expect(typeCount(feats, "park-tree")).toBeGreaterThan(0); // bosquet quincunx blocks
+    // 027-B: the central basin is INTRINSIC to a formal garden (Versailles
+    // Grande Perspective) — size-gated, NOT pond-param-gated, so it appears even
+    // at pond=false. Deliberate change from 027-A's "formal has no pond".
+    expect(typeCount(feats, "park-pond")).toBe(1);
+    expect(typeCount(feats, "park-point")).toBeGreaterThan(0); // the fountain in the basin
   });
 });
 
@@ -282,6 +287,176 @@ describe("park generator — preset semantics", () => {
   it("japanese-garden ponds even when pond=false (its composition anchor)", () => {
     const feats = generatePark(3, regionFor(SQUARE), PARAMS({ variety: "japanese-garden", pond: false }), CONSTRAINTS);
     expect(typeCount(feats, "park-pond")).toBe(1);
+  });
+});
+
+describe("park generator — 027-B skeleton (entrances + per-variety structure)", () => {
+  type Path = { coords: Pt[]; class: string };
+  function paths(feats: GeoJSON.Feature[]): Path[] {
+    return feats
+      .filter((f) => (f.properties as { generatorId?: string }).generatorId === "park-path")
+      .map((f) => ({
+        coords: (f.geometry as unknown as { coordinates: Pt[] }).coordinates,
+        class: String((f.properties as { class?: string }).class),
+      }));
+  }
+  function roadNear(from: Pt, to: Pt): FabricFeature {
+    return {
+      type: "Feature",
+      id: `road-${from[0]}-${from[1]}`,
+      geometry: { type: "LineString", coordinates: [from, to] },
+      properties: { kind: "road" },
+    } as FabricFeature;
+  }
+
+  it("hangs an entrance off a sketched road crossing — a path endpoint lands on the ring there", () => {
+    // A road approaching the LEFT edge of SQUARE near y=500 ⇒ an entrance at ~[0,500].
+    const constraints: GenerationConstraints = { ...CONSTRAINTS, fabricFeatures: [roadNear([-40, 500], [-8, 500])] };
+    const region = regionFor(SQUARE);
+    const feats = generatePark(50, region, PARAMS({ variety: "city-park" }), constraints);
+    const endpoints: Pt[] = [];
+    for (const p of paths(feats)) {
+      endpoints.push(p.coords[0], p.coords[p.coords.length - 1]);
+    }
+    // Some path endpoint sits ON the boundary near the road projection [0,500].
+    const hit = endpoints.some(([x, y]) => distanceToBoundary(region, x, y) < 2 && Math.hypot(x - 0, y - 500) < 25);
+    expect(hit, "no path reaches the road-derived entrance at [0,500]").toBe(true);
+  });
+
+  it("with no roads, falls back to 2–5 boundary entrances and connects them", () => {
+    const region = regionFor(SQUARE);
+    const feats = generatePark(50, region, PARAMS({ variety: "city-park" }), CONSTRAINTS);
+    // Every diagonal ('walk') endpoint sits on the ring (entrance-connects).
+    for (const p of paths(feats).filter((x) => x.class === "walk")) {
+      for (const end of [p.coords[0], p.coords[p.coords.length - 1]]) {
+        expect(distanceToBoundary(region, end[0], end[1])).toBeLessThan(3);
+      }
+    }
+  });
+
+  it("city-park emits a closed perimeter loop (first ≈ last)", () => {
+    const feats = generatePark(50, regionFor(SQUARE), PARAMS({ variety: "city-park" }), CONSTRAINTS);
+    const loop = paths(feats).find((p) => p.class === "loop");
+    expect(loop, "no perimeter loop").toBeDefined();
+    const a = loop!.coords[0];
+    const b = loop!.coords[loop!.coords.length - 1];
+    expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThan(0.01); // closed ring
+    expect(loop!.coords.length).toBeGreaterThan(3);
+  });
+
+  it("formal-garden axis follows the ring's LONGEST dimension (rectangle) and mirror-matches beds", () => {
+    // A wide rectangle (2:1) ⇒ the dominant axis is horizontal.
+    const RECT: Pt[] = [
+      [0, 0],
+      [1600, 0],
+      [1600, 800],
+      [0, 800],
+      [0, 0],
+    ];
+    const region = regionFor(RECT);
+    const feats = generatePark(9, region, PARAMS({ variety: "formal-garden", pond: false }), CONSTRAINTS);
+    const axes = paths(feats).filter((p) => p.class === "axis");
+    expect(axes.length).toBeGreaterThan(0);
+    // The longest axis path should span more in x than in y (horizontal dominant).
+    const longest = axes.reduce((m, p) => {
+      const len = Math.hypot(
+        p.coords[p.coords.length - 1][0] - p.coords[0][0],
+        p.coords[p.coords.length - 1][1] - p.coords[0][1]
+      );
+      return len > m.len ? { len, p } : m;
+    }, { len: 0, p: axes[0] });
+    const dx = Math.abs(longest.p.coords[longest.p.coords.length - 1][0] - longest.p.coords[0][0]);
+    const dy = Math.abs(longest.p.coords[longest.p.coords.length - 1][1] - longest.p.coords[0][1]);
+    expect(dx).toBeGreaterThan(dy);
+
+    // Beds are mirror-symmetric across the horizontal axis (y = cy). Reflecting a
+    // bed's centroid across cy should match another bed's centroid within mm.
+    const beds = feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "park-bed");
+    expect(beds.length).toBeGreaterThanOrEqual(4);
+    const cy = region.interiorPole[1];
+    const centroid = (f: GeoJSON.Feature): Pt => {
+      const ring = (f.geometry as unknown as { coordinates: Pt[][] }).coordinates[0];
+      let x = 0;
+      let y = 0;
+      for (let i = 0; i < ring.length - 1; i++) {
+        x += ring[i][0];
+        y += ring[i][1];
+      }
+      return [x / (ring.length - 1), y / (ring.length - 1)];
+    };
+    const cents = beds.map(centroid);
+    for (const c of cents) {
+      const mirrored: Pt = [c[0], 2 * cy - c[1]];
+      const match = cents.some((o) => Math.hypot(o[0] - mirrored[0], o[1] - mirrored[1]) < 0.05);
+      expect(match, `bed at ${c} has no mirror partner across y=${cy}`).toBe(true);
+    }
+  });
+
+  it("japanese-garden emits lanterns and a teahouse as park-point, deterministically", () => {
+    const region = regionFor(SQUARE);
+    const p = PARAMS({ variety: "japanese-garden" });
+    const a = generatePark(9, region, p, CONSTRAINTS);
+    const points = a.filter((f) => (f.properties as { generatorId?: string }).generatorId === "park-point");
+    const kinds = new Set(points.map((f) => String((f.properties as { pointKind?: string }).pointKind)));
+    expect(kinds.has("lantern"), "no lanterns").toBe(true);
+    expect(kinds.has("teahouse"), "no teahouse").toBe(true);
+    // A roji spur (its own path class) accompanies the teahouse.
+    expect(a.some((f) => String((f.properties as { class?: string }).class) === "roji")).toBe(true);
+    // Rocks come in ODD-count groups (Sakuteiki) — total is a sum of 3/5/3.
+    const rocks = typeCount(a, "park-rock");
+    expect([3, 5, 6, 8, 11].includes(rocks) || rocks % 2 === 1, `rocks=${rocks}`).toBe(true);
+    // Determinism: a second run is byte-identical.
+    const b = generatePark(9, region, p, CONSTRAINTS);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it("wild-common is restrained: few paths, ONE landmark, a duck pond, an open centre", () => {
+    const region = regionFor(SQUARE);
+    const feats = generatePark(9, region, PARAMS({ variety: "wild-common" }), CONSTRAINTS);
+    expect(typeCount(feats, "park-path")).toBeLessThanOrEqual(4); // 1–2 desire lines (each may clip to runs)
+    expect(typeCount(feats, "park-point")).toBe(1); // ONE monument/maypole
+    expect(typeCount(feats, "park-pond")).toBe(1); // the duck pond
+    expect(typeCount(feats, "park-canopy")).toBe(0); // no manicured canopy masses
+    // The meadow centre stays open (no trees within maxD*0.55 of the pole).
+    const [cx, cy] = region.interiorPole;
+    const treeInCentre = feats.some(
+      (f) =>
+        (f.properties as { generatorId?: string }).generatorId === "park-tree" &&
+        Math.hypot((f.geometry as unknown as { coordinates: Pt }).coordinates[0] - cx, (f.geometry as unknown as { coordinates: Pt }).coordinates[1] - cy) <
+          region.maxInteriorDistance * 0.4
+    );
+    expect(treeInCentre, "wild-common centre is not an open meadow").toBe(false);
+    // The lawn carries the meadow flag (theme tint hook).
+    const lawn = feats.find((f) => (f.properties as { generatorId?: string }).generatorId === "park-lawn")!;
+    expect((lawn.properties as { meadow?: boolean }).meadow).toBe(true);
+  });
+
+  it("entrance edit-locality: moving a far vertex leaves a road-pinned entrance's path byte-identical", () => {
+    // Two roads pin entrances on the LEFT and TOP edges; the diagonal between
+    // them is far from the bottom-right corner we move.
+    const constraints: GenerationConstraints = {
+      ...CONSTRAINTS,
+      fabricFeatures: [roadNear([-40, 250], [-8, 250]), roadNear([250, -40], [250, -8])],
+    };
+    const base = generatePark(50, regionFor(SQUARE), PARAMS({ variety: "city-park" }), constraints);
+    const movedRing: Pt[] = [
+      [0, 0],
+      [1080, 0],
+      [1080, 1080], // far corner pushed out
+      [0, 1000],
+      [0, 0],
+    ];
+    const moved = generatePark(50, regionFor(movedRing), PARAMS({ variety: "city-park" }), constraints);
+    // The 'walk' diagonal touching the left+top entrances is unaffected by the
+    // far corner: its serialization is present in both outputs.
+    const walk = (fs: GeoJSON.Feature[]): string[] =>
+      fs
+        .filter((f) => String((f.properties as { class?: string }).class) === "walk")
+        .map((f) => JSON.stringify((f.geometry as unknown as { coordinates: Pt[] }).coordinates));
+    const baseWalks = walk(base);
+    const movedWalks = new Set(walk(moved));
+    // At least one near-side diagonal survives byte-identical across the edit.
+    expect(baseWalks.some((w) => movedWalks.has(w)), "no near-side diagonal stayed byte-identical").toBe(true);
   });
 });
 

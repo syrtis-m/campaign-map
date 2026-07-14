@@ -78,8 +78,8 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
           "interpolate",
           ["linear"],
           ["zoom"],
-          8, ["match", ["get", "class"], "axis", 4, "loop", 3, "circuit", 2.6, "walk", 2.2, 3],
-          15, ["match", ["get", "class"], "axis", 9, "loop", 7, "circuit", 6, "walk", 5, 6],
+          8, ["match", ["get", "class"], "axis", 4, "loop", 3, "circuit", 2.6, "walk", 2.2, "roji", 1.8, 3],
+          15, ["match", ["get", "class"], "axis", 9, "loop", 7, "circuit", 6, "walk", 5, "roji", 4, 6],
         ],
       },
     } as unknown as LayerSpecification,
@@ -100,8 +100,8 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
           "interpolate",
           ["linear"],
           ["zoom"],
-          8, ["match", ["get", "class"], "axis", 2.4, "loop", 1.6, "circuit", 1.3, "walk", 1, 1.6],
-          15, ["match", ["get", "class"], "axis", 6, "loop", 4.5, "circuit", 3.6, "walk", 3, 4],
+          8, ["match", ["get", "class"], "axis", 2.4, "loop", 1.6, "circuit", 1.3, "walk", 1, "roji", 0.8, 1.6],
+          15, ["match", ["get", "class"], "axis", 6, "loop", 4.5, "circuit", 3.6, "walk", 3, "roji", 2.4, 4],
         ],
       },
     } as unknown as LayerSpecification,
@@ -174,6 +174,38 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
         "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 1.2, 14, 2.6],
         "circle-color": t.fabricForest,
         "circle-opacity": 0.95,
+      },
+    } as unknown as LayerSpecification,
+    {
+      // Park point dressing (plan 027-B): fountain / bandstand / monument /
+      // lantern / teahouse — landmark markers, painted ON TOP of the greenery so
+      // the composition's focal points read. One layer, tinted per `pointKind`
+      // (water-blue fountains, stony lanterns/monuments, accent bandstands).
+      // Circle markers now; 27-C upgrades these to per-kind SDF symbols.
+      id: "generated-park-point",
+      type: "circle",
+      source: "generated",
+      filter: ["==", ["get", "generatorId"], "park-point"],
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 1.6, 14, 4],
+        "circle-color": [
+          "match",
+          ["get", "pointKind"],
+          "fountain",
+          t.fabricWater,
+          "bandstand",
+          t.accent,
+          "monument",
+          t.fabricWall,
+          "lantern",
+          t.fabricWall,
+          "teahouse",
+          t.fabricWall,
+          t.accent,
+        ],
+        "circle-opacity": 1,
+        "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 6, 0.3, 14, 1],
+        "circle-stroke-color": pathCasing,
       },
     } as unknown as LayerSpecification,
   ];

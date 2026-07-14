@@ -251,6 +251,7 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3 + 027-A)", () 
     "generated-park-canopy",
     "generated-park-path-casing",
     "generated-park-pond-shore",
+    "generated-park-point", // plan 027-B point dressing (fountain/bandstand/monument/lantern/teahouse)
   ] as const;
 
   it("all park layers exist on the generated source and filter on generatorId (no zoom LOD in filter)", () => {
@@ -291,6 +292,8 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3 + 027-A)", () 
     const bridge = ids.indexOf("generated-park-bridge");
     const court = ids.indexOf("generated-park-court");
     const rock = ids.indexOf("generated-park-rock");
+    const tree = ids.indexOf("generated-park-tree");
+    const point = ids.indexOf("generated-park-point");
     // Ground first; canopy (second green) above the lawn.
     expect(canopy).toBeGreaterThan(lawn);
     // Cased path: the darker casing paints UNDER the lighter fill line.
@@ -304,6 +307,8 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3 + 027-A)", () 
     expect(bridge).toBeGreaterThan(island);
     // A rock reads on top of its gravel court.
     expect(rock).toBeGreaterThan(court);
+    // Point dressing (landmarks) reads on top of the greenery stipple.
+    expect(point).toBeGreaterThan(tree);
   });
 
   it("park layers keep the generated- prefix so the z-order stack holds", () => {
