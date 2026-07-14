@@ -616,3 +616,127 @@ describe("river generator — meander math (plan 028 §1.2, box 28-B)", () => {
     expect(hi).toBeLessThanOrEqual(0.8 * BASE_MEANDER_AMP_M + 1e-6);
   });
 });
+
+// ── Box 23-E: slope coupling (plan 022 §3.1 deferral) ────────────────────────
+// The sketched mountains' elevation field (fields/mountainField.ts, composed
+// from constraints.fabricFeatures — the raw sketch layer) damps meander
+// amplitude and stretches wavelength on steep ground. These tests pin the
+// direction of the modulation, the no-mountain / no-overlap byte-identity, the
+// canal regression, and coupled determinism.
+
+/** A sketched procgen MOUNTAIN whose interior covers the middle of STRAIGHT
+ * (the single segment's midpoint x=3300 sits deep inside → real slope). */
+function mountainAt(x0: number, x1: number, seed = 777): NonNullable<GenerationConstraints["fabricFeatures"]>[number] {
+  return {
+    type: "Feature",
+    id: `mountain-${x0}`,
+    geometry: {
+      type: "Polygon",
+      coordinates: [[[x0, -2000], [x1, -2000], [x1, 2000], [x0, 2000], [x0, -2000]]],
+    },
+    properties: {
+      kind: "mountain",
+      procgen: { algorithm: "mountain", seed, version: 1, params: { terrain: "alpine", amplitude: 0.8, roughness: 0.5 } },
+    },
+  } as NonNullable<GenerationConstraints["fabricFeatures"]>[number];
+}
+
+function withMountain(x0: number, x1: number): GenerationConstraints {
+  return { worldBounds: CONSTRAINTS.worldBounds, fabricFeatures: [mountainAt(x0, x1)] };
+}
+
+describe("river generator — slope coupling (box 23-E)", () => {
+  it("steep ground straightens the river: smaller amplitude AND fewer bends than the flat control", () => {
+    const p = MEANDER_P; // slopeSensitivity absent ⇒ 1 (coupling on)
+    const region = regionFor(STRAIGHT, p);
+    const flat = centerlineOf(generateRiver(50, region, p, CONSTRAINTS));
+    const steep = centerlineOf(generateRiver(50, region, p, withMountain(1000, 5600)));
+    const amp = (c: Pt[]): number => Math.max(...c.map(([, y]) => Math.abs(y)));
+    // Amplitude damped (direction test: steep < flat, meaningfully).
+    expect(amp(steep)).toBeLessThan(amp(flat) * 0.9);
+    expect(amp(steep)).toBeGreaterThan(0); // damped, not zeroed
+    // Wavelength stretched ⇒ fewer zero crossings (fewer bends).
+    expect(crossingsOf(steep).length).toBeLessThan(crossingsOf(flat).length);
+  });
+
+  it("slopeSensitivity straightens monotonically — sinuosity drops as sensitivity rises (0 = byte-identical to no coupling)", () => {
+    const region = regionFor(STRAIGHT, MEANDER_P);
+    // Sinuosity (centerline arc / chord) is THE straightness measure: both
+    // coupling mechanisms (amplitude damping AND wavelength stretch) lower it,
+    // while max|y| alone can tie when the R_c cap re-binds.
+    const sinuosityFor = (slopeSensitivity: number | undefined): number => {
+      const p = PARAMS({ windiness: 0.8, width: 20, slopeSensitivity });
+      const c = centerlineOf(generateRiver(50, region, p, withMountain(1000, 5600)));
+      let arc = 0;
+      for (let i = 1; i < c.length; i++) arc += Math.hypot(c[i][0] - c[i - 1][0], c[i][1] - c[i - 1][1]);
+      return arc / Math.hypot(c[c.length - 1][0] - c[0][0], c[c.length - 1][1] - c[0][1]);
+    };
+    const off = sinuosityFor(0);
+    const half = sinuosityFor(0.5);
+    const full = sinuosityFor(1);
+    expect(full).toBeLessThan(half);
+    expect(half).toBeLessThan(off);
+    expect(off).toBeGreaterThan(1); // the uncoupled river genuinely meanders
+    // sensitivity 0 over a mountain = byte-identical to the uncoupled river.
+    const p0 = PARAMS({ windiness: 0.8, width: 20, slopeSensitivity: 0 });
+    const a = generateRiver(50, region, p0, withMountain(1000, 5600));
+    const b = generateRiver(50, region, PARAMS({ windiness: 0.8, width: 20 }), CONSTRAINTS);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it("a mountain that does NOT overlap the river leaves the output byte-identical (exact-zero mask)", () => {
+    const p = MEANDER_P;
+    const region = regionFor(STRAIGHT, p);
+    const bare = generateRiver(50, region, p, CONSTRAINTS);
+    const far = generateRiver(50, region, p, withMountain(20000, 24000));
+    expect(JSON.stringify(far)).toBe(JSON.stringify(bare));
+  });
+
+  it("canal (windiness 0) is byte-identical with or without an overlapping mountain", () => {
+    const p = PARAMS({ windiness: 0, braiding: 0, width: 12, widthGrowth: 0 });
+    const region = regionFor(STRAIGHT, p);
+    const bare = generateRiver(50, region, p, CONSTRAINTS);
+    const coupled = generateRiver(50, region, p, withMountain(1000, 5600));
+    expect(JSON.stringify(coupled)).toBe(JSON.stringify(bare));
+  });
+
+  it("coupled output is deterministic, keys on the mountain's persisted seed, and stays inside the corridor", () => {
+    const p = MEANDER_P;
+    const region = regionFor(STRAIGHT, p);
+    const spine = makeSpine("river-test", STRAIGHT);
+    const a = generateRiver(50, region, p, withMountain(1000, 5600));
+    const b = generateRiver(50, region, p, withMountain(1000, 5600));
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    // The mountain seed is a durable INPUT: a different seed re-shapes the
+    // slope sample → a (deterministically) different meander.
+    const other = generateRiver(50, region, p, {
+      worldBounds: CONSTRAINTS.worldBounds,
+      fabricFeatures: [mountainAt(1000, 5600, 778)],
+    });
+    expect(JSON.stringify(other)).not.toBe(JSON.stringify(a));
+    // Containment bound unchanged (amplitude only shrinks under coupling).
+    const maxOffset = riverMaxOffset(p);
+    for (const [x, y] of allCoords(a)) {
+      expect(distanceToSpine(spine, x, y)).toBeLessThanOrEqual(maxOffset + 1e-3);
+    }
+  });
+
+  it("multi-segment: only mountain-overlapped segments change; far segments are byte-identical", () => {
+    // Two segments: the first crosses the mountain, the second is far away.
+    const twoSeg: Pt[] = [
+      [0, 0],
+      [3000, 0],
+      [12000, 0],
+    ];
+    const p = PARAMS({ windiness: 0.8, width: 20, widthGrowth: 0 });
+    const region = regionFor(twoSeg, p);
+    const bare = generateRiver(50, region, p, CONSTRAINTS);
+    const coupled = generateRiver(50, region, p, withMountain(500, 2500));
+    // (segment-1 midpoint 1500 is inside; segment-2 midpoint 7500 samples an
+    // exactly-zero gradient → multipliers exactly 1.)
+    const seg2 = (feats: GeoJSON.Feature[]): string =>
+      JSON.stringify(feats.filter((f) => allCoords([f]).every(([x]) => x >= 3100)));
+    expect(seg2(coupled)).toBe(seg2(bare));
+    expect(JSON.stringify(coupled)).not.toBe(JSON.stringify(bare));
+  });
+});

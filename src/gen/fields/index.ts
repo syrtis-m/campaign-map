@@ -44,6 +44,19 @@ export {
   valueNoise2DWithDeriv,
   fbmEroded,
 } from "./elevation";
+export type { MountainTerrain, MountainParams, TerrainConfig } from "./mountainField";
+export {
+  // Mountain elevation field (plan 023 §3), moved verbatim from mountain.ts in
+  // box 23-E — the shared cross-KIND elevation surface. `elevationFieldFromFabric`
+  // composes the campaign field from the sketched mountain features carried on
+  // GenerationConstraints: how farmland (paddy terraces) and the river (slope
+  // coupling) legally read elevation without importing the mountain generator.
+  MOUNTAIN_TERRAINS,
+  mountainHeightField,
+  elevationFieldFromFabric,
+  terrainConfig,
+  terrace,
+} from "./mountainField";
 export type { Contour, MarchingSquaresOptions } from "./marchingSquares";
 export {
   // Iso-line / iso-band tracing over any scalar field (plan 023 §4.1) — the

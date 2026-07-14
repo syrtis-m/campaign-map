@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import { generateFarmland, type FarmlandParams } from "./farmland";
 import { makeRegion, distanceToBoundary, type ProcgenRegion } from "./region";
+import { elevationFieldFromFabric } from "./fields/mountainField";
+import type { FabricFeature } from "../model/fabric";
 import type { GenerationConstraints } from "./types";
 import { clipNetworkToTile } from "./citynet";
 import { tileBBox, tileXYForPoint } from "./cache/tileGrid";
@@ -47,6 +49,27 @@ const PARAMS = (o: Partial<FarmlandParams> = {}): FarmlandParams => ({
 function regionFor(ring: Pt[]): ProcgenRegion {
   return makeRegion("farm-test", ring);
 }
+
+/** A sketched procgen MOUNTAIN feature covering the SQUARE region and beyond —
+ * the box 23-E elevation source paddy-terraces reads via the constraints (the
+ * raw sketch layer; the persisted seed/params ARE the durable input). */
+const MOUNTAIN_OVER_SQUARE = {
+  type: "Feature",
+  id: "mountain-z",
+  geometry: {
+    type: "Polygon",
+    coordinates: [[[-400, -400], [1400, -400], [1400, 1400], [-400, 1400], [-400, -400]]],
+  },
+  properties: {
+    kind: "mountain",
+    procgen: { algorithm: "mountain", seed: 777, version: 1, params: { terrain: "alpine", amplitude: 0.8, roughness: 0.5 } },
+  },
+} as FabricFeature;
+
+const MOUNTAIN_CONSTRAINTS: GenerationConstraints = {
+  worldBounds: CONSTRAINTS.worldBounds,
+  fabricFeatures: [MOUNTAIN_OVER_SQUARE],
+};
 
 function allCoords(feats: GeoJSON.Feature[]): Pt[] {
   const out: Pt[] = [];
@@ -235,14 +258,13 @@ describe("farmland generator — identity / edit locality", () => {
 });
 
 describe("farmland generator — outskirt suppression is a strict no-op with no farmland (unit)", () => {
-  it("farmland never reads its constraints (unused arg) — output is identical with or without busy fabric", () => {
+  it("non-paddy farmland never reads its constraints — output is identical with or without busy fabric (incl. a MOUNTAIN, box 23-E)", () => {
     const region = regionFor(SQUARE);
-    const bare = generateFarmland(7, region, PARAMS(), CONSTRAINTS);
-    // Constraints carrying arbitrary sketched fabric (incl. a city district and
-    // even another farmland) must not perturb farmland — the generator never
-    // sees anything downstream (stage layering, plan 022 §3.5; `_constraints`
-    // is accepted for signature parity only). Farmland reading the city would
-    // be a stage-3→2 cascade cycle, which is rejected.
+    // Constraints carrying arbitrary sketched fabric (incl. a city district,
+    // another farmland, and — the 23-E cross-kind byte-identity rule — a
+    // procgen MOUNTAIN overlapping the region) must not perturb the four 22-F
+    // field types: only paddy-terraces composes the elevation field. Farmland
+    // reading the city would be a stage-3→2 cascade cycle, which is rejected.
     const busy: GenerationConstraints = {
       worldBounds: CONSTRAINTS.worldBounds,
       fabricFeatures: [
@@ -258,10 +280,156 @@ describe("farmland generator — outskirt suppression is a strict no-op with no 
           geometry: { type: "Polygon", coordinates: [[[0, 0], [1000, 0], [1000, 1000], [0, 1000], [0, 0]]] },
           properties: { kind: "farmland" },
         },
+        MOUNTAIN_OVER_SQUARE,
       ],
     };
-    const withBusy = generateFarmland(7, region, PARAMS(), busy);
-    expect(JSON.stringify(withBusy)).toBe(JSON.stringify(bare));
+    for (const fieldType of ["open-field-strips", "enclosed-patchwork", "grid-quarters", "orchard"] as const) {
+      const bare = generateFarmland(7, region, PARAMS({ fieldType }), CONSTRAINTS);
+      const withBusy = generateFarmland(7, region, PARAMS({ fieldType }), busy);
+      expect(JSON.stringify(withBusy), `${fieldType} must ignore constraints`).toBe(JSON.stringify(bare));
+    }
+  });
+});
+
+describe("farmland generator — paddy-terraces (box 23-E: elevation-coupled banks)", () => {
+  const PADDY = PARAMS({ fieldType: "paddy-terraces", hedging: "none" });
+
+  function banks(feats: GeoJSON.Feature[]): GeoJSON.Feature[] {
+    return feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "farm-bank");
+  }
+
+  it("with an overlapping mountain: emits a paddy wash + contour-following banks, all contained", () => {
+    const region = regionFor(SQUARE);
+    const feats = generateFarmland(7, region, PADDY, MOUNTAIN_CONSTRAINTS);
+    // One region-wide wash carrying the paddy crop tag.
+    const fields = feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "farm-field");
+    expect(fields.length).toBe(1);
+    expect((fields[0].properties as { crop?: string }).crop).toBe("paddy");
+    // Banks exist and every coordinate stays inside the ring.
+    const bs = banks(feats);
+    expect(bs.length).toBeGreaterThan(3);
+    for (const [x, y] of allCoords(feats)) {
+      expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1e-3);
+    }
+    // No rectangle-lattice artifacts: paddy replaces the field grid entirely.
+    expect(typeCount(feats, "farm-hedge")).toBe(0);
+    expect(typeCount(feats, "orchard-tree")).toBe(0);
+  });
+
+  it("banks FOLLOW the elevation contours: the field is near-constant along every bank", () => {
+    const region = regionFor(SQUARE);
+    const feats = generateFarmland(7, region, PADDY, MOUNTAIN_CONSTRAINTS);
+    const elev = elevationFieldFromFabric(MOUNTAIN_CONSTRAINTS.fabricFeatures)!;
+    // The adaptive band interval = the gap between adjacent distinct levels.
+    const levels = [...new Set(banks(feats).map((b) => (b.properties as { elevation?: number }).elevation!))].sort(
+      (a, b) => a - b
+    );
+    expect(levels.length).toBeGreaterThan(1);
+    const interval = levels[1] - levels[0];
+    let checked = 0;
+    let errSum = 0;
+    for (const b of banks(feats)) {
+      const coords = (b.geometry as GeoJSON.LineString).coordinates as Pt[];
+      if (coords.length < 4) continue;
+      const level = (b.properties as { elevation?: number }).elevation!;
+      for (const [x, y] of coords) {
+        // Linear-interpolation error on the 10 m lattice over the (ridged,
+        // fine-octave) field: the interval is CAPPED at 25 m (field-scale
+        // terraces), so per-vertex error is bounded by lattice roughness, not
+        // by the interval — allow 1.5 bands worst-case but demand the AVERAGE
+        // stays a small fraction of a band (a diagonal grid-following polyline
+        // or an off-by-a-band bug errs at relief scale, hundreds of meters).
+        const err = Math.abs(elev(x, y).v - level);
+        expect(err).toBeLessThan(interval * 1.5);
+        errSum += err;
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(50);
+    expect(errSum / checked).toBeLessThan(interval * 0.3);
+  });
+
+  it("is byte-identical across two coupled runs, and keys on the MOUNTAIN's persisted seed", () => {
+    const region = regionFor(SQUARE);
+    const a = generateFarmland(7, region, PADDY, MOUNTAIN_CONSTRAINTS);
+    const b = generateFarmland(7, region, PADDY, MOUNTAIN_CONSTRAINTS);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    // A different mountain seed is a different durable input → different banks
+    // (documented 23-E coupling: the mountain is an INPUT, like a vertex edit).
+    const otherMountain = JSON.parse(JSON.stringify(MOUNTAIN_OVER_SQUARE)) as typeof MOUNTAIN_OVER_SQUARE;
+    (otherMountain.properties.procgen as { seed: number }).seed = 778;
+    const c = generateFarmland(7, region, PADDY, {
+      worldBounds: CONSTRAINTS.worldBounds,
+      fabricFeatures: [otherMountain],
+    });
+    expect(JSON.stringify(banks(c))).not.toBe(JSON.stringify(banks(a)));
+  });
+
+  it("no mountain (or flat field): falls back to concentric interior-distance bands, contained + deterministic", () => {
+    const region = regionFor(SQUARE);
+    const a = generateFarmland(7, region, PADDY, CONSTRAINTS);
+    const b = generateFarmland(7, region, PADDY, CONSTRAINTS);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    const bs = banks(a);
+    expect(bs.length).toBeGreaterThan(2);
+    for (const [x, y] of allCoords(bs)) {
+      expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1e-3);
+    }
+    // Fallback banks are iso-distance rings: every vertex of a bank sits at
+    // (about) its level's distance from the boundary.
+    for (const bank of bs) {
+      const level = (bank.properties as { elevation?: number }).elevation!;
+      for (const [x, y] of (bank.geometry as GeoJSON.LineString).coordinates as Pt[]) {
+        expect(Math.abs(distanceToBoundary(region, x, y) - level)).toBeLessThan(10);
+      }
+    }
+    // A mountain ELSEWHERE (no overlap → zero relief here) must leave the
+    // fallback output byte-identical (the no-overlap byte-identity rule).
+    const farMountain = JSON.parse(JSON.stringify(MOUNTAIN_OVER_SQUARE)) as typeof MOUNTAIN_OVER_SQUARE;
+    (farMountain.geometry as GeoJSON.Polygon).coordinates = [
+      [[8000, 8000], [9500, 8000], [9500, 9500], [8000, 9500], [8000, 8000]],
+    ];
+    const c = generateFarmland(7, region, PADDY, {
+      worldBounds: CONSTRAINTS.worldBounds,
+      fabricFeatures: [farMountain],
+    });
+    expect(JSON.stringify(c)).toBe(JSON.stringify(a));
+  });
+
+  it("stays inside the concave L-shape (banks never bridge the notch)", () => {
+    const region = regionFor(L_SHAPE);
+    const feats = generateFarmland(11, region, PADDY, MOUNTAIN_CONSTRAINTS);
+    for (const [x, y] of allCoords(feats)) {
+      expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1e-3);
+    }
+  });
+
+  it("2x2 seam: the coupled whole artifact clips deterministically per tile", () => {
+    const region = regionFor(SQUARE);
+    const network = generateFarmland(21, region, PADDY, MOUNTAIN_CONSTRAINTS);
+    const min = tileXYForPoint(region.bbox.minX, region.bbox.minY);
+    const max = tileXYForPoint(region.bbox.maxX, region.bbox.maxY);
+    let clipped = 0;
+    for (let ty = min.tileY; ty <= max.tileY; ty++) {
+      for (let tx = min.tileX; tx <= max.tileX; tx++) {
+        const bb = tileBBox(tx, ty);
+        const a = clipNetworkToTile(network, bb);
+        const b = clipNetworkToTile(network, bb);
+        expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+        for (const gid of Object.keys(a)) {
+          for (const f of a[gid]) {
+            for (const [x, y] of allCoords([f])) {
+              expect(x).toBeGreaterThanOrEqual(bb.minX - 1e-3);
+              expect(x).toBeLessThanOrEqual(bb.maxX + 1e-3);
+              expect(y).toBeGreaterThanOrEqual(bb.minY - 1e-3);
+              expect(y).toBeLessThanOrEqual(bb.maxY + 1e-3);
+              clipped++;
+            }
+          }
+        }
+      }
+    }
+    expect(clipped).toBeGreaterThan(0);
   });
 });
 

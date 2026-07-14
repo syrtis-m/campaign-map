@@ -68,41 +68,36 @@ import {
 } from "./region";
 import { sdfPolygon, fMask, marchingSquares } from "./fields";
 import { fbmEroded, type HeightSample, type ElevationField } from "./fields/elevation";
+import {
+  // The elevation-field internals moved VERBATIM to fields/mountainField.ts in
+  // box 23-E (shared-field rule: farmland/river read the mountain elevation
+  // through fields/, never by importing this generator). Re-exported below so
+  // every existing import path (registry, MapController, tests) is unchanged —
+  // the 23-A verbatim-move technique; mountain output stays byte-identical.
+  MOUNTAIN_TERRAINS,
+  type MountainTerrain,
+  type MountainParams,
+  AMP_MIN_M,
+  AMP_MAX_M,
+  BASE_CELL_M,
+  MASK_BAND_M,
+  terrainConfig,
+  terrace,
+  clamp01,
+  mountainHeightField,
+} from "./fields/mountainField";
 import { q } from "./waterEmit";
 import type { GenerationConstraints } from "./types";
 
 type Pt = [number, number];
 
-export const MOUNTAIN_TERRAINS = ["alpine", "mesa", "rolling-hills"] as const;
-export type MountainTerrain = (typeof MOUNTAIN_TERRAINS)[number];
-
-/** Mountain params v1 (plan 023 §3). All knobs have defaults so a bare `{}`
- * validates to a reasonable alpine massif (additive-params rule §1). `terrain`
- * drives layout (like the city `profile`), never a preset-id branch; `amplitude`
- * 0–1 scales relief height; `roughness` 0–1 adds octaves (finer detail). */
-export interface MountainParams {
-  terrain: MountainTerrain;
-  amplitude: number;
-  roughness: number;
-}
+export { MOUNTAIN_TERRAINS, terrace, mountainHeightField };
+export type { MountainTerrain, MountainParams };
 
 // ── World-aligned lattice spacings (meters), absolute so edits stay local ────
 const HACHURE_M = 26; // downslope tick spacing (sparse enough to read as strokes)
 const PEAK_M = 45; // peak-search lattice (coarser than hachures)
 const CONTAIN_MARGIN_M = 1; // keep ticks a hair clear of the boundary
-// Relief amplitude envelope (meters of vertical relief): amplitude 0 → 200 m
-// foothills, 1 → 1400 m alpine wall. Reads in the campaign's own metric scale.
-const AMP_MIN_M = 200;
-const AMP_MAX_M = 1200;
-// Relief feature scale (coarsest fBm octave cell, meters) and mask fade band —
-// FIXED absolute-world constants, NEVER derived from `region.effectiveRadius`.
-// A region-size-derived scale would change the noise frequency / mask ramp when
-// a vertex edit changes the area, re-rolling the whole interior — the farmland
-// "deviation #1" trap (an edit would look like a re-roll). A constant keeps the
-// deep interior byte-identical under edits (relief wavelength is a real-world
-// quantity anyway, not a function of how big the polygon was drawn).
-const BASE_CELL_M = 320;
-const MASK_BAND_M = 120;
 // Hachure tick geometry.
 const TICK_MIN_M = 7;
 const TICK_MAX_M = 24;
@@ -133,80 +128,6 @@ function contourInterval(A: number): number {
   return CONTOUR_INTERVAL_LADDER[CONTOUR_INTERVAL_LADDER.length - 1];
 }
 
-/** Per-terrain relief character. `octavesBase`/`damping`/`ridged`/`terrace`
- * shape the fBm; `peakThreshold` (normalized 0..1) gates summits; `hachureStride`
- * subsamples the tick lattice; `slopeGate` is the minimum normalized slope a
- * tick needs (flats stay bare — classic hachure cartography). */
-interface TerrainConfig {
-  octavesBase: number;
-  damping: number;
-  ridged: boolean;
-  terraceSteps: number; // 0 = no terracing
-  peakThreshold: number;
-  hachureStride: number;
-}
-
-function terrainConfig(terrain: MountainTerrain): TerrainConfig {
-  switch (terrain) {
-    case "mesa":
-      return { octavesBase: 3, damping: 0.15, ridged: false, terraceSteps: 4, peakThreshold: 0.62, hachureStride: 1 };
-    case "rolling-hills":
-      return { octavesBase: 2, damping: 0.05, ridged: false, terraceSteps: 0, peakThreshold: 0.72, hachureStride: 2 };
-    default: // alpine
-      return { octavesBase: 5, damping: 0.7, ridged: true, terraceSteps: 0, peakThreshold: 0.46, hachureStride: 1 };
-  }
-}
-
-/** Terrace transform (mesa): flatten tops, steepen risers → cliff bands. Maps
- * `v ∈ [0,1]` to a stepped value whose plateaus are flat and whose steps are
- * sharp. `steps ≤ 0` is the identity. Exported for direct unit testing (the
- * mesa signature is otherwise subtle until contours land, 23-C). */
-export function terrace(v: number, steps: number): number {
-  if (steps <= 0) return v;
-  const s = Math.min(0.999999, Math.max(0, v)) * steps;
-  const base = Math.floor(s);
-  const frac = s - base;
-  // Cube the fractional part so most of a step is a flat plateau, the last
-  // sliver a steep riser.
-  return (base + frac * frac * frac) / steps;
-}
-
-/**
- * Build the mountain height field for a region (plan 023 §3): the campaign
- * base is deferred to plan 024, so this is `A · mask(x,y) · terrace(fbm(x,y))`
- * in meters, plus its analytic gradient. Exposed as an `ElevationField` — the
- * `elevationWithGrad(x,y)` shape §3 names, so plan 024 stage 0 can compose
- * several of these (+ base, + water carve) into the campaign-wide field.
- *
- * The returned gradient uses the RAW fbm gradient scaled by `A·mask` (the mask
- * factor's own gradient is dropped): deep inside `mask ≡ 1` (grad 0) so this is
- * exact there, and near the rim the tick DIRECTION should follow the terrain
- * slope, not point radially inward along `∇mask` — a deliberate choice (plan
- * 023 §3 hachure-orientation open question) that keeps the interior edit-local
- * and the rim natural.
- */
-export function mountainHeightField(seed: number, region: ProcgenRegion, params: MountainParams): ElevationField {
-  const cfg = terrainConfig(params.terrain);
-  const amplitude = clamp01(params.amplitude);
-  const roughness = clamp01(params.roughness);
-  const A = AMP_MIN_M + amplitude * (AMP_MAX_M - AMP_MIN_M);
-  const octaves = cfg.octavesBase + Math.round(roughness * 2);
-  // Mask fades relief in over a fixed band inside the ring (treeline-style
-  // falloff); deep interior saturates to 1 so edits stay rim-local.
-  const mask = fMask(sdfPolygon(region.ring), MASK_BAND_M);
-  const opts = { octaves, damping: cfg.damping, ridged: cfg.ridged, baseCell: BASE_CELL_M, salt: "mtn-elev" };
-
-  return (x, y): HeightSample => {
-    const m = mask(x, y);
-    const n = fbmEroded(seed, x, y, opts);
-    const tv = terrace(n.v, cfg.terraceSteps);
-    // d(terrace)/dv ≈ 1 on average; for slope direction the raw fbm gradient is
-    // the honest terrain slope (terrace only re-buckets magnitude), so scale by
-    // A·m and keep direction from the fbm gradient.
-    return { v: A * m * tv, dx: A * m * n.dx, dy: A * m * n.dy };
-  };
-}
-
 /** Normalized shape value (mask·terrace(fbm), 0..1) — the peak/threshold space,
  * independent of the amplitude in meters. */
 function shapeValue(seed: number, region: ProcgenRegion, params: MountainParams): (x: number, y: number) => number {
@@ -216,10 +137,6 @@ function shapeValue(seed: number, region: ProcgenRegion, params: MountainParams)
   const mask = fMask(sdfPolygon(region.ring), MASK_BAND_M);
   const opts = { octaves, damping: cfg.damping, ridged: cfg.ridged, baseCell: BASE_CELL_M, salt: "mtn-elev" };
   return (x, y) => mask(x, y) * terrace(fbmEroded(seed, x, y, opts).v, cfg.terraceSteps);
-}
-
-function clamp01(v: number): number {
-  return Math.min(1, Math.max(0, v));
 }
 
 /**

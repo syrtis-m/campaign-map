@@ -361,6 +361,26 @@
         "src/controller/MapController.ts",
         "src/view/MapView.ts"
       ]
+    },
+    "coupling23e": {
+      "script": "scripts/gates/coupling23e.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/farmland.ts",
+        "src/gen/river.ts",
+        "src/gen/mountain.ts",
+        "src/gen/fields/**",
+        "src/gen/procgen/**",
+        "src/controller/MapController.ts",
+        "src/model/fabric.ts",
+        "src/model/tileCache.ts",
+        "src/map/themes/generatedLayers.ts",
+        "src/map/themes/generated/farm.ts",
+        "src/map/themes/generated/river.ts",
+        "src/map/themes/tokens.ts",
+        "src/map/theme.ts",
+        "src/view/MapView.ts"
+      ]
     }
   }
 }

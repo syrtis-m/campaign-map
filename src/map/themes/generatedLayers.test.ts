@@ -414,6 +414,7 @@ describe("generatedLayers — wall moat/band/tower/gate paint coverage (plan 022
  * outputs, unlike the fill-only `anyColor`. */
 const FARM_LAYER_IDS = [
   "generated-farm-field",
+  "generated-farm-bank", // paddy terrace bunds (box 23-E)
   "generated-farm-lane",
   "generated-farm-hedge",
   "generated-farm-building",
@@ -437,7 +438,7 @@ function hasColor(layer: LayerSpecification): boolean {
 }
 
 describe("generatedLayers — farmland field/lane/hedge/building/tree paint coverage (plan 022 §3.5)", () => {
-  it("all five farmland layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
+  it("all six farmland layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
     const layers = generatedLayers(PARCHMENT);
     for (const id of FARM_LAYER_IDS) {
       const layer = layers.find((l) => l.id === id);
@@ -483,7 +484,7 @@ describe("generatedLayers — farmland field/lane/hedge/building/tree paint cove
     });
   }
 
-  it("obsidian-native runtime style paints all five farmland layers", () => {
+  it("obsidian-native runtime style paints all six farmland layers", () => {
     const css: ObsidianCssTokens = {
       backgroundPrimary: "#1e1e1e",
       backgroundSecondary: "#262626",

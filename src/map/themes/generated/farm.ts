@@ -24,6 +24,22 @@ export function farmLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricFarmland, "fill-opacity": 0.7 },
     } as unknown as LayerSpecification,
     {
+      // Paddy terrace banks (box 23-E) — the contour-following bunds of the
+      // paddy-terraces field type, thin earthen `fabricWall`-hued steps drawn
+      // OVER the paddy wash but UNDER the lanes (a lane crosses the terraces).
+      // Same class of mark as the mountain contour but field-scale.
+      id: "generated-farm-bank",
+      type: "line",
+      source: "generated",
+      filter: ["==", ["get", "generatorId"], "farm-bank"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": t.fabricWall,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.5, 16, 1.4],
+        "line-opacity": 0.75,
+      },
+    } as unknown as LayerSpecification,
+    {
       // Farm lanes / section roads — the fabric road hue (F2), a thin dirt
       // track, ABOVE the field fill so the lanes read over the crops.
       id: "generated-farm-lane",

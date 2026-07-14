@@ -33,8 +33,16 @@
  *    downstream width) — a deliberate deviation from local-width realism so
  *    the meander stays a pure per-segment function of params: zero global-arc
  *    coupling, identity property preserved verbatim. (The braid path's fMid
- *    precedent exists, but the meander is kept stricter; 23-E's slope
- *    coupling revisits with its own params.)
+ *    precedent exists, but the meander is kept stricter.)
+ *  - SLOPE COUPLING (box 23-E, the plan 022 §3.1 deferral): the sketch-derived
+ *    elevation field (fields/mountainField.ts — a pure function of the durable
+ *    mountain sketches on the constraints) modulates each segment's meander:
+ *    amplitude ×(1−0.85·k), wavelength ×(1+0.6·k), k = slopeSensitivity ·
+ *    sat(mean |∇h| along the segment). Steep ground ⇒ straighter, longer
+ *    reaches; flat ⇒ full meander. Sampled at five fixed along-segment positions (position-
+ *    derived, zero rng draws) so identity keying and the containment bound are
+ *    untouched (amplitude only shrinks); no mountain ⇒ multipliers exactly 1 ⇒
+ *    byte-identical to 28-B. Braids are deliberately NOT slope-coupled in v1.
  *  - windiness = 0 (canal) zeroes every amplitude cap, so the lateral offset
  *    is EXACTLY 0 through the same arithmetic — canal output is byte-identical
  *    to 28-A (the sha-pinned regression fixture must never change).
@@ -89,6 +97,8 @@ import { hashSeed, mulberry32 } from "./rng";
 import { q } from "./waterEmit";
 import type { ProcgenRegion } from "./region";
 import type { GenerationConstraints } from "./types";
+import { elevationFieldFromFabric } from "./fields/mountainField";
+import type { ElevationField } from "./fields/elevation";
 
 type Pt = [number, number];
 
@@ -103,6 +113,16 @@ export interface RiverParams {
    * (the `delta` preset). Params are the whole truth (determinism), so the
    * "toward the end" behavior is a param, never a preset-id branch. */
   braidBias: number;
+  /** Slope coupling strength, 0–1 (box 23-E, the plan 022 §3.1 deferral):
+   * local terrain slope — read from the elevation field the SKETCHED MOUNTAINS
+   * define (fields/mountainField.ts, a pure function of the durable sketch
+   * layer) — damps meander amplitude and stretches wavelength, so a river
+   * crossing steep ground runs straighter (flat → full meander, steep →
+   * straight; the empirical low-sinuosity-on-gradient signature). 0 disables
+   * coupling entirely. OPTIONAL, additive (plan 022 §1): absent ⇒ 1, and with
+   * no mountain sketch the multipliers are EXACTLY 1 through the same
+   * arithmetic, so every no-mountain river is byte-identical to pre-23-E. */
+  slopeSensitivity?: number;
 }
 
 // Params-only lateral-budget constants (meters). maxOffset sums their scaled
@@ -123,6 +143,24 @@ const KINOSHITA_JS = 1 / 32;
 /** Curvature-radius floor in channel widths (empirical R_c ≈ 2–3 W; doubles as
  * the bank self-intersection guard: R_c ≥ 2W ≫ half-width). */
 export const RC_MIN_WIDTHS = 2;
+// ── Slope coupling (box 23-E; plan 022 §3.1 "modulated by local slope") ───────
+// Slope is the mean |∇h| (m/m) of the sketch-derived elevation field over
+// five fixed positions along the segment — a pure function of the segment's
+// own endpoints + the durable
+// mountain sketches, so the per-segment identity keying is untouched (an edit
+// re-meanders only the adjacent segments, exactly as before). The response is
+// a saturating curve s/(s+HALF) (the wave-1 P2 idiom: smooth saturation, no
+// cliffs): HALF is the half-effect slope, calibrated against measured field
+// gradients (alpine median ≈ 2.8 m/m, rolling-hills ≈ 1.1 at default params).
+// Amplitude is only ever SHRUNK (mA ≤ 1) and wavelength only ever STRETCHED
+// (mH ≥ 1 ⇒ fewer, longer lobes), so `riverMaxOffset` and the containment
+// proof are byte-untouched. Zero slope (or no mountain sketch) yields mA = mH
+// = 1 EXACTLY, so uncoupled rivers/segments multiply by 1 — byte-identical.
+const SLOPE_HALF_MPM = 1.2;
+/** Max fraction of the meander amplitude a fully steep slope removes. */
+const SLOPE_AMP_KILL = 0.85;
+/** Max fractional wavelength stretch on a fully steep slope. */
+const SLOPE_LAMBDA_STRETCH = 0.6;
 // ─────────────────────────────────────────────────────────────────────────────
 export const BASE_BRAID_OFFSET_M = 55; // braid lens bulge at braiding = 1 —
 // large enough that the secondary channel clears both banks and opens an island
@@ -235,7 +273,7 @@ function maxProfileCurvature(skew: number): number {
  * clamp) are all params-only, so |offset| ≤ windiness·BASE_MEANDER_AMP_M and
  * the corridor bound is untouched. windiness 0 ⇒ every cap 0 ⇒ offset ≡ 0
  * exactly (canal byte-identity). */
-function meanderSegment(seed: number, a: Pt, b: Pt, params: RiverParams): {
+function meanderSegment(seed: number, a: Pt, b: Pt, params: RiverParams, elev: ElevationField | null): {
   offset: (localS: number) => number;
   segLen: number;
   leftN: Pt;
@@ -250,13 +288,39 @@ function meanderSegment(seed: number, a: Pt, b: Pt, params: RiverParams): {
   const phi0 = rng() * Math.PI * 2;
   const sign = rng() < 0.5 ? -1 : 1;
   const W = params.width; // BASE width: params-only (see header — identity)
+  // ── Slope coupling (box 23-E): the mean sketch-derived |∇h| over five fixed
+  //    interior positions along THIS segment (i/6, i = 1..5 — position-derived
+  //    from the segment's own endpoints, so identity keying is untouched, and
+  //    NO rng draws, so the stream below is bit-for-bit the 28-B stream). A
+  //    single midpoint sample proved luck-hostage on a live gate run — one
+  //    ridge-top/valley-floor sample (∇ ≈ 0) switched a mountain crossing's
+  //    coupling off; the along-segment mean reads the terrain the reach
+  //    actually runs through. Steep ⇒ amplitude damped + wavelength stretched
+  //    (straighter); flat or uncoupled ⇒ both multipliers EXACTLY 1 (the mask
+  //    is exactly 0 outside every mountain ring, so every sample — hence the
+  //    mean — is exactly 0 and far-from-mountain segments stay byte-identical).
+  let slopeAmpMul = 1;
+  let slopeLambdaMul = 1;
+  if (elev) {
+    let s = 0;
+    for (let i = 1; i <= 5; i++) {
+      const t = i / 6;
+      const g = elev(a[0] + dx * t, a[1] + dy * t);
+      s += Math.hypot(g.dx, g.dy);
+    }
+    s /= 5;
+    const k = (params.slopeSensitivity ?? 1) * (s / (s + SLOPE_HALF_MPM));
+    slopeAmpMul = 1 - SLOPE_AMP_KILL * k;
+    slopeLambdaMul = 1 + SLOPE_LAMBDA_STRETCH * k;
+  }
   // Kinoshita skew: θ₀ scales with windiness, so a near-straight river is
   // near-symmetric and a canal is exactly zero.
   const theta0 = KINOSHITA_THETA0_MAX * params.windiness;
   const skew = theta0 * theta0 * KINOSHITA_JS;
   const pNorm = 1 + skew; // exact bound: |sin φ − skew·cos 3φ| ≤ 1 + skew
   // Lobe layout: half-wave lobes targeting λ/2, hashed relative lengths.
-  const H = Math.max(MIN_HALF_WAVELENGTH_M, (MEANDER_WAVELENGTH_WIDTHS * W) / 2);
+  // (×1 is exact in IEEE 754, so the uncoupled value is bit-unchanged.)
+  const H = Math.max(MIN_HALF_WAVELENGTH_M, (MEANDER_WAVELENGTH_WIDTHS * W) / 2) * slopeLambdaMul;
   const nLobes = Math.max(1, Math.round(segLen / H));
   const rel: number[] = [];
   let relSum = 0;
@@ -289,8 +353,17 @@ function meanderSegment(seed: number, a: Pt, b: Pt, params: RiverParams): {
     // long lobe's amplitude with a short neighbor's rate — ~30% overshoot at
     // ±30% jitter).
     const hMin = Math.min(hs[Math.max(0, i - 1)], hs[i], hs[Math.min(nLobes - 1, i + 1)]);
-    const rcCap = (hMin * hMin) / (Math.PI * Math.PI * RC_MIN_WIDTHS * W * curvFactor);
-    const cap = Math.min(ampBudget, rcCap);
+    // Box 23-E: rcCap is PINNED at its unstretched value (÷ mH²; hMin carries
+    // the λ stretch, so rcCap ∝ h² would otherwise grow by mH² and cancel the
+    // amplitude damping almost exactly in the R_c-bound regime — the common
+    // one per 28-B's saturation note; caught live twice). Dividing only ever
+    // SHRINKS the cap below the physically-allowed bound (longer bends at
+    // capped amplitude sit ABOVE the R_c floor), so realism + containment
+    // hold, and the slope damping applies AFTER the min so it is never masked.
+    // ÷1 and ×1 are exact in IEEE 754 — the uncoupled stream is bit-unchanged.
+    const rcCap =
+      (hMin * hMin) / (Math.PI * Math.PI * RC_MIN_WIDTHS * W * curvFactor) / (slopeLambdaMul * slopeLambdaMul);
+    const cap = Math.min(ampBudget, rcCap) * slopeAmpMul;
     amps.push(cap * (1 - AMP_JITTER * rng()));
   }
   // Cumulative phase at lobe midpoints (trapezoid integrals of the
@@ -339,9 +412,10 @@ function segmentCtx(
   a: Pt,
   b: Pt,
   arcStart: number,
-  totalLen: number
+  totalLen: number,
+  elev: ElevationField | null
 ): SegmentCtx {
-  const { offset, segLen, leftN } = meanderSegment(seed, a, b, params);
+  const { offset, segLen, leftN } = meanderSegment(seed, a, b, params, elev);
   const [ux, uy] = unit(b[0] - a[0], b[1] - a[1]);
   const evalAt = (s: number): Pt => {
     const off = offset(s);
@@ -437,21 +511,31 @@ function weldToward(from: Pt, toward: Pt): Pt {
  * merged river-channel polygons + river-bank casing LineStrings (+ braid
  * river-island lozenges), all strictly within `riverMaxOffset(params)` of the
  * spine.
- * `constraints` are accepted for signature parity but not consumed in v1 — the
- * spine (not the generated channel) still feeds the city as a constraint
- * (RIVER_HALF_WIDTH); the channel→constraint cascade is plan 024, elevation
- * coupling is plan 023 (both intentional seams).
+ * `constraints` feed ONE thing (box 23-E): the sketched MOUNTAIN features, from
+ * which the elevation field is composed for slope coupling — reading the raw
+ * sketch layer, never another generator's output. The spine (not the generated
+ * channel) still feeds the city as a constraint (RIVER_HALF_WIDTH); the
+ * channel→constraint cascade remains plan 024 (an intentional seam).
  */
 export function generateRiver(
   seed: number,
   region: ProcgenRegion,
   params: RiverParams,
-  _constraints: GenerationConstraints
+  constraints: GenerationConstraints
 ): GeoJSON.Feature[] {
   const spine = region.spine;
   if (!spine || spine.points.length < 2) return [];
   const pts = spine.points;
   const totalLen = spine.totalLen;
+
+  // Slope coupling input (box 23-E): the elevation field composed from the
+  // SKETCHED mountain features on the constraints — the raw sketch layer, the
+  // one cross-feature surface every stage may read (never another generator's
+  // OUTPUT; that is plan 024's cascade). `null` when no mountain sketch exists
+  // or coupling is off ⇒ the pre-23-E code path, byte-identical. windiness 0
+  // (canal) has zero meander amplitude through the same arithmetic regardless.
+  const slopeSens = params.slopeSensitivity ?? 1;
+  const elev = slopeSens > 0 && params.windiness > 0 ? elevationFieldFromFabric(constraints.fabricFeatures) : null;
 
   // 1. Per-segment meandered samples (identity-keyed per segment), concatenated
   //    into ONE global centerline. The join vertex appears exactly once (as the
@@ -464,7 +548,7 @@ export function generateRiver(
   const sampleS: number[] = []; // per-sample segment-local arc (m)
   const segs: SegmentCtx[] = [];
   for (let k = 0; k < pts.length - 1; k++) {
-    const seg = segmentCtx(seed, params, pts[k], pts[k + 1], spine.cumLen[k], totalLen);
+    const seg = segmentCtx(seed, params, pts[k], pts[k + 1], spine.cumLen[k], totalLen, elev);
     segs.push(seg);
     const steps = Math.max(1, Math.ceil(seg.segLen / RESAMPLE_STEP_M));
     for (let j = k === 0 ? 0 : 1; j <= steps; j++) {

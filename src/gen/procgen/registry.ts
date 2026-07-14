@@ -144,6 +144,15 @@ const riverParamsSchema = z.object({
   width: z.number().positive().max(500).default(12),
   widthGrowth: z.number().min(0).max(4).default(0),
   braidBias: z.number().min(0).max(1).default(0),
+  /** Box 23-E (plan 022 §3.1): terrain-slope coupling strength — steep ground
+   * (from the sketched mountains' elevation field) straightens the meander.
+   * ADDITIVE default 1 (coupling on): with no mountain sketch the output is
+   * byte-identical for ANY value, so legacy no-mountain rivers are untouched;
+   * a legacy river that DOES cross a sketched mountain adapts on its next
+   * regenerate — the elevation field was already that river's declared input
+   * (§3.1 "when plan 023 lands"), the same additive-output precedent as 23-C
+   * contours appearing on existing mountains. Flagged in DECISIONS. */
+  slopeSensitivity: z.number().min(0).max(1).default(1),
 });
 
 /** River presets (plan 022 §3.1) — the templates Jonah named. Params are the
@@ -153,22 +162,23 @@ const RIVER_PRESETS: readonly ProcgenPreset[] = [
   {
     id: "lazy-lowland",
     label: "Lazy lowland — wide, windy, braided",
-    params: { windiness: 0.85, braiding: 0.5, width: 26, widthGrowth: 0.7, braidBias: 0.2 },
+    params: { windiness: 0.85, braiding: 0.5, width: 26, widthGrowth: 0.7, braidBias: 0.2, slopeSensitivity: 1 },
   },
   {
     id: "mountain-torrent",
     label: "Mountain torrent — narrow, straight, rocky",
-    params: { windiness: 0.15, braiding: 0, width: 8, widthGrowth: 0.2, braidBias: 0 },
+    params: { windiness: 0.15, braiding: 0, width: 8, widthGrowth: 0.2, braidBias: 0, slopeSensitivity: 1 },
   },
   {
+    // slopeSensitivity 0: an engineered canal ignores terrain by definition.
     id: "canal",
     label: "Canal — dead straight, uniform width",
-    params: { windiness: 0, braiding: 0, width: 12, widthGrowth: 0, braidBias: 0 },
+    params: { windiness: 0, braiding: 0, width: 12, widthGrowth: 0, braidBias: 0, slopeSensitivity: 0 },
   },
   {
     id: "delta",
     label: "Delta — heavy braiding near the mouth",
-    params: { windiness: 0.5, braiding: 1, width: 22, widthGrowth: 1.2, braidBias: 1 },
+    params: { windiness: 0.5, braiding: 1, width: 22, widthGrowth: 1.2, braidBias: 1, slopeSensitivity: 1 },
   },
 ];
 
@@ -376,26 +386,33 @@ const farmlandParamsSchema = z.object({
   farmsteads: z.number().min(0).max(1).default(0.4),
 });
 
-/** Farmland presets (plan 022 §3.5) — the four templates. `paddy-terraces` is
- * DEFERRED to plan 023 (box 23-E) and deliberately omitted (additive later).
- * Params are the whole truth; `fieldType` is carried onto features for theme
- * tinting, never a runtime preset-id branch. */
+/** Farmland presets (plan 022 §3.5) — the five templates. `paddy-terraces`
+ * landed in box 23-E (the plan-023 field-coupled variant: contour-following
+ * banks over the sketched mountains' elevation field, concentric fallback on
+ * flat ground). Params are the whole truth; `fieldType` is carried onto
+ * features for theme tinting, never a runtime preset-id branch. */
 const FARMLAND_PRESETS: readonly ProcgenPreset[] = [
   { id: "open-field-strips", label: "Open-field strips — medieval furlongs off lanes", params: { fieldType: "open-field-strips", fieldSize: 0.55, hedging: "none", laneDensity: 0.66, farmsteads: 0.3 } },
   { id: "enclosed-patchwork", label: "Enclosed patchwork — irregular hedged fields", params: { fieldType: "enclosed-patchwork", fieldSize: 0.5, hedging: "hedgerows", laneDensity: 0.4, farmsteads: 0.45 } },
   { id: "grid-quarters", label: "Grid quarters — rectilinear sections + section roads", params: { fieldType: "grid-quarters", fieldSize: 0.7, hedging: "fences", laneDensity: 0.66, farmsteads: 0.35 } },
   { id: "orchard", label: "Orchard — regular tree rows", params: { fieldType: "orchard", fieldSize: 0.4, hedging: "hedgerows", laneDensity: 0.5, farmsteads: 0.3 } },
+  { id: "paddy-terraces", label: "Paddy terraces — contour-following banks", params: { fieldType: "paddy-terraces", fieldSize: 0.35, hedging: "none", laneDensity: 0.4, farmsteads: 0.25 } },
 ];
 
-/** Farmland tile-generator ids = the emitted feature buckets (plan 022 §3.5):
- * tilled fields, the lane web, field-edge hedges/fences, farmstead footprints,
- * and orchard tree points. Cache keys + paint layers key on these. */
+/** Farmland tile-generator ids = the emitted feature buckets (plan 022 §3.5 +
+ * box 23-E): tilled fields, the lane web, field-edge hedges/fences, farmstead
+ * footprints, orchard tree points, and paddy terrace bank lines. Cache keys +
+ * paint layers key on these. (`farm-bank` appended — ADDITIVE: a pre-23-E
+ * cached farmland tile just misses the new bucket, so its next read re-clips
+ * the cached network; the pre-existing gids' bytes are unchanged, the 23-C
+ * mountain-contour precedent.) */
 export const FARMLAND_TILE_GENERATOR_IDS: readonly string[] = [
   "farm-field",
   "farm-lane",
   "farm-hedge",
   "farm-building",
   "orchard-tree",
+  "farm-bank",
 ];
 
 const farmlandAlgorithm: ProcgenAlgorithm = {

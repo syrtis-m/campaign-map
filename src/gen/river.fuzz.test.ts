@@ -76,6 +76,68 @@ describe("river generator — fuzz (seeded random polylines × 4 presets)", () =
       expect(JSON.stringify(a)).toBe(JSON.stringify(b));
     }
   });
+
+  it("slope-coupled to a random MOUNTAIN sketch (box 23-E): never throws, contained, byte-deterministic", () => {
+    // Random spines crossing random mountains at full sensitivity — the
+    // coupling only SHRINKS amplitude / stretches wavelength, so the corridor
+    // bound must keep holding, and the coupled output must be a pure function
+    // of (seed, spine, params, mountain sketch).
+    const rng = mulberry32(24601);
+    for (let s = 0; s < 60; s++) {
+      const line = randomLine(s + 700);
+      const params = PRESETS[s % PRESETS.length];
+      const region = makeCorridorRegion("fuzz-s", makeSpine("fuzz-s", line), riverMaxOffset(params));
+      const spine = region.spine!;
+      if (spine.totalLen < 1) continue;
+      const cx = (rng() - 0.5) * 800;
+      const cy = (rng() - 0.5) * 800;
+      const r = 200 + rng() * 600;
+      const mring: Pt[] = [
+        [cx - r, cy - r],
+        [cx + r, cy - r],
+        [cx + r, cy + r],
+        [cx - r, cy + r],
+        [cx - r, cy - r],
+      ];
+      const constraints = {
+        worldBounds: CONSTRAINTS.worldBounds,
+        fabricFeatures: [
+          {
+            type: "Feature",
+            id: `m-${s}`,
+            geometry: { type: "Polygon", coordinates: [mring] },
+            properties: {
+              kind: "mountain",
+              procgen: {
+                algorithm: "mountain",
+                seed: s * 17 + 3,
+                version: 1,
+                params: { terrain: (["alpine", "mesa", "rolling-hills"] as const)[s % 3], amplitude: 0.3 + (s % 5) * 0.15, roughness: 0.5 },
+              },
+            },
+          },
+        ],
+      } as GenerationConstraints;
+      const maxOffset = riverMaxOffset(params);
+      let a: GeoJSON.Feature[] = [];
+      expect(() => {
+        a = generateRiver(hashLike(s, 23), region, params, constraints);
+      }).not.toThrow();
+      for (const f of a) {
+        const scan = (c: unknown): void => {
+          if (!Array.isArray(c)) return;
+          if (typeof c[0] === "number" && typeof c[1] === "number") {
+            expect(distanceToSpine(spine, c[0] as number, c[1] as number)).toBeLessThanOrEqual(maxOffset + 1e-2);
+            return;
+          }
+          for (const x of c) scan(x);
+        };
+        scan((f.geometry as { coordinates: unknown }).coordinates);
+      }
+      const b = generateRiver(hashLike(s, 23), region, params, constraints);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    }
+  });
 });
 
 // ─── Plan 028 §1.2 (box 28-B): extreme-params grid — containment under the new

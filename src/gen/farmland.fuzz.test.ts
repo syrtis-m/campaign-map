@@ -15,6 +15,9 @@ const PRESETS: FarmlandParams[] = [
   { fieldType: "enclosed-patchwork", fieldSize: 0.5, hedging: "hedgerows", laneDensity: 0.4, farmsteads: 0.45 },
   { fieldType: "grid-quarters", fieldSize: 0.7, hedging: "fences", laneDensity: 0.66, farmsteads: 0.35 },
   { fieldType: "orchard", fieldSize: 0.4, hedging: "hedgerows", laneDensity: 0.5, farmsteads: 0.3 },
+  // Box 23-E: no mountains in CONSTRAINTS ⇒ this fuzzes the concentric
+  // interior-distance fallback banks on every random/concave region.
+  { fieldType: "paddy-terraces", fieldSize: 0.35, hedging: "none", laneDensity: 0.4, farmsteads: 0.25 },
 ];
 
 /** A seeded random simple polygon: a jittered N-gon around a center, radius
@@ -113,6 +116,41 @@ describe("farmland generator — fuzz (seeded random polygons × 4 presets × re
       const params = PRESETS[s % PRESETS.length];
       const a = generateFarmland(s + 7, region, params, CONSTRAINTS);
       const b = generateFarmland(s + 7, region, params, CONSTRAINTS);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    }
+  });
+
+  it("paddy-terraces coupled to a random MOUNTAIN sketch: never throws, contained, byte-deterministic (box 23-E)", () => {
+    const paddy = PRESETS[PRESETS.length - 1];
+    for (let s = 0; s < 40; s++) {
+      const region = makeRegion("fuzz-paddy", randomRing(s + 900, 120, 500));
+      // A random mountain ring near (often overlapping) the farmland region.
+      const mring = randomRing(s + 1300, 200, 700);
+      const constraints = {
+        worldBounds: CONSTRAINTS.worldBounds,
+        fabricFeatures: [
+          {
+            type: "Feature",
+            id: `m-${s}`,
+            geometry: { type: "Polygon", coordinates: [mring] },
+            properties: {
+              kind: "mountain",
+              procgen: {
+                algorithm: "mountain",
+                seed: s * 31 + 5,
+                version: 1,
+                params: { terrain: (["alpine", "mesa", "rolling-hills"] as const)[s % 3], amplitude: 0.3 + (s % 5) * 0.15, roughness: 0.5 },
+              },
+            },
+          },
+        ],
+      } as GenerationConstraints;
+      let a: GeoJSON.Feature[] = [];
+      expect(() => {
+        a = generateFarmland(s + 11, region, paddy, constraints);
+      }).not.toThrow();
+      assertContained(a, region);
+      const b = generateFarmland(s + 11, region, paddy, constraints);
       expect(JSON.stringify(a)).toBe(JSON.stringify(b));
     }
   });
