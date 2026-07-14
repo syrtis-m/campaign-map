@@ -207,7 +207,7 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
       stage rm-.mapcache byte-diff (024 §6) ⛳ full board
 
 **Plan 025 — street-pattern presets + benchmarks** (`plans/025-street-pattern-presets-and-benchmarks.md`)
-- [ ] 25-A metrics.ts + benchmark gates for 4 existing presets + PRESET
+- [x] 6ccafc4 25-A metrics.ts + benchmark gates for 4 existing presets + PRESET
       GALLERY campaign & gate (025 §3.1, §3.5)
 - [ ] 25-B width system + superblock preset (025 §3.3, §2.6)
 - [ ] 25-C tartan-grid + ward-grid + eixample + chamfer operator (025 §2)
@@ -255,6 +255,13 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 7 cont.): 25-A via phase subagent, T1 green —
+  pure metrics.ts + research-anchored benchmark bands (hard in unit suite,
+  warn-only in the live gallery gate — OQ#1 decided: bands encode taste) +
+  Preset Gallery campaign (1×4 equatorial, pinned seed) + contact sheet
+  eyeballed. Finding for §3.4: na-suburb cul-de-sac signature is raw
+  deadEndCount, not share. Committed 6ccafc4. Fast 788. Next: 25-B width
+  system + superblock.
 - 2026-07-14 (arc run, session 7 cont.): 24-C via phase subagent, T1 green —
   city consumes the generated river channel (channelRings supersede the
   sketched spine; bridges/quays/streets/footprints track the meander;

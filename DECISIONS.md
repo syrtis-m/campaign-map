@@ -1062,3 +1062,19 @@
   standalone-green same run → .lastgreenboard advanced. The screenshot-write
   infra failure is new noise worth folding into the fixture-seed chip's
   scope if it recurs.
+
+## 2026-07-14 — Plan 025 phase A (metrics + gallery, phase subagent)
+- **OQ#1 decided: benchmark bands are HARD in the unit suite, WARN-ONLY in
+  the live gallery gate** — distribution bands encode taste; Jonah
+  calibrates from review/gallery/. Invariants (determinism, Fabric
+  byte-intact, explicit-only) hard-fail everywhere.
+- **Gallery layout 1×4 equatorial** (not 2×2): fictional units are degrees;
+  a 2×2 pushed rows to lat ±39 ≈ 29% Mercator stretch — unequal catalog
+  tiles. Equator + scaleMetersPerUnit 100 keeps every district identical.
+- **Width is class-derived** (documented §3.3 stand-in); widthOf prefers an
+  emitted width prop, so 25-B's width system slots in without metrics
+  changes. streetLandShare currently runs above Salat's 25–30% (generous
+  class widths) — 25-B tightens.
+- **Finding for §3.4:** na-suburb's dead-end SHARE is diluted by its high
+  node count; the true cul-de-sac signature is raw deadEndCount (asserted >
+  na-grid). Relevant to the permeability-floor/superblock work.

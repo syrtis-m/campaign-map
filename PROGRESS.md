@@ -341,8 +341,14 @@
   30/33, every failure standalone-green (screenshot-write infra ×2 +
   procgen48 seed-luck) → .lastgreenboard advanced. Fast 771. See DECISIONS
   "24-C".
-- Next: plan 025 street-pattern presets — 25-A metrics.ts + benchmark gates
-  + PRESET GALLERY campaign & gate.
+- **25-A DONE** (`6ccafc4`): metrics.ts (pure §3.1 measurement — 9 network
+  metrics, width class-derived pending §3.3) + benchmark bands (hard in
+  unit suite / warn-only live, OQ#1 decided) + Preset Gallery campaign
+  fixture (1×4 equatorial row, pinned seed 25025) + presetGallery gate w/
+  metrics table + contact sheet (eyeballed — 4 genres identifiable in 3s).
+  Generator byte-unchanged. Gate: fast 788/788 · presetGallery 8/8 ·
+  Vespergate untouched. See DECISIONS "25-A".
+- Next: 25-B width system + superblock preset (025 §3.3, §2.6).
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 
