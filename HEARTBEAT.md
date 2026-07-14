@@ -185,7 +185,7 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
       marching squares (23-C machinery) + Chaikin → ONE multipolygon w/
       clearing holes; rim line layer; dead-wood emits no canopy; 2×2 seam gate
       (026 §2)
-- [ ] 26-C tree glyphs: `treeGlyphs.ts` runtime canvas/SDF glyph module +
+- [x] 1643739 26-C tree glyphs: `treeGlyphs.ts` runtime canvas/SDF glyph module +
       symbol layers (icon-allow-overlap + ignore-placement,
       symbol-z-order viewport-y, icon-translate shadow layer, per-variety
       glyph/tint, rank×zoom opacity fade); perf on throttled CPU (026 §2)
@@ -255,6 +255,14 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 7 cont.): 26-C via phase subagent, T1 green —
+  reusable SDF glyph module (headless EDT synthesis, addImage+
+  styleimagemissing lifecycle surviving setStyle; 27-C/28-C consume it);
+  circle stack → two symbol layers w/ zoom-ramped fade (26-A deferral
+  closed); generator untouched so goldens/fuzz pinned. procgen51-glyphs
+  13/13. PERF caveat: p95 19.2ms on the unthrottled dev machine — Surface
+  Pro throttled numbers still owed (flagged). Committed 1643739. Fast 681.
+  Next: ∥ P3 (27-C park water/canopy + 28-C river junctions ⛳ wave-2 board).
 - 2026-07-14 (arc run, session 7 cont.): 26-B via phase subagent (advisor
   BANNED after repeated fatal API stalls — decisions made inline + documented),
   T1 green — organic canopy MultiPolygon w/ holes; two integration

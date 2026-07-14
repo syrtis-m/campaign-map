@@ -288,9 +288,18 @@
   consumes these next). Gate: fast 673/673 · fuzz green · procgen50-canopy
   13/13 · 3 screenshots eyeballed (organic mass, no staircase/seams) ·
   dev-vault clean. See DECISIONS "26-B".
-- Next: 26-C tree glyphs (treeGlyphs.ts canvas/SDF module + symbol layers;
-  perf on throttled CPU), then ∥ P3: 27-C park organic water/canopy + 28-C
-  river junctions/mouths ⛳ ONE board covers 026+027+028.
+- **26-C DONE** (`1643739`): tree GLYPHS — reusable src/map/treeGlyphs.ts
+  (pure headless SDF synthesis, no canvas; addImage+styleimagemissing
+  lifecycle survives setStyle/theme-switch/reload; 27-C/28-C consume it);
+  26-A circle stack → two symbol layers (20 per-variety/variant SDF icons,
+  icon-color tint, halo rim, translate shadow, allow-overlap+viewport-y,
+  zoom-ramped fade — halo/shadow →0 at overview kills SDF downscale boxes).
+  Generator untouched; goldens pinned. Gate: fast 681/681 ·
+  procgen51-glyphs 13/13 · screenshots eyeballed (real tree shapes) ·
+  dev-vault clean. PERF flag: 52fps p95 on the unthrottled dev machine —
+  Surface Pro throttled numbers owed. See DECISIONS "26-C".
+- Next: ∥ P3 — 27-C park organic water/canopy + 28-C river junctions/mouths
+  ⛳ ONE board covers plans 026+027+028; then plan 024.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

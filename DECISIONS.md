@@ -946,3 +946,27 @@
 - **forest-clearing retired as emitted features** (holes replace them); gid +
   paint kept for pre-026-B cache back-compat. Dasharray rim per theme
   deferred (needs a tokens.ts style flag).
+
+## 2026-07-14 — Plan 026 phase C (SDF tree glyphs, phase subagent)
+- **SDF over per-theme canvas** (§1.3 primary path): theme-independent bytes,
+  tinted at draw time via icon-color — no per-theme regeneration; multi-tone
+  recovered with layers (dark icon-translate shadow below, lighter icon-halo
+  rim above). Pure headless EDT synthesis (no canvas) keeps glyph bytes
+  unit-testable.
+- **SDF downscale smear**: small icon-size smears the AA band into a box,
+  worst on the halo-less shadow. Fix: radius-6 field + zoom-ramp
+  icon-halo-width and shadow-opacity to ~0 toward overview. Pattern for any
+  future SDF icon work (27-C/28-C).
+- **Image lifecycle**: styleimagemissing provider installed once at map
+  creation + proactive registration in load/styledata handlers — survives
+  setStyle (theme/css switch), plugin reload, campaign switch. This is the
+  template 27-C/28-C should copy.
+- **PERF flag for Jonah:** p95 19.2ms (~52fps) panning dense forest on the
+  UNTHROTTLED dev machine (no CPU-throttle harness exists in docs/05). The
+  60fps-on-Surface-Pro budget still needs real throttled numbers — candidate
+  for a follow-up harness; collision detection is skipped (allow-overlap +
+  ignore-placement) so the known symbol-layer cliff is avoided.
+- `generated-forest-tree-base` retired (folded into halo); the sibling
+  procgen49-forest gate's circle probes updated to symbol probes so the 28-C
+  board stays valid. `mixed` reuses the broadleaf silhouette (placement
+  already interleaves populations).
