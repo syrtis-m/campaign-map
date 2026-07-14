@@ -36,6 +36,7 @@ import type { ProfileId } from "./domain";
 import { makeCostField } from "./costField";
 import { buildSkeleton } from "./skeleton";
 import { growNetwork, collectGrownChains, collectCourtTips, COURT_RADIUS_M } from "./growth";
+import { driveBoulevards } from "./axial";
 import { extractBlocks, chamferRing } from "./faces";
 import { subdivideBlocks } from "./parcels";
 import { buildWards } from "./wards";
@@ -296,6 +297,12 @@ export function generateCityNetwork(
   // (roadClass "street" or "alley" — chains never mix classes, v3.4). Chain
   // keys are position-derived (endpoint node keys), never order-derived.
   const { graph } = growNetwork(citySeed, region, profile, constraints, skel);
+  // Axial breakthrough (plan 025 §3.2): profiles that opt in (haussmann,
+  // baroque-axial) cut wide boulevards THROUGH the grown fabric here — spliced
+  // planar into the graph as `boulevard`-class grown edges BEFORE faces/parcels,
+  // so the blocks they cross re-close and re-parcel fronting the cut with no
+  // reflow pass. A no-op (byte-neutral) for every profile without `axial`.
+  if (profile.axial) driveBoulevards(citySeed, graph, region, profile, skel);
   for (const chain of collectGrownChains(graph)) {
     if (chain.coords.length < 2) continue;
     features.push({

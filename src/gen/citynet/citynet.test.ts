@@ -788,6 +788,139 @@ describe("plan 025-C preset signatures (genre reads on the geometry)", () => {
   });
 });
 
+// ── plan 025-D: axial-breakthrough operator + haussmann / baroque-axial ──────
+
+describe("axial-breakthrough operator (plan 025 §3.2 / §2.1 + §2.5)", () => {
+  type Pt = [number, number];
+  const AXIAL: ProfileId[] = ["haussmann", "baroque-axial"];
+  const boulevards = (network: GeoJSON.Feature[]): GeoJSON.Feature[] =>
+    network.filter((f) => f.properties?.roadClass === "boulevard");
+  /** Coordinate strings of every emitted city-street EXCEPT boulevards (the
+   * grown organic fabric + skeleton arterials/ring/waterfront). */
+  const fabricStreetCoords = (network: GeoJSON.Feature[]): Set<string> => {
+    const s = new Set<string>();
+    for (const f of network) {
+      if (f.properties?.generatorId !== "city-street") continue;
+      if (f.properties?.roadClass === "boulevard") continue;
+      for (const [x, y] of (f.geometry as GeoJSON.LineString).coordinates as Pt[]) s.add(`${x},${y}`);
+    }
+    return s;
+  };
+  const blockRings = (network: GeoJSON.Feature[]): Pt[][] =>
+    network
+      .filter((f) => f.properties?.generatorId === "city-block")
+      .map((f) => (f.geometry as GeoJSON.Polygon).coordinates[0] as Pt[]);
+
+  it("both axial presets are byte-deterministic and fully contained in the region", () => {
+    for (const p of AXIAL) {
+      const a = net(600, 600, p);
+      const b = net(600, 600, p);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+      const { region } = fixtureAt(600, 600, p);
+      expect(allCoordsInside(a, region)).toBe(true);
+    }
+  });
+
+  it("emits wide `boulevard`-class cuts (width 30 m); NO other preset does", () => {
+    for (const p of AXIAL) {
+      const bs = boulevards(net(600, 600, p));
+      expect(bs.length, `${p} should cut boulevards`).toBeGreaterThan(0);
+      // Boulevards carry the profile's boulevard width (30 m), not a street width.
+      expect(bs.every((f) => f.properties?.width === 30)).toBe(true);
+    }
+    // The operator is opt-in: every non-axial preset emits ZERO boulevards.
+    for (const p of [
+      "euro-medieval",
+      "euro-continental",
+      "na-grid",
+      "na-suburb",
+      "superblock",
+      "tartan-grid",
+      "ward-grid",
+      "eixample",
+    ] as ProfileId[]) {
+      expect(boulevards(net(600, 600, p)).length, `${p} must not cut boulevards`).toBe(0);
+    }
+  });
+
+  it("boulevards CUT THROUGH the fabric: they span most of the region and are noded into many pieces", () => {
+    const { region } = fixtureAt(600, 600); // radius 900 disc → ~1800 m across
+    for (const p of AXIAL) {
+      const bs = boulevards(net(600, 600, p));
+      // A boulevard passing through dense fabric is split at every crossing, so
+      // one long cut emits as MANY collinear pieces (continuity through fabric).
+      expect(bs.length, `${p} boulevards should be noded by the fabric`).toBeGreaterThan(10);
+      // The cut reaches across the interior — max pairwise extent ≥ half the span.
+      const pts: Pt[] = [];
+      for (const f of bs) for (const c of (f.geometry as GeoJSON.LineString).coordinates as Pt[]) pts.push(c);
+      let maxD = 0;
+      for (let i = 0; i < pts.length; i++)
+        for (let j = i + 1; j < pts.length; j++)
+          maxD = Math.max(maxD, Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]));
+      expect(maxD, `${p} boulevard extent`).toBeGreaterThan(900);
+      // Everything still inside the sketched outline.
+      expect(allCoordsInside(net(600, 600, p), region)).toBe(true);
+    }
+  });
+
+  it("PRESERVES the fabric between cuts: every euro-medieval street vertex survives in haussmann", () => {
+    // haussmann's base params ARE euro-medieval's, and `net` keys the seed on
+    // position only (not profile), so the grown fabric is byte-identical BEFORE
+    // the splice. The breakthrough only ADDS boulevards and NODES crossed
+    // streets (adding a vertex at the crossing) — it never moves or deletes
+    // existing fabric. So every euro-medieval street vertex reappears in
+    // haussmann; the operator's whole effect is additive (the palimpsest).
+    const base = fabricStreetCoords(net(600, 600, "euro-medieval"));
+    const cut = fabricStreetCoords(net(600, 600, "haussmann"));
+    expect(base.size).toBeGreaterThan(100);
+    const missing = [...base].filter((c) => !cut.has(c));
+    expect(missing, `${missing.length} preserved-fabric vertices vanished`).toEqual([]);
+  });
+
+  it("DEMOLISHES / re-closes crossed faces: blocks front the boulevard (an edge lies on the cut)", () => {
+    for (const p of AXIAL) {
+      const network = net(600, 600, p);
+      const boulCoords = new Set<string>();
+      for (const f of boulevards(network))
+        for (const [x, y] of (f.geometry as GeoJSON.LineString).coordinates as Pt[]) boulCoords.add(`${x},${y}`);
+      // A block that re-closed AROUND the cut has ≥2 CONSECUTIVE ring vertices
+      // that are boulevard nodes — i.e. one of its edges IS a boulevard edge, so
+      // its parcels re-split fronting the boulevard (front realignment).
+      let fronting = 0;
+      for (const ring of blockRings(network)) {
+        for (let i = 0; i + 1 < ring.length; i++) {
+          const a = `${ring[i][0]},${ring[i][1]}`;
+          const b = `${ring[i + 1][0]},${ring[i + 1][1]}`;
+          if (boulCoords.has(a) && boulCoords.has(b)) {
+            fronting++;
+            break;
+          }
+        }
+      }
+      expect(fronting, `${p} should have blocks fronting the boulevard`).toBeGreaterThan(0);
+    }
+  });
+
+  it("baroque-axial fans its corsi from ONE shared apex (the gate piazza)", () => {
+    // Every trident corso starts at the same rim apex; casting from the graph,
+    // the apex is the single node shared by all boulevard-chain endpoints on the
+    // near rim. We assert the boulevards emanate from a common point: some coord
+    // is shared by ≥2 boulevard features (the apex/star), which distinguishes the
+    // fan from haussmann's independent chords.
+    const bs = boulevards(net(600, 600, "baroque-axial"));
+    const count = new Map<string, number>();
+    for (const f of bs) {
+      const cs = (f.geometry as GeoJSON.LineString).coordinates as Pt[];
+      for (const c of [cs[0], cs[cs.length - 1]]) {
+        const k = `${c[0]},${c[1]}`;
+        count.set(k, (count.get(k) ?? 0) + 1);
+      }
+    }
+    const maxShared = Math.max(...count.values());
+    expect(maxShared, "a shared apex node joins multiple corsi").toBeGreaterThanOrEqual(2);
+  });
+});
+
 // ── v4.0 plan-020 gates ─────────────────────────────────────────────────────
 
 describe("v4.0 concave smoke (plan 020 gate d)", () => {

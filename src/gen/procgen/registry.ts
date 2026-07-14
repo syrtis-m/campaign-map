@@ -106,6 +106,8 @@ export const CITY_PROFILE_IDS = [
   "tartan-grid",
   "ward-grid",
   "eixample",
+  "haussmann",
+  "baroque-axial",
 ] as const satisfies readonly ProfileId[];
 
 const cityParamsSchema = z.object({
@@ -136,6 +138,8 @@ const CITY_PRESETS: readonly ProcgenPreset[] = [
   { id: "tartan-grid", label: "Tartan grid — coarse arterial grid, fine alley web (Seoul/Tokyo)", params: { profile: "tartan-grid" } },
   { id: "ward-grid", label: "Ward grid — walled modular quarters around squares (Savannah)", params: { profile: "ward-grid" } },
   { id: "eixample", label: "Eixample — uniform blocks, chamfered octagon corners (Barcelona)", params: { profile: "eixample" } },
+  { id: "haussmann", label: "Haussmann — boulevards cut through a medieval warren, star plazas (Paris)", params: { profile: "haussmann" } },
+  { id: "baroque-axial", label: "Baroque axial — a straight trident of grand corsi from a gate piazza (Rome/Turin)", params: { profile: "baroque-axial" } },
 ];
 
 const cityAlgorithm: ProcgenAlgorithm = {

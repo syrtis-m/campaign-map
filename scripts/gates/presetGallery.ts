@@ -5,8 +5,10 @@
 // sketched district per city preset, all the SAME shape (regular 16-gon,
 // effective radius ~700 m) in a 1×N equatorial row, so on-screen differences are
 // the PRESET, never the boundary. Phase 025-B added the superblock district +
-// the §3.3 width histogram columns; 025-C appends tartan-grid, ward-grid and
-// eixample (the §3.4 chamfer operator — eixample's octagonal corners). This gate:
+// the §3.3 width histogram columns; 025-C appended tartan-grid, ward-grid and
+// eixample (the §3.4 chamfer operator); 025-D appends haussmann + baroque-axial
+// (the §3.2 axial-breakthrough operator — boulevards cut through the fabric).
+// This gate:
 //
 //   (a) reloads the plugin with the gallery cache cleared, opens the gallery,
 //       and confirms every preset's district GENERATES from the committed
@@ -53,9 +55,10 @@ const SCALE = 100;
 // campaign worldBounds the app passes to generation = these × SCALE, so a wider
 // bound shifts every preset's height-falloff a hair (warn-only metrics; the hard
 // bands live in the unit suite on a fixed-bounds ring). 025-C appended
-// tartan-grid(56)/ward-grid(72)/eixample(88); eixample at x=88 spans 80.9–95.1,
-// so maxX 97 fits it with margin.
-const BOUNDS: [number, number, number, number] = [-33, -10, 97, 10];
+// tartan-grid(56)/ward-grid(72)/eixample(88); 025-D appended haussmann(104)/
+// baroque-axial(120). baroque-axial at x=120 spans 112.9–127.1, so maxX 129
+// fits it with margin.
+const BOUNDS: [number, number, number, number] = [-33, -10, 129, 10];
 const WORLD = { minX: BOUNDS[0] * SCALE, minY: BOUNDS[1] * SCALE, maxX: BOUNDS[2] * SCALE, maxY: BOUNDS[3] * SCALE };
 // Per-preset display-space centres (must match the authored Fabric.geojson) +
 // the district circumradius in display units, for fitBounds framing.
@@ -68,6 +71,8 @@ const CENTERS: Record<string, [number, number]> = {
   "tartan-grid": [56, 0],
   "ward-grid": [72, 0],
   eixample: [88, 0],
+  haussmann: [104, 0],
+  "baroque-axial": [120, 0],
 };
 const R_UNITS = 7.6; // circumradius 7.09 + margin
 const PRESET_ORDER: ProfileId[] = [
@@ -79,6 +84,8 @@ const PRESET_ORDER: ProfileId[] = [
   "tartan-grid",
   "ward-grid",
   "eixample",
+  "haussmann",
+  "baroque-axial",
 ];
 
 interface GalleryFeature {
@@ -132,11 +139,23 @@ function regionCount(id: string): number {
   const n = sync(`(v.regionFeatureIds(${JSON.stringify(id)})||[]).length`);
   return typeof n === "number" ? n : Number(n) || 0;
 }
-async function reopenAndSettle(): Promise<void> {
+async function reopenAndSettle(ids: string[] = []): Promise<void> {
   await issueOpen();
   front();
   await waitFor(() => evalJs(`!!(${viewExpr()})`) === true, 20000, "gallery view");
-  await new Promise((r) => setTimeout(r, 5000)); // replay + all-preset generation settle
+  await new Promise((r) => setTimeout(r, 5000)); // replay kickoff
+  // The gallery now holds 10 districts; each generates a full city network
+  // asynchronously, so a fixed sleep races the last presets (baroque-axial is
+  // generated LAST). Poll until EVERY region has features before any digest is
+  // captured — robust to the count growing, not a magic sleep.
+  if (ids.length > 0) {
+    await waitFor(
+      () => ids.every((id) => regionCount(id) > 0),
+      30000,
+      "all gallery presets generated"
+    );
+    await new Promise((r) => setTimeout(r, 1500)); // small quiescence margin
+  }
 }
 function fabricDigest(): string {
   return readFileSync(FABRIC_ABS, "utf8");
@@ -195,14 +214,14 @@ function printMetricsTable(gate: Gate): void {
 
 async function main(): Promise<void> {
   const gate = new Gate();
-  console.log("== Plan 025-A gate (preset gallery — the city style catalog) ==\n");
+  console.log("== Plan 025-D gate (preset gallery — the city style catalog) ==\n");
   mkdirSync(REVIEW, { recursive: true });
 
   const gallery = readGallery();
   const fabricBefore = fabricDigest();
 
   await gate.try(`gallery fixture present (${gallery.length} presets), plugin reloads clean`, () => {
-    if (gallery.length !== 8) throw new Error(`expected 8 gallery presets, found ${gallery.length}`);
+    if (gallery.length !== 10) throw new Error(`expected 10 gallery presets, found ${gallery.length}`);
     if (existsSync(CACHE_ABS)) rmSync(CACHE_ABS);
     obsidian("plugin:reload id=campaign-map");
     clearErrors();
@@ -211,7 +230,7 @@ async function main(): Promise<void> {
   });
 
   await gate.try("(a) gallery opens; every preset district generates from the committed fabric", async () => {
-    await reopenAndSettle();
+    await reopenAndSettle(gallery.map((f) => f.id));
     for (const f of gallery) {
       const c = regionCount(f.id);
       if (c < 1) throw new Error(`preset ${f.properties.name} generated no features`);
@@ -235,7 +254,7 @@ async function main(): Promise<void> {
       await new Promise((r) => setTimeout(r, 1600));
       screenshot(`${REVIEW}/${profile}.png`);
     }
-    // Contact sheet: the whole 1×4 row in one frame.
+    // Contact sheet: the whole 1×10 row in one frame.
     sync(
       `(function(){v.map.fitBounds([[${BOUNDS[0]},${BOUNDS[1]}],[${BOUNDS[2]},${BOUNDS[3]}]],{padding:20,animate:false});return 'ok';})()`
     );
@@ -246,7 +265,7 @@ async function main(): Promise<void> {
       if (!existsSync(`${REVIEW}/${profile}.png`)) throw new Error(`missing screenshot for ${profile}`);
     }
     if (!existsSync(`${REVIEW}/_contact-sheet.png`)) throw new Error("missing contact sheet");
-    console.log("     [c] 4 preset shots + contact sheet written to review/gallery/");
+    console.log("     [c] 10 preset shots + contact sheet written to review/gallery/");
   });
 
   await gate.try("(e) explicit-only: pan/zoom never generates", async () => {
@@ -264,7 +283,7 @@ async function main(): Promise<void> {
     resetLeaves();
     await new Promise((r) => setTimeout(r, 800));
     if (existsSync(CACHE_ABS)) rmSync(CACHE_ABS);
-    await reopenAndSettle();
+    await reopenAndSettle(gallery.map((f) => f.id));
     for (const f of gallery) {
       if (digest(f.id) !== firstDigests[f.id]) {
         throw new Error(`preset ${f.properties.name} not byte-identical after cache delete`);
@@ -283,7 +302,7 @@ async function main(): Promise<void> {
   });
 
   resetLeaves();
-  process.exit(gate.summarize("Plan 025-A"));
+  process.exit(gate.summarize("Plan 025-D"));
 }
 
 main().catch((e) => {

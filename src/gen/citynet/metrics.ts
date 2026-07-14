@@ -185,6 +185,35 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [1.42, 1.85],
     anchor: "Barcelona Cerdà 103 (ours denser) — chamfered octagon blocks, uniform grid",
   },
+  // ── plan 025-D presets: euro-medieval organic base + the §3.2 axial-
+  // breakthrough operator. Both run DENSER than plain euro-medieval — the
+  // boulevards add street length + crossing intersections and the wide (30 m)
+  // cuts push a few % of length into the >20 m band (the only euro-organic
+  // presets that show a >20 m column). Measured on the gallery ring (pinned
+  // seed) and widened to research windows (25-A methodology).
+  //
+  // haussmann (§2.1): perspective boulevards CUT as chords through the retained
+  // warren, crossing at interior star plazas. Anchor: Paris Étoile 133 /
+  // Mayfair 165 (organic grain, few grand cuts — ours denser).
+  haussmann: {
+    intersectionsPerKm2: [340, 580],
+    streetKmPerKm2: [28, 45],
+    streetLandShare: [0.38, 0.58],
+    blockGrainP50: [28, 52],
+    permeability: [1.32, 1.65],
+    anchor: "Paris Étoile 133 · Mayfair 165 — breakthrough boulevards through a medieval warren, star plazas",
+  },
+  // baroque-axial (§2.5): a straight trident of grand corsi fanning from one
+  // gate piazza to monumental far-rim endpoints. Anchor: Roma Trident / Turin
+  // Via Po (a few composed axes through organic fabric).
+  "baroque-axial": {
+    intersectionsPerKm2: [320, 520],
+    streetKmPerKm2: [26, 42],
+    streetLandShare: [0.36, 0.56],
+    blockGrainP50: [26, 50],
+    permeability: [1.3, 1.62],
+    anchor: "Roma Trident · Turin Via Po — a straight trident of corsi from a gate piazza",
+  },
 };
 
 /** True when `value` lies within the closed band. */

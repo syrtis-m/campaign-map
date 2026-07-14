@@ -320,6 +320,48 @@ describe("§3.1 benchmark gates — plan 025-C presets (tartan-grid / ward-grid 
   });
 });
 
+describe("§3.1 benchmark gates — plan 025-D presets (haussmann / baroque-axial)", () => {
+  const region = galleryRegion();
+  const AXIAL: ProfileId[] = ["haussmann", "baroque-axial"];
+  const M: Record<string, NetworkMetrics> = {};
+  for (const p of [...AXIAL, "euro-medieval" as ProfileId])
+    M[p] = computeNetworkMetrics(presetNet(p, region), region);
+
+  for (const p of AXIAL) {
+    it(`${p} lands inside its §3.1 benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
+      const violations = benchmarkViolations(p, M[p]);
+      expect(violations, violations.join("; ")).toEqual([]);
+    });
+  }
+
+  // The axial operator only ADDS fabric (boulevards + their crossings), so both
+  // presets read DENSER than their euro-medieval organic base — more street
+  // length, more intersections. The §3.2 "cut through, preserve between" story.
+  it("both axial presets are denser than plain euro-medieval (the boulevards add fabric)", () => {
+    for (const p of AXIAL) {
+      expect(
+        M[p].streetKmPerKm2,
+        `${p} ${M[p].streetKmPerKm2.toFixed(1)} vs euro-medieval ${M["euro-medieval"].streetKmPerKm2.toFixed(1)}`
+      ).toBeGreaterThan(M["euro-medieval"].streetKmPerKm2);
+      expect(M[p].intersectionsPerKm2).toBeGreaterThan(M["euro-medieval"].intersectionsPerKm2);
+    }
+  });
+
+  // The wide (30 m) boulevards are the ONLY reason a euro-organic preset shows a
+  // >20 m width column — plain euro-medieval has none (its widest street is the
+  // 18 m arterial, which lands in the 10–20 band).
+  it("the boulevard cuts put a slice of street length in the >20 m band (euro-medieval has none)", () => {
+    expect(M["euro-medieval"].widthHistogram.gt20).toBe(0);
+    for (const p of AXIAL) {
+      expect(M[p].widthHistogram.gt20, `${p} >20 m band`).toBeGreaterThan(0);
+    }
+  });
+
+  it("both axial presets clear Salat's ≥15 km/km² floor (composed organic fabric, not the anti-pattern)", () => {
+    for (const p of AXIAL) expect(M[p].streetKmPerKm2).toBeGreaterThanOrEqual(15);
+  });
+});
+
 describe("§3.3 form-based width — the generator emits an explicit metre width per street", () => {
   const region = galleryRegion();
 

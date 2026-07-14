@@ -42,6 +42,39 @@ export interface StreetWidths {
   boulevard: number;
 }
 
+/**
+ * Axial-breakthrough configuration (plan 025 §3.2 / §2.1 + §2.5). A profile
+ * that carries this drives a deterministic post-growth pass that CUTS wide
+ * boulevards THROUGH the already-grown organic fabric — the Haussmann
+ * breakthrough (perspective boulevards slicing the retained medieval warren)
+ * and the Baroque trident (a fan of straight corsi from one gate piazza). The
+ * cut splices `boulevard`-class edges into the planar street graph BEFORE faces
+ * and parcels, so the blocks it crosses re-close and their parcels re-split
+ * fronting the boulevard — no reflow pass, all downstream stages compute once
+ * against the final graph (§3.2). The organic fabric BETWEEN the cuts is
+ * untouched (the palimpsest is preserved).
+ *
+ * ADDITIVE-PARAMS (binding): this is an OPTIONAL field. Every pre-025-D profile
+ * omits it entirely (`undefined`), so `driveBoulevards` is skipped for them and
+ * their emitted bytes are unchanged — the operator only ever runs for a profile
+ * that opts in. haussmann + baroque-axial are the only carriers today; their
+ * bytes are theirs from birth (the boulevards ARE their intended geometry).
+ */
+export interface AxialConfig {
+  /** How many boulevard cuts to drive. Haussmann: 2–4 chords fanning across the
+   * fabric; Baroque trident: the fan count (3 = the classic Roma Trident). */
+  count: number;
+  /** `"breakthrough"` (Haussmann): each cut is a chord between two boundary
+   * points at interleaved bearings — the chords cross at interior STAR plazas.
+   * `"trident"` (Baroque): all cuts share ONE apex (a gate piazza on the rim)
+   * and fan straight toward monumental endpoints on the far side. */
+  mode: "breakthrough" | "trident";
+  /** Max elbow displacement of a cut's midpoint, as a fraction of its length,
+   * perpendicular to the chord (the Haussmann "slight convex effect"; §1.3).
+   * 0 ⇒ dead-straight (Baroque corsi are straight). Hashed sign per cut. */
+  elbow: number;
+}
+
 /** The pre-025 class→width mapping, shared by every walkable profile so their
  * emitted widths reproduce the metrics stand-in exactly (additive-params). */
 export const LEGACY_STREET_WIDTHS: StreetWidths = {
@@ -147,6 +180,13 @@ export interface CityProfile {
    * seams the way `na-grid` does. false ⇒ the per-quadrant jog (every other
    * grid preset). Read by `growth.ts`. */
   uniformGrid: boolean;
+
+  // ── Axial breakthrough (plan 025 §3.2 / §2.1 + §2.5) ─────────────────────
+  /** Optional axial-breakthrough config (see `AxialConfig`). Present ⇒ the
+   * `driveBoulevards` post-pass cuts boulevards through the grown fabric before
+   * faces/parcels (haussmann + baroque-axial). Absent (every pre-025-D profile)
+   * ⇒ no boulevards, bytes unchanged. Read in `index.ts` after growth. */
+  axial?: AxialConfig;
 
   // ── Stage C: blocks / parcels / footprints (v3.2 — typed now, unread) ──
   /** Target block area window, m² (§6 "block target"). */
@@ -513,6 +553,102 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     footprintInset: 2.5,
     footprintDepth: 15,
     footprintCoverage: 0.6,
+  },
+  // ── haussmann (plan 025 §2.1) — Paris breakthrough boulevards ──────────────
+  // An EURO-MEDIEVAL organic base (identical growth params — the retained
+  // medieval warren) PLUS the §3.2 axial-breakthrough operator: 3 wide (30 m,
+  // roadClass `boulevard`) perspective boulevards CUT as chords through the
+  // grown fabric, crossing at interior STAR plazas, slight elbow permitted
+  // (§1.3 "convex effect"). The organic fabric BETWEEN the cuts survives — the
+  // palimpsest IS the look (§1.3 Haussmann). The base fabric being byte-for-byte
+  // euro-medieval makes the boulevards the ONLY differentiator: the operator's
+  // whole contribution reads on screen. hasWall stays true (the gates + ring
+  // anchor the "aimed at the gates" reading; the operator itself derives its
+  // chord bearings from the region + center, so it is robust with or without a
+  // wall). Anchor: Paris Étoile 133 · Mayfair 165 (organic grain, few grand cuts).
+  haussmann: {
+    id: "haussmann",
+    arterialCount: 5,
+    waterfrontOffsets: [20, 55],
+    landmarks: ["church", "market", "keep", "temple"],
+    plazaRadius: 20,
+    hasWall: true,
+    wallChance: 1,
+    ringRadiusFrac: 0.55,
+    segmentLen: 40,
+    branchProb: 0.45,
+    edge: 0.22,
+    branchAngle: Math.PI / 2,
+    branchAngleJitter: (25 * Math.PI) / 180,
+    curvature: (8 * Math.PI) / 180,
+    snapDist: 18,
+    minAngle: (30 * Math.PI) / 180,
+    minEdge: 12,
+    minStub: 18,
+    maxSegments: 4000,
+    alleys: true,
+    culdesacs: false,
+    snapProb: 1,
+    gridAzimuths: [],
+    streetWidths: LEGACY_STREET_WIDTHS,
+    chamfer: 0,
+    uniformGrid: false,
+    // 3 boulevard chords, slight convex elbow — the breakthrough web + stars.
+    axial: { count: 3, mode: "breakthrough", elbow: 0.06 },
+    blockAreaMin: 1000,
+    blockAreaMax: 3000,
+    parcelMinArea: 120,
+    parcelMaxAspect: 3.5,
+    parcelMinFrontage: 6,
+    footprintInset: 1.5,
+    footprintDepth: 10,
+    footprintCoverage: 0.78,
+  },
+  // ── baroque-axial (plan 025 §2.5) — Roma Trident / Turin Via Po ────────────
+  // Organic euro-medieval base + a TRIDENT: a fan of `count` straight corsi all
+  // radiating from ONE gate piazza on the rim toward monumental endpoints on the
+  // far side (the "points of view", §1.3). Distinct from haussmann (independent
+  // chords crossing at multiple stars): here the boulevards share the apex —
+  // ONE grand star at the gate piazza, straight axes (elbow 0). Distinct from
+  // radial-star (§2.8, deferred): that IS the whole fabric; this composes a few
+  // axes THROUGH retained organic fabric. Anchor: Roma Trident · Turin Via Po.
+  "baroque-axial": {
+    id: "baroque-axial",
+    arterialCount: 5,
+    waterfrontOffsets: [20, 55],
+    landmarks: ["church", "market", "keep", "temple"],
+    plazaRadius: 20,
+    hasWall: true,
+    wallChance: 1,
+    ringRadiusFrac: 0.55,
+    segmentLen: 40,
+    branchProb: 0.45,
+    edge: 0.22,
+    branchAngle: Math.PI / 2,
+    branchAngleJitter: (25 * Math.PI) / 180,
+    curvature: (8 * Math.PI) / 180,
+    snapDist: 18,
+    minAngle: (30 * Math.PI) / 180,
+    minEdge: 12,
+    minStub: 18,
+    maxSegments: 4000,
+    alleys: true,
+    culdesacs: false,
+    snapProb: 1,
+    gridAzimuths: [],
+    streetWidths: LEGACY_STREET_WIDTHS,
+    chamfer: 0,
+    uniformGrid: false,
+    // 3 straight corsi fanning from one gate piazza — the Roma Trident.
+    axial: { count: 3, mode: "trident", elbow: 0 },
+    blockAreaMin: 1000,
+    blockAreaMax: 3000,
+    parcelMinArea: 120,
+    parcelMaxAspect: 3.5,
+    parcelMinFrontage: 6,
+    footprintInset: 1.5,
+    footprintDepth: 10,
+    footprintCoverage: 0.78,
   },
 };
 

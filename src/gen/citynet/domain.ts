@@ -30,7 +30,9 @@ export type ProfileId =
   | "superblock"
   | "tartan-grid"
   | "ward-grid"
-  | "eixample";
+  | "eixample"
+  | "haussmann"
+  | "baroque-axial";
 
 export interface CityDomain {
   /** `dom:<anchorCellX>:<anchorCellY>` — stable, position-keyed. */

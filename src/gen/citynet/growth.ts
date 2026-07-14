@@ -174,8 +174,11 @@ function lineAngleDelta(prior: number, theta: number): number {
 }
 
 /** Insert a world-meter polyline into the graph as a chain of lattice edges.
- * Returns the inserted node keys in order (consecutive duplicates dropped). */
-function insertPolyline(
+ * Returns the inserted node keys in order (consecutive duplicates dropped).
+ * Exported (plan 025-D) so the axial-breakthrough operator splices its
+ * boulevards through the grown fabric with the same battle-tested planar
+ * insertion (every crossing noded — faces need a true planar graph). */
+export function insertPolyline(
   graph: StreetGraph,
   coords: Pt[],
   props: { roadClass: string; grown: boolean; sketch: boolean }
