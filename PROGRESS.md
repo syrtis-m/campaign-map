@@ -151,7 +151,30 @@
   tsc+build · procgen47 13/13 (identity/gates/moat/undo/double-wall city-band
   14→0/explicit-only) · both screenshots eyeballed (curtain towered band;
   bastioned star-fort + moat) · dev-vault byte-clean. See DECISIONS "phase E".
-- Next: 22-F FARMLAND incl. outskirt-field suppression (022 §3.5) ⛳ full board.
+- **22-F DONE** (`257e280`) — **PLAN 022 COMPLETE**: FARMLAND — new `farmland`
+  polygon FabricKind end-to-end (forest-checklist parity: fabricFarmland token
+  all themes, inert 0.28 fill hiding under procgen, sub-bar button, 5
+  `generated-farm-*` layers painted everywhere + coverage test). Generator
+  `src/gen/farmland.ts`: absolute-world field lattice subdivided per preset
+  (open-field-strips / enclosed-patchwork / grid-quarters / orchard;
+  paddy-terraces deferred to 23-E), lane web, dedup'd field-edge hedges,
+  position-hashed farmsteads at lane junctions, orchard rows; strip axis
+  pinned world-X (bbox-keyed axis made a vertex edit ≈ re-roll — fixed during
+  audit of the interrupted first agent's work). Outskirt suppression per §3.5:
+  city reads the RAW farmland sketch and drops its own outskirt fields inside
+  it (strict no-op with none sketched, unit-asserted); farmland-vs-city
+  overlap legal. Farm stack paints BELOW city layers (stage-2-under-stage-3
+  read — deliberate divergence from forest's above-footprints slot; flagged).
+  Gate: fast 484/484 · farmland fuzz 3/3 · tsc+build · procgen48 13/13
+  (byte-identical regen, edit 100% vs re-roll 41.2%, undo, suppression 6→0,
+  explicit-only) · screenshots eyeballed (patchwork smallholdings vs
+  rectilinear quarters) · dev-vault byte-clean · **plan-022 board 16/16**
+  (procgen45 board-flake, standalone 12/12; first run externally killed
+  mid-phase4 and resumed). `.lastgreenboard` → 257e280. See DECISIONS
+  "phase F".
+- Next: visual-overhaul wave 1 (plans 026–028, Jonah-slotted 2026-07-13) —
+  VO-W0 generatedLayers per-kind split (byte-identical style gate), then
+  26-A/27-A/28-A (∥ P1), 27-B/28-B (∥ P2); then plan 023.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

@@ -668,3 +668,50 @@
   overhauls) appeared untracked mid-phase from a separate research session;
   left uncommitted + flagged in HEARTBEAT §Questions rather than folded into
   this run (checklist scope is Jonah's call).
+
+## 2026-07-13 — Plans 026–028 slotting + board collapse (Jonah, via research session)
+- **Plans 026–028 (forest/park/river visual overhauls) ratified and slotted**
+  into HEARTBEAT as two waves: wave 1 (VO-W0 paint-module split + 26-A/27-A/
+  28-A ∥P1 + 27-B/28-B ∥P2) after 22-F; wave 2 (26-B → 26-C → 27-C/28-C ∥P3)
+  after 023. Rationale: A/B phases have no 023 dependency (visual wins pulled
+  forward); 26-B/27-C need 23-C marching squares; 26-C's glyph module feeds
+  27-C/28-C; 28-B precedes 23-E by checklist order (river-slope coupling
+  builds on the new meander math); everything lands before 024 so the cascade
+  integrates final geometry once.
+- **∥ protocol:** ∥ groups are CODE-parallel only (disjoint generators; VO-W0
+  removes the generatedLayers.ts collision; 27-A owns tokens.ts in P1).
+  Integration, live gates, boards, and commits always serialize; the
+  unattended driver runs ∥ boxes as consecutive solo phases (one-kill-one-
+  phase-rework stands); attended sessions may fan out worktree subagents
+  within one invocation.
+- **Board collapse (Jonah):** ONE full board covers all three overhaul plans,
+  run at 28-C — not one board per plan. Every other wave box commits on T1.
+  The once-per-plan cadence and board-flake rule apply to the 026–028 block
+  as a whole.
+
+## 2026-07-13/14 — Plan 022 phase F (FARMLAND, Opus 4.8 phase subagent; plan-022 board)
+- **Strip-axis pinned to constant world-X** (audit fix on the interrupted
+  agent's generator): keying strip orientation on the region bbox's longer
+  axis meant a vertex edit that flips the dominant axis rotated EVERY strip —
+  edit ≈ re-roll, violating edit-locality. A constant axis keeps fields
+  world-stable under any boundary edit. "Strips radiate off lanes" still
+  holds (lanes follow the same lattice).
+- **Farm stack paints BELOW city district/footprints/streets** (farmland is
+  cascade stage 2, city stage 3 — city-over-farmland reads city-on-top).
+  Deliberate divergence from forest (canopy paints above footprints).
+  **Flag for Jonah** with the v4.9 screenshots.
+- **Inert paint = forest §5.2 mechanism exactly**: fabricFarmland 0.28 fill,
+  opacity 0 once `procgen` present; fill stays for hit-testing.
+- **Self-contained rectangle splitter** rather than importing
+  parcels.subdivideBlocks (CityProfile-coupled) — park precedent endorsed.
+- **paddy-terraces omitted entirely** (not stubbed): additive-params rule
+  makes it a legal later addition at 23-E, where elevation exists.
+- **Board conduct:** first board externally killed mid-phase4 (main-session
+  interrupt cancels bg tasks — known failure mode); prologue + phase0–3 were
+  already green so the board was RESUMED (`--no-prologue --gates=<remaining>`)
+  rather than re-run — one logical board. procgen45 failed in-board on a CLI
+  eval flake (`failed: => started` — eval succeeded, wrapper threw; same
+  signature as the phase4 in-board flake that passed on the resumed check)
+  and passed standalone 12/12 immediately after → counts GREEN per the
+  2026-07-13 flake rule; board not re-run. Combined: 16/16 gates, 0 probe
+  relaunches.

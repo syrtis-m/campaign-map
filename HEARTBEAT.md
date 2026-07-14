@@ -1,4 +1,4 @@
-# HEARTBEAT.md — overnight run: implement plans 021–025
+# HEARTBEAT.md — overnight run: implement plans 021–028
 
 **Unattended driver (the one that survives kills): `scripts/heartbeat-run.sh`**
 ```
@@ -21,7 +21,7 @@ limit or reboot leaves nothing running; the supervisor is what relaunches. See
 docs/08 for the full pattern.
 
 **Attended alternative (you're watching, hands-on):** in an open session,
-`/goal implement plans 021-025 per HEARTBEAT.md — do the next unchecked box to
+`/goal implement plans 021-028 per HEARTBEAT.md — do the next unchecked box to
 its green T1 gate, commit+push, flip it; stop when every box is checked` keeps
 turns going with no idle wait — but only while that session lives; restore with
 `claude --resume` after a kill. `/loop` (self-paced) is the polling equivalent.
@@ -123,7 +123,48 @@ exists to make that true.
       marching squares deferred to 023; theme paint in ALL themes) (022 §3.2)
 - [x] ab320f4 22-D PARK incl. japanese-garden (022 §3.3)
 - [x] b119117 22-E WALL elaboration + raw-sketch double-wall suppression (022 §3.4)
-- [ ] 22-F FARMLAND incl. outskirt-field suppression (022 §3.5) ⛳ full board
+- [x] 257e280 22-F FARMLAND incl. outskirt-field suppression (022 §3.5) ⛳ full board
+
+**Plans 026–028 — visual overhaul, wave 1** (`plans/026-forest-visual-overhaul.md`,
+`plans/027-park-visual-overhaul.md`, `plans/028-river-visual-overhaul.md` —
+slotted by Jonah's ruling 2026-07-13; no 023 dependency, biggest visual wins
+pulled forward. First box here also commits the three plan files + README rows.)
+- [ ] VO-W0 prep: split `generatedLayers.ts` into per-kind modules (e.g.
+      `src/map/themes/generated/{world,city,river,forest,park,wall,farm}.ts`),
+      ZERO behavior change — style-JSON byte-identical gate before/after.
+      This is the ONE file all three plans touch; it makes the ∥ groups below
+      conflict-free
+- [ ] 26-A forest trees: hashed Thomas-cluster placement + sizeN/rank/variety
+      properties; stacked shadow/base/highlight circle paint keyed on
+      forestType; `fill-antialias: false` on canopy (026 §2) — ∥ group P1
+- [ ] 27-A park ground: merged single lawn polygon + two-green canopy blobs +
+      cased path LINE layers + water shore casing (027 §4) — ∥ group P1
+      [P1 file protocol: 27-A owns any tokens.ts edit; 26-A uses match
+      expressions per 026 Q1 default; 28-A touches neither]
+- [ ] 28-A river body: per-segment channel-polygon merge + `river-bank`
+      casing LineStrings + braid-island legibility floor; canal preset
+      regression-checked (028 §2) — ∥ group P1
+- [ ] 27-B park skeletons: boundary entrances (sketched-road constraints) +
+      perimeter loop + desire-line diagonals; formal axis/mirror-parterres;
+      japanese circuit/rocks/lanterns/roji; wild-common restraint (027 §4)
+      — ∥ group P2
+- [ ] 28-B river meander math: sine-generated-curve bend shape + Kinoshita
+      third-harmonic skew + per-bend hashed wavelength/amplitude jitter;
+      ratio-derived defaults (λ≈11W, R_c≥2W containment clamp); canal
+      (windiness 0) byte-identical gate (028 §2) — ∥ group P2 [MUST precede
+      23-E: river-slope coupling builds on this math]
+
+∥ protocol (Jonah ruling 2026-07-13): a ∥ group is CODE-parallel — the three
+generators + their tests/snapshots/gates are disjoint and VO-W0 removes the
+shared-paint-file collision. Under the unattended driver, run ∥ boxes as
+consecutive solo phases (one phase per invocation stands — the one-kill-one-
+phase-rework property is load-bearing). An ATTENDED session MAY fan a group
+out as concurrent worktree subagents inside one invocation, but integration
+is ALWAYS serial: merge one plan-phase at a time → that phase's own T1 →
+commit → push. Live gates and boards ALWAYS serialize (single dev-vault +
+one Obsidian process); subagents never commit. Board cadence (Jonah
+2026-07-13): ONE board covers all three overhaul plans, at 28-C — every other
+wave box commits on T1 only.
 
 **Plan 023 — constraint fields + elevation** (`plans/023-constraint-fields-and-elevation.md`)
 - [ ] 23-A `src/gen/fields/` core + BIT-EXACT interiorT/constraints retrofit
@@ -135,7 +176,27 @@ exists to make that true.
 - [ ] 23-D hillshade + 3D terrain (raw-lattice cache, PNG at serve; heights
       compared in gates, never PNG bytes) (023 §4.2) ⛳ full board
 - [ ] 23-E paddy-terraces + river-slope coupling deferred from 022 (022 §3.1,
-      §3.5)
+      §3.5) [runs after wave-1's 28-B by checklist order — coupling builds on
+      the new meander math]
+
+**Plans 026–028 — visual overhaul, wave 2** (needs 023: 23-C marching squares
+for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
+- [ ] 26-B forest canopy: domain-warped masked-noise field + clump metaballs →
+      marching squares (23-C machinery) + Chaikin → ONE multipolygon w/
+      clearing holes; rim line layer; dead-wood emits no canopy; 2×2 seam gate
+      (026 §2)
+- [ ] 26-C tree glyphs: `treeGlyphs.ts` runtime canvas/SDF glyph module +
+      symbol layers (icon-allow-overlap + ignore-placement,
+      symbol-z-order viewport-y, icon-translate shadow layer, per-variety
+      glyph/tint, rank×zoom opacity fade); perf on throttled CPU (026 §2)
+- [ ] 27-C park organic water/canopy (marching-squares shorelines) + glyph
+      dressing via treeGlyphs + karesansui texture + bridge styling (027 §4)
+      — ∥ group P3
+- [ ] 28-C river junctions/mouths/dressing: confluence Y-merge
+      (W₃=√(W₁²+W₂²), no inland forks), delta ~72° distributaries, estuary
+      exponential flare, point bars/oxbows/rapids-falls-ford glyphs (028 §2)
+      — ∥ group P3 ⛳ full board — ONE board covers plans 026+027+028
+      (Jonah 2026-07-13); 26-B/26-C/27-C commit on T1 only
 
 **Plan 024 — cross-layer cascade** (`plans/024-cross-layer-regen-cascade.md`)
 - [ ] 24-A input fingerprints on cache records + stale-replay detection
@@ -161,12 +222,12 @@ exists to make that true.
 (none — add entries as `- <box-id>: <why> — <what's needed>`)
 
 ## Questions for Jonah (answered decisions logged in DECISIONS.md; morning digest)
-- 22-E: new plan files `plans/026-forest-visual-overhaul.md` +
-  `plans/027-park-visual-overhaul.md` appeared from a parallel research
-  session (21:09, 2026-07-13) recommending an execution slot between 023 and
-  024. Left UNTRACKED and NOT added to this run's checklist — ratify the slot
-  (and commit the plan files) or defer? This run continues 22-F → 023 → 024 →
-  025 as written meanwhile.
+- ~~22-E: new plan files 026/027 appeared from a parallel research session —
+  ratify the slot or defer?~~ **RESOLVED (Jonah via the research session,
+  2026-07-13):** plans 026–028 (028 river added same day) are ratified and
+  slotted into this checklist as two waves + VO-W0 prep + ∥ protocol (see
+  §Checklist). Commit the three plan files + README rows with the VO-W0
+  phase (or an earlier `state:` commit if one happens first).
 - 22-E judgment calls (details in DECISIONS.md): wall gates key on SKETCHED
   roads pre-024 (generated-street alignment deferred to the cascade — §3.4's
   "align to stage-3 streets" is read as the 024 target state); moat/bastions
@@ -182,6 +243,30 @@ exists to make that true.
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-13/14 (arc run, session 6 cont.): 22-F FARMLAND — first spawn
+  user-interrupted mid-phase (its work stayed on the tree; TaskList had no
+  transcript to resume), respawned an Opus 4.8 agent to FINISH it per wake
+  protocol: audited the inherited generator (fixed a strip-axis edit-locality
+  bug — pinned world-X), wrote farmland unit+fuzz tests, coverage block,
+  procgen48. T1 green (fast 484/484, farmland fuzz 3/3, procgen48 13/13
+  standalone). PLAN-022 BOARD: first run externally killed mid-phase4 (bg-task
+  cancel), resumed not re-run → combined 16/16 gates + prologue 4/4; one flake
+  (procgen45, standalone 12/12 right after) logged per flake rule, board NOT
+  re-run. 22-F committed 257e280; .lastgreenboard → 257e280; plans/026–028 +
+  README rows committed in this state commit per Jonah's resolution. PLAN 022
+  COMPLETE. Next: VO-W0 (generatedLayers split).
+- 2026-07-13 (research orchestrator, follow-up): Jonah collapsed the three
+  wave-2 boards into ONE at 28-C (covers 026+027+028); checklist, ∥ protocol
+  note, plan files 026–028 §gates, and DECISIONS.md updated to match.
+- 2026-07-13 (research orchestrator, parallel session, ~22:00): plans 026–028
+  (forest/park/river visual overhauls) authored from a 4-round Opus research
+  pass (reports in that session; each plan §0 carries the digest + sources)
+  and slotted per Jonah: wave 1 (VO-W0 + 26-A/27-A/28-A + 27-B/28-B) after
+  22-F, wave 2 (26-B/26-C + 27-C/28-C) after 23-E; ∥ protocol added; title/
+  goal now say 021–028; 22-E's plan-files question RESOLVED. Tree delta from
+  this session: HEARTBEAT.md + plans/026–028 (untracked) + plans/README.md
+  rows — NO src/ changes; this is NOT an interrupted phase. Continue at the
+  next unchecked box (22-F) as normal.
 - 2026-07-13 (arc run, session 6 cont.): 22-E WALL via Opus 4.8 phase subagent,
   T1 green first try (fast 454/454, wall fuzz 2/2, procgen47 13/13 standalone,
   screenshots eyeballed, dev-vault clean); orchestrator re-verified
