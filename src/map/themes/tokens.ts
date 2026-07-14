@@ -25,6 +25,15 @@ export interface ThemeTokens {
   fabricWater: string; // water-body fill
   fabricRiver: string; // river line — same family as water but clearly distinct in shade
   fabricRoad: string; // sketched road line
+  /** Darker under-line for a CASED path (plan 027-A): drawn below + wider than
+   * `fabricRoad` so a park path reads with a rim on both banks. Optional so the
+   * addition stays additive against older theme literals; paint falls back to
+   * `fabricWall`. */
+  fabricPathCasing?: string;
+  /** Shore-casing rim on a water body (plan 027-A): a thin line on the pond
+   * boundary, distinct from `fabricWater`. Optional (additive); paint falls back
+   * to `fabricRiver`. */
+  fabricWaterShore?: string;
   fabricWall: string; // masonry/boundary line (dashed) — stony, never a label gray
   fabricPark: string; // greenspace fill — the per-theme green (manicured/lawn)
   fabricForest: string; // woodland canopy fill — a DEEPER, less-manicured green than fabricPark (plan 022 §3.2)
@@ -59,6 +68,8 @@ export const MODERN_CLEAN: ThemeTokens = {
   fabricWater: "#a8d0e8",
   fabricRiver: "#5a9bd4",
   fabricRoad: "#f0c948",
+  fabricPathCasing: "#b8901f", // darker goldenrod under the gold path fill
+  fabricWaterShore: "#5f8fb0", // deeper blue rim on the pale pond
   fabricWall: "#857a68",
   fabricPark: "#a8d5a2",
   fabricForest: "#6fae72", // deeper than the pale park green — reads as woodland
@@ -86,6 +97,8 @@ export const PARCHMENT: ThemeTokens = {
   fabricWater: "#c9d6c5",
   fabricRiver: "#6f8fa0",
   fabricRoad: "#8a6f4d",
+  fabricPathCasing: "#5f4a30", // darker brown ink under the path fill
+  fabricWaterShore: "#8ba086", // deeper sage rim on the sage pond
   fabricWall: "#5e564a",
   fabricPark: "#9db87a",
   fabricForest: "#6d8f4e", // muted olive-green woodland, sits on parchment
@@ -113,6 +126,8 @@ export const INK_SOOT: ThemeTokens = {
   fabricWater: "#1a2530",
   fabricRiver: "#4a6478",
   fabricRoad: "#4a4642",
+  fabricPathCasing: "#2b2825", // near-black rim under the ink-gray path fill
+  fabricWaterShore: "#38546b", // lighter steel rim, reads on near-black water
   fabricWall: "#8a7a5f",
   fabricPark: "#5f7a4d",
   fabricForest: "#43613a", // dark ink-soot canopy, deeper than the park green
@@ -142,6 +157,8 @@ export const NEON_SPRAWL: ThemeTokens = {
   fabricWater: "#10344a",
   fabricRiver: "#3a7bd5",
   fabricRoad: "#00e5ff",
+  fabricPathCasing: "#087a8c", // darker cyan glow-base under the neon path
+  fabricWaterShore: "#1f6a8f", // lighter teal rim, reads on the deep-teal water
   fabricWall: "#ff6a3d",
   fabricPark: "#30c85e",
   fabricForest: "#1f9e6d", // neon teal-green canopy, distinct from the bright park green

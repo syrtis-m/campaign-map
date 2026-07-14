@@ -59,11 +59,14 @@ function allCoords(feats: GeoJSON.Feature[]): Pt[] {
 }
 
 /** Coordinate buckets for a single generatorId — the locality measure (a fine
- * grid so the seed-driven vertex jitter registers under a re-roll). */
-function lawnBuckets(feats: GeoJSON.Feature[], grid = 6): Set<string> {
+ * grid so the seed-driven placement jitter registers under a re-roll). Since
+ * 027-A the lawn is ONE polygon = the region ring (seed-independent), so
+ * edit-locality is now measured on the seed-driven `park-tree` scatter (a
+ * far-vertex edit leaves interior trees identical; a re-roll re-places all). */
+function bucketsFor(feats: GeoJSON.Feature[], gid: string, grid: number): Set<string> {
   const s = new Set<string>();
   for (const f of feats) {
-    if ((f.properties as { generatorId?: string }).generatorId !== "park-lawn") continue;
+    if ((f.properties as { generatorId?: string }).generatorId !== gid) continue;
     for (const [x, y] of allCoords([f])) s.add(`${Math.round(x / grid)},${Math.round(y / grid)}`);
   }
   return s;
@@ -164,10 +167,13 @@ describe("park generator — containment (every coordinate inside the ring)", ()
 });
 
 describe("park generator — identity / edit locality", () => {
-  it("a single vertex edit changes the lawn far less than a re-roll", () => {
-    const base = lawnBuckets(generatePark(50, regionFor(SQUARE), PARAMS(), CONSTRAINTS));
+  it("a single vertex edit changes the tree scatter far less than a re-roll", () => {
+    // city-park (PARAMS default) scatters trees on an ABSOLUTE-world lattice —
+    // the seed-driven signal that carries edit-locality now that the lawn is the
+    // (seed-independent) ring itself.
+    const base = bucketsFor(generatePark(50, regionFor(SQUARE), PARAMS(), CONSTRAINTS), "park-tree", 20);
 
-    // Move ONE corner outward — only boundary cells near it change containment.
+    // Move ONE corner outward — only trees near it change containment.
     const moved: Pt[] = [
       [0, 0],
       [1080, 0],
@@ -175,15 +181,46 @@ describe("park generator — identity / edit locality", () => {
       [0, 1000],
       [0, 0],
     ];
-    const movedBuckets = lawnBuckets(generatePark(50, regionFor(moved), PARAMS(), CONSTRAINTS));
+    const movedBuckets = bucketsFor(generatePark(50, regionFor(moved), PARAMS(), CONSTRAINTS), "park-tree", 20);
 
-    // Re-roll: a new seed re-jitters the whole ground lattice.
-    const rerolled = lawnBuckets(generatePark(51, regionFor(SQUARE), PARAMS(), CONSTRAINTS));
+    // Re-roll: a new seed re-places the whole tree scatter.
+    const rerolled = bucketsFor(generatePark(51, regionFor(SQUARE), PARAMS(), CONSTRAINTS), "park-tree", 20);
 
     const editOverlap = overlapPct(base, movedBuckets);
     const rerollOverlap = overlapPct(base, rerolled);
+    expect(base.size).toBeGreaterThan(0);
     expect(editOverlap).toBeGreaterThan(rerollOverlap + 25);
     expect(editOverlap).toBeGreaterThan(80);
+  });
+});
+
+describe("park generator — 027-A figure-ground topology", () => {
+  it("emits exactly ONE merged lawn polygon per park (no per-cell lattice)", () => {
+    for (const v of ["formal-garden", "city-park", "wild-common", "japanese-garden"] as const) {
+      const feats = generatePark(77, regionFor(SQUARE), PARAMS({ variety: v }), CONSTRAINTS);
+      expect(typeCount(feats, "park-lawn"), `${v}: expected one merged lawn`).toBe(1);
+      const lawn = feats.find((f) => (f.properties as { generatorId?: string }).generatorId === "park-lawn")!;
+      expect(lawn.geometry.type).toBe("Polygon");
+    }
+  });
+
+  it("city-park emits canopy clumps (the second green) as their own polygons", () => {
+    const feats = generatePark(88, regionFor(SQUARE), PARAMS({ variety: "city-park" }), CONSTRAINTS);
+    expect(typeCount(feats, "park-canopy")).toBeGreaterThan(0);
+    for (const f of feats) {
+      if ((f.properties as { generatorId?: string }).generatorId !== "park-canopy") continue;
+      expect(f.geometry.type).toBe("Polygon");
+    }
+  });
+
+  it("re-emits paths as classed LineStrings (cased-path pairing hook), not span quads", () => {
+    const feats = generatePark(88, regionFor(SQUARE), PARAMS({ variety: "city-park" }), CONSTRAINTS);
+    const paths = feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "park-path");
+    expect(paths.length).toBeGreaterThan(0);
+    for (const p of paths) {
+      expect(p.geometry.type).toBe("LineString");
+      expect(typeof (p.properties as { class?: string }).class).toBe("string");
+    }
   });
 });
 

@@ -276,6 +276,7 @@ const PARK_PRESETS: readonly ProcgenPreset[] = [
  * tree points. Cache keys + paint layers key on these. */
 export const PARK_TILE_GENERATOR_IDS: readonly string[] = [
   "park-lawn",
+  "park-canopy",
   "park-bed",
   "park-path",
   "park-pond",

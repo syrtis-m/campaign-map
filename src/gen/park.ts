@@ -1,51 +1,56 @@
 /**
- * Park generator (plan 022 §3.3) — wires up the `park` polygon kind, which
- * shipped INERT (a sketchable/paintable kind with no procgen). Pure/headless
- * (no DOM/map/Obsidian imports; reads only its arguments, D6): a sketched
- * `park` polygon is the region; this fills it with a ground fabric, lays a path
- * web, and dresses it per `variety` — everything strictly inside the ring.
+ * Park generator (plan 022 §3.3, reshaped by plan 027-A). Pure/headless (no
+ * DOM/map/Obsidian imports; reads only its arguments, D6): a sketched `park`
+ * polygon is the region; this fills it with a ground fabric, lays a path web,
+ * and dresses it per `variety` — everything strictly inside the ring.
  *
  * Four varieties (params, never presetId — mirrors the city algorithm's
  * `profile` branch): `formal-garden` (axial paths + symmetric beds),
- * `city-park` (curved loop + lawns + optional pond), `wild-common` (sparse
- * paths + scattered trees), `japanese-garden` (Jonah 2026-07-12 — a deliberately
- * asymmetric strolling garden: winding single-track circuit, an irregular pond
- * anchor with an island + short bridges, deterministic rock groupings, specimen
- * trees at viewpoints, and an optional raked-gravel `karesansui` court; small
- * regions degrade gracefully — drop court → drop island → pond only).
+ * `city-park` (curved loop + lawns + canopy clumps + optional pond),
+ * `wild-common` (sparse paths + scattered trees), `japanese-garden` (a
+ * deliberately asymmetric strolling garden: winding single-track circuit, an
+ * irregular pond anchor with an island + short bridges, deterministic rock
+ * groupings, specimen trees at viewpoints, and an optional raked-gravel
+ * `karesansui` court; small regions degrade gracefully — drop court → drop
+ * island → pond only).
  *
- * Design (advisor 2026-07-13 + plan §3.3): NOT the citynet growth loop. Growth
- * requires a fabricated SkeletonOutput + CityProfile + tensor/cost fields — a
- * fake city to grow park paths, more fragile than a purpose-built closed-form
- * generator, not less. Forest set the precedent: a self-contained pure
- * generator keyed on ABSOLUTE WORLD POSITION gives determinism, containment and
- * edit-locality in closed form. So the ground is a forest-style watertight
- * jittered lattice cell-fill (the containment + locality backbone), and paths /
- * pond / island / bridges / rocks / trees / court draw over it.
+ * Plan 027-A figure-ground rewrite (fixes the "green square with graph-paper
+ * texture" defect diagnosed against review/v4.7-park-*.png):
+ *  - GROUND is ONE `park-lawn` polygon = the region ring (replaces the jittered
+ *    22 m cell lattice entirely — the lattice was the source of the antialiasing
+ *    hairline grid). A single merged polygon has no interior seams.
+ *  - CANOPY (the second green — lawn vs wooded blocks, the #1 legibility fix)
+ *    is a set of `park-canopy` harmonic-blob clumps at hashed absolute-lattice
+ *    anchors (city-park). Keyed on absolute world position like the trees, so a
+ *    far-vertex edit leaves interior clumps byte-identical while a re-roll
+ *    replaces them; contained by shrink-to-fit. (Phase C upgrades these to
+ *    domain-warped marching squares + a real polygon union.)
+ *  - PATHS are `park-path` LINESTRINGS carrying a `class` (`axis`/`loop`/
+ *    `circuit`/`walk`) — same centerlines as before, re-emitted as polylines so
+ *    the theme can render a casing line under a lighter fill line (round joins
+ *    fix the old notch problem for free). Replaces the hairline span quads.
  *
  * Determinism argument (procgen_v3_design.md §4):
- *  - D4/D6: closed-form arithmetic + seeded value noise on an absolute-world
- *    lattice + seeded harmonic blobs; seeded only by `hashSeed(seed, salt, …)`.
+ *  - D4/D6: closed-form arithmetic + seeded harmonic blobs; seeded only by
+ *    `hashSeed(seed, salt, …)`.
  *  - D5: every emitted coordinate is mm-quantized before it leaves.
- *  - Identity property: ground cells key on ABSOLUTE world position (like
- *    forest), the pond/island anchor at the region's `interiorPole` (a lattice
- *    argmax that is stable under a far vertex edit), and path/rock/tree keying
- *    hashes positions — so a ring vertex edit changes only boundary cells +
- *    nearby dressing, while a re-roll (new seed) re-jitters and re-classifies
- *    everything (measured in the gate: edit overlap ≫ re-roll overlap).
- *  - Containment: ground cells emit only when all corners are ≥ (jitter +
- *    margin) inside the ring; a path segment emits only when both centreline
- *    endpoints are ≥ (halfWidth + margin) inside, so its ±halfWidth banks stay
- *    inside; pond/island/court are verified vertex-by-vertex and shrunk/dropped
- *    if they do not fit (the graceful-degradation ladder doubles as the
- *    small-region containment guarantee).
+ *  - Identity property: the lawn is the ring itself (seed-independent); canopy
+ *    clumps + path banks + rocks + trees key on ABSOLUTE world position (canopy
+ *    lattice anchor, path centreline point, tree lattice cell) or the region's
+ *    `interiorPole` (a lattice argmax stable under a far vertex edit) — so a ring
+ *    vertex edit changes only boundary features + nearby dressing, while a
+ *    re-roll (new seed) re-places everything (measured in the gate: edit overlap
+ *    ≫ re-roll overlap on the tree scatter, now that the lawn is seed-invariant).
+ *  - Containment: a path LineString emits only the contiguous runs whose every
+ *    vertex clears (halfWidth + margin) of the boundary, so its ±halfWidth banks
+ *    stay inside; canopy/pond/island/court are verified vertex-by-vertex and
+ *    shrunk/dropped if they do not fit.
  *  - Feature ids hash positions (never emission order), integers so
  *    `clipNetworkToTile`'s `Number(id)` sort stays stable.
  */
 import { hashSeed, mulberry32 } from "./rng";
-import { fractalNoise2D } from "./world/noise";
 import { distanceToBoundary, type ProcgenRegion } from "./region";
-import { q, quad, harmonicBlobRing, blobFeature, spanQuad } from "./waterEmit";
+import { q, harmonicBlobRing, blobFeature, spanQuad } from "./waterEmit";
 import type { GenerationConstraints } from "./types";
 
 type Pt = [number, number];
@@ -62,19 +67,20 @@ export interface ParkParams {
   pond: boolean;
 }
 
-const LAWN_CELL_M = 22; // ground fill cell size (world meters)
-const JITTER_FRAC = 0.16; // corner jitter as a fraction of a cell
+const MIN_FEATURE_M = 22; // below this a loop/clump is too small to read
 const MARGIN_M = 1; // mm-scale slack inside the containment bound
-const BED_NOISE_CELL_M = 130; // planting-bed patch scale
 const TREE_CELL_M = 40; // scatter-tree stipple grid
 const TREE_JITTER_FRAC = 0.3;
+const CANOPY_CELL_M = 170; // canopy-clump anchor lattice (world meters)
+const CANOPY_JITTER_FRAC = 0.28;
 
 /** Per-variety layout profile (a pure lookup on the `variety` param — like the
  * city algorithm switching on `profile`; never reads a presetId). */
 interface Layout {
   pathHalfM: number;
-  bedFraction: number; // 0 = no noise-beds (formal uses explicit rectangles)
+  pathClass: string; // "axis" | "loop" | "circuit" | "walk"
   scatterTrees: boolean; // stipple grid of trees (wild/city)
+  canopy: boolean; // harmonic-blob canopy clumps (the second green)
   formalCross: boolean; // axial cross + symmetric rectangle beds
   loop: boolean; // a curved/winding ring path
   loopLobes: number;
@@ -84,13 +90,13 @@ interface Layout {
 function layoutFor(v: ParkVariety): Layout {
   switch (v) {
     case "formal-garden":
-      return { pathHalfM: 3.5, bedFraction: 0, scatterTrees: false, formalCross: true, loop: false, loopLobes: 0, loopIrregularity: 0 };
+      return { pathHalfM: 3.5, pathClass: "axis", scatterTrees: false, canopy: false, formalCross: true, loop: false, loopLobes: 0, loopIrregularity: 0 };
     case "city-park":
-      return { pathHalfM: 3, bedFraction: 0.18, scatterTrees: true, formalCross: false, loop: true, loopLobes: 2, loopIrregularity: 0.35 };
+      return { pathHalfM: 3, pathClass: "loop", scatterTrees: true, canopy: true, formalCross: false, loop: true, loopLobes: 2, loopIrregularity: 0.35 };
     case "wild-common":
-      return { pathHalfM: 2, bedFraction: 0.08, scatterTrees: true, formalCross: false, loop: true, loopLobes: 2, loopIrregularity: 0.6 };
+      return { pathHalfM: 2, pathClass: "walk", scatterTrees: true, canopy: false, formalCross: false, loop: true, loopLobes: 2, loopIrregularity: 0.6 };
     case "japanese-garden":
-      return { pathHalfM: 1.6, bedFraction: 0.12, scatterTrees: false, formalCross: false, loop: true, loopLobes: 4, loopIrregularity: 0.8 };
+      return { pathHalfM: 1.6, pathClass: "circuit", scatterTrees: false, canopy: false, formalCross: false, loop: true, loopLobes: 4, loopIrregularity: 0.8 };
   }
 }
 
@@ -98,33 +104,6 @@ function layoutFor(v: ParkVariety): Layout {
 function jitter(seed: number, salt: string, ix: number, iy: number, amp: number): Pt {
   const rng = mulberry32(hashSeed(seed, salt, ix, iy));
   return [(rng() * 2 - 1) * amp, (rng() * 2 - 1) * amp];
-}
-
-/** Jittered lattice vertex — shared by every cell meeting at (ix, iy), so the
- * ground tessellation is watertight (forest's discipline). */
-function groundVertex(seed: number, ix: number, iy: number, amp: number): Pt {
-  const [dx, dy] = jitter(seed, "park-vtx", ix, iy, amp);
-  return [ix * LAWN_CELL_M + dx, iy * LAWN_CELL_M + dy];
-}
-
-function groundCell(seed: number, gid: string, ix: number, iy: number, amp: number, parkType: string): GeoJSON.Feature {
-  const a = groundVertex(seed, ix, iy, amp);
-  const b = groundVertex(seed, ix + 1, iy, amp);
-  const c = groundVertex(seed, ix + 1, iy + 1, amp);
-  const d = groundVertex(seed, ix, iy + 1, amp);
-  const ring: Pt[] = [
-    [q(a[0]), q(a[1])],
-    [q(b[0]), q(b[1])],
-    [q(c[0]), q(c[1])],
-    [q(d[0]), q(d[1])],
-    [q(a[0]), q(a[1])],
-  ];
-  return {
-    type: "Feature",
-    id: hashSeed(seed, gid, ix, iy),
-    geometry: { type: "Polygon", coordinates: [ring] },
-    properties: { generatorId: gid, type: gid, parkType },
-  };
 }
 
 /** Is every point within `r` of (x,y) inside the ring? True iff (x,y) is at
@@ -139,12 +118,13 @@ function ringContained(region: ProcgenRegion, ring: Pt[], margin: number): boole
 }
 
 /**
- * Generate a park inside a sketched polygon region (plan 022 §3.3). Emits the
- * ground fabric (`park-lawn` + noise `park-bed` cells), a path web (`park-path`
- * quads), and per-variety dressing (`park-pond`/`park-island`/`park-bridge`
- * water, `park-court` gravel, `park-rock` points, `park-tree` points) — all
- * strictly inside `region.ring`. `constraints` accepted for signature parity,
- * not consumed in v1 (the park→city interaction is plan 024's cascade).
+ * Generate a park inside a sketched polygon region (plan 022 §3.3 / 027-A).
+ * Emits the ground (`park-lawn` = the region ring), canopy clumps
+ * (`park-canopy`), a `park-path` LineString web (classed), formal `park-bed`
+ * rectangles, per-variety water (`park-pond`/`park-island`/`park-bridge`),
+ * `park-court` gravel, `park-rock` points and `park-tree` points — all strictly
+ * inside `region.ring`. `constraints` accepted for signature parity, not
+ * consumed in v1 (the park→city interaction is plan 024's cascade).
  */
 export function generatePark(
   seed: number,
@@ -159,50 +139,64 @@ export function generatePark(
   const [cx, cy] = region.interiorPole; // stable anchor (lattice argmax)
   const maxD = region.maxInteriorDistance;
 
-  // ── Ground fill: watertight jittered lattice cells (absolute world position),
-  //    a seed-driven subset reclassified as planting beds via fractal noise ────
-  const jitAmp = LAWN_CELL_M * JITTER_FRAC;
-  const ix0 = Math.floor(bbox.minX / LAWN_CELL_M) - 1;
-  const ix1 = Math.ceil(bbox.maxX / LAWN_CELL_M) + 1;
-  const iy0 = Math.floor(bbox.minY / LAWN_CELL_M) - 1;
-  const iy1 = Math.ceil(bbox.maxY / LAWN_CELL_M) + 1;
-  const bedThreshold = 1 - L.bedFraction; // noise > threshold ⇒ a bed cell
-  for (let ix = ix0; ix <= ix1; ix++) {
-    for (let iy = iy0; iy <= iy1; iy++) {
-      const corners: Pt[] = [
-        [ix * LAWN_CELL_M, iy * LAWN_CELL_M],
-        [(ix + 1) * LAWN_CELL_M, iy * LAWN_CELL_M],
-        [(ix + 1) * LAWN_CELL_M, (iy + 1) * LAWN_CELL_M],
-        [ix * LAWN_CELL_M, (iy + 1) * LAWN_CELL_M],
-      ];
-      let contained = true;
-      for (const [px, py] of corners) {
-        if (distanceToBoundary(region, px, py) < jitAmp + MARGIN_M) {
-          contained = false;
-          break;
+  // ── Ground: ONE merged lawn polygon = the region ring (no lattice, no seams).
+  //    The lawn is seed-independent (it IS the sketched shape) — edit-locality
+  //    now lives on the seed-driven canopy/tree scatter, not the ground. ───────
+  out.push(blobFeature(seed, "park-lawn", region.ring, { parkType: variety, formal: variety === "formal-garden" }));
+
+  // ── Canopy: the second green (lawn vs wooded blocks). Harmonic-blob clumps at
+  //    hashed absolute-lattice anchors — sparse, contained by shrink-to-fit.
+  //    (Phase C: domain-warped marching squares + real union.) ─────────────────
+  if (L.canopy) {
+    const cjit = CANOPY_CELL_M * CANOPY_JITTER_FRAC;
+    const cix0 = Math.floor(bbox.minX / CANOPY_CELL_M) - 1;
+    const cix1 = Math.ceil(bbox.maxX / CANOPY_CELL_M) + 1;
+    const ciy0 = Math.floor(bbox.minY / CANOPY_CELL_M) - 1;
+    const ciy1 = Math.ceil(bbox.maxY / CANOPY_CELL_M) + 1;
+    for (let ix = cix0; ix <= cix1; ix++) {
+      for (let iy = ciy0; iy <= ciy1; iy++) {
+        // ~30% of cells host a clump — a handful in a large park, none in a small.
+        if (mulberry32(hashSeed(seed, "park-canopy-place", ix, iy))() >= 0.3) continue;
+        const [dx, dy] = jitter(seed, "park-canopy-jit", ix, iy, cjit);
+        const ax = (ix + 0.5) * CANOPY_CELL_M + dx;
+        const ay = (iy + 0.5) * CANOPY_CELL_M + dy;
+        // Keep canopy off open water.
+        if ((pond || variety === "japanese-garden") && Math.hypot(ax - cx, ay - cy) < maxD * 0.42) continue;
+        // Largest clump that fits (shrink until every vertex clears the ring).
+        const salt = `park-canopy-${ix}-${iy}`;
+        for (let base = CANOPY_CELL_M * 0.5; base >= MIN_FEATURE_M; base *= 0.78) {
+          const ring = harmonicBlobRing(seed, salt, ax, ay, base, 0.35, 3, 40);
+          if (ringContained(region, ring, MARGIN_M)) {
+            out.push(blobFeature(seed, "park-canopy", ring, { parkType: variety }));
+            break;
+          }
         }
       }
-      if (!contained) continue;
-      const mx = (ix + 0.5) * LAWN_CELL_M;
-      const my = (iy + 0.5) * LAWN_CELL_M;
-      let gid = "park-lawn";
-      if (L.bedFraction > 0) {
-        const n = fractalNoise2D(seed, mx, my, "park-bed", { octaves: 2, baseCellSize: BED_NOISE_CELL_M, persistence: 0.5 });
-        if (n > bedThreshold) gid = "park-bed";
-      }
-      out.push(groundCell(seed, gid, ix, iy, jitAmp, variety));
     }
   }
 
-  // ── Path web ─────────────────────────────────────────────────────────────
-  const emitPath = (line: Pt[]): void => {
+  // ── Path web: LineStrings carrying a `class` (theme renders casing + fill). ──
+  const emitPathLine = (line: Pt[], cls: string): void => {
     const hw = L.pathHalfM;
-    for (let i = 0; i < line.length - 1; i++) {
-      const a = line[i];
-      const b = line[i + 1];
-      if (!clearOf(region, a[0], a[1], hw + MARGIN_M) || !clearOf(region, b[0], b[1], hw + MARGIN_M)) continue;
-      out.push(spanQuad(seed, "park-path", a, b, hw, { parkType: variety }));
+    let run: Pt[] = [];
+    const flush = (): void => {
+      if (run.length >= 2) {
+        const a = run[0];
+        const b = run[run.length - 1];
+        out.push({
+          type: "Feature",
+          id: hashSeed(seed, "park-path", q(a[0]), q(a[1]), q(b[0]), q(b[1]), run.length),
+          geometry: { type: "LineString", coordinates: run.map((p) => [q(p[0]), q(p[1])]) },
+          properties: { generatorId: "park-path", type: "park-path", parkType: variety, class: cls, halfWidthM: hw },
+        });
+      }
+      run = [];
+    };
+    for (const p of line) {
+      if (clearOf(region, p[0], p[1], hw + MARGIN_M)) run.push(p);
+      else flush();
     }
+    flush();
   };
   // Resample a straight segment into small steps (so near-rim parts drop cleanly).
   const straight = (a: Pt, b: Pt, step = 8): Pt[] => {
@@ -214,13 +208,13 @@ export function generatePark(
 
   if (L.formalCross) {
     // Axial cross through the anchor + optional secondary axes by pathDensity.
-    emitPath(straight([bbox.minX, cy], [bbox.maxX, cy]));
-    emitPath(straight([cx, bbox.minY], [cx, bbox.maxY]));
+    emitPathLine(straight([bbox.minX, cy], [bbox.maxX, cy]), "axis");
+    emitPathLine(straight([cx, bbox.minY], [cx, bbox.maxY]), "axis");
     const arms = Math.round(pathDensity * 2); // 0..2 mirrored secondary axes
     for (let s = 1; s <= arms; s++) {
       const off = (maxD * s) / (arms + 1);
-      emitPath(straight([bbox.minX, cy + off], [bbox.maxX, cy + off]));
-      emitPath(straight([bbox.minX, cy - off], [bbox.maxX, cy - off]));
+      emitPathLine(straight([bbox.minX, cy + off], [bbox.maxX, cy + off]), "axis");
+      emitPathLine(straight([bbox.minX, cy - off], [bbox.maxX, cy - off]), "axis");
     }
   }
   if (L.formalCross) {
@@ -241,7 +235,7 @@ export function generatePark(
           [bx - bedHalf, by + bedHalf],
           [bx - bedHalf, by - bedHalf],
         ];
-        if (ringContained(region, bed, MARGIN_M)) out.push(blobFeature(seed, "park-bed", bed, { parkType: variety }));
+        if (ringContained(region, bed, MARGIN_M)) out.push(blobFeature(seed, "park-bed", bed, { parkType: variety, bedKind: "border" }));
       }
     }
   }
@@ -249,11 +243,11 @@ export function generatePark(
     // A curved (city) / winding (japanese) ring path around the anchor. Radius
     // shrinks a touch with pathDensity so a denser park reads busier inside.
     const loopR = maxD * (0.62 - pathDensity * 0.12);
-    if (loopR > LAWN_CELL_M) {
+    if (loopR > MIN_FEATURE_M) {
       const loop = harmonicBlobRing(seed, "park-loop", cx, cy, loopR, L.loopIrregularity, L.loopLobes, 56);
-      emitPath(loop);
+      emitPathLine(loop, L.pathClass);
       // A connecting spoke (city/wild) so the loop is reachable from the centre.
-      if (!L.formalCross) emitPath(straight([cx, cy], loop[Math.floor(loop.length / 4)]));
+      if (!L.formalCross) emitPathLine(straight([cx, cy], loop[Math.floor(loop.length / 4)]), "walk");
     }
   }
 

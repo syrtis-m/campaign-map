@@ -229,34 +229,69 @@ describe("generatedLayers — forest canopy/clearing/stacked-tree paint coverage
   });
 });
 
-describe("generatedLayers — park paint coverage (plan 022 §3.3)", () => {
-  it("all nine park layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
+describe("generatedLayers — park paint coverage (plan 022 §3.3 + 027-A)", () => {
+  // Plan 027-A adds the second-green CANOPY and splits the old park-path fill
+  // into a CASED path (casing line under fill line) + a pond SHORE casing. The
+  // top-of-file PARK_LAYER_IDS const is shared file surface (sits by the
+  // forest/river consts 26-A/28-A may touch) — spread it here so all park edits
+  // stay inside this describe block.
+  const PARK_IDS = [
+    ...PARK_LAYER_IDS,
+    "generated-park-canopy",
+    "generated-park-path-casing",
+    "generated-park-pond-shore",
+  ] as const;
+
+  it("all park layers exist on the generated source and filter on generatorId (no zoom LOD in filter)", () => {
     const layers = generatedLayers(PARCHMENT);
-    for (const id of PARK_LAYER_IDS) {
+    for (const id of PARK_IDS) {
       const layer = layers.find((l) => l.id === id);
       expect(layer, `${id} missing from generatedLayers`).toBeDefined();
       expect((layer as { source?: string }).source).toBe("generated");
       const filter = JSON.stringify((layer as { filter?: unknown }).filter);
       expect(filter).toContain('"generatorId"');
-      expect(filter).not.toContain('"zoom"'); // NO zoom LOD (Jonah 2026-07-12)
+      expect(filter).not.toContain('"zoom"'); // NO zoom LOD in the FILTER (Jonah 2026-07-12)
     }
   });
 
-  it("layers the composition top-down: lawn under everything, water/rocks above the ground", () => {
+  it("the merged lawn is ONE fill (no per-cell lattice) and the path is a cased LINE pair", () => {
+    const layers = generatedLayers(PARCHMENT);
+    // Ground: a single fill filtered on park-lawn (the 027-A merged polygon).
+    expect(layers.find((l) => l.id === "generated-park-lawn")!.type).toBe("fill");
+    // Path: BOTH the casing and the fill are line layers filtered on park-path.
+    const casing = layers.find((l) => l.id === "generated-park-path-casing")!;
+    const fill = layers.find((l) => l.id === "generated-park-path")!;
+    expect(casing.type).toBe("line");
+    expect(fill.type).toBe("line");
+    for (const l of [casing, fill]) {
+      expect(JSON.stringify((l as { filter?: unknown }).filter)).toContain("park-path");
+    }
+  });
+
+  it("layers the composition top-down: lawn under canopy; path casing UNDER path fill; shore ABOVE pond", () => {
     const ids = generatedLayers(PARCHMENT).map((l) => l.id);
     const lawn = ids.indexOf("generated-park-lawn");
+    const canopy = ids.indexOf("generated-park-canopy");
+    const casing = ids.indexOf("generated-park-path-casing");
     const path = ids.indexOf("generated-park-path");
     const pond = ids.indexOf("generated-park-pond");
+    const shore = ids.indexOf("generated-park-pond-shore");
     const island = ids.indexOf("generated-park-island");
     const bridge = ids.indexOf("generated-park-bridge");
     const court = ids.indexOf("generated-park-court");
     const rock = ids.indexOf("generated-park-rock");
-    // Ground first; path above ground; pond above path; island above pond water;
-    // bridge above the island; a rock reads on top of its gravel court.
-    expect(path).toBeGreaterThan(lawn);
+    // Ground first; canopy (second green) above the lawn.
+    expect(canopy).toBeGreaterThan(lawn);
+    // Cased path: the darker casing paints UNDER the lighter fill line.
+    expect(casing).toBeGreaterThan(lawn);
+    expect(path).toBeGreaterThan(casing);
+    // Pond above the path; shore casing ABOVE the pond fill (a rim, not an
+    // under-casing); island above the pond water; bridge above the island.
     expect(pond).toBeGreaterThan(path);
-    expect(island).toBeGreaterThan(pond);
+    expect(shore).toBeGreaterThan(pond);
+    expect(island).toBeGreaterThan(shore);
     expect(bridge).toBeGreaterThan(island);
+    // A rock reads on top of its gravel court.
     expect(rock).toBeGreaterThan(court);
   });
 
@@ -265,20 +300,24 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3)", () => {
   });
 
   for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
-    it(`${id}: every park layer paints a color`, () => {
+    it(`${id}: every park layer paints a color (fills, cased lines and stipples)`, () => {
       const layers = generatedLayers(tokens);
-      for (const layerId of PARK_LAYER_IDS) {
+      for (const layerId of PARK_IDS) {
         const layer = layers.find((l) => l.id === layerId)!;
-        expect(anyColor(layer).length, `${id}: ${layerId} paints no color`).toBeGreaterThan(0);
+        // hasColor reads fill/circle/line color, so the new line layers count.
+        expect(hasColor(layer), `${id}: ${layerId} paints no color`).toBe(true);
       }
-      // Lawn (open greensward) and pond (water) must read as different things.
+      // Lawn (open greensward) and pond (water) must read as different things,
+      // and the second-green canopy must read distinct from the lawn.
       const lawn = anyColor(layers.find((l) => l.id === "generated-park-lawn")!);
       const pond = anyColor(layers.find((l) => l.id === "generated-park-pond")!);
+      const canopy = anyColor(layers.find((l) => l.id === "generated-park-canopy")!);
       expect(lawn, `${id}: lawn and pond share a color`).not.toBe(pond);
+      expect(canopy, `${id}: lawn and canopy share a color (no figure-ground)`).not.toBe(lawn);
     });
   }
 
-  it("obsidian-native runtime style paints all nine park layers", () => {
+  it("obsidian-native runtime style paints all park layers (incl. canopy + casings)", () => {
     const css: ObsidianCssTokens = {
       backgroundPrimary: "#1e1e1e",
       backgroundSecondary: "#262626",
@@ -290,7 +329,7 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3)", () => {
     };
     const style = obsidianNativeStyle(css, "http://localhost/glyphs/{fontstack}/{range}.pbf");
     const ids = style.layers.map((l) => l.id);
-    for (const id of PARK_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
+    for (const id of PARK_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
   });
 });
 
