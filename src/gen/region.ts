@@ -27,6 +27,16 @@
  *    lowest-x) point of any tie wins — scan order can never leak.
  */
 import type { BBox } from "./spatialHash";
+// Leaf distance/containment primitives live in the fields module (plan 023 §2)
+// — MOVED verbatim from here, imported back one-way (region → fields, acyclic)
+// so `interiorT`/`distanceToBoundary` are literally thin wrappers over fields
+// while the float arithmetic is byte-identical. See fields/sdf.ts BIT-EXACTNESS.
+import {
+  distanceToRingBoundary,
+  ringContainsEvenOdd,
+  signedDistancePolygon,
+  distanceToPolyline,
+} from "./fields/sdf";
 
 type Pt = [number, number];
 
@@ -219,33 +229,11 @@ export function makeRegion(id: string, ring: Pt[]): ProcgenRegion {
   return region;
 }
 
-/** Even-odd ray cast (same predicate family as fabricConstraints.pointInRing). */
+/** Even-odd ray cast (same predicate family as fabricConstraints.pointInRing).
+ * Thin wrapper over fields' `ringContainsEvenOdd` (moved verbatim, plan 023
+ * §2) — byte-identical. */
 export function regionContains(r: ProcgenRegion, x: number, y: number): boolean {
-  const ring = r.ring;
-  let inside = false;
-  // Iterate the open portion: ring is closed, so stop before the closure.
-  for (let i = 0, j = ring.length - 2; i < ring.length - 1; j = i++) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-
-/** Min distance from a point to any boundary segment of a closed ring. */
-function distanceToRingBoundary(closed: Pt[], x: number, y: number): number {
-  let best = Infinity;
-  for (let i = 0; i < closed.length - 1; i++) {
-    const [ax, ay] = closed[i];
-    const [bx, by] = closed[i + 1];
-    const dx = bx - ax;
-    const dy = by - ay;
-    const l2 = dx * dx + dy * dy;
-    const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2));
-    const d = Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
-    if (d < best) best = d;
-  }
-  return best;
+  return ringContainsEvenOdd(r.ring, x, y);
 }
 
 /** Exact per-segment distance to the region boundary, signed: positive
@@ -253,13 +241,16 @@ function distanceToRingBoundary(closed: Pt[], x: number, y: number): number {
  * the boundary is the corridor edge: `corridorMaxOffset − distanceToSpine`,
  * so a point is "inside" iff it sits within the offset of the spine — the same
  * positive-inside / negative-outside convention every caller already relies
- * on, including the containment gate (`< −1` ⇒ spilled outside). */
+ * on, including the containment gate (`< −1` ⇒ spilled outside).
+ *
+ * The polygon branch is fields' `signedDistancePolygon` (moved verbatim, plan
+ * 023 §2): identical arithmetic (`distanceToRingBoundary` then sign by
+ * `ringContainsEvenOdd`), so the retrofit is byte-preserving. */
 export function distanceToBoundary(r: ProcgenRegion, x: number, y: number): number {
   if (r.spine && r.corridorMaxOffset !== undefined) {
     return r.corridorMaxOffset - distanceToSpine(r.spine, x, y);
   }
-  const d = distanceToRingBoundary(r.ring, x, y);
-  return regionContains(r, x, y) ? d : -d;
+  return signedDistancePolygon(r.ring, x, y);
 }
 
 /**
@@ -626,23 +617,11 @@ export function makeSpine(id: string, line: Pt[]): Spine {
 }
 
 /** Min distance from a point to any segment of the spine polyline — the
- * corridor containment metric (closed-form, deterministic). */
+ * corridor containment metric (closed-form, deterministic). Thin wrapper over
+ * fields' `distanceToPolyline` (moved verbatim, plan 023 §2) — byte-identical,
+ * degenerate handling (empty → Infinity, single point → hypot) preserved. */
 export function distanceToSpine(spine: Spine, x: number, y: number): number {
-  const pts = spine.points;
-  if (pts.length === 0) return Infinity;
-  if (pts.length === 1) return Math.hypot(x - pts[0][0], y - pts[0][1]);
-  let best = Infinity;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const [ax, ay] = pts[i];
-    const [bx, by] = pts[i + 1];
-    const dx = bx - ax;
-    const dy = by - ay;
-    const l2 = dx * dx + dy * dy;
-    const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2));
-    const d = Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
-    if (d < best) best = d;
-  }
-  return best;
+  return distanceToPolyline(spine.points, x, y);
 }
 
 /**

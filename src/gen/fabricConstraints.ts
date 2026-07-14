@@ -13,6 +13,10 @@
 import type { FabricFeature } from "../model/fabric";
 import type { AngleSampler } from "./city/streamlines";
 import { sampleFieldAngle, type TensorFieldParams } from "./city/tensorField";
+// The water-polygon predicate is fields' `pointInRingClosed` (moved verbatim,
+// plan 023 §2), imported back so the constraint math shares the fields
+// distance/containment currency. Byte-identical — see fields/sdf.ts.
+import { pointInRingClosed } from "./fields/sdf";
 
 type Pt = [number, number];
 
@@ -85,15 +89,11 @@ export function insideSketchedFarmland(idx: FabricConstraintIndex, x: number, y:
   return false;
 }
 
-/** Ray-cast point-in-polygon — pure arithmetic on the ring, deterministic. */
+/** Ray-cast point-in-polygon — pure arithmetic on the ring, deterministic.
+ * Thin wrapper over fields' `pointInRingClosed` (moved verbatim, plan 023 §2)
+ * — byte-identical. */
 export function pointInRing(ring: Pt[], x: number, y: number): boolean {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
+  return pointInRingClosed(ring, x, y);
 }
 
 /** Distance to — and direction of — the nearest segment of `line`. Strict

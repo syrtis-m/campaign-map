@@ -297,6 +297,15 @@
         "src/view/RegionProcgenModal.ts",
         "src/view/SketchController.ts"
       ]
+    },
+    "fields23a": {
+      "script": "scripts/gates/fields23a.ts",
+      "globs": [
+        "src/gen/fields/**",
+        "src/gen/region.ts",
+        "src/gen/fabricConstraints.ts",
+        "src/gen/citynet/**"
+      ]
     }
   }
 }

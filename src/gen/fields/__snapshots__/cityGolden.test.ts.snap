@@ -1,0 +1,33 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`city byte golden (plan 023-A bit-exact retrofit reference) > bare disc region — euro-medieval (interiorT/cityness falloff path) 1`] = `
+{
+  "bytes": 3491623,
+  "features": 12266,
+  "sha256": "9a1e3d8edd00bf267e9a8abce8bab8fc17d7832f14578fc0e5aaf991e5fa78a6",
+}
+`;
+
+exports[`city byte golden (plan 023-A bit-exact retrofit reference) > bare disc region — na-grid (second profile, different skeleton) 1`] = `
+{
+  "bytes": 1586844,
+  "features": 5611,
+  "sha256": "f7f4d95eb4bb6e2d46524410011b9db775294caf08c772b6582944208a33c5bd",
+}
+`;
+
+exports[`city byte golden (plan 023-A bit-exact retrofit reference) > constrained region — river + lake + road (fabricConstraints water/river predicate path) 1`] = `
+{
+  "bytes": 2281581,
+  "features": 7980,
+  "sha256": "7f344617c881924795d28917c193ae2f091775deac1126e7a03e28e41d4f5eb0",
+}
+`;
+
+exports[`city byte golden (plan 023-A bit-exact retrofit reference) > irregular concave hexagon region — euro-medieval (concave distanceToBoundary path) 1`] = `
+{
+  "bytes": 3510739,
+  "features": 12652,
+  "sha256": "435472c319a21778c403c10c440cab1501df4555ced40fa3e361612022732dfe",
+}
+`;
