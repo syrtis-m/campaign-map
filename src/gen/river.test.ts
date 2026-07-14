@@ -5,6 +5,8 @@ import {
   riverMaxOffset,
   BASE_MEANDER_AMP_M,
   MIN_ISLAND_WIDTH_FRAC,
+  MEANDER_WAVELENGTH_WIDTHS,
+  RC_MIN_WIDTHS,
   type RiverParams,
 } from "./river";
 import { makeSpine, makeCorridorRegion, distanceToSpine, type ProcgenRegion } from "./region";
@@ -461,5 +463,156 @@ describe("river generator — canal preset regression (plan 028 §2, 28-A gate)"
       for (const b of bankPts) nearest = Math.min(nearest, dist(e, b));
       expect(nearest).toBeLessThanOrEqual(0.5 + 5e-3);
     }
+  });
+});
+
+// ─── Plan 028 §1.2 (box 28-B): SGC/Kinoshita meander math — ratio defaults,
+// per-bend jitter, upstream skew, R_c ≥ 2W realism clamp ─────────────────────
+
+/** One long straight segment along +x: lateral offset IS the y coordinate,
+ * there are no fillets, and the envelope is negligible mid-segment — the
+ * cleanest window onto the bend train. */
+const STRAIGHT: Pt[] = [
+  [0, 0],
+  [6600, 0],
+];
+const MEANDER_P = PARAMS({ windiness: 0.8, braiding: 0, width: 20, widthGrowth: 0 });
+
+/** Centerline reconstructed as the midpoint of the left/right bank casing
+ * lines (emitted from the same samples, so midpoints ARE the meandered
+ * centerline samples). */
+function centerlineOf(feats: GeoJSON.Feature[]): Pt[] {
+  const banks = byType(feats, "river-bank");
+  expect(banks.length).toBe(2);
+  const left = (banks[0].geometry as GeoJSON.LineString).coordinates as Pt[];
+  const right = (banks[1].geometry as GeoJSON.LineString).coordinates as Pt[];
+  expect(right.length).toBe(left.length);
+  return left.map((p, i) => [(p[0] + right[i][0]) / 2, (p[1] + right[i][1]) / 2]);
+}
+
+/** Interior zero crossings of y along the centerline, linearly interpolated
+ * to arc positions (x ≈ arc on the straight fixture). Exact zeros (segment
+ * endpoints, env = 0) produce no crossing (y[i]·y[i+1] < 0 test). */
+function crossingsOf(center: Pt[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i + 1 < center.length; i++) {
+    const y0 = center[i][1];
+    const y1 = center[i + 1][1];
+    if (y0 * y1 < 0) out.push(center[i][0] + (center[i + 1][0] - center[i][0]) * (y0 / (y0 - y1)));
+  }
+  return out;
+}
+
+/** Per-bend records between consecutive crossings: apex position fraction
+ * (arc of max |y| within the bend) and apex amplitude. */
+function bendsOf(center: Pt[], crossings: number[]): { apexFrac: number; apexAmp: number; span: number }[] {
+  const bends: { apexFrac: number; apexAmp: number; span: number }[] = [];
+  for (let b = 0; b + 1 < crossings.length; b++) {
+    const [s0, s1] = [crossings[b], crossings[b + 1]];
+    let apexAmp = -1;
+    let apexX = s0;
+    for (const [x, y] of center) {
+      if (x < s0 || x > s1) continue;
+      if (Math.abs(y) > apexAmp) {
+        apexAmp = Math.abs(y);
+        apexX = x;
+      }
+    }
+    bends.push({ apexFrac: (apexX - s0) / (s1 - s0), apexAmp, span: s1 - s0 });
+  }
+  return bends;
+}
+
+/** Discrete curvature radius by three-point circumradius. */
+function circumradius(a: Pt, b: Pt, c: Pt): number {
+  const ab = dist(a, b);
+  const bc = dist(b, c);
+  const ca = dist(c, a);
+  const area2 = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]));
+  if (area2 < 1e-12) return Infinity;
+  return (ab * bc * ca) / (2 * area2);
+}
+
+describe("river generator — meander math (plan 028 §1.2, box 28-B)", () => {
+  const feats = generateRiver(50, regionFor(STRAIGHT, MEANDER_P), MEANDER_P, CONSTRAINTS);
+  const center = centerlineOf(feats);
+  const crossings = crossingsOf(center);
+  const bends = bendsOf(center, crossings);
+
+  it("wavelength defaults to the empirical ratio: λ/W within 10–14 (target 11)", () => {
+    // Mean spacing between zero crossings ≈ λ/2; skew shifts every zero by the
+    // same phase at first order, so spacings are unbiased.
+    expect(crossings.length).toBeGreaterThan(20);
+    const spacings: number[] = [];
+    for (let i = 0; i + 1 < crossings.length; i++) spacings.push(crossings[i + 1] - crossings[i]);
+    const meanLambda = (2 * spacings.reduce((a, b) => a + b, 0)) / spacings.length;
+    const ratio = meanLambda / MEANDER_P.width;
+    expect(ratio).toBeGreaterThanOrEqual(MEANDER_WAVELENGTH_WIDTHS - 2);
+    expect(ratio).toBeLessThanOrEqual(MEANDER_WAVELENGTH_WIDTHS + 2);
+  });
+
+  it("bends are quasi-periodic, not metronomic: per-bend wavelength AND amplitude vary", () => {
+    const cv = (xs: number[]): number => {
+      const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+      const varc = xs.reduce((a, b) => a + (b - mean) ** 2, 0) / xs.length;
+      return Math.sqrt(varc) / mean;
+    };
+    // Interior bends only (envelope suppresses amplitude near segment ends).
+    const interior = bends.filter((b) => b.apexAmp > 3);
+    expect(interior.length).toBeGreaterThan(10);
+    expect(cv(interior.map((b) => b.span))).toBeGreaterThan(0.05); // ±30% draw
+    expect(cv(interior.map((b) => b.apexAmp))).toBeGreaterThan(0.05); // amp jitter + R_c clamp
+  });
+
+  it("Kinoshita skew leans every developed bend upstream (apex before the bend midpoint)", () => {
+    const interior = bends.filter((b) => b.apexAmp > 3);
+    expect(interior.length).toBeGreaterThan(10);
+    const meanFrac = interior.reduce((a, b) => a + b.apexFrac, 0) / interior.length;
+    // Symmetric bends would sit at 0.5; the third harmonic pulls the apex
+    // measurably upstream (analytically ≈ 0.43 at windiness 0.8).
+    expect(meanFrac).toBeLessThan(0.48);
+    expect(meanFrac).toBeGreaterThan(0.3); // sanity: a lean, not a collapse
+    // The lean is systematic, not noise: a clear majority of bends lean.
+    const leaning = interior.filter((b) => b.apexFrac < 0.5).length;
+    expect(leaning / interior.length).toBeGreaterThan(0.75);
+  });
+
+  it("asymmetry is windiness-driven: near-straight rivers are near-symmetric", () => {
+    const p = PARAMS({ windiness: 0.15, braiding: 0, width: 20, widthGrowth: 0 });
+    const c = centerlineOf(generateRiver(50, regionFor(STRAIGHT, p), p, CONSTRAINTS));
+    const b = bendsOf(c, crossingsOf(c)).filter((x) => x.apexAmp > 0.5);
+    expect(b.length).toBeGreaterThan(10);
+    const meanFrac = b.reduce((a, x) => a + x.apexFrac, 0) / b.length;
+    // skew ∝ windiness²: at 0.15 it is ~28× weaker than at 0.8.
+    expect(Math.abs(meanFrac - 0.5)).toBeLessThan(0.04);
+  });
+
+  it("R_c ≥ 2W realism clamp: no bend tighter than RC_MIN_WIDTHS × width", () => {
+    // Discrete three-point circumradius along the reconstructed centerline.
+    // The clamp is analytic small-slope; slope only ADDS radius, and the
+    // envelope is negligible on this long fixture — tolerance 0.85 absorbs
+    // midpoint interpolation between lobes and discretization.
+    let minR = Infinity;
+    for (let i = 1; i + 1 < center.length; i++) {
+      minR = Math.min(minR, circumradius(center[i - 1], center[i], center[i + 1]));
+    }
+    expect(minR).toBeGreaterThanOrEqual(RC_MIN_WIDTHS * MEANDER_P.width * 0.85);
+    // …and the clamp actually engages: the tightest bend sits near the floor,
+    // not far above it (the meander uses its curvature budget).
+    expect(minR).toBeLessThanOrEqual(RC_MIN_WIDTHS * MEANDER_P.width * 3);
+  });
+
+  it("windiness drives amplitude monotonically", () => {
+    const ampOf = (windiness: number): number => {
+      const p = PARAMS({ windiness, braiding: 0, width: 20, widthGrowth: 0 });
+      const c = centerlineOf(generateRiver(50, regionFor(STRAIGHT, p), p, CONSTRAINTS));
+      return Math.max(...c.map(([, y]) => Math.abs(y)));
+    };
+    const hi = ampOf(0.8);
+    const lo = ampOf(0.2);
+    expect(hi).toBeGreaterThan(lo);
+    expect(lo).toBeGreaterThan(0);
+    // And the budget is respected (containment constant unchanged).
+    expect(hi).toBeLessThanOrEqual(0.8 * BASE_MEANDER_AMP_M + 1e-6);
   });
 });

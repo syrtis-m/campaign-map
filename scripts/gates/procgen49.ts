@@ -1,7 +1,9 @@
 #!/usr/bin/env tsx
-// Procgen v4.10 gate — RIVER visual overhaul wave 1 (plan 028 §2, box 28-A):
-// per-segment merged channel polygons + river-bank casing LineStrings +
-// legible braid islands, canal preset regression-checked.
+// Procgen v4.11 gate — RIVER visual overhaul wave 1 (plan 028 §2, boxes 28-A
+// + 28-B): per-segment merged channel polygons + river-bank casing
+// LineStrings + legible braid islands (28-A); SGC/Kinoshita quasi-periodic
+// meander math with per-bend hashed λ/amplitude jitter and the R_c ≥ 2W
+// realism clamp (28-B); canal preset regression-checked.
 //
 // Live against dev-vault via the obsidian CLI (headless twin createSpineForTest
 // — modals hang CLI — runs the FULL commit path). Extends procgen44's checks:
@@ -21,11 +23,21 @@
 //       (plan 028 §1.3 legibility floor) and islands exist at all;
 //   (h) pan/zoom → generatorRunCount unchanged (explicit-only preserved);
 //   (i) dev:errors clean end-to-end;
-//   screenshots → review/: windy braided river (overview ~z4.5), dead-straight
-//       canal (CRISP-MITER REGRESSION — compare against the pre-028
-//       v4.5-river-canal.png: same footprint, only the new bank casing added),
-//       and a close zoom on the delta's islands (land-hued lozenges, dark
-//       bank edges, no ribbon seam texture). EYEBALL ALL THREE (docs/04).
+//   (j) 28-B BEND-SHAPE SANITY on a long straight river (plan 028 §1.2, full
+//       commit path): reconstruct the centerline from the region network's
+//       bank lines, then assert ≥10 developed bends; wavelength within the
+//       empirical ratio (λ/W in [9, 13], target 11); bends quasi-periodic —
+//       zero-crossing spacing CV > 0.05, NOT metronomic; Kinoshita upstream
+//       skew — mean apex fraction < 0.48 with a clear majority of bends
+//       leaning; curvature floor — min 3-pt circumradius ≥ 2W·0.8;
+//   screenshots → review/: windy braided river (overview ~z4.5 — post-28-B the
+//       bends read lazier/irregular/upstream-skewed, deliberately calmer than
+//       28-A's tight worm-wiggle; NO visible periodicity), dead-straight canal
+//       (CRISP-MITER REGRESSION — byte-anchored by the unit sha fixture; same
+//       footprint as v4.5-river-canal.png + bank casing only), close zoom on
+//       the delta's islands (land-hued lozenges, dark bank edges, no ribbon
+//       seam texture), and the 28-B straight meander train (irregular skewed
+//       bends). EYEBALL ALL FOUR (docs/04).
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { Gate, obsidian, evalJs, clearErrors, devErrors, screenshot } from "../lib/cli.js";
@@ -41,11 +53,18 @@ const TEST_NAME = "__p49_test__";
 const WINDY = "[[10,-30],[16,-24],[10,-16],[16,-8]]";
 const CANAL = "[[32,-30],[32,-6]]"; // dead straight, east of the windy river
 const DELTA = "[[-30,-30],[-24,-22],[-30,-14],[-24,-6]]"; // west, long segments
+// 28-B: ONE long straight segment (80 units = 4000 m), north row, clear of the
+// other fixtures and the migrated district — no fillets, lateral offset is
+// pure meander: the cleanest live window onto the bend train.
+const STRAIGHT_MEANDER = "[[-40,20],[40,20]]";
 const LAZY_PARAMS = "{ windiness: 0.85, braiding: 0.6, width: 26, widthGrowth: 0.7, braidBias: 0.2 }";
 const CANAL_PARAMS = "{ windiness: 0, braiding: 0, width: 14, widthGrowth: 0, braidBias: 0 }";
 const DELTA_PARAMS = "{ windiness: 0.5, braiding: 1, width: 22, widthGrowth: 1.2, braidBias: 1 }";
+const MEANDER_PARAMS = "{ windiness: 0.8, braiding: 0, width: 20, widthGrowth: 0, braidBias: 0 }";
+const MEANDER_WIDTH_M = 20;
 const DELTA_WIDTH_M = 22;
 const MIN_ISLAND_WIDTH_FRAC = 0.4; // keep in sync with src/gen/river.ts
+const RC_MIN_WIDTHS = 2; // keep in sync with src/gen/river.ts (plan 028 §1.2)
 
 function viewExpr(): string {
   return `app.workspace.getLeavesOfType('campaign-map-view').map(function(l){return l.view;}).find(function(v){return v&&v.campaign&&v.campaign.id==='${CAMPAIGN}'})`;
@@ -183,7 +202,7 @@ async function newRiver(line: string, params: string): Promise<string> {
 
 async function main(): Promise<void> {
   const gate = new Gate();
-  console.log("== Procgen v4.10 gate (plan 028-A: river body + banks + legible islands) ==\n");
+  console.log("== Procgen v4.11 gate (plan 028-A body/banks/islands + 028-B meander math) ==\n");
 
   await gate.try("unit gates: river gen (incl. 028 topology/island/canal blocks) + spine + registry + generated paint + controller lifecycle", () => {
     execFileSync(
@@ -353,6 +372,79 @@ async function main(): Promise<void> {
     if (before !== after) throw new Error(`generatorRunCount moved under pan/zoom: ${before} -> ${after}`);
   });
 
+  let meanderId = "";
+  await gate.try("(j) 28-B bend-shape sanity: λ/W ratio, quasi-periodicity, upstream skew, R_c floor", async () => {
+    meanderId = await newRiver(STRAIGHT_MEANDER, MEANDER_PARAMS);
+    if (containment(meanderId).outside > 0) throw new Error("straight meander spilled outside its corridor");
+    const network = regionNetwork(meanderId);
+    const banks = network.filter(
+      (f) => (f.properties as { generatorId?: string })?.generatorId === "river-bank"
+    );
+    if (banks.length !== 2) throw new Error(`expected 2 bank lines on a 1-segment river, got ${banks.length}`);
+    const L = (banks[0].geometry as GeoJSON.LineString).coordinates as [number, number][];
+    const R = (banks[1].geometry as GeoJSON.LineString).coordinates as [number, number][];
+    if (L.length !== R.length) throw new Error("bank sample counts differ — centerline reconstruction broken");
+    const center: [number, number][] = L.map((p, i) => [(p[0] + R[i][0]) / 2, (p[1] + R[i][1]) / 2]);
+    // Lateral offset = y-deviation from the straight spine (env=0 at the ends,
+    // so the endpoints sit ON the spine).
+    const ySpine = (center[0][1] + center[center.length - 1][1]) / 2;
+    const lat = center.map(([x, y]) => [x, y - ySpine] as [number, number]);
+    const crossings: number[] = [];
+    for (let i = 0; i + 1 < lat.length; i++) {
+      const [x0, y0] = lat[i];
+      const [x1, y1] = lat[i + 1];
+      if (y0 * y1 < 0) crossings.push(x0 + (x1 - x0) * (y0 / (y0 - y1)));
+    }
+    const bends: { frac: number; amp: number; span: number }[] = [];
+    for (let b = 0; b + 1 < crossings.length; b++) {
+      const [s0, s1] = [crossings[b], crossings[b + 1]];
+      let amp = -1;
+      let ax = s0;
+      for (const [x, y] of lat) {
+        if (x >= s0 && x <= s1 && Math.abs(y) > amp) {
+          amp = Math.abs(y);
+          ax = x;
+        }
+      }
+      bends.push({ frac: (ax - s0) / (s1 - s0), amp, span: s1 - s0 });
+    }
+    const interior = bends.filter((b) => b.amp > 3);
+    if (interior.length < 10) throw new Error(`only ${interior.length} developed bends (< 10) — meander train missing`);
+    const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const lambdaOverW = (2 * mean(bends.map((b) => b.span))) / MEANDER_WIDTH_M;
+    if (lambdaOverW < 9 || lambdaOverW > 13) {
+      throw new Error(`λ/W = ${lambdaOverW.toFixed(2)} outside [9, 13] (empirical ratio target 11)`);
+    }
+    const spans = interior.map((b) => b.span);
+    const cv = Math.sqrt(mean(spans.map((s) => (s - mean(spans)) ** 2))) / mean(spans);
+    if (cv <= 0.05) throw new Error(`bend spacing CV ${cv.toFixed(3)} ≤ 0.05 — metronomic (periodicity not killed)`);
+    const meanFrac = mean(interior.map((b) => b.frac));
+    const leaning = interior.filter((b) => b.frac < 0.5).length / interior.length;
+    if (meanFrac >= 0.48) throw new Error(`mean apex fraction ${meanFrac.toFixed(3)} ≥ 0.48 — no upstream skew`);
+    if (leaning <= 0.75) throw new Error(`only ${(leaning * 100).toFixed(0)}% of bends lean upstream (≤ 75%)`);
+    let minR = Infinity;
+    for (let i = 1; i + 1 < center.length; i++) {
+      const [a, b, c] = [center[i - 1], center[i], center[i + 1]];
+      const d = (u: [number, number], v: [number, number]): number => Math.hypot(u[0] - v[0], u[1] - v[1]);
+      const area2 = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]));
+      if (area2 > 1e-12) minR = Math.min(minR, (d(a, b) * d(b, c) * d(c, a)) / (2 * area2));
+    }
+    const rcFloor = RC_MIN_WIDTHS * MEANDER_WIDTH_M * 0.8;
+    if (minR < rcFloor) throw new Error(`min curvature radius ${minR.toFixed(1)} m < ${rcFloor.toFixed(1)} m floor`);
+    console.log(
+      `     [j] ${interior.length} bends; λ/W ${lambdaOverW.toFixed(1)}; spacing CV ${cv.toFixed(2)}; ` +
+        `apex frac ${meanFrac.toFixed(2)} (${(leaning * 100).toFixed(0)}% lean upstream); min R_c ${minR.toFixed(1)} m`
+    );
+  });
+
+  await gate.try("screenshot: 28-B straight meander train (irregular, upstream-skewed bends)", async () => {
+    sync("(function(){v.map.fitBounds([[-42,14],[42,26]],{animate:false,padding:30});return 'ok';})()");
+    await new Promise((r) => setTimeout(r, 2500));
+    front();
+    await new Promise((r) => setTimeout(r, 800));
+    screenshot(`${REVIEW}/procgen49-river-meander-straight.png`);
+  });
+
   await gate.try("screenshot: windy braided river (overview — no seam texture, dark-edge/light-core)", async () => {
     await evalAsync(`function(v){ return v.setRegionParams(${JSON.stringify(id)}, ${LAZY_PARAMS}); }`);
     sync("(function(){v.map.fitBounds([[6,-32],[22,-4]],{animate:false,padding:40});return 'ok';})()");
@@ -393,7 +485,7 @@ async function main(): Promise<void> {
   await new Promise((r) => setTimeout(r, 800));
   stripTestFabric();
 
-  process.exit(gate.summarize("Procgen v4.10"));
+  process.exit(gate.summarize("Procgen v4.11"));
 }
 
 main();

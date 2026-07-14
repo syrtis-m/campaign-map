@@ -1,9 +1,43 @@
 /**
  * River generator (plan 022 §3.1; channel body overhauled per plan 028 §1.1 +
- * §1.3, box 28-A). Pure/headless (no DOM/map/Obsidian imports; reads only its
- * arguments, D6): a sketched river LINE is the SPINE; this elaborates it into
- * per-segment merged channel polygons, `river-bank` casing LineStrings, and
- * legible braid-island lozenges, all strictly inside the spine corridor.
+ * §1.3, box 28-A; meander math overhauled per plan 028 §1.2, box 28-B).
+ * Pure/headless (no DOM/map/Obsidian imports; reads only its arguments, D6):
+ * a sketched river LINE is the SPINE; this elaborates it into per-segment
+ * merged channel polygons, `river-bank` casing LineStrings, and legible
+ * braid-island lozenges, all strictly inside the spine corridor.
+ *
+ * Meander shape (plan 028 §1.2 — kills the metronomic worm-wiggle):
+ *  - Each ORIGINAL segment's lateral profile is a quasi-periodic train of
+ *    half-wave "lobes" (one lobe = one bend). Lobe length targets the
+ *    empirical ratio λ ≈ MEANDER_WAVELENGTH_WIDTHS × channel width (USGS /
+ *    Leopold–Wolman 10–14 W), jittered ±30% per lobe; per-lobe amplitude is
+ *    jittered too (Ferguson 1975: meander trains are quasi-periodic, never
+ *    periodic).
+ *  - The bend shape carries a Kinoshita third-harmonic skew,
+ *    `P(φ) = sin φ − skew·cos 3φ`, `skew = θ₀²·Jₛ`, `θ₀ = KINOSHITA_THETA0_MAX
+ *    · windiness`, canonical `Jₛ = 1/32` (plan 028 §0 digest; J_f dropped in
+ *    v1 — subtle at map scale). Every full bend's apex leans UPSTREAM (apex
+ *    arc-position < bend midpoint). The profile is normalized by its exact
+ *    bound max|P| ≤ 1 + skew, so the amplitude budget stays exact.
+ *  - Phase is the integral of a piecewise-LINEAR ω(s) interpolated between
+ *    per-lobe rates at lobe midpoints (piecewise-quadratic phase ⇒ C1
+ *    centerline), and per-lobe amplitudes interpolate linearly at the same
+ *    midpoints — per-bend wavelength/amplitude jitter without kinks.
+ *  - Realism clamp AS containment (plan 028 §1.2): per-lobe amplitude is
+ *    capped so bend curvature radius R_c ≥ RC_MIN_WIDTHS × width (empirical
+ *    R_c ≈ 2–3 W): the small-slope bound |D″| ≤ A·ω²·max|P″|/(1+skew) is
+ *    inverted for A, with max|P″| evaluated on a fixed deterministic grid.
+ *    The cap only SHRINKS amplitudes below the windiness budget, so
+ *    `riverMaxOffset` and the corridor argument are unchanged.
+ *  - λ and the R_c clamp read `params.width` (BASE width, not the grown
+ *    downstream width) — a deliberate deviation from local-width realism so
+ *    the meander stays a pure per-segment function of params: zero global-arc
+ *    coupling, identity property preserved verbatim. (The braid path's fMid
+ *    precedent exists, but the meander is kept stricter; 23-E's slope
+ *    coupling revisits with its own params.)
+ *  - windiness = 0 (canal) zeroes every amplitude cap, so the lateral offset
+ *    is EXACTLY 0 through the same arithmetic — canal output is byte-identical
+ *    to 28-A (the sha-pinned regression fixture must never change).
  *
  * Emission shape (plan 028 §1.1 — kills the every-6 m quad hairline texture):
  *  - `river-channel`: ONE ribbon Polygon per ORIGINAL spine segment (the old
@@ -74,12 +108,30 @@ export interface RiverParams {
 // Params-only lateral-budget constants (meters). maxOffset sums their scaled
 // maxima, so the corridor is a pure function of the params.
 export const BASE_MEANDER_AMP_M = 45; // meander amplitude at windiness = 1
-const MEANDER_WAVELENGTH_M = 140; // ~1 lobe per this much spine length
+// ── Meander-shape constants (plan 028 §1.2, box 28-B) ────────────────────────
+/** Target meander wavelength in channel widths (USGS/Leopold–Wolman: 10–14). */
+export const MEANDER_WAVELENGTH_WIDTHS = 11;
+/** Per-lobe wavelength jitter, ± fraction (Ferguson quasi-periodicity). */
+const WAVELENGTH_JITTER = 0.3;
+/** Per-lobe amplitude jitter: A ∈ [1−AMP_JITTER, 1]×cap (±25% around mean). */
+const AMP_JITTER = 0.4;
+/** Kinoshita heading amplitude θ₀ at windiness 1 (rad, ~109°: a well-developed
+ * meander train; plan 028 §0 flags exact coefficients for later verification
+ * vs Abad WRR 2023 — Jₛ is the canonical 1/32). */
+const KINOSHITA_THETA0_MAX = 1.9;
+const KINOSHITA_JS = 1 / 32;
+/** Curvature-radius floor in channel widths (empirical R_c ≈ 2–3 W; doubles as
+ * the bank self-intersection guard: R_c ≥ 2W ≫ half-width). */
+export const RC_MIN_WIDTHS = 2;
+// ─────────────────────────────────────────────────────────────────────────────
 export const BASE_BRAID_OFFSET_M = 55; // braid lens bulge at braiding = 1 —
 // large enough that the secondary channel clears both banks and opens an island
 // even on a wide (delta) river.
 const CORRIDOR_MARGIN_M = 6;
 const RESAMPLE_STEP_M = 6; // centerline sampling step
+/** Half-wavelength floor: ≥4 centerline samples per bend (anti-aliasing guard
+ * for pathologically narrow widths; params-only). */
+const MIN_HALF_WAVELENGTH_M = 4 * RESAMPLE_STEP_M;
 const SECONDARY_WIDTH_FRAC = 0.5; // braid side-channel width vs main
 const AMP_SEG_FRAC = 0.35; // per-segment amplitude cap (self-intersection guard)
 const BRAID_SUB0 = 0.15; // braid unit sits inside [BRAID_SUB0, 1-BRAID_SUB0] of a segment
@@ -159,11 +211,31 @@ function unit(dx: number, dy: number): Pt {
   return [dx / l, dy / l];
 }
 
-/** Per-segment meander offset function, keyed on the segment's quantized
- * endpoints (identity property). Envelope `sin²(πt)` is 0 with zero derivative
- * at both ends, so the centerline passes through each spine vertex tangentially
- * — C1 at the joins w.r.t. the meander, and self-contained per segment. */
-function meanderSegment(seed: number, a: Pt, b: Pt, windiness: number): {
+/** Exact worst-case |P″(φ)|/ω² of the skewed profile `sin φ − skew·cos 3φ`,
+ * by deterministic grid maximization (720 fixed samples — closed-form
+ * arithmetic, no data dependence, D4). Used to invert the R_c clamp. */
+function maxProfileCurvature(skew: number): number {
+  if (skew <= 0) return 1;
+  let m = 0;
+  for (let i = 0; i < 720; i++) {
+    const phi = (i / 720) * Math.PI * 2;
+    m = Math.max(m, Math.abs(-Math.sin(phi) + 9 * skew * Math.cos(3 * phi)));
+  }
+  return m;
+}
+
+/** Per-segment meander offset function (plan 028 §1.2), keyed on the segment's
+ * quantized endpoints (identity property). Envelope `sin²(πt)` is 0 with zero
+ * derivative at both ends, so the centerline passes through each spine vertex
+ * tangentially — self-contained per segment. Inside: a lobe train with hashed
+ * per-lobe half-wavelengths (target λ/2 = 11·width/2, ±30%) and amplitudes
+ * (±25% around mean), C1-interpolated at lobe midpoints; the Kinoshita
+ * third-harmonic term skews every bend's apex upstream. Amplitude caps
+ * (windiness budget, AMP_SEG_FRAC self-intersection guard, R_c ≥ 2W realism
+ * clamp) are all params-only, so |offset| ≤ windiness·BASE_MEANDER_AMP_M and
+ * the corridor bound is untouched. windiness 0 ⇒ every cap 0 ⇒ offset ≡ 0
+ * exactly (canal byte-identity). */
+function meanderSegment(seed: number, a: Pt, b: Pt, params: RiverParams): {
   offset: (localS: number) => number;
   segLen: number;
   leftN: Pt;
@@ -173,16 +245,87 @@ function meanderSegment(seed: number, a: Pt, b: Pt, windiness: number): {
   const segLen = Math.hypot(dx, dy);
   const [ux, uy] = unit(dx, dy);
   const leftN: Pt = [-uy, ux];
+  if (segLen <= 0) return { offset: () => 0, segLen, leftN };
   const rng = mulberry32(hashSeed(seed, "meander", a[0], a[1], b[0], b[1]));
-  const phi = rng() * Math.PI * 2;
+  const phi0 = rng() * Math.PI * 2;
   const sign = rng() < 0.5 ? -1 : 1;
-  const nWaves = Math.max(0.5, segLen / MEANDER_WAVELENGTH_M);
-  const amp = Math.min(windiness * BASE_MEANDER_AMP_M, AMP_SEG_FRAC * segLen);
+  const W = params.width; // BASE width: params-only (see header — identity)
+  // Kinoshita skew: θ₀ scales with windiness, so a near-straight river is
+  // near-symmetric and a canal is exactly zero.
+  const theta0 = KINOSHITA_THETA0_MAX * params.windiness;
+  const skew = theta0 * theta0 * KINOSHITA_JS;
+  const pNorm = 1 + skew; // exact bound: |sin φ − skew·cos 3φ| ≤ 1 + skew
+  // Lobe layout: half-wave lobes targeting λ/2, hashed relative lengths.
+  const H = Math.max(MIN_HALF_WAVELENGTH_M, (MEANDER_WAVELENGTH_WIDTHS * W) / 2);
+  const nLobes = Math.max(1, Math.round(segLen / H));
+  const rel: number[] = [];
+  let relSum = 0;
+  for (let i = 0; i < nLobes; i++) {
+    const r = 1 + WAVELENGTH_JITTER * (2 * rng() - 1);
+    rel.push(r);
+    relSum += r;
+  }
+  // Per-lobe midpoints, angular rates, and clamped+jittered amplitudes.
+  const ampBudget = Math.min(params.windiness * BASE_MEANDER_AMP_M, AMP_SEG_FRAC * segLen);
+  const curvFactor = maxProfileCurvature(skew) / pNorm; // |D″| ≤ A·ω²·curvFactor
+  const mids: number[] = [];
+  const omega: number[] = [];
+  const hs: number[] = [];
+  let cursor = 0;
+  for (let i = 0; i < nLobes; i++) {
+    const h = (segLen * rel[i]) / relSum;
+    hs.push(h);
+    mids.push(cursor + h / 2);
+    omega.push(Math.PI / h);
+    cursor += h;
+  }
+  const amps: number[] = [];
+  for (let i = 0; i < nLobes; i++) {
+    // R_c ≥ RC_MIN_WIDTHS·W: invert |D″| ≤ A·(π/h)²·curvFactor ≤ 1/(RC·W).
+    // The cap uses the NEIGHBORHOOD's shortest half-wavelength: between two
+    // midpoints, ω(s) ≤ max(ωᵢ, ωᵢ₊₁) while A(s) ≤ max(Aᵢ, Aᵢ₊₁), so capping
+    // every lobe against its worst adjacent rate keeps A(s)·ω(s)² within the
+    // budget POINTWISE (a lobe-local cap alone lets the interpolation pair a
+    // long lobe's amplitude with a short neighbor's rate — ~30% overshoot at
+    // ±30% jitter).
+    const hMin = Math.min(hs[Math.max(0, i - 1)], hs[i], hs[Math.min(nLobes - 1, i + 1)]);
+    const rcCap = (hMin * hMin) / (Math.PI * Math.PI * RC_MIN_WIDTHS * W * curvFactor);
+    const cap = Math.min(ampBudget, rcCap);
+    amps.push(cap * (1 - AMP_JITTER * rng()));
+  }
+  // Cumulative phase at lobe midpoints (trapezoid integrals of the
+  // piecewise-linear ω) — closed form, C1 phase.
+  const phiMid: number[] = [phi0 + omega[0] * mids[0]];
+  for (let i = 1; i < nLobes; i++) {
+    phiMid.push(phiMid[i - 1] + ((omega[i - 1] + omega[i]) / 2) * (mids[i] - mids[i - 1]));
+  }
+  const last = nLobes - 1;
   const offset = (localS: number): number => {
-    if (segLen <= 0) return 0;
+    if (ampBudget <= 0) return 0; // canal: exact zero, byte-identical
     const t = localS / segLen;
     const env = Math.sin(Math.PI * t) ** 2;
-    return sign * amp * env * Math.sin(2 * Math.PI * nWaves * t + phi);
+    let phi: number;
+    let A: number;
+    if (localS <= mids[0]) {
+      phi = phi0 + omega[0] * localS;
+      A = amps[0];
+    } else if (localS >= mids[last]) {
+      phi = phiMid[last] + omega[last] * (localS - mids[last]);
+      A = amps[last];
+    } else {
+      let j = 0;
+      while (localS > mids[j + 1]) j++;
+      const span = mids[j + 1] - mids[j];
+      const ds = localS - mids[j];
+      phi = phiMid[j] + omega[j] * ds + (0.5 * (omega[j + 1] - omega[j]) * ds * ds) / span;
+      // Smoothstep (C1) amplitude blend: A′ = 0 at the midpoints, so per-bend
+      // amplitude changes add no derivative kink (a linear blend's A′ jump
+      // reads as a curvature spike against the R_c floor).
+      const u = ds / span;
+      A = amps[j] + (amps[j + 1] - amps[j]) * u * u * (3 - 2 * u);
+    }
+    const prof = (Math.sin(phi) - skew * Math.cos(3 * phi)) / pNorm;
+    return sign * A * env * prof;
   };
   return { offset, segLen, leftN };
 }
@@ -198,7 +341,7 @@ function segmentCtx(
   arcStart: number,
   totalLen: number
 ): SegmentCtx {
-  const { offset, segLen, leftN } = meanderSegment(seed, a, b, params.windiness);
+  const { offset, segLen, leftN } = meanderSegment(seed, a, b, params);
   const [ux, uy] = unit(b[0] - a[0], b[1] - a[1]);
   const evalAt = (s: number): Pt => {
     const off = offset(s);
