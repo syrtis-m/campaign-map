@@ -1,0 +1,22 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`mountain generator — determinism > matches the seeded snapshot fixture (alpine — golden drift tripwire) 1`] = `
+{
+  "sha256": "274c402514b92524a1ed5862d35c2887104127ac29a2526f13dfb89ce17887db",
+  "summary": {
+    "mountain-hachure": 1888,
+    "mountain-massif": 1,
+    "mountain-peak": 29,
+    "total": 1918,
+  },
+}
+`;
+
+exports[`plan 023 §3 compatibility — world-tier heightAt is UNTOUCHED > heightAt produces its committed values for fixed samples (bit-exact guard) 1`] = `
+[
+  0.8519239802674079,
+  0.7156269723927895,
+  0.4473805172398416,
+  0.2302355387270094,
+]
+`;

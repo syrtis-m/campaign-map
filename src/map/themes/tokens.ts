@@ -38,6 +38,7 @@ export interface ThemeTokens {
   fabricPark: string; // greenspace fill — the per-theme green (manicured/lawn)
   fabricForest: string; // woodland canopy fill — a DEEPER, less-manicured green than fabricPark (plan 022 §3.2)
   fabricFarmland: string; // tilled-field fill — a warm cultivated ochre/khaki, distinct from both greens (plan 022 §3.5)
+  fabricMountain: string; // rocky-relief massif fill — a stony grey-brown, distinct from the wall stone + the greens (plan 023 §3)
   fabricDistrict: string; // neighborhood wash — rendered at low opacity, must not slab the base
   fontRegular: string; // glyph stack name (fontstack)
   fontRegion: string; // glyph stack name for region/accent labels
@@ -74,6 +75,7 @@ export const MODERN_CLEAN: ThemeTokens = {
   fabricPark: "#a8d5a2",
   fabricForest: "#6fae72", // deeper than the pale park green — reads as woodland
   fabricFarmland: "#d9c48a", // warm cultivated wheat-tan, distinct from both greens
+  fabricMountain: "#b3a596", // warm rocky taupe, greyer/browner than the wall concrete
   fabricDistrict: "#e07f4f",
   fontRegular: "Inter Regular",
   fontRegion: "Inter Bold",
@@ -103,6 +105,7 @@ export const PARCHMENT: ThemeTokens = {
   fabricPark: "#9db87a",
   fabricForest: "#6d8f4e", // muted olive-green woodland, sits on parchment
   fabricFarmland: "#c9b070", // aged wheat-ochre, the hand-tinted field wash on parchment
+  fabricMountain: "#a89272", // dun rock-brown, the hand-drawn massif tint on parchment
   fabricDistrict: "#8f4a3d",
   fontRegular: "Alegreya Regular",
   fontRegion: "Cormorant SC SemiBold",
@@ -132,6 +135,7 @@ export const INK_SOOT: ThemeTokens = {
   fabricPark: "#5f7a4d",
   fabricForest: "#43613a", // dark ink-soot canopy, deeper than the park green
   fabricFarmland: "#6e6144", // dark tilled-earth khaki, warmer than the moss greens
+  fabricMountain: "#5a5348", // dark slate-brown rock on the soot land, distinct from the sandstone wall
   fabricDistrict: "#584a6b",
   fontRegular: "IBM Plex Serif Regular",
   fontRegion: "Oswald Regular",
@@ -163,6 +167,7 @@ export const NEON_SPRAWL: ThemeTokens = {
   fabricPark: "#30c85e",
   fabricForest: "#1f9e6d", // neon teal-green canopy, distinct from the bright park green
   fabricFarmland: "#b89b3a", // synthetic amber cropland, distinct from the neon greens
+  fabricMountain: "#4a4a5e", // cold gunmetal rock, a desaturated slate against the neon palette
   fabricDistrict: "#8034a8",
   fontRegular: "Saira Condensed Regular",
   fontRegion: "Rajdhani Bold",

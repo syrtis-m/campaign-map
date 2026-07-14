@@ -115,6 +115,24 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
         "fill-outline-color": tokens.fabricFarmland,
       },
     },
+    mountain: {
+      // Inert sketched mountain (plan 023 §3, forest §5.2 precedent): a faint
+      // rocky wash so an un-generated mountain outline reads as "relief here"
+      // without competing with the generated massif/hachures. Once a procgen
+      // block is attached the generated `mountain-massif` + hachures ARE the
+      // paint, so the raw polygon drops to opacity 0 — same mechanism as the
+      // forest/farmland fill (fill stays rendered so queryRenderedFeatures still
+      // hit-tests it for selection).
+      id: "fabric-mountain",
+      type: "fill",
+      source: "fabric",
+      filter: kindFilter("mountain"),
+      paint: {
+        "fill-color": tokens.fabricMountain,
+        "fill-opacity": ["case", ["has", "procgen"], 0, 0.28],
+        "fill-outline-color": tokens.fabricMountain,
+      },
+    },
     // Lines
     river: {
       id: "fabric-river",

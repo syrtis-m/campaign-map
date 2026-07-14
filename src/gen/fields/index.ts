@@ -37,3 +37,10 @@ export {
   fClamp,
   fSum,
 } from "./combinators";
+export type { HeightSample, FbmErodedOptions, ElevationField } from "./elevation";
+export {
+  // Analytic-derivative noise + gradient-damped fBm (plan 023 §1.1) — the
+  // elevation base, consumed first by the `mountain` generator.
+  valueNoise2DWithDeriv,
+  fbmEroded,
+} from "./elevation";

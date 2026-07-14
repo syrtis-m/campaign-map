@@ -1697,6 +1697,14 @@ export class MapView extends ItemView {
     return this.controller.regionContainmentReport(regionId);
   }
 
+  /** Numeric elevation samples for a mountain region (plan 023 §3 gate): the
+   * point-evaluable height field rebuilt from the persisted seed+params and
+   * sampled at deterministic gen-space points — heights compared numerically,
+   * never rendered bytes (§4.2). Two calls across a regenerate must match. */
+  regionElevationReport(regionId: string): { x: number; y: number; h: number; dx: number; dy: number }[] {
+    return this.controller.regionElevationReport(regionId);
+  }
+
   /** Set (or clear, with `null`) a region's persisted generation center
    * (params.center, gen-space meters) via the full commit path — the
    * draggable-plaza feature (Addendum 2). `centerDisplay` is in DISPLAY units. */

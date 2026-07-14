@@ -84,7 +84,7 @@ describe("FabricFeatureSchema", () => {
 
 describe("kind partitioning", () => {
   it("splits line vs polygon kinds as designed", () => {
-    expect(FABRIC_KINDS.filter(isPolygonKind)).toEqual(["water", "district", "park", "forest", "farmland"]);
+    expect(FABRIC_KINDS.filter(isPolygonKind)).toEqual(["water", "district", "park", "forest", "farmland", "mountain"]);
     expect(FABRIC_KINDS.filter((k) => !isPolygonKind(k))).toEqual(["road", "wall", "river"]);
   });
 });

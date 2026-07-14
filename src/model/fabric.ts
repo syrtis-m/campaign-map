@@ -9,13 +9,18 @@ import { z } from "zod";
  * only — no DOM/map/Obsidian imports) so generators can read fabric features
  * as constraints headlessly.
  */
-export const FABRIC_KINDS = ["road", "wall", "river", "water", "district", "park", "forest", "farmland"] as const;
+export const FABRIC_KINDS = ["road", "wall", "river", "water", "district", "park", "forest", "farmland", "mountain"] as const;
 export type FabricKind = (typeof FABRIC_KINDS)[number];
 
-/** line kinds: road, wall, river ; polygon kinds: water, district, park, forest, farmland */
+/** line kinds: road, wall, river ; polygon kinds: water, district, park, forest, farmland, mountain */
 export function isPolygonKind(kind: FabricKind): boolean {
   return (
-    kind === "water" || kind === "district" || kind === "park" || kind === "forest" || kind === "farmland"
+    kind === "water" ||
+    kind === "district" ||
+    kind === "park" ||
+    kind === "forest" ||
+    kind === "farmland" ||
+    kind === "mountain"
   );
 }
 

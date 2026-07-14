@@ -1,6 +1,7 @@
 import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "./tokens";
 import { worldRegionLayers, worldRouteLayers } from "./generated/world";
+import { mountainLayers } from "./generated/mountain";
 import { farmLayers } from "./generated/farm";
 import { cityLayers, cityStreetLayers } from "./generated/city";
 import { riverLayers } from "./generated/river";
@@ -19,8 +20,8 @@ import { wallLayers } from "./generated/wall";
  * (plan 019, D2) — the world-settlement generator is unwired from
  * generate-here, so nothing emits point features into this source.
  *
- * The per-kind layer builders live in `./generated/{world,farm,city,river,
- * forest,park,wall}.ts` (split VO-W0 so the three visual-overhaul plans —
+ * The per-kind layer builders live in `./generated/{world,mountain,farm,city,
+ * river,forest,park,wall}.ts` (split VO-W0 so the three visual-overhaul plans —
  * 026 forest / 027 park / 028 river — touch disjoint files). This function is
  * the sole composer: it concatenates the fragments in EXACTLY the emitted
  * order. That order is deliberately interleaved — world-region opens the stack
@@ -34,6 +35,7 @@ import { wallLayers } from "./generated/wall";
 export function generatedLayers(t: ThemeTokens): LayerSpecification[] {
   return [
     ...worldRegionLayers(t),
+    ...mountainLayers(t),
     ...farmLayers(t),
     ...cityLayers(t),
     ...riverLayers(t),

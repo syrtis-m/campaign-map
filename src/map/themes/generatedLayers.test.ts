@@ -498,3 +498,89 @@ describe("generatedLayers — farmland field/lane/hedge/building/tree paint cove
     for (const id of FARM_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
   });
 });
+
+/** Every emitted mountain feature type (plan 023 §3) needs paint in every
+ * theme: the rocky massif fill, the downslope hachure ticks (LINE) and the
+ * summit peak markers (CIRCLE). Coverage guard for the mountain types added in
+ * plan 023-B. */
+const MOUNTAIN_LAYER_IDS = [
+  "generated-mountain-massif",
+  "generated-mountain-hachure",
+  "generated-mountain-peak",
+] as const;
+
+describe("generatedLayers — mountain massif/hachure/peak paint coverage (plan 023 §3)", () => {
+  it("all three mountain layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
+    const layers = generatedLayers(PARCHMENT);
+    for (const id of MOUNTAIN_LAYER_IDS) {
+      const layer = layers.find((l) => l.id === id);
+      expect(layer, `${id} missing from generatedLayers`).toBeDefined();
+      expect((layer as { source?: string }).source).toBe("generated");
+      const filter = JSON.stringify((layer as { filter?: unknown }).filter);
+      expect(filter).toContain('"generatorId"');
+      expect(filter).not.toContain('"zoom"'); // NO zoom LOD (Jonah 2026-07-12)
+    }
+  });
+
+  it("massif is a fill, hachure a line, peak a circle", () => {
+    const layers = generatedLayers(PARCHMENT);
+    expect(layers.find((l) => l.id === "generated-mountain-massif")!.type).toBe("fill");
+    expect(layers.find((l) => l.id === "generated-mountain-hachure")!.type).toBe("line");
+    expect(layers.find((l) => l.id === "generated-mountain-peak")!.type).toBe("circle");
+  });
+
+  it("layers relief bottom-up: massif under hachure under peak", () => {
+    const ids = generatedLayers(PARCHMENT).map((l) => l.id);
+    expect(ids.indexOf("generated-mountain-hachure")).toBeGreaterThan(ids.indexOf("generated-mountain-massif"));
+    expect(ids.indexOf("generated-mountain-peak")).toBeGreaterThan(ids.indexOf("generated-mountain-hachure"));
+  });
+
+  it("mountain block is BASE TERRAIN: sits before the farm/city stack, keeps the generated- prefix", () => {
+    const ids = generatedLayers(PARCHMENT).map((l) => l.id);
+    const massif = ids.indexOf("generated-mountain-massif");
+    const farm = ids.indexOf("generated-farm-field");
+    const district = ids.indexOf("generated-district");
+    if (farm >= 0) expect(massif).toBeLessThan(farm);
+    if (district >= 0) expect(massif).toBeLessThan(district);
+    expect(() => assertLayerOrder(generatedLayers(PARCHMENT))).not.toThrow();
+  });
+
+  it("no mountain layer carries a minzoom/maxzoom gate (density is paint, never zoom)", () => {
+    const layers = generatedLayers(PARCHMENT);
+    for (const id of MOUNTAIN_LAYER_IDS) {
+      const layer = layers.find((l) => l.id === id)! as { minzoom?: number; maxzoom?: number };
+      expect(layer.minzoom, `${id} must not gate on minzoom`).toBeUndefined();
+      expect(layer.maxzoom, `${id} must not gate on maxzoom`).toBeUndefined();
+    }
+  });
+
+  for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
+    it(`${id}: every mountain layer paints a color; massif ≠ hachure (dark-line relief)`, () => {
+      const layers = generatedLayers(tokens);
+      for (const layerId of MOUNTAIN_LAYER_IDS) {
+        expect(hasColor(layers.find((l) => l.id === layerId)!), `${id}: ${layerId} paints no color`).toBe(true);
+      }
+      const massif = fillColor(layers.find((l) => l.id === "generated-mountain-massif")!);
+      // Massif fill must stay EXACTLY the theme's mountain token (hue discipline).
+      expect(massif).toBe(tokens.fabricMountain.toLowerCase());
+      // Hachures are a DARKER stroke of the massif hue — never the massif color.
+      const hachure = bankLineColor(layers.find((l) => l.id === "generated-mountain-hachure")!);
+      expect(hachure, `${id}: hachure must differ from the massif fill`).not.toBe(massif);
+    });
+  }
+
+  it("obsidian-native runtime style paints all three mountain layers", () => {
+    const css: ObsidianCssTokens = {
+      backgroundPrimary: "#1e1e1e",
+      backgroundSecondary: "#262626",
+      backgroundModifierBorder: "#4d4d4d",
+      textMuted: "#999999",
+      textNormal: "#dcddde",
+      interactiveAccent: "#7c3aed",
+      fontText: "sans-serif",
+    };
+    const style = obsidianNativeStyle(css, "http://localhost/glyphs/{fontstack}/{range}.pbf");
+    const ids = style.layers.map((l) => l.id);
+    for (const id of MOUNTAIN_LAYER_IDS) expect(ids, `obsidian-native missing ${id}`).toContain(id);
+  });
+});

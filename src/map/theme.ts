@@ -82,6 +82,7 @@ const FABRIC_ON_LIGHT = {
   fabricPark: "#93bd80",
   fabricForest: "#5f9560", // deeper than park; woodland on a light Obsidian theme
   fabricFarmland: "#cdb679", // warm cultivated tan on a light Obsidian theme
+  fabricMountain: "#ab9d8d", // rocky taupe massif on a light Obsidian theme
   fabricPathCasing: "#6b6b6b", // darker gray rim under the road-gray park path (plan 027-A)
   fabricWaterShore: "#6f97b4", // deeper blue rim on the pale pond (plan 027-A)
 } as const;
@@ -92,6 +93,7 @@ const FABRIC_ON_DARK = {
   fabricPark: "#5d7a4e",
   fabricForest: "#3f5c38", // dark canopy, distinct from the park green on dark
   fabricFarmland: "#6b5d3f", // dark tilled-earth khaki on a dark Obsidian theme
+  fabricMountain: "#565046", // dark slate-brown rock on a dark Obsidian theme
   fabricPathCasing: "#3a3a3a", // near-black rim under the road-gray park path (plan 027-A)
   fabricWaterShore: "#4a6a86", // lighter steel rim, reads on the dark pond (plan 027-A)
 } as const;

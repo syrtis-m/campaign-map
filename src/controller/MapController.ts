@@ -93,6 +93,7 @@ import {
   type RingValidation,
 } from "../gen/region";
 import { algorithmById, algorithmForKind, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
+import { mountainHeightField, type MountainTerrain } from "../gen/mountain";
 import type { GeneratorId } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
 import { hashSeed } from "../gen/rng";
@@ -1536,6 +1537,44 @@ export class MapController {
       }
     }
     return { count, outside };
+  }
+
+  /**
+   * Numeric elevation samples for a mountain region (plan 023 §3 gate) — the
+   * point-evaluable height field rebuilt from the persisted seed + params, then
+   * sampled at a deterministic set of gen-space points derived from the region
+   * bbox. Returns `{h, dx, dy}` per contained sample (mm/rounded), NEVER
+   * rendered bytes (plan 023 §4.2 DEM-determinism trap: compare heights, not
+   * PNGs). Two calls across a regenerate MUST be identical — the field is a pure
+   * function of (seed, position), so this proves the elevation model is
+   * deterministic and correctly wired. Empty for a non-mountain region.
+   */
+  regionElevationReport(regionId: string): { x: number; y: number; h: number; dx: number; dy: number }[] {
+    const feature = this.fabricCollection.features.find((f) => f.id === regionId);
+    const block = feature?.properties.procgen;
+    if (!feature || !block || block.algorithm !== "mountain") return [];
+    const region = this.buildRegionFromFeature(feature);
+    if (!region) return [];
+    const p = block.params as Record<string, unknown>;
+    const terrain = (typeof p.terrain === "string" ? p.terrain : "alpine") as MountainTerrain;
+    const amplitude = typeof p.amplitude === "number" ? p.amplitude : 0.6;
+    const roughness = typeof p.roughness === "number" ? p.roughness : 0.5;
+    const field = mountainHeightField(block.seed, region, { terrain, amplitude, roughness });
+    const b = region.bbox;
+    const round = (v: number): number => Math.round(v * 1e6) / 1e6;
+    const out: { x: number; y: number; h: number; dx: number; dy: number }[] = [];
+    // Fixed 5×5 grid across the bbox interior; keep only contained samples so
+    // the point set is a pure function of the (deterministic) region geometry.
+    for (let i = 1; i <= 5; i++) {
+      for (let j = 1; j <= 5; j++) {
+        const x = b.minX + ((b.maxX - b.minX) * i) / 6;
+        const y = b.minY + ((b.maxY - b.minY) * j) / 6;
+        if (distanceToBoundary(region, x, y) <= 0) continue;
+        const s = field(x, y);
+        out.push({ x: round(x), y: round(y), h: round(s.v), dx: round(s.dx), dy: round(s.dy) });
+      }
+    }
+    return out;
   }
 
   /** Set (or clear, with `null`) a region's persisted generation center. */

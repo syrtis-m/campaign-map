@@ -21,6 +21,7 @@ import { generateForest, FOREST_VARIETIES } from "../forest";
 import { generatePark, PARK_VARIETIES } from "../park";
 import { generateWall, wallMaxOffset, WALL_STYLES } from "../wall";
 import { generateFarmland, FARMLAND_TYPES, HEDGING_KINDS } from "../farmland";
+import { generateMountain, MOUNTAIN_TERRAINS } from "../mountain";
 import {
   DOMAIN_TILE_GENERATOR_IDS,
   generateCityNetwork,
@@ -419,9 +420,59 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-/** v1 registers `city` + `forest` + `park` + `farmland` (polygon) + `river` +
- * `wall` (line). Order matters for `algorithmForKind` (first match wins) — keep
- * the list explicit and small. */
+// ─── Mountain (plan 023 §3) — the relief polygon kind, first consumer of the
+// elevation field (fields/elevation.ts) ──────────────────────────────────────
+
+/** Mountain params v1 (plan 023 §3). All knobs have defaults so a bare `{}`
+ * validates to a reasonable alpine massif (additive-params rule §1). `terrain`
+ * drives layout (like the city `profile` / park `variety`), never a preset-id
+ * branch. `paddy-terraces` (farmland box, deferred) is unrelated. */
+const mountainParamsSchema = z.object({
+  terrain: z.enum(MOUNTAIN_TERRAINS).default("alpine"),
+  amplitude: z.number().min(0).max(1).default(0.6),
+  roughness: z.number().min(0).max(1).default(0.5),
+});
+
+/** Mountain presets (plan 023 §3) — the three templates Jonah named. Params are
+ * the whole truth; `terrain` is carried onto features for theme tinting, never
+ * a runtime preset-id branch. */
+const MOUNTAIN_PRESETS: readonly ProcgenPreset[] = [
+  { id: "alpine", label: "Alpine — high ridged peaks, steep relief", params: { terrain: "alpine", amplitude: 0.85, roughness: 0.6 } },
+  { id: "mesa", label: "Mesa — terraced tablelands, cliff risers", params: { terrain: "mesa", amplitude: 0.55, roughness: 0.4 } },
+  { id: "rolling-hills", label: "Rolling hills — gentle rounded uplands", params: { terrain: "rolling-hills", amplitude: 0.3, roughness: 0.35 } },
+];
+
+/** Mountain tile-generator ids = the emitted feature buckets (plan 023 §3): the
+ * rocky-ground massif, the downslope relief hachures, and the summit peaks.
+ * Cache keys + paint layers key on these — EVERY emitted gid MUST appear here
+ * or the tile clip silently drops it (the twice-hit integration bug). */
+export const MOUNTAIN_TILE_GENERATOR_IDS: readonly string[] = ["mountain-massif", "mountain-hachure", "mountain-peak"];
+
+const mountainAlgorithm: ProcgenAlgorithm = {
+  id: "mountain",
+  label: "Mountain",
+  appliesTo: ["mountain"],
+  paramsSchema: mountainParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
+  presets: MOUNTAIN_PRESETS,
+  defaultPresetId(themeId: string): string {
+    // Fantasy parchment/ink-soot read best as dramatic alpine relief; the clean
+    // modern/neon themes default to rolling hills (their flatter palette suits
+    // gentle uplands). Every returned id is a member of MOUNTAIN_PRESETS.
+    return themeId === "modern-clean" || themeId === "neon-sprawl" ? "rolling-hills" : "alpine";
+  },
+  defaultParams(themeId: string): Record<string, unknown> {
+    const preset = presetById(this, this.defaultPresetId(themeId));
+    return preset ? { ...preset.params } : { ...MOUNTAIN_PRESETS[0].params };
+  },
+  tileGeneratorIds: MOUNTAIN_TILE_GENERATOR_IDS,
+  generate(seed, region, params, constraints): GeoJSON.Feature[] {
+    return generateMountain(seed, region, mountainParamsSchema.parse(params), constraints);
+  },
+};
+
+/** v1 registers `city` + `forest` + `park` + `farmland` + `mountain` (polygon) +
+ * `river` + `wall` (line). Order matters for `algorithmForKind` (first match
+ * wins) — keep the list explicit and small. */
 const REGISTRY: readonly ProcgenAlgorithm[] = [
   cityAlgorithm,
   riverAlgorithm,
@@ -429,6 +480,7 @@ const REGISTRY: readonly ProcgenAlgorithm[] = [
   parkAlgorithm,
   wallAlgorithm,
   farmlandAlgorithm,
+  mountainAlgorithm,
 ];
 
 export function algorithmForKind(kind: FabricKind): ProcgenAlgorithm | undefined {

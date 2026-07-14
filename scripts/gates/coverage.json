@@ -306,6 +306,27 @@
         "src/gen/fabricConstraints.ts",
         "src/gen/citynet/**"
       ]
+    },
+    "elevation23b": {
+      "script": "scripts/gates/elevation23b.ts",
+      "globs": [
+        "src/main.ts",
+        "src/gen/**",
+        "src/gen/procgen/**",
+        "src/gen/mountain.ts",
+        "src/gen/fields/**",
+        "src/controller/MapController.ts",
+        "src/controller/FakeHost.ts",
+        "src/model/fabric.ts",
+        "src/map/themes/generatedLayers.ts",
+        "src/map/themes/generated/mountain.ts",
+        "src/map/themes/fabricLayers.ts",
+        "src/map/themes/tokens.ts",
+        "src/map/theme.ts",
+        "src/view/MapView.ts",
+        "src/view/RegionProcgenModal.ts",
+        "src/view/SketchController.ts"
+      ]
     }
   }
 }
