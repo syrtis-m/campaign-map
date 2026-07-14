@@ -84,17 +84,21 @@ export function harmonicBlobRing(
   return ring;
 }
 
-/** A closed-ring polygon feature (pond/island), id hashed on its anchor. */
+/** A closed-ring polygon feature (pond/island), id hashed on its anchor.
+ * Quantizes every vertex (D5) and re-closes on the quantized first vertex —
+ * idempotent for pre-quantized rings, a sub-mm snap for raw ones. */
 export function blobFeature(
   seed: number,
   gid: string,
   ring: Pt[],
   extraProps: Record<string, unknown> = {}
 ): GeoJSON.Feature {
+  const quantized: Pt[] = ring.map(([x, y]) => [q(x), q(y)] as Pt);
+  quantized[quantized.length - 1] = [quantized[0][0], quantized[0][1]];
   return {
     type: "Feature",
-    id: hashSeed(seed, gid, q(ring[0][0]), q(ring[0][1]), ring.length),
-    geometry: { type: "Polygon", coordinates: [ring] },
+    id: hashSeed(seed, gid, quantized[0][0], quantized[0][1], quantized.length),
+    geometry: { type: "Polygon", coordinates: [quantized] },
     properties: { generatorId: gid, type: gid, ...extraProps },
   };
 }

@@ -144,32 +144,21 @@ describe("park generator — determinism", () => {
 });
 
 describe("park generator — structural invariants (containment · closed rings · mm lattice)", () => {
-  // KNOWN GAP (flagged for Jonah): `blobFeature` in waterEmit.ts emits its ring
-  // verbatim without re-quantizing, unlike `quad`/`spanQuad`. Two park callers
-  // pass a rotated, non-mm ring — the formal-garden broderie BED and the
-  // japanese zigzag BRIDGE — so those two varieties carry sub-mm coordinates and
-  // opt out of the mm-lattice check here (containment + closed rings still hold).
-  // The other varieties, and every other generator, satisfy the full invariant.
   for (const preset of [
-    { name: "formal-garden", p: PARAMS({ variety: "formal-garden", pond: false }), mm: false },
-    { name: "city-park", p: PARAMS({ variety: "city-park", pond: true }), mm: true },
-    { name: "wild-common", p: PARAMS({ variety: "wild-common", pond: false }), mm: true },
-    { name: "japanese-garden", p: PARAMS({ variety: "japanese-garden", pond: true }), mm: false },
+    { name: "formal-garden", p: PARAMS({ variety: "formal-garden", pond: false }) },
+    { name: "city-park", p: PARAMS({ variety: "city-park", pond: true }) },
+    { name: "wild-common", p: PARAMS({ variety: "wild-common", pond: false }) },
+    { name: "japanese-garden", p: PARAMS({ variety: "japanese-garden", pond: true }) },
   ]) {
     it(`all output inside the ring — ${preset.name}`, () => {
       const region = regionFor(SQUARE);
-      expectGeneratorInvariants(generatePark(99, region, preset.p, CONSTRAINTS), region, {
-        checkMmQuantization: preset.mm,
-      });
+      expectGeneratorInvariants(generatePark(99, region, preset.p, CONSTRAINTS), region);
     });
   }
 
   it("stays inside a strongly concave (L-shaped) region", () => {
     const region = regionFor(L_SHAPE);
-    // japanese-garden → zigzag bridge → the flagged blobFeature mm gap above.
-    expectGeneratorInvariants(generatePark(42, region, PARAMS({ variety: "japanese-garden" }), CONSTRAINTS), region, {
-      checkMmQuantization: false,
-    });
+    expectGeneratorInvariants(generatePark(42, region, PARAMS({ variety: "japanese-garden" }), CONSTRAINTS), region);
   });
 });
 

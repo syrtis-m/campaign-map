@@ -30,6 +30,7 @@ import { toMeters, type StreetGraph } from "./graph";
 import { tileBBox, GENERATION_TILE_SIZE } from "../cache/tileGrid";
 // Shared fixtures also feed the slow fuzz tier (citynet.fuzz.test.ts). Plan 021 §2.1.
 import { WORLD_BOUNDS, CAMPAIGN_SEED, fixtureAt, net, riverThrough, allCoordsInside } from "./citynet.fixtures";
+import { expectGeneratorInvariants, expectDeterministic } from "../testkit/invariants";
 
 function lineCoords(f: GeoJSON.Feature): [number, number][] {
   return (f.geometry as GeoJSON.LineString).coordinates as [number, number][];
@@ -37,10 +38,7 @@ function lineCoords(f: GeoJSON.Feature): [number, number][] {
 
 describe("generateCityNetwork determinism (gate a)", () => {
   it("is byte-identical across repeated calls (cache delete + regenerate)", () => {
-    const a = net(600, 600);
-    const b = net(600, 600);
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    expect(a.length).toBeGreaterThan(0);
+    expectDeterministic(() => net(600, 600));
   });
 
   it("differs for a different region seed", () => {
@@ -73,11 +71,11 @@ describe("generateCityNetwork determinism (gate a)", () => {
     const region = makeRegion("hex-1", hex);
     const seed = hashSeed(CAMPAIGN_SEED, "hex", 1);
     const constraints: GenerationConstraints = { worldBounds: WORLD_BOUNDS };
-    const a = generateCityNetwork(seed, region, "euro-medieval", constraints);
-    const b = generateCityNetwork(seed, region, "euro-medieval", constraints);
+    const a = expectDeterministic(() => generateCityNetwork(seed, region, "euro-medieval", constraints));
     expect(a.length).toBeGreaterThan(100);
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    expect(allCoordsInside(a, region)).toBe(true);
+    // Shared invariants add closed-ring + mm-lattice checks on top of the
+    // concave-ring containment that `allCoordsInside` covered here before.
+    expectGeneratorInvariants(a, region);
   });
 });
 

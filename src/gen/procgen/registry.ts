@@ -406,7 +406,9 @@ export const PARK_TILE_GENERATOR_IDS: readonly string[] = [
 const parkAlgorithm: ProcgenAlgorithm = {
   id: "park",
   label: "Park",
-  currentVersion: 1,
+  // v2: blobFeature now mm-quantizes its ring (D5) — a sub-mm snap of the
+  // formal-garden bed / japanese bridge / court coordinates. Params unchanged.
+  currentVersion: 2,
   appliesTo: ["park"],
   // Stage 2 (vegetation), same band as forest: a park pond sits away from a
   // river channel → consumes `water`; produces `vegetation`.

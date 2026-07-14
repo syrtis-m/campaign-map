@@ -22,10 +22,18 @@ describe("registry — currentVersion contract", () => {
     }
   });
 
-  it("an algorithm above version 1 must supply migrateParams (adoption needs a params path)", () => {
+  it("adoption from any older pin yields params the CURRENT schema accepts (identity or migrated)", () => {
+    // migrateParams is optional — absent means the bump changed no param
+    // semantics and the identity fallback is the adoption path. Either way,
+    // adopting a v1-pinned preset must produce currently-valid params.
     for (const a of allAlgorithms()) {
-      if (a.currentVersion > 1) {
-        expect(a.migrateParams, `${a.id} is at v${a.currentVersion} without migrateParams`).toBeDefined();
+      if (a.currentVersion <= 1) continue;
+      for (const preset of a.presets) {
+        const adopted = migrateParamsForAdoption(a, 1, preset.params);
+        expect(
+          a.paramsSchema.safeParse(adopted).success,
+          `${a.id} v1→v${a.currentVersion} adoption of preset ${preset.id}`
+        ).toBe(true);
       }
     }
   });
