@@ -772,3 +772,33 @@
 - **Gate naming:** 28-A's live gate shipped as `procgen49.ts` and 26-A's as
   `procgen49-forest.ts` (the agents numbered independently). Both registered
   in coverage.json; names left as-is — renumber cosmetically if it grates.
+
+## 2026-07-14 — Visual-overhaul wave 1, ∥ group P2 (27-B/28-B) — WAVE 1 COMPLETE
+- **Third per-tile-clip gate-bug instance:** vo27-park's closed-loop check
+  read first≈last off single cache records; a closed loop spanning tiles is
+  N open per-tile polylines. Replaced with an endpoint-degree circuit test
+  (mm-quantized; closed circuit ⇔ zero odd-degree endpoints — tile-edge cut
+  points appear in both neighbours, degree 2). PATTERN now firmly
+  established: any gate assertion about whole-artifact topology must be
+  clip-aware (distinct ids for counts, endpoint degree for closure, unit
+  snapshots for exact shape). Candidate for docs/06's gate checklist.
+- **27-B judgment calls (flagged by the agent, endorsed):** formal-garden
+  basin reuses `park-pond` (plan's `park-water` name doesn't exist in the
+  shipped schema) and is intrinsic/size-gated — the "formal has no pond"
+  test was updated deliberately; bare-park entrance edit-locality is
+  per-edge-local for INCLUSION but diagonal PAIRING is index-based over the
+  entrance list (road-authored entrances fully local + tested; the sacred
+  tree-scatter locality guarantee unchanged). Point dressing = tinted circle
+  markers; SDF symbols are 27-C.
+- **28-B judgment calls (flagged, endorsed):** amplitude saturates once the
+  R_c≥2W clamp binds (≈windiness 0.5 at default widths) — the slider's top
+  half now adds skew, not amplitude; **flag for Jonah** (empirically real,
+  but the knob feels subtler; 28-B suggests width-relative lens amplitude if
+  wide rivers should braid/wind more). λ + clamp read base `params.width`,
+  not grown local width — strict per-segment identity, and the clean 23-E
+  seam is meanderSegment's params block. Kinoshita Js=1/32 canonical,
+  θ₀max=1.9; the plan's "verify vs Abad WRR 2023" research flag stands.
+- **Remote drift mid-phase:** Jonah deleted GOAL.md on GitHub (3968cfb);
+  27-B rebased over it cleanly. The overnight-run assumption "only this
+  session pushes" is false when Jonah is live — push failures get a fetch +
+  inspect before any rebase.

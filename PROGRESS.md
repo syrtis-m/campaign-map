@@ -196,8 +196,20 @@
   byte-identical. Gates: fast 508/508 · per-kind fuzz green ·
   procgen49-forest 13/13, vo27-park 14/14 (fresh process), procgen49 15/15 ·
   9 screenshots eyeballed · dev-vault byte-clean. See DECISIONS "wave-1 P1".
-- Next: wave-1 ∥ group P2 — 27-B park skeletons, 28-B river meander math
-  (28-B MUST precede 23-E); then plan 023.
+- **P2 DONE (27-B `cd21d30` · 28-B `0699e01`) — VISUAL-OVERHAUL WAVE 1
+  COMPLETE**. 27-B: per-variety park skeletons hung off boundary entrances
+  (sketched-road crossings + per-edge-local hashed fallbacks) — city
+  perimeter loop + bowed diagonals + bandstand; formal principal-axis +
+  mirror beds + central basin + fountain; japanese circuit/roji/lanterns/
+  teahouse/odd rocks; wild restraint; new `park-point` gid. 28-B: lobe-train
+  quasi-periodic meanders (λ≈11W), Kinoshita upstream skew, R_c≥2W amplitude
+  clamp; canal windiness-0 byte-identical (sha-pinned); 23-E hooks into the
+  meanderSegment param seam. Gates: fast 521/521 · fuzz green · vo27-park
+  20/20 · procgen49 17/17 · screenshots eyeballed · dev-vault byte-clean.
+  Third per-tile-clip gate-bug instance fixed (closed-loop → endpoint-degree
+  circuit test). See DECISIONS "wave-1 P2".
+- Next: plan 023 — 23-A `src/gen/fields/` core + BIT-EXACT interiorT
+  retrofit (byte-identical city snapshot gate); then 23-B mountain/elevation.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 

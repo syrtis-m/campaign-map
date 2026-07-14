@@ -144,11 +144,11 @@ pulled forward. First box here also commits the three plan files + README rows.)
 - [x] e514ac0 28-A river body: per-segment channel-polygon merge + `river-bank`
       casing LineStrings + braid-island legibility floor; canal preset
       regression-checked (028 §2) — ∥ group P1
-- [ ] 27-B park skeletons: boundary entrances (sketched-road constraints) +
+- [x] cd21d30 27-B park skeletons: boundary entrances (sketched-road constraints) +
       perimeter loop + desire-line diagonals; formal axis/mirror-parterres;
       japanese circuit/rocks/lanterns/roji; wild-common restraint (027 §4)
       — ∥ group P2
-- [ ] 28-B river meander math: sine-generated-curve bend shape + Kinoshita
+- [x] 0699e01 28-B river meander math: sine-generated-curve bend shape + Kinoshita
       third-harmonic skew + per-bend hashed wavelength/amplitude jitter;
       ratio-derived defaults (λ≈11W, R_c≥2W containment clamp); canal
       (windiness 0) byte-identical gate (028 §2) — ∥ group P2 [MUST precede
@@ -243,6 +243,17 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 6 cont.): ∥ group P2 (27-B cd21d30, 28-B
+  0699e01) — same concurrent-worktree fan-out, serial integration. WAVE 1
+  COMPLETE. 27-B: vo27-park 20/20 after one integration fix in the GATE
+  (closed-loop check → endpoint-degree circuit test; per-tile clips make
+  first≈last unreadable — third instance of the per-tile-clip gate-bug class)
+  + park-point registry gid line; 5 screenshots eyeballed. 28-B: procgen49
+  17/17 first try; canal sha byte-identical; meander deliberately calmer
+  (R_c clamp) — amplitude-saturation above windiness≈0.5 flagged for Jonah.
+  One mid-run push rejection: Jonah deleted GOAL.md on GitHub (3968cfb) —
+  rebased cleanly. 28-B agent stalled once on the API and was resumed from
+  transcript. Fast suite now 521. Next: 23-A (constraint fields core).
 - 2026-07-14 (arc run, session 6 cont.): ∥ group P1 executed as three CONCURRENT
   Opus 4.8 worktree subagents per the attended fan-out clause; integration
   strictly serial in checklist order (patch → fast+tsc+build → own live gate →
