@@ -87,3 +87,15 @@ export function fSum(...fields: Field[]): Field {
     return total;
   };
 }
+
+/**
+ * Domain warp (Iñigo Quílez): sample `base` at a position displaced by the
+ * offset fields `(wx, wy)` — `base(x + wx(x,y), y + wy(x,y))`. The one trick
+ * that turns geometric iso-lines into hand-drawn-looking edges (plan 026-B
+ * §1.2): warping the canopy density field before thresholding scallops and
+ * frays the outline. Still `f(x, y)` from durable inputs (the offset is itself a
+ * field), so seam/determinism properties compose.
+ */
+export function fDomainWarp(base: Field, wx: Field, wy: Field): Field {
+  return (x, y) => base(x + wx(x, y), y + wy(x, y));
+}

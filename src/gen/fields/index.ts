@@ -36,7 +36,17 @@ export {
   fScale,
   fClamp,
   fSum,
+  fDomainWarp,
 } from "./combinators";
+export {
+  // Metaball potential + Chaikin smoothing + contour→MultiPolygon assembly
+  // (plan 026-B) — the reusable half of the organic-canopy pipeline: bumps a
+  // density field around anchors, rounds a marching-squares ring, and nests the
+  // closed loops into filled polygons with holes.
+  metaballField,
+} from "./metaball";
+export { chaikinClosed } from "./smoothing";
+export { contoursToMultiPolygon } from "./polygons";
 export type { HeightSample, FbmErodedOptions, ElevationField } from "./elevation";
 export {
   // Analytic-derivative noise + gradient-damped fBm (plan 023 §1.1) — the

@@ -235,10 +235,18 @@ const FOREST_PRESETS: readonly ProcgenPreset[] = [
   { id: "dead-wood", label: "Dead-wood — sparse, ragged, many clearings", params: { variety: "dead-wood", density: 0.35, clearings: 0.35, edgeRaggedness: 0.7 } },
 ];
 
-/** Forest tile-generator ids = the emitted feature buckets (plan 022 §3.2):
- * canopy fill + clearing holes + tree stipple. Cache keys + paint layers key
- * on these. */
-export const FOREST_TILE_GENERATOR_IDS: readonly string[] = ["forest-canopy", "forest-clearing", "forest-tree"];
+/** Forest tile-generator ids = the emitted feature buckets. Plan 026-B: the
+ * canopy is ONE `forest-canopy` MultiPolygon (clearings are interior HOLES, no
+ * `forest-clearing` features any more) plus its `forest-canopy-rim` outline
+ * LineStrings and the `forest-tree` stipple. `forest-clearing` is retained in
+ * the list so pre-026-B caches still surface their clearing cells (cache keys +
+ * paint layers key on these ids; an uncached gid is silently dropped). */
+export const FOREST_TILE_GENERATOR_IDS: readonly string[] = [
+  "forest-canopy",
+  "forest-canopy-rim",
+  "forest-clearing",
+  "forest-tree",
+];
 
 const forestAlgorithm: ProcgenAlgorithm = {
   id: "forest",

@@ -21,16 +21,26 @@
  *    up at clump cores), `rank` (0 core / 1 fringe / 2 loner — paint fades
  *    loners), `variant` (0–3 hashed glyph pick, consumed by phase C).
  *
- * Canopy approach (pre-023 fallback, per plan 022 §3.2 + the 2026-07-13
- * decision): the plan's literal "marching squares on the masked density field"
- * is the machinery plan 023 §4.1 actually builds; until then the canopy is a
- * GLOBAL-lattice cell fill — each cell is emitted iff its (position-hashed,
- * shared-vertex-jittered) quad passes the density mask AND all four corners sit
- * inside the ring with a jitter margin. That gives containment WITHOUT clipping
- * (advisor 2026-07-13), the `density`/`clearings`/`edgeRaggedness` knobs for
- * free, and a seam-free result (every sample is a pure function of its absolute
- * world position, never of generation order or tile). Upgrades to real marching
- * squares in plan 023.
+ * Canopy approach (plan 026-B — organic marching-squares canopy, replaces the
+ * 026-A cell-fill): the canopy is ONE `forest-canopy` MultiPolygon traced from a
+ * masked density field with 23-C's marching-squares module. The field is
+ *   F(p) = min( warp(fbm)(p) + Σ metaball(clump parentᵢ) − edgeFade − clearing
+ *               − threshold ,  sdf(p) − CONTAIN )
+ * traced at level 0, Chaikin-smoothed, and nested into exteriors + clearing
+ * holes (fields/polygons.ts). Domain-warping the noise (Iñigo Quílez) frays the
+ * outline into a hand-drawn edge; the metaball bumps around the tree-clump
+ * parents scallop it toward the clumps (the classic fantasy cloud edge); the
+ * `sdf − CONTAIN` term is a hard containment floor so the canopy sits ≥ CONTAIN
+ * metres inside the ring WITHOUT a polygon clip (a Chaikin pass only ever pulls
+ * the boundary further in). The three params keep their meanings: `density`
+ * moves the threshold, `clearings` scales the interior subtraction (holes),
+ * `edgeRaggedness` scales the warp amplitude + rim fade. `dead-wood` emits NO
+ * canopy (bare stand — instant variety differentiation). Everything is a local
+ * function of absolute world position + the persisted seed (the containment
+ * floor and rim fade read the LOCAL signed distance, never the global
+ * `interiorT`/`maxInteriorDistance`), so a rim vertex edit only re-extracts the
+ * boundary-adjacent cells — interior canopy is byte-identical (edit-locality),
+ * and abutting/whole-artifact clips are seam-free (world-aligned lattice).
  *
  * Determinism argument (procgen_v3_design.md §4):
  *  - D4/D6: closed-form arithmetic + seeded value noise on an absolute-world
@@ -51,6 +61,15 @@
 import { hashSeed, mulberry32 } from "./rng";
 import { fractalNoise2D } from "./world/noise";
 import { distanceToBoundary, interiorT, type ProcgenRegion } from "./region";
+import {
+  signedDistancePolygon,
+  fDomainWarp,
+  metaballField,
+  chaikinClosed,
+  contoursToMultiPolygon,
+  marchingSquares,
+  type Field,
+} from "./fields";
 import type { GenerationConstraints } from "./types";
 
 type Pt = [number, number];
@@ -67,11 +86,19 @@ export interface ForestParams {
   edgeRaggedness: number;
 }
 
-const FOREST_CELL_M = 26; // canopy cell size (world meters)
+// ── Organic canopy (plan 026-B) — marching-squares density field ─────────────
 const CANOPY_NOISE_CELL_M = 190; // fractal base cell — patch scale of the canopy
-const CLEARING_NOISE_CELL_M = 150;
-const JITTER_FRAC = 0.16; // corner jitter as a fraction of a cell
-const CANOPY_MARGIN_M = 1; // mm-scale slack inside the containment bound
+const CLEARING_NOISE_CELL_M = 150; // clearing (hole) noise scale
+const CANOPY_LATTICE_M = 12; // marching-squares sampling step (world-aligned)
+const CANOPY_CONTAIN_M = 3; // hard containment floor: canopy stays ≥ this inside
+const CANOPY_WARP_CELL_M = 120; // domain-warp noise scale
+const CANOPY_WARP_BASE_M = 26; // base warp amplitude (× edgeRaggedness)
+const CANOPY_EDGE_BAND_M = 55; // rim-fade band (torn inset edge)
+const CANOPY_METABALL_RADIUS_M = 130; // clump-parent bump radius (~1.2 × clump cell)
+const CANOPY_METABALL_STRENGTH = 0.14; // density bump per clump parent
+const CANOPY_CLEARING_AMP = 0.6; // how deep a clearing subtracts (punches holes)
+const CANOPY_CLEARING_W = 0.12; // clearing-edge softness band
+const CANOPY_CHAIKIN_PASSES = 2; // corner-cutting rounds (staircase → organic)
 
 // ── Tree placement (plan 026-A §1.1) — all lattices absolute-world ───────────
 const CLUMP_CELL_M = 110; // coarse clump-parent lattice (§1.1 "start 110 m")
@@ -119,33 +146,6 @@ function q(v: number): number {
 function jitter(seed: number, salt: string, ix: number, iy: number, amp: number): Pt {
   const rng = mulberry32(hashSeed(seed, salt, ix, iy));
   return [(rng() * 2 - 1) * amp, (rng() * 2 - 1) * amp];
-}
-
-/** Jittered lattice vertex — shared by every cell meeting at (ix, iy), so the
- * canopy tessellation is watertight. */
-function vertexAt(seed: number, ix: number, iy: number, amp: number): Pt {
-  const [dx, dy] = jitter(seed, "forest-vtx", ix, iy, amp);
-  return [ix * FOREST_CELL_M + dx, iy * FOREST_CELL_M + dy];
-}
-
-function cellPolygon(seed: number, gid: string, ix: number, iy: number, amp: number): GeoJSON.Feature {
-  const a = vertexAt(seed, ix, iy, amp);
-  const b = vertexAt(seed, ix + 1, iy, amp);
-  const c = vertexAt(seed, ix + 1, iy + 1, amp);
-  const d = vertexAt(seed, ix, iy + 1, amp);
-  const ring: Pt[] = [
-    [q(a[0]), q(a[1])],
-    [q(b[0]), q(b[1])],
-    [q(c[0]), q(c[1])],
-    [q(d[0]), q(d[1])],
-    [q(a[0]), q(a[1])],
-  ];
-  return {
-    type: "Feature",
-    id: hashSeed(seed, gid, ix, iy),
-    geometry: { type: "Polygon", coordinates: [ring] },
-    properties: { generatorId: gid, type: gid },
-  };
 }
 
 function clamp01(v: number): number {
@@ -280,10 +280,115 @@ function treeFeature(
   };
 }
 
+/** Every clump parent whose cell overlaps the region bbox (grown by the
+ * metaball radius so an off-bbox clump still bumps the rim). These are the
+ * metaball anchors — the canopy scallops around the SAME clump parents that
+ * seed the trees, aligning the cloud edge with the visible clumps. Pure
+ * f(seed, variety, threshold, indices). */
+function collectClumpParents(
+  seed: number,
+  variety: ForestVariety,
+  threshold: number,
+  bbox: ProcgenRegion["bbox"]
+): Pt[] {
+  const m = CANOPY_METABALL_RADIUS_M;
+  const cx0 = Math.floor((bbox.minX - m) / CLUMP_CELL_M);
+  const cx1 = Math.ceil((bbox.maxX + m) / CLUMP_CELL_M);
+  const cy0 = Math.floor((bbox.minY - m) / CLUMP_CELL_M);
+  const cy1 = Math.ceil((bbox.maxY + m) / CLUMP_CELL_M);
+  const out: Pt[] = [];
+  for (let cix = cx0; cix <= cx1; cix++) {
+    for (let ciy = cy0; ciy <= cy1; ciy++) {
+      const p = clumpParent(seed, variety, threshold, cix, ciy);
+      if (p) out.push(p);
+    }
+  }
+  return out;
+}
+
 /**
- * Generate a forest inside a sketched polygon region (plan 022 §3.2). Emits
- * `forest-canopy` + `forest-clearing` polygons and `forest-tree` points, all
- * strictly inside `region.ring`. `constraints` are accepted for signature
+ * The organic canopy MultiPolygon coordinates (plan 026-B §1.2) — see the module
+ * JSDoc for the field. Returns [] when nothing crosses the threshold (a very
+ * sparse forest). `dead-wood` never reaches here (bare stand, no canopy).
+ */
+function buildCanopy(
+  seed: number,
+  region: ProcgenRegion,
+  params: ForestParams,
+  clumpThreshold: number
+): Pt[][][] {
+  const { variety, density, clearings, edgeRaggedness } = params;
+  const ring = region.ring;
+  const bbox = region.bbox;
+
+  // Domain-warp offsets (edgeRaggedness scales the amplitude → frayed edge).
+  const warpAmp = CANOPY_WARP_BASE_M * (0.4 + 0.9 * clamp01(edgeRaggedness));
+  const warpOpts = { octaves: 2, baseCellSize: CANOPY_WARP_CELL_M, persistence: 0.5 };
+  const wx: Field = (x, y) => (fractalNoise2D(seed, x, y, "forest-warp-x", warpOpts) - 0.5) * 2 * warpAmp;
+  const wy: Field = (x, y) => (fractalNoise2D(seed, x, y, "forest-warp-y", warpOpts) - 0.5) * 2 * warpAmp;
+  const baseNoise: Field = (x, y) =>
+    fractalNoise2D(seed, x, y, "forest-canopy", { octaves: 3, baseCellSize: CANOPY_NOISE_CELL_M, persistence: 0.55 });
+  const warped = fDomainWarp(baseNoise, wx, wy);
+
+  // Metaball anchors (tree-clump parents) + potential field.
+  const anchors = collectClumpParents(seed, variety, clumpThreshold, bbox);
+  const meta = metaballField(anchors, CANOPY_METABALL_RADIUS_M, CANOPY_METABALL_STRENGTH);
+
+  const canopyThreshold = 0.5 - 0.42 * clamp01(density);
+  const clearingThreshold = 0.72 - clamp01(clearings) * 0.4;
+
+  // F(p): density value − threshold, capped by the signed-distance containment
+  // floor. Near/outside the inset the containment term governs (a clean arc at
+  // sdf = CONTAIN) so nothing spills; deeper in, the warped noise + metaballs +
+  // clearing holes shape the outline. sdf is LOCAL (never interiorT), so a rim
+  // edit stays local.
+  const field: Field = (x, y) => {
+    const sd = signedDistancePolygon(ring, x, y);
+    const contain = sd - CANOPY_CONTAIN_M;
+    if (contain <= 0) return contain; // rim band / outside — containment governs
+    let v = warped(x, y) + meta(x, y);
+    // Torn inset edge: fade the canopy toward the rim ∝ edgeRaggedness (local sd).
+    if (sd < CANOPY_EDGE_BAND_M) {
+      const e = (CANOPY_EDGE_BAND_M - sd) / CANOPY_EDGE_BAND_M; // 0 at band → 1 at rim
+      v -= edgeRaggedness * 0.5 * e * e;
+    }
+    // Clearings: subtract a smooth bump where the clearing noise is high → holes.
+    if (clearings > 0) {
+      const c = fractalNoise2D(seed, x, y, "forest-clearing", {
+        octaves: 2,
+        baseCellSize: CLEARING_NOISE_CELL_M,
+        persistence: 0.5,
+      });
+      if (c > clearingThreshold) {
+        const t = Math.min(1, (c - clearingThreshold) / CANOPY_CLEARING_W);
+        v -= CANOPY_CLEARING_AMP * t * t * (3 - 2 * t);
+      }
+    }
+    return Math.min(v - canopyThreshold, contain);
+  };
+
+  // World-aligned lattice, bbox grown one cell so the F<0 border fully encloses
+  // every canopy loop (all rings close → no open lines running off the lattice).
+  const grown = {
+    minX: bbox.minX - CANOPY_LATTICE_M,
+    minY: bbox.minY - CANOPY_LATTICE_M,
+    maxX: bbox.maxX + CANOPY_LATTICE_M,
+    maxY: bbox.maxY + CANOPY_LATTICE_M,
+  };
+  const contours = marchingSquares(field, { bbox: grown, step: CANOPY_LATTICE_M, levels: [0] });
+  const rings: Pt[][] = [];
+  for (const c of contours) {
+    if (!c.closed) continue; // an open line can't bound a filled region
+    rings.push(chaikinClosed(c.points, CANOPY_CHAIKIN_PASSES));
+  }
+  return contoursToMultiPolygon(rings);
+}
+
+/**
+ * Generate a forest inside a sketched polygon region (plan 022 §3.2, canopy
+ * overhauled in plan 026-B). Emits ONE `forest-canopy` MultiPolygon (organic
+ * mass with clearing holes; `dead-wood` emits none) and `forest-tree` points,
+ * all strictly inside `region.ring`. `constraints` are accepted for signature
  * parity but not consumed in v1 (the city→forest interaction is plan 024's
  * cascade; forest never sees the city — one-direction rule, plan 022 §3.2).
  */
@@ -293,76 +398,49 @@ export function generateForest(
   params: ForestParams,
   _constraints: GenerationConstraints
 ): GeoJSON.Feature[] {
-  const { variety, density, clearings, edgeRaggedness } = params;
+  const { variety, density } = params;
   const out: GeoJSON.Feature[] = [];
   const bbox = region.bbox;
 
-  // ── Canopy + clearing cells on the absolute-world lattice ────────────────
-  const jitAmp = FOREST_CELL_M * JITTER_FRAC;
-  const ix0 = Math.floor(bbox.minX / FOREST_CELL_M) - 1;
-  const ix1 = Math.ceil(bbox.maxX / FOREST_CELL_M) + 1;
-  const iy0 = Math.floor(bbox.minY / FOREST_CELL_M) - 1;
-  const iy1 = Math.ceil(bbox.maxY / FOREST_CELL_M) + 1;
-  // density 1 → threshold 0 (fill everything that passes containment);
-  // density 0 → threshold 1 (almost nothing). edgeRaggedness thins the canopy
-  // near the boundary (interiorT → 1 at the rim), giving a torn edge.
-  const canopyThreshold = 1 - density;
-  // Clearing noise (fractal) concentrates near 0.5, so the threshold must live
-  // inside its active band [~0.3, ~0.72] to actually cut glades: clearings 0 →
-  // 0.72 (essentially none, and the >0 guard below skips it entirely), clearings
-  // 1 → 0.27 (mostly clearings).
-  const clearingThreshold = 0.72 - clearings * 0.45;
-  for (let ix = ix0; ix <= ix1; ix++) {
-    for (let iy = iy0; iy <= iy1; iy++) {
-      // Cell corners on the UN-jittered lattice; require all inside the ring
-      // with margin so the jittered quad stays contained.
-      const corners: Pt[] = [
-        [ix * FOREST_CELL_M, iy * FOREST_CELL_M],
-        [(ix + 1) * FOREST_CELL_M, iy * FOREST_CELL_M],
-        [(ix + 1) * FOREST_CELL_M, (iy + 1) * FOREST_CELL_M],
-        [ix * FOREST_CELL_M, (iy + 1) * FOREST_CELL_M],
-      ];
-      let contained = true;
-      for (const [cx, cy] of corners) {
-        if (distanceToBoundary(region, cx, cy) < jitAmp + CANOPY_MARGIN_M) {
-          contained = false;
-          break;
-        }
-      }
-      if (!contained) continue;
-      const mx = (ix + 0.5) * FOREST_CELL_M;
-      const my = (iy + 0.5) * FOREST_CELL_M;
-      const edgeT = Math.min(1, Math.max(0, interiorT(region, mx, my)));
-      const canopy = fractalNoise2D(seed, mx, my, "forest-canopy", {
-        octaves: 3,
-        baseCellSize: CANOPY_NOISE_CELL_M,
-        persistence: 0.55,
-      });
-      // Thin the canopy near the rim (edgeT → 1) in proportion to raggedness.
-      if (canopy - edgeRaggedness * edgeT * 0.6 <= canopyThreshold) continue;
-      const clearing = fractalNoise2D(seed, mx, my, "forest-clearing", {
-        octaves: 2,
-        baseCellSize: CLEARING_NOISE_CELL_M,
-        persistence: 0.5,
-      });
-      if (clearings > 0 && clearing > clearingThreshold) {
-        const f = cellPolygon(seed, "forest-clearing", ix, iy, jitAmp);
-        (f.properties as Record<string, unknown>).forestType = variety;
-        out.push(f);
-      } else {
-        const f = cellPolygon(seed, "forest-canopy", ix, iy, jitAmp);
-        (f.properties as Record<string, unknown>).forestType = variety;
-        out.push(f);
-      }
-    }
-  }
-
-  // ── Trees — hashed Thomas clusters (plan 026-A §1.1) ─────────────────────
   const cfg = PLACEMENT[variety];
   const countScale = 0.55 + 0.6 * density; // more offspring in denser forests
   // Denser forests seed more clumps too (the fBm mask cutoff drops with density).
   const clumpThreshold = clamp01(cfg.clumpThreshold + (0.5 - density) * 0.3);
 
+  // ── Canopy: ONE organic MultiPolygon (plan 026-B). dead-wood = bare stand,
+  //    no leaf mass → no canopy (instant variety differentiation). ───────────
+  if (variety !== "dead-wood") {
+    const coords = buildCanopy(seed, region, params, clumpThreshold);
+    if (coords.length > 0) {
+      out.push({
+        type: "Feature",
+        id: hashSeed(seed, "forest-canopy", region.id),
+        geometry: { type: "MultiPolygon", coordinates: coords },
+        properties: { generatorId: "forest-canopy", type: "forest-canopy", forestType: variety },
+      });
+      // Rim: every canopy ring (exterior + clearing holes) as its OWN
+      // LineString, so the tile clip runs it through `clipPolylineToBBox` — which
+      // cuts the boundary at a tile edge WITHOUT synthesizing a segment along the
+      // seam. A `line` layer on the MultiPolygon itself would instead stroke the
+      // clip-induced tile edges (visible grid lines); a separate line feature is
+      // the seam-free rim (plan 026-B). id hashes the ring's first vertex
+      // (position, never emission order).
+      let ringIx = 0;
+      for (const poly of coords) {
+        for (const ring of poly) {
+          const [fx, fy] = ring[0];
+          out.push({
+            type: "Feature",
+            id: hashSeed(seed, "forest-canopy-rim", region.id, ringIx++, Math.round(fx * 10), Math.round(fy * 10)),
+            geometry: { type: "LineString", coordinates: ring.map(([x, y]) => [q(x), q(y)] as Pt) },
+            properties: { generatorId: "forest-canopy-rim", type: "forest-canopy-rim", forestType: variety },
+          });
+        }
+      }
+    }
+  }
+
+  // ── Trees — hashed Thomas clusters (plan 026-A §1.1) ─────────────────────
   if (cfg.clumpsEnabled) {
     const cix0 = Math.floor(bbox.minX / CLUMP_CELL_M) - 1;
     const cix1 = Math.ceil(bbox.maxX / CLUMP_CELL_M) + 1;

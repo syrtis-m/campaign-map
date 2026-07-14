@@ -129,7 +129,8 @@ describe("generatedLayers — forest canopy/clearing/stacked-tree paint coverage
     "generated-forest-tree-base",
     "generated-forest-tree-highlight",
   ] as const;
-  const FOREST_ALL_IDS = [...FOREST_FILL_IDS, ...FOREST_TREE_IDS];
+  const FOREST_RIM_ID = "generated-forest-rim"; // plan 026-B: canopy outline line
+  const FOREST_ALL_IDS = [...FOREST_FILL_IDS, FOREST_RIM_ID, ...FOREST_TREE_IDS];
 
   /** Read a variety's colour out of a `["match", ["get","forestType"], …]`. */
   function matchColor(expr: unknown, variety: string): string | undefined {
@@ -152,16 +153,18 @@ describe("generatedLayers — forest canopy/clearing/stacked-tree paint coverage
     }
   });
 
-  it("the three tree layers are circles; the two ground layers are fills (stacked glyph)", () => {
+  it("the three tree layers are circles; the two ground layers are fills; the rim is a line", () => {
     const layers = generatedLayers(PARCHMENT);
     for (const id of FOREST_TREE_IDS) expect(layers.find((l) => l.id === id)!.type).toBe("circle");
     for (const id of FOREST_FILL_IDS) expect(layers.find((l) => l.id === id)!.type).toBe("fill");
+    expect(layers.find((l) => l.id === FOREST_RIM_ID)!.type).toBe("line");
   });
 
-  it("z-stack order: canopy < clearing < tree shadow < base < highlight", () => {
+  it("z-stack order: canopy < rim < clearing < tree shadow < base < highlight", () => {
     const ids = generatedLayers(PARCHMENT).map((l) => l.id);
     const order = [
       "generated-forest-canopy",
+      "generated-forest-rim",
       "generated-forest-clearing",
       "generated-forest-tree-shadow",
       "generated-forest-tree-base",
@@ -224,7 +227,7 @@ describe("generatedLayers — forest canopy/clearing/stacked-tree paint coverage
     });
   }
 
-  it("obsidian-native runtime style paints all five forest layers", () => {
+  it("obsidian-native runtime style paints all six forest layers", () => {
     const css: ObsidianCssTokens = {
       backgroundPrimary: "#1e1e1e",
       backgroundSecondary: "#262626",

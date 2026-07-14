@@ -112,6 +112,22 @@ export function forestLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricForest, "fill-opacity": 0.8, "fill-antialias": false },
     } as unknown as LayerSpecification,
     {
+      // Canopy RIM (plan 026-B): a slightly darker line tracing the canopy
+      // outline — outer edge AND clearing-hole edges — so the organic silhouette
+      // + glades read as drawn masses, not flat washes. Filters the SEPARATE
+      // `forest-canopy-rim` LineString features (not the fill), so the tile clip
+      // never strokes seam edges. NO zoom LOD.
+      id: "generated-forest-rim",
+      type: "line",
+      source: "generated",
+      filter: ["==", ["get", "generatorId"], "forest-canopy-rim"],
+      paint: {
+        "line-color": rgbToHex(scale(base, 0.62)),
+        "line-width": 0.8,
+        "line-opacity": 0.65,
+      },
+    } as unknown as LayerSpecification,
+    {
       // Forest clearings: open ground punched into the canopy — land hue,
       // painted ABOVE the canopy so the glade reads as a hole of ground.
       id: "generated-forest-clearing",

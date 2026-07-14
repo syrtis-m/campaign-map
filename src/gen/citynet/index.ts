@@ -78,8 +78,27 @@ function firstCoord(f: GeoJSON.Feature): Pt {
   const g = f.geometry;
   if (g.type === "LineString") return g.coordinates[0] as Pt;
   if (g.type === "Polygon") return g.coordinates[0][0] as Pt;
+  if (g.type === "MultiPolygon") return g.coordinates[0][0][0] as Pt;
   if (g.type === "Point") return g.coordinates as Pt;
   return [0, 0];
+}
+
+/**
+ * Clip a polygon's rings (`[outer, ...holes]`, each closed) to a bbox, keeping
+ * the holes. Two tiles clipping the same pre-clip polygon against their shared
+ * edge compute bit-identical boundary points (`clipPolygonToBBox`), so the
+ * seam is invisible. Returns null when the outer ring clips away entirely; a
+ * hole that clips away is dropped.
+ */
+function clipRingsToBBox(polygon: Pt[][], bbox: BBox): Pt[][] | null {
+  const outer = clipPolygonToBBox(polygon[0] as Pt[], bbox);
+  if (outer.length < 3) return null;
+  const rings: Pt[][] = [[...outer, outer[0]]];
+  for (let h = 1; h < polygon.length; h++) {
+    const hole = clipPolygonToBBox(polygon[h] as Pt[], bbox);
+    if (hole.length >= 3) rings.push([...hole, hole[0]]);
+  }
+  return rings;
 }
 
 /** Canonical order: first coordinate x, then y, then id. The id compare is
@@ -447,13 +466,28 @@ export function clipNetworkToTile(
         });
       });
     } else if (g.type === "Polygon") {
-      const clipped = clipPolygonToBBox(g.coordinates[0] as Pt[], bbox);
-      if (clipped.length < 3) continue; // degenerate/empty
-      const ring: Pt[] = [...clipped, clipped[0]];
+      const rings = clipRingsToBBox(g.coordinates as Pt[][], bbox);
+      if (!rings) continue; // degenerate/empty outer
       push(gid, {
         type: "Feature",
         id: hashSeed(Number(f.id) >>> 0, "clip"),
-        geometry: { type: "Polygon", coordinates: [ring] },
+        geometry: { type: "Polygon", coordinates: rings },
+        properties: f.properties,
+      });
+    } else if (g.type === "MultiPolygon") {
+      // Clip each sub-polygon (outer + holes) to the tile; drop those that fall
+      // entirely outside. One artifact → one MultiPolygon per tile, holes kept
+      // so forest clearings survive the tiling (plan 026-B).
+      const polys: Pt[][][] = [];
+      for (const poly of g.coordinates as Pt[][][]) {
+        const rings = clipRingsToBBox(poly, bbox);
+        if (rings) polys.push(rings);
+      }
+      if (polys.length === 0) continue;
+      push(gid, {
+        type: "Feature",
+        id: hashSeed(Number(f.id) >>> 0, "clip"),
+        geometry: { type: "MultiPolygon", coordinates: polys },
         properties: f.properties,
       });
     } else if (g.type === "Point") {

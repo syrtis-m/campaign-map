@@ -2,12 +2,12 @@
 
 exports[`forest generator — determinism > matches the seeded snapshot fixture (mixed woodland — golden drift tripwire) 1`] = `
 {
-  "sha256": "f862d0cd31c3c4b49781078a59f7b2c5dcab8f8fe543a8e06e520991dc2c740d",
+  "sha256": "66a9df593df851c48d33fc3921c9a373b695fc9833c349109a64befc23fd21e4",
   "summary": {
-    "forest-canopy": 373,
-    "forest-clearing": 77,
+    "forest-canopy": 1,
+    "forest-canopy-rim": 3,
     "forest-tree": 246,
-    "total": 696,
+    "total": 250,
   },
 }
 `;

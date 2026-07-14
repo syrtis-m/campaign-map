@@ -75,6 +75,31 @@ function typeCount(feats: GeoJSON.Feature[], type: string): number {
   return feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === type).length;
 }
 
+function canopyFeature(feats: GeoJSON.Feature[]): GeoJSON.Feature | undefined {
+  return feats.find((f) => (f.properties as { generatorId?: string }).generatorId === "forest-canopy");
+}
+
+/** Interior holes across every polygon of a canopy MultiPolygon. */
+function holeCount(canopy: GeoJSON.Feature): number {
+  const mp = (canopy.geometry as unknown as { coordinates: Pt[][][] }).coordinates;
+  return mp.reduce((n, poly) => n + (poly.length - 1), 0);
+}
+
+/** Total absolute shoelace area of every exterior ring of a canopy MultiPolygon
+ * (holes not subtracted) — a stable "how much canopy" proxy for preset compares. */
+function canopyExteriorArea(canopy: GeoJSON.Feature | undefined): number {
+  if (!canopy) return 0;
+  const mp = (canopy.geometry as unknown as { coordinates: Pt[][][] }).coordinates;
+  let area = 0;
+  for (const poly of mp) {
+    const ring = poly[0];
+    let a = 0;
+    for (let i = 0; i < ring.length - 1; i++) a += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+    area += Math.abs(a / 2);
+  }
+  return area;
+}
+
 /** Hash + per-type counts (the 022 golden tripwire idiom): any numeric drift
  * flips the sha256; self-relative tests survive a uniform change, this does
  * not. */
@@ -112,10 +137,15 @@ describe("forest generator — determinism", () => {
     }
   });
 
-  it("emits canopy, clearings, and trees for a mixed woodland", () => {
+  it("emits ONE canopy MultiPolygon (with clearing holes) + trees for a mixed woodland", () => {
     const feats = generateForest(9, regionFor(SQUARE), PARAMS({ clearings: 0.3 }), CONSTRAINTS);
-    expect(typeCount(feats, "forest-canopy")).toBeGreaterThan(0);
-    expect(typeCount(feats, "forest-clearing")).toBeGreaterThan(0);
+    const canopy = feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "forest-canopy");
+    expect(canopy.length).toBe(1); // plan 026-B: a single organic mass, not a cell soup
+    expect(canopy[0].geometry.type).toBe("MultiPolygon");
+    // Clearings are now interior HOLES on the canopy polygons (no forest-clearing
+    // features are emitted any more).
+    expect(typeCount(feats, "forest-clearing")).toBe(0);
+    expect(holeCount(canopy[0])).toBeGreaterThan(0);
     expect(typeCount(feats, "forest-tree")).toBeGreaterThan(0);
   });
 });
@@ -173,11 +203,11 @@ describe("forest generator — identity / edit locality", () => {
 });
 
 describe("forest generator — preset semantics", () => {
-  it("denser presets emit more canopy than sparse ones (same region/seed)", () => {
+  it("denser presets cover more canopy area than sparse ones (same region/seed)", () => {
     const region = regionFor(SQUARE);
     const dense = generateForest(3, region, PARAMS({ density: 0.9, clearings: 0.05 }), CONSTRAINTS);
     const sparse = generateForest(3, region, PARAMS({ density: 0.3, clearings: 0.05 }), CONSTRAINTS);
-    expect(typeCount(dense, "forest-canopy")).toBeGreaterThan(typeCount(sparse, "forest-canopy"));
+    expect(canopyExteriorArea(canopyFeature(dense))).toBeGreaterThan(canopyExteriorArea(canopyFeature(sparse)));
   });
 
   it("carries the variety onto emitted features (theme tint hook)", () => {
@@ -186,10 +216,65 @@ describe("forest generator — preset semantics", () => {
     for (const f of feats) expect((f.properties as { forestType?: string }).forestType).toBe("conifer");
   });
 
-  it("no clearings when clearings = 0", () => {
-    const feats = generateForest(3, regionFor(SQUARE), PARAMS({ clearings: 0 }), CONSTRAINTS);
-    expect(typeCount(feats, "forest-clearing")).toBe(0);
-    expect(typeCount(feats, "forest-canopy")).toBeGreaterThan(0);
+  it("clearings = 0 yields far fewer holes than a glade-heavy preset (canopy still present)", () => {
+    const region = regionFor(SQUARE);
+    // With clearings 0 the only interior holes are natural low-noise gaps; a
+    // glade-heavy preset punches many more.
+    const none = canopyFeature(generateForest(3, region, PARAMS({ density: 0.85, clearings: 0 }), CONSTRAINTS))!;
+    const glades = canopyFeature(generateForest(3, region, PARAMS({ density: 0.85, clearings: 0.6 }), CONSTRAINTS))!;
+    expect(none).toBeDefined();
+    expect(holeCount(none)).toBeLessThan(holeCount(glades));
+  });
+});
+
+describe("forest generator — organic canopy topology (plan 026-B)", () => {
+  it("dead-wood emits NO canopy but still scatters trees (bare stand)", () => {
+    const feats = generateForest(9, regionFor(SQUARE), PARAMS({ variety: "dead-wood", density: 0.5 }), CONSTRAINTS);
+    expect(canopyFeature(feats)).toBeUndefined();
+    expect(typeCount(feats, "forest-tree")).toBeGreaterThan(0);
+  });
+
+  it("every living variety emits exactly one canopy MultiPolygon feature", () => {
+    for (const variety of ["broadleaf", "conifer", "mixed", "swamp"] as const) {
+      const feats = generateForest(9, regionFor(SQUARE), PARAMS({ variety, density: 0.7 }), CONSTRAINTS);
+      expect(typeCount(feats, "forest-canopy"), variety).toBe(1);
+      expect(canopyFeature(feats)!.geometry.type, variety).toBe("MultiPolygon");
+    }
+  });
+
+  it("canopy stays comfortably inside the ring (no clip needed — containment floor)", () => {
+    const region = regionFor(SQUARE);
+    const canopy = canopyFeature(generateForest(9, region, PARAMS({ density: 0.8 }), CONSTRAINTS))!;
+    for (const [x, y] of allCoords([canopy])) {
+      // The sdf containment floor keeps every canopy vertex metres inside.
+      expect(distanceToBoundary(region, x, y)).toBeGreaterThan(0);
+    }
+  });
+
+  it("Chaikin-smoothed canopy is byte-identical across two runs (determinism)", () => {
+    const region = regionFor(SQUARE);
+    const a = canopyFeature(generateForest(77, region, PARAMS(), CONSTRAINTS))!;
+    const b = canopyFeature(generateForest(77, region, PARAMS(), CONSTRAINTS))!;
+    expect(JSON.stringify(a.geometry)).toBe(JSON.stringify(b.geometry));
+  });
+
+  it("emits one rim LineString per canopy ring (exterior + holes), seam-safe outline", () => {
+    const feats = generateForest(9, regionFor(SQUARE), PARAMS({ clearings: 0.3 }), CONSTRAINTS);
+    const canopy = canopyFeature(feats)!;
+    const rings = (canopy.geometry as unknown as { coordinates: Pt[][][] }).coordinates.reduce(
+      (n, poly) => n + poly.length,
+      0
+    );
+    const rims = feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "forest-canopy-rim");
+    expect(rims.length).toBe(rings); // one rim line per exterior + hole ring
+    for (const r of rims) expect(r.geometry.type).toBe("LineString");
+  });
+
+  it("higher clearings punches more interior holes (same region/seed)", () => {
+    const region = regionFor(SQUARE);
+    const many = canopyFeature(generateForest(5, region, PARAMS({ clearings: 0.6 }), CONSTRAINTS))!;
+    const few = canopyFeature(generateForest(5, region, PARAMS({ clearings: 0.05 }), CONSTRAINTS))!;
+    expect(holeCount(many)).toBeGreaterThan(holeCount(few));
   });
 });
 
