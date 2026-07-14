@@ -388,7 +388,11 @@ export function growNetwork(
     let ang = Math.atan2(yM - centerY, xM - centerX);
     if (ang < 0) ang += 2 * Math.PI;
     const quadrant = Math.min(3, Math.floor(ang / (Math.PI / 2)));
-    const base = mulberry32(hashSeed(citySeed, "gridaz", quadrant))() * (Math.PI / 2);
+    // eixample (§2.4): a single cardinal orientation everywhere — a fixed base
+    // (0) for ALL quadrants instead of the per-quadrant hashed base that makes
+    // na-grid jog at its seams. Byte-neutral for every profile with
+    // uniformGrid=false (the hashed base is unchanged).
+    const base = profile.uniformGrid ? 0 : mulberry32(hashSeed(citySeed, "gridaz", quadrant))() * (Math.PI / 2);
     let best = theta;
     let bestD = Infinity;
     for (const off of profile.gridAzimuths) {

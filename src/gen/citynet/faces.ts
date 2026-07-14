@@ -52,6 +52,65 @@ interface HalfEdge {
 }
 
 /**
+ * CHAMFER OPERATOR (plan 025 §3.4 / §2.4 — the eixample corner treatment).
+ *
+ * Cut every CONVEX corner of a closed CCW ring back `dist` metres along each of
+ * its two incident edges, replacing that one vertex with two — the Barcelona-
+ * Cerdà chaflán. Applied to every block corner it turns square blocks into
+ * octagons, and where four blocks meet their four cut corners frame the
+ * octagonal intersection that is the eixample signature.
+ *
+ * Pure geometry (no seed, no RNG): a deterministic function of `(ring, dist)`,
+ * reusable as a generic "corner treatment" param. Determinism obligations are
+ * satisfied by the caller quantizing on emit (D5) — this returns raw FP.
+ *
+ * Correctness guarantees:
+ *  • CCW input (faces.ts emits CCW blocks). Convexity is the sign of the 2-D
+ *    cross product of (incoming, outgoing) edge directions — >0 is a left turn
+ *    ⇒ convex on a CCW ring. Reflex (≤0) corners are left INTACT so a concave
+ *    block is not turned inside-out.
+ *  • The per-corner setback is clamped to `dist` AND to 0.45× of EACH incident
+ *    edge's length. Because every edge is shared by two corners and each takes
+ *    at most 0.45 of it, the two chamfer points on one edge never cross
+ *    (0.45 + 0.45 < 1) — the result stays a simple polygon.
+ *  • A degenerate corner (a zero-length incident edge) is passed through
+ *    unchanged rather than producing NaN.
+ *
+ * `ring` must be closed (first === last); the returned ring is closed too.
+ */
+export function chamferRing(ring: Pt[], dist: number): Pt[] {
+  if (dist <= 0 || ring.length < 4) return ring;
+  const pts = ring.slice(0, -1); // strip the closing vertex
+  const n = pts.length;
+  if (n < 3) return ring;
+  const out: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const prev = pts[(i - 1 + n) % n];
+    const cur = pts[i];
+    const nxt = pts[(i + 1) % n];
+    const inX = cur[0] - prev[0];
+    const inY = cur[1] - prev[1];
+    const outX = nxt[0] - cur[0];
+    const outY = nxt[1] - cur[1];
+    const inLen = Math.hypot(inX, inY);
+    const outLen = Math.hypot(outX, outY);
+    // Degenerate incident edge, or a reflex/straight corner (cross ≤ 0 on a CCW
+    // ring): keep the vertex as-is.
+    const cross = inX * outY - inY * outX;
+    if (inLen === 0 || outLen === 0 || cross <= 0) {
+      out.push(cur);
+      continue;
+    }
+    const setback = Math.min(dist, 0.45 * inLen, 0.45 * outLen);
+    // Back up along the incoming edge, then forward along the outgoing edge.
+    out.push([cur[0] - (inX / inLen) * setback, cur[1] - (inY / inLen) * setback]);
+    out.push([cur[0] + (outX / outLen) * setback, cur[1] + (outY / outLen) * setback]);
+  }
+  out.push(out[0]);
+  return out;
+}
+
+/**
  * Extract bounded faces of the graph as blocks. Pure function of the graph +
  * region geometry; iteration order is fully canonical (D2).
  */

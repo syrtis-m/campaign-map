@@ -22,7 +22,15 @@ export const DOMAIN_LATTICE_M = 30;
 /** Sides of the polygon a disc migrates to (plan 020 §3.2). */
 export const DISC_TO_RING_SEGMENTS = 32;
 
-export type ProfileId = "euro-medieval" | "euro-continental" | "na-grid" | "na-suburb" | "superblock";
+export type ProfileId =
+  | "euro-medieval"
+  | "euro-continental"
+  | "na-grid"
+  | "na-suburb"
+  | "superblock"
+  | "tartan-grid"
+  | "ward-grid"
+  | "eixample";
 
 export interface CityDomain {
   /** `dom:<anchorCellX>:<anchorCellY>` — stable, position-keyed. */

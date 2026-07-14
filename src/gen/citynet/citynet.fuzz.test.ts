@@ -11,9 +11,19 @@ import { WORLD_BOUNDS, net, riverThrough, allCoordsInside } from "./citynet.fixt
 
 describe("v3.1/v3.4 200-region fuzz (gate e, anti-Watabou — all five profiles)", () => {
   it("200 hashed disc regions generate without throwing, each within budget", () => {
-    // Five profiles incl. plan 025-B superblock (§2.6) — a new profile must
-    // survive the same no-throw/within-budget fuzz as the originals.
-    const fuzzProfiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb", "superblock"];
+    // All profiles incl. plan 025-B superblock + 025-C tartan-grid/ward-grid/
+    // eixample — every new profile must survive the same no-throw/within-budget
+    // fuzz as the originals.
+    const fuzzProfiles: ProfileId[] = [
+      "euro-medieval",
+      "euro-continental",
+      "na-grid",
+      "na-suburb",
+      "superblock",
+      "tartan-grid",
+      "ward-grid",
+      "eixample",
+    ];
     const t0 = Date.now();
     for (let i = 0; i < 200; i++) {
       const rng = mulberry32(hashSeed(4242, "fuzz", i));
@@ -74,9 +84,18 @@ describe("v4.0 4-profile polygon fuzz (plan 020 gate f)", () => {
     return makeRegion(`fuzz-poly-${i}`, ring);
   }
 
-  const fuzzProfiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb", "superblock"];
+  const fuzzProfiles: ProfileId[] = [
+    "euro-medieval",
+    "euro-continental",
+    "na-grid",
+    "na-suburb",
+    "superblock",
+    "tartan-grid",
+    "ward-grid",
+    "eixample",
+  ];
 
-  it("30 random simple polygons × 5 profiles: no throw, all output inside", () => {
+  it("30 random simple polygons × all profiles: no throw, all output inside", () => {
     for (let i = 0; i < 30; i++) {
       const region = randomRegion(i);
       for (const profile of fuzzProfiles) {

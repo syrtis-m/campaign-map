@@ -4,8 +4,9 @@
 // dev-vault campaign (`Campaigns/Preset Gallery`, committed fixture) holds ONE
 // sketched district per city preset, all the SAME shape (regular 16-gon,
 // effective radius ~700 m) in a 1×N equatorial row, so on-screen differences are
-// the PRESET, never the boundary. Phase 025-B adds the superblock district +
-// the §3.3 width histogram columns in the metrics table. This gate:
+// the PRESET, never the boundary. Phase 025-B added the superblock district +
+// the §3.3 width histogram columns; 025-C appends tartan-grid, ward-grid and
+// eixample (the §3.4 chamfer operator — eixample's octagonal corners). This gate:
 //
 //   (a) reloads the plugin with the gallery cache cleared, opens the gallery,
 //       and confirms every preset's district GENERATES from the committed
@@ -51,9 +52,10 @@ const SCALE = 100;
 // Bounds widen EAST as presets append (existing districts keep their x); the
 // campaign worldBounds the app passes to generation = these × SCALE, so a wider
 // bound shifts every preset's height-falloff a hair (warn-only metrics; the hard
-// bands live in the unit suite on a fixed-bounds ring). superblock at x=40 spans
-// 32.9–47.1, so maxX 49 fits it with margin.
-const BOUNDS: [number, number, number, number] = [-33, -10, 49, 10];
+// bands live in the unit suite on a fixed-bounds ring). 025-C appended
+// tartan-grid(56)/ward-grid(72)/eixample(88); eixample at x=88 spans 80.9–95.1,
+// so maxX 97 fits it with margin.
+const BOUNDS: [number, number, number, number] = [-33, -10, 97, 10];
 const WORLD = { minX: BOUNDS[0] * SCALE, minY: BOUNDS[1] * SCALE, maxX: BOUNDS[2] * SCALE, maxY: BOUNDS[3] * SCALE };
 // Per-preset display-space centres (must match the authored Fabric.geojson) +
 // the district circumradius in display units, for fitBounds framing.
@@ -63,9 +65,21 @@ const CENTERS: Record<string, [number, number]> = {
   "na-grid": [8, 0],
   "na-suburb": [24, 0],
   superblock: [40, 0],
+  "tartan-grid": [56, 0],
+  "ward-grid": [72, 0],
+  eixample: [88, 0],
 };
 const R_UNITS = 7.6; // circumradius 7.09 + margin
-const PRESET_ORDER: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb", "superblock"];
+const PRESET_ORDER: ProfileId[] = [
+  "euro-medieval",
+  "euro-continental",
+  "na-grid",
+  "na-suburb",
+  "superblock",
+  "tartan-grid",
+  "ward-grid",
+  "eixample",
+];
 
 interface GalleryFeature {
   id: string;
@@ -188,7 +202,7 @@ async function main(): Promise<void> {
   const fabricBefore = fabricDigest();
 
   await gate.try(`gallery fixture present (${gallery.length} presets), plugin reloads clean`, () => {
-    if (gallery.length !== 5) throw new Error(`expected 5 gallery presets, found ${gallery.length}`);
+    if (gallery.length !== 8) throw new Error(`expected 8 gallery presets, found ${gallery.length}`);
     if (existsSync(CACHE_ABS)) rmSync(CACHE_ABS);
     obsidian("plugin:reload id=campaign-map");
     clearErrors();

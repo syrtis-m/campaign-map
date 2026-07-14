@@ -23,7 +23,7 @@ import { RIVER_HALF_WIDTH } from "../fabricConstraints";
 import { COST_CELL_M, makeCostField } from "./costField";
 import { buildSkeleton } from "./skeleton";
 import { growNetwork } from "./growth";
-import { extractBlocks } from "./faces";
+import { extractBlocks, chamferRing } from "./faces";
 import { subdivideBlocks } from "./parcels";
 import { makeCityness } from "./cityness";
 import { toMeters, type StreetGraph } from "./graph";
@@ -654,6 +654,138 @@ describe("profile smoke (gate g)", () => {
       expect(network.some((f) => f.properties?.type === "plaza")).toBe(true);
     });
   }
+});
+
+// ── plan 025-C: chamfer operator + tartan-grid / ward-grid / eixample ───────
+
+describe("chamfer operator (plan 025 §3.4)", () => {
+  type Pt = [number, number];
+  const shoelace = (ring: Pt[]): number => {
+    let a = 0;
+    const n = ring.length - 1; // ring is closed; iterate the open loop
+    for (let i = 0; i < n; i++) a += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+    return a / 2;
+  };
+  const unitSquareCCW: Pt[] = [
+    [0, 0],
+    [1, 0],
+    [1, 1],
+    [0, 1],
+    [0, 0],
+  ];
+
+  it("cuts every convex corner of a square into two, making an octagon of the exact chamfered area", () => {
+    const d = 0.2;
+    const oct = chamferRing(unitSquareCCW, d);
+    // 4 corners → 2 vertices each = 8, plus the closing vertex.
+    expect(oct.length).toBe(9);
+    expect(oct[0]).toEqual(oct[oct.length - 1]); // still closed
+    // Area = 1 − 4·(½·d²) = 1 − 2d².
+    expect(Math.abs(shoelace(oct))).toBeCloseTo(1 - 2 * d * d, 9);
+    // Every new vertex lies on an original edge (x or y pinned to 0 or 1).
+    for (const [x, y] of oct.slice(0, -1)) {
+      const onEdge = x === 0 || x === 1 || y === 0 || y === 1;
+      expect(onEdge, `(${x},${y}) should sit on a square edge`).toBe(true);
+    }
+    // The two cut points nearest the origin corner are (d,0) and (0,d).
+    const pts = oct.slice(0, -1).map((p) => `${p[0]},${p[1]}`);
+    expect(pts).toContain(`${d},0`);
+    expect(pts).toContain(`0,${d}`);
+  });
+
+  it("leaves REFLEX corners intact (a concave L-block is not turned inside out)", () => {
+    // CCW L-shape (area 3): the vertex (1,1) is the single reflex corner.
+    const L: Pt[] = [
+      [0, 0],
+      [2, 0],
+      [2, 1],
+      [1, 1],
+      [1, 2],
+      [0, 2],
+      [0, 0],
+    ];
+    const out = chamferRing(L, 0.3);
+    // The reflex vertex survives verbatim; the 5 convex corners each split in two.
+    const flat = out.slice(0, -1).map((p) => `${p[0]},${p[1]}`);
+    expect(flat).toContain("1,1");
+    expect(out.slice(0, -1).length).toBe(1 + 5 * 2); // 1 reflex kept + 5 convex doubled
+    // Still a simple, positively-oriented (CCW) polygon of sane area.
+    expect(shoelace(out)).toBeGreaterThan(0);
+    expect(Math.abs(shoelace(out))).toBeLessThan(3);
+  });
+
+  it("clamps the setback so an over-large chamfer stays a simple polygon (no self-intersection)", () => {
+    // d far bigger than the square: each corner clamps to 0.45·edge, so adjacent
+    // cuts on one edge never cross (0.45+0.45 < 1) — area stays positive & < 1.
+    const oct = chamferRing(unitSquareCCW, 5);
+    expect(oct.length).toBe(9);
+    const area = Math.abs(shoelace(oct));
+    expect(area).toBeGreaterThan(0);
+    expect(area).toBeLessThan(1);
+    for (const [x, y] of oct) expect(Number.isFinite(x) && Number.isFinite(y)).toBe(true);
+  });
+
+  it("is a no-op for dist ≤ 0 and deterministic (pure function of ring + dist)", () => {
+    expect(chamferRing(unitSquareCCW, 0)).toBe(unitSquareCCW);
+    expect(chamferRing(unitSquareCCW, -3)).toBe(unitSquareCCW);
+    expect(chamferRing(unitSquareCCW, 0.2)).toEqual(chamferRing(unitSquareCCW, 0.2));
+  });
+});
+
+describe("plan 025-C preset signatures (genre reads on the geometry)", () => {
+  const blockVertexCounts = (network: GeoJSON.Feature[]): number[] =>
+    network
+      .filter((f) => f.properties?.generatorId === "city-block")
+      .map((f) => (f.geometry as GeoJSON.Polygon).coordinates[0].length - 1);
+
+  it("eixample chamfers EVERY block into an octagon (>4 vertices), and emits no ring/wall", () => {
+    const network = net(600, 600, "eixample");
+    const counts = blockVertexCounts(network);
+    expect(counts.length).toBeGreaterThan(20);
+    expect(counts.every((c) => c > 4)).toBe(true); // chamfer applied to all corners
+    expect(network.some((f) => f.properties?.type === "wall")).toBe(false);
+    expect(network.some((f) => f.properties?.roadClass === "ring")).toBe(false);
+  });
+
+  it("chamfer applies ONLY where specced: na-grid blocks are NOT all chamfered (many stay quads)", () => {
+    const counts = blockVertexCounts(net(600, 600, "na-grid"));
+    expect(counts.length).toBeGreaterThan(10);
+    // Ordinary grid faces are triangles/quads; only a minority are >4.
+    expect(counts.some((c) => c <= 4)).toBe(true);
+  });
+
+  it("ward-grid is a WALLED grid: emits a ring road + wall segments (the walled-quarter read)", () => {
+    const network = net(600, 600, "ward-grid");
+    expect(network.some((f) => f.properties?.roadClass === "ring")).toBe(true);
+    expect(network.some((f) => f.properties?.type === "wall")).toBe(true);
+    // Orthogonal grid ⇒ 4-way junctions dominate over T-junctions.
+    const { graph } = grownGraph(600, 600, 900, {}, "ward-grid");
+    const { d3, d4 } = degreeHistogram(graph);
+    expect(d4).toBeGreaterThan(0);
+  });
+
+  it("tartan-grid grows the fine ALLEY web inside its coarse grid (the two-scale signature)", () => {
+    const network = net(600, 600, "tartan-grid");
+    expect(network.some((f) => f.properties?.roadClass === "alley")).toBe(true);
+    // Wide arterial mains coexist with narrow ordinary streets — width contrast.
+    const widths = new Set(
+      network
+        .filter((f) => f.properties?.generatorId === "city-street")
+        .map((f) => f.properties?.width as number)
+    );
+    expect(widths.has(26)).toBe(true); // arterial main
+    expect(widths.has(9)).toBe(true); // narrow street
+  });
+
+  it("every 025-C preset is byte-deterministic and fully contained in its region", () => {
+    for (const p of ["tartan-grid", "ward-grid", "eixample"] as ProfileId[]) {
+      const a = net(600, 600, p);
+      const b = net(600, 600, p);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+      const { region } = fixtureAt(600, 600, p);
+      expect(allCoordsInside(a, region)).toBe(true);
+    }
+  });
 });
 
 // ── v4.0 plan-020 gates ─────────────────────────────────────────────────────

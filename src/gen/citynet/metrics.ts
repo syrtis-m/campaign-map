@@ -144,6 +144,47 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [1.0, 1.28],
     anchor: "Chongqing superblocks ~49–66 / Beijing South 13–16 — modernist megablocks, low connectivity",
   },
+  // ── plan 025-C presets: measured on the gallery ring (pinned seed), widened
+  // to research-anchored windows (25-A methodology). Cross-preset orderings —
+  // tartan-grid the DENSEST intersections of any preset, eixample the chamfered
+  // grid — are asserted separately in the suite (the strongest signals).
+  //
+  // tartan-grid (§2.2): the two-scale Seoul/Tokyo grid — a coarse arterial grid
+  // packed with a fine alley web. The HIGHEST intersection density AND the
+  // narrowest fabric (its 9 m streets + 4 m alleys put >90% of street length in
+  // the <10 m band, the only preset that does — the §1.2 "highest proportion
+  // narrow" signature). Densest of all presets by design.
+  "tartan-grid": {
+    intersectionsPerKm2: [560, 900],
+    streetKmPerKm2: [38, 60],
+    streetLandShare: [0.38, 0.58],
+    blockGrainP50: [28, 55],
+    permeability: [1.45, 1.85],
+    anchor: "Seoul 313 · Tokyo Nihonbashi 386 — two-scale tartan, densest & narrowest fabric",
+  },
+  // ward-grid (§2.3): Savannah walled modular quarters — a regular grid ringed
+  // by a wall, punctuated by square/park landmarks; wide mains vs narrow
+  // standards (§1.3 directional asymmetry). Moderate, regular-grid numbers.
+  "ward-grid": {
+    intersectionsPerKm2: [110, 260],
+    streetKmPerKm2: [16, 30],
+    streetLandShare: [0.18, 0.36],
+    blockGrainP50: [34, 72],
+    permeability: [1.22, 1.55],
+    anchor: "Amsterdam core 314 · Savannah ward grid — regular blocks around squares",
+  },
+  // eixample (§2.4): Barcelona Cerdà — uniform blocks on a single cardinal
+  // orientation with CHAMFERED corners (octagonal blocks/intersections). Denser
+  // than the historic anchor (our generator's finer fabric); the octagon is the
+  // signature (asserted by block-corner geometry, not a metric band).
+  eixample: {
+    intersectionsPerKm2: [180, 400],
+    streetKmPerKm2: [20, 40],
+    streetLandShare: [0.28, 0.5],
+    blockGrainP50: [30, 62],
+    permeability: [1.42, 1.85],
+    anchor: "Barcelona Cerdà 103 (ours denser) — chamfered octagon blocks, uniform grid",
+  },
 };
 
 /** True when `value` lies within the closed band. */

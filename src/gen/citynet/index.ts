@@ -36,7 +36,7 @@ import type { ProfileId } from "./domain";
 import { makeCostField } from "./costField";
 import { buildSkeleton } from "./skeleton";
 import { growNetwork, collectGrownChains, collectCourtTips, COURT_RADIUS_M } from "./growth";
-import { extractBlocks } from "./faces";
+import { extractBlocks, chamferRing } from "./faces";
 import { subdivideBlocks } from "./parcels";
 import { buildWards } from "./wards";
 import { buildOutskirts } from "./outskirts";
@@ -356,7 +356,16 @@ export function generateCityNetwork(
     }
     return !blockedByWater(fabricIdx, sx / n, sy / n);
   });
-  for (const block of dryBlocks) {
+  // Corner treatment (plan 025 §3.4): chamfered profiles (eixample) cut every
+  // convex block corner back before emission AND before parcelling, so the
+  // octagonal blocks read on screen and footprints front the cut corner
+  // instead of poking into it. Byte-neutral for chamfer===0 (every other
+  // preset): `shapedBlocks` IS `dryBlocks`.
+  const shapedBlocks =
+    profile.chamfer > 0
+      ? dryBlocks.map((b) => ({ ...b, ring: chamferRing(b.ring, profile.chamfer) }))
+      : dryBlocks;
+  for (const block of shapedBlocks) {
     features.push({
       type: "Feature",
       id: hashSeed(citySeed, "block", block.nodeKeys.join("|")),
@@ -371,7 +380,7 @@ export function generateCityNetwork(
   }
 
   const cityness = makeCityness(citySeed, region, constraints.canonFeatures ?? []);
-  const { parcels, footprints } = subdivideBlocks(citySeed, dryBlocks, profile, cityness);
+  const { parcels, footprints } = subdivideBlocks(citySeed, shapedBlocks, profile, cityness);
   for (const p of parcels) {
     const ring = [...p.ring, p.ring[0]];
     features.push({

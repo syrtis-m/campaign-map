@@ -130,6 +130,24 @@ export interface CityProfile {
    * in `index.ts` and by the §3.1 metrics; NEVER affects growth geometry. */
   streetWidths: StreetWidths;
 
+  // ── Corner treatment / grid orientation (plan 025-C, §3.4 + §2.4) ────────
+  /** Block-corner chamfer setback in metres (plan 025 §3.4). >0 runs the
+   * `chamferRing` post-pass on every block: each convex corner is cut back
+   * `chamfer` m along both incident edges, turning square blocks into
+   * octagons — the Barcelona-Cerdà signature (§2.4, the octagonal
+   * intersection). The setback is capped per-corner so adjacent chamfers never
+   * cross (see `chamferRing`). 0 ⇒ no chamfer (every pre-025-C preset). Applied
+   * BEFORE parcels so footprints front the cut corner (the chaflán) and never
+   * poke into it. Read in `index.ts`; NEVER affects growth geometry. */
+  chamfer: number;
+  /** Single-cardinal grid orientation (plan 025 §2.4 eixample). When true and
+   * `gridAzimuths` is non-empty, the growth grid prior uses a fixed base
+   * azimuth (0) for ALL quadrants instead of a per-quadrant hashed base, so the
+   * whole city aligns to ONE orientation rather than jogging at the quadrant
+   * seams the way `na-grid` does. false ⇒ the per-quadrant jog (every other
+   * grid preset). Read by `growth.ts`. */
+  uniformGrid: boolean;
+
   // ── Stage C: blocks / parcels / footprints (v3.2 — typed now, unread) ──
   /** Target block area window, m² (§6 "block target"). */
   blockAreaMin: number;
@@ -180,6 +198,8 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     snapProb: 1,
     gridAzimuths: [],
     streetWidths: LEGACY_STREET_WIDTHS,
+    chamfer: 0,
+    uniformGrid: false,
     blockAreaMin: 1000,
     blockAreaMax: 3000,
     parcelMinArea: 120,
@@ -214,6 +234,8 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     snapProb: 1,
     gridAzimuths: [],
     streetWidths: LEGACY_STREET_WIDTHS,
+    chamfer: 0,
+    uniformGrid: false,
     blockAreaMin: 3000,
     blockAreaMax: 8000,
     parcelMinArea: 200,
@@ -248,6 +270,8 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     snapProb: 1,
     gridAzimuths: [0, Math.PI / 2],
     streetWidths: LEGACY_STREET_WIDTHS,
+    chamfer: 0,
+    uniformGrid: false,
     blockAreaMin: 6000,
     blockAreaMax: 12000,
     parcelMinArea: 300,
@@ -282,6 +306,8 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     snapProb: 0.55,
     gridAzimuths: [],
     streetWidths: LEGACY_STREET_WIDTHS,
+    chamfer: 0,
+    uniformGrid: false,
     blockAreaMin: 12000,
     blockAreaMax: 30000,
     parcelMinArea: 500,
@@ -334,6 +360,8 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     // Wide arterial CANYONS (§1.1 70–100 m); ordinary internal streets stay
     // narrow so the width hierarchy reads as a hard step, not a ramp.
     streetWidths: { arterial: 85, ring: 40, street: 14, alley: 8, boulevard: 90 },
+    chamfer: 0,
+    uniformGrid: false,
     // Megablocks (§1.1 400–800 m): 400²–800² m² parcels-target windows.
     blockAreaMin: 160000,
     blockAreaMax: 640000,
@@ -344,6 +372,147 @@ export const PROFILES: Record<ProfileId, CityProfile> = {
     footprintInset: 10,
     footprintDepth: 24,
     footprintCoverage: 0.32,
+  },
+  // ── tartan-grid (plan 025 §2.2) — Seoul / Tokyo Marunouchi two-scale grid ──
+  // A COARSE regular arterial grid whose cells are packed with a FINE, dense
+  // street+alley web — permeability at two scales at once, and the HIGHEST
+  // intersection density of any preset (§1.3 tartan grids; anchor Seoul 313 /
+  // Tokyo Nihonbashi 386). Data-only (no new operator): the look is bought by
+  //  • gridAzimuths [0, π/2] — orthogonal grid direction prior;
+  //  • wide arterials (26 m mains) vs narrow ordinary streets (9 m) — the
+  //    "main/minor alternating" width contrast reads on screen;
+  //  • short segmentLen (36 m ⇒ ~40 m grain) + high branchProb + low edge +
+  //    high maxSegments + alleys — the fine web filling each coarse cell.
+  "tartan-grid": {
+    id: "tartan-grid",
+    arterialCount: 6,
+    waterfrontOffsets: [],
+    landmarks: ["market", "temple"],
+    plazaRadius: 22,
+    hasWall: false,
+    wallChance: 0,
+    ringRadiusFrac: 0,
+    segmentLen: 36,
+    branchProb: 0.62,
+    edge: 0.1,
+    branchAngle: Math.PI / 2,
+    branchAngleJitter: (3 * Math.PI) / 180,
+    curvature: 0,
+    snapDist: 16,
+    minAngle: (55 * Math.PI) / 180,
+    minEdge: 11,
+    minStub: 16,
+    maxSegments: 5200,
+    alleys: true,
+    culdesacs: false,
+    snapProb: 1,
+    gridAzimuths: [0, Math.PI / 2],
+    // Wide arterial mains vs narrow streets/alleys — the two-scale "tartan".
+    streetWidths: { arterial: 26, ring: 16, street: 9, alley: 4, boulevard: 30 },
+    chamfer: 0,
+    uniformGrid: false,
+    blockAreaMin: 1000,
+    blockAreaMax: 3000,
+    parcelMinArea: 110,
+    parcelMaxAspect: 3.5,
+    parcelMinFrontage: 6,
+    footprintInset: 1.2,
+    footprintDepth: 9,
+    footprintCoverage: 0.82,
+  },
+  // ── ward-grid (plan 025 §2.3) — Savannah modular walled quarters ───────────
+  // A regular grid organised into WALLED modular quarters, each anchored by a
+  // generated square/park (the landmark plaza + extra landmarks read as the
+  // ward squares). Directional width asymmetry (§1.3 Savannah: 24–26 m mains,
+  // 10 m standards) is approximated by the wide arterial (24 m) vs narrow
+  // street (10 m) contrast. The ring wall is what makes the quarters read as
+  // ENCLOSED (the "walled-quarter" screenshot signature), distinguishing it
+  // from na-grid (open, jogged) and euro-medieval (walled but organic).
+  "ward-grid": {
+    id: "ward-grid",
+    arterialCount: 4,
+    waterfrontOffsets: [],
+    landmarks: ["market", "temple", "church"],
+    plazaRadius: 30,
+    hasWall: true,
+    wallChance: 1,
+    ringRadiusFrac: 0.62,
+    segmentLen: 64,
+    branchProb: 0.42,
+    edge: 0.16,
+    branchAngle: Math.PI / 2,
+    branchAngleJitter: (4 * Math.PI) / 180,
+    curvature: 0,
+    snapDist: 22,
+    minAngle: (55 * Math.PI) / 180,
+    minEdge: 18,
+    minStub: 22,
+    maxSegments: 3200,
+    alleys: false,
+    culdesacs: false,
+    snapProb: 1,
+    gridAzimuths: [0, Math.PI / 2],
+    // Wide E-W mains vs narrow N-S standards (§1.3) — directional asymmetry.
+    streetWidths: { arterial: 24, ring: 18, street: 10, alley: 6, boulevard: 30 },
+    chamfer: 0,
+    uniformGrid: false,
+    blockAreaMin: 3000,
+    blockAreaMax: 8000,
+    parcelMinArea: 200,
+    parcelMaxAspect: 3,
+    parcelMinFrontage: 8,
+    footprintInset: 2,
+    footprintDepth: 13,
+    footprintCoverage: 0.7,
+  },
+  // ── eixample (plan 025 §2.4) — Barcelona Cerdà chamfered octagon grid ──────
+  // Uniform square blocks on a SINGLE cardinal orientation (uniformGrid) with
+  // CHAMFERED corners (chamfer > 0 ⇒ the octagonal-intersection signature, the
+  // one visual that must READ on screen), and a two-level avenue/street
+  // hierarchy (wide arterials = the avenues connecting the territory; ordinary
+  // streets = the locality). Anchor: Barcelona Cerdà ~103 int/km². The larger
+  // segmentLen (78 m ⇒ ~100 m+ blocks) keeps blocks big enough that the 16 m
+  // chamfer is clearly visible; no alleys (uniform blocks, not a fine web).
+  eixample: {
+    id: "eixample",
+    arterialCount: 4,
+    waterfrontOffsets: [],
+    landmarks: ["market"],
+    plazaRadius: 24,
+    hasWall: false,
+    wallChance: 0,
+    ringRadiusFrac: 0,
+    segmentLen: 78,
+    branchProb: 0.5,
+    edge: 0.14,
+    branchAngle: Math.PI / 2,
+    branchAngleJitter: (1.5 * Math.PI) / 180,
+    curvature: 0,
+    snapDist: 24,
+    minAngle: (60 * Math.PI) / 180,
+    minEdge: 22,
+    minStub: 26,
+    maxSegments: 2600,
+    alleys: false,
+    culdesacs: false,
+    snapProb: 1,
+    gridAzimuths: [0, Math.PI / 2],
+    // Avenue (arterial) vs street two-level hierarchy (§2.4).
+    streetWidths: { arterial: 22, ring: 16, street: 13, alley: 6, boulevard: 30 },
+    // The Cerdà chaflán: cut each block corner back 22 m → octagonal blocks +
+    // octagonal intersections (a bold setback so the octagon READS on screen at
+    // the gallery's fixed zoom, capped per-edge in `chamferRing`). uniformGrid
+    // keeps the whole grid on ONE cardinal azimuth.
+    chamfer: 22,
+    uniformGrid: true,
+    blockAreaMin: 6000,
+    blockAreaMax: 12000,
+    parcelMinArea: 280,
+    parcelMaxAspect: 2.5,
+    parcelMinFrontage: 10,
+    footprintInset: 2.5,
+    footprintDepth: 15,
+    footprintCoverage: 0.6,
   },
 };
 

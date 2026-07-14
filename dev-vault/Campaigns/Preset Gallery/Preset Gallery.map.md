@@ -7,7 +7,7 @@ scaleMetersPerUnit: 100
 bounds:
   - -33
   - -10
-  - 49
+  - 97
   - 10
 ---
 
@@ -20,10 +20,12 @@ every district identically and on-screen differences are the PRESET, never the
 boundary or projection:
 
     euro-medieval(-24)  euro-continental(-8)  na-grid(8)  na-suburb(24)  superblock(40)
+    tartan-grid(56)  ward-grid(72)  eixample(88)
 
 New presets APPEND to the right (fixed x, existing districts never move) and the
 eastern bound widens to fit — so a fixture diff stays localised to the appended
-district + the one bound. superblock landed in 025-B (§2.6).
+district + the one bound. superblock landed in 025-B (§2.6); tartan-grid,
+ward-grid and eixample landed in 025-C (§2.2–2.4 + the §3.4 chamfer operator).
 
 Committed fixture: this note + Fabric.geojson are durable repo content; the
 .mapcache/ is regenerable and sync-excluded. `scripts/gates/presetGallery.ts`

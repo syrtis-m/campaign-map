@@ -254,6 +254,72 @@ describe("computeNetworkMetrics — §3.1 benchmark gates for the four existing 
   });
 });
 
+describe("§3.1 benchmark gates — plan 025-C presets (tartan-grid / ward-grid / eixample)", () => {
+  const region = galleryRegion();
+  // Every preset (all eight) measured once on the pinned gallery ring.
+  const ALL: ProfileId[] = [
+    "euro-medieval",
+    "euro-continental",
+    "na-grid",
+    "na-suburb",
+    "superblock",
+    "tartan-grid",
+    "ward-grid",
+    "eixample",
+  ];
+  const M: Record<string, NetworkMetrics> = {};
+  for (const p of ALL) M[p] = computeNetworkMetrics(presetNet(p, region), region);
+
+  for (const p of ["tartan-grid", "ward-grid", "eixample"] as ProfileId[]) {
+    it(`${p} lands inside its §3.1 benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
+      const violations = benchmarkViolations(p, M[p]);
+      expect(violations, violations.join("; ")).toEqual([]);
+    });
+  }
+
+  // ── tartan-grid: the two-scale Seoul/Tokyo grid (§2.2) ─────────────────────
+  it("tartan-grid is the DENSEST preset — the highest intersections/km² of ALL presets (§2.2)", () => {
+    for (const p of ALL) {
+      if (p === "tartan-grid") continue;
+      expect(
+        M["tartan-grid"].intersectionsPerKm2,
+        `tartan-grid ${M["tartan-grid"].intersectionsPerKm2.toFixed(0)} vs ${p} ${M[p].intersectionsPerKm2.toFixed(0)}`
+      ).toBeGreaterThan(M[p].intersectionsPerKm2);
+    }
+  });
+
+  it("tartan-grid is the NARROWEST fabric: majority of street length in the <10 m band (§1.2 narrow-majority)", () => {
+    expect(M["tartan-grid"].widthHistogram.lt10).toBeGreaterThan(0.5);
+    // No walkable/legacy preset is narrow-majority (their streets are 10–20 m).
+    for (const p of ["euro-medieval", "euro-continental", "na-grid", "na-suburb", "ward-grid", "eixample"] as ProfileId[]) {
+      expect(M[p].widthHistogram.lt10).toBeLessThan(0.5);
+    }
+  });
+
+  // ── ward-grid: regular walled quarters (§2.3) ──────────────────────────────
+  it("ward-grid clears Salat's ≥15 km/km² street-density floor (a walkable regular grid)", () => {
+    expect(M["ward-grid"].streetKmPerKm2).toBeGreaterThanOrEqual(15);
+  });
+
+  it("ward-grid shows wide-main width contrast: some street length in the >20 m band (directional asymmetry, §1.3)", () => {
+    // Its 24 m arterials land in the >20 m band; the narrow 10 m standards don't.
+    expect(M["ward-grid"].widthHistogram.gt20).toBeGreaterThan(0);
+    expect(M["ward-grid"].widthHistogram.gt20).toBeLessThan(0.2);
+  });
+
+  // ── eixample: uniform chamfered grid (§2.4) ────────────────────────────────
+  it("eixample is a permeable, low-dead-end grid (uniform blocks, not a cul-de-sac fabric)", () => {
+    expect(M["eixample"].permeability).toBeGreaterThan(1.3);
+    expect(M["eixample"].deadEndShare).toBeLessThan(M["na-suburb"].deadEndShare);
+  });
+
+  it("all §025-C presets clear Salat's ≥15 km/km² floor (none is the superblock anti-pattern)", () => {
+    for (const p of ["tartan-grid", "ward-grid", "eixample"] as ProfileId[]) {
+      expect(M[p].streetKmPerKm2).toBeGreaterThanOrEqual(15);
+    }
+  });
+});
+
 describe("§3.3 form-based width — the generator emits an explicit metre width per street", () => {
   const region = galleryRegion();
 

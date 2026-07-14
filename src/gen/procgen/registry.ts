@@ -103,6 +103,9 @@ export const CITY_PROFILE_IDS = [
   "na-grid",
   "na-suburb",
   "superblock",
+  "tartan-grid",
+  "ward-grid",
+  "eixample",
 ] as const satisfies readonly ProfileId[];
 
 const cityParamsSchema = z.object({
@@ -130,6 +133,9 @@ const CITY_PRESETS: readonly ProcgenPreset[] = [
   { id: "na-grid", label: "North American grid — right angles, jogged grids", params: { profile: "na-grid" } },
   { id: "na-suburb", label: "North American suburb — curving streets, cul-de-sacs", params: { profile: "na-suburb" } },
   { id: "superblock", label: "Superblock — modernist megablocks, arterial canyons, dead-ends", params: { profile: "superblock" } },
+  { id: "tartan-grid", label: "Tartan grid — coarse arterial grid, fine alley web (Seoul/Tokyo)", params: { profile: "tartan-grid" } },
+  { id: "ward-grid", label: "Ward grid — walled modular quarters around squares (Savannah)", params: { profile: "ward-grid" } },
+  { id: "eixample", label: "Eixample — uniform blocks, chamfered octagon corners (Barcelona)", params: { profile: "eixample" } },
 ];
 
 const cityAlgorithm: ProcgenAlgorithm = {
