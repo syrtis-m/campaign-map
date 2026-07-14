@@ -201,7 +201,7 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
 **Plan 024 — cross-layer cascade** (`plans/024-cross-layer-regen-cascade.md`)
 - [x] 5597cd4 24-A input fingerprints on cache records + stale-replay detection
       (024 §5.1 — hardens plan 020 too)
-- [ ] 24-B stage DAG + upstream-as-data worker interface + cascade regen on
+- [x] af5166c 24-B stage DAG + upstream-as-data worker interface + cascade regen on
       edit (024 §2–§4)
 - [ ] 24-C windiness acceptance gate + cascade-order determinism + multi-
       stage rm-.mapcache byte-diff (024 §6) ⛳ full board
@@ -255,6 +255,16 @@ for 26-B/27-C; 26-C's glyph module feeds 27-C/28-C)
   want a retro-migration pass?
 
 ## Log (one line per session/kill/resume — newest first)
+- 2026-07-14 (arc run, session 7 cont.): 24-B via phase subagent, T1 green —
+  stage DAG (produces∩consumes edges refine §4's bbox-only rule; farmland
+  slotted stage 2), upstream-as-data worker interface (built + tested; citynet
+  consumption deferred to 24-C w/ the §6 windiness golden), cascade on every
+  edit-commit path w/ >10-region cost cap, fingerprints extended
+  append-when-present (NO version bump — no-upstream campaigns byte-identical).
+  cascade24b 10/10 (DAG-deterministic assertions — output-byte checks are
+  seed-flaky under mm quantization). Committed af5166c (+a5bad88 coverage
+  registration, missed). Fast 764. Next: 24-C windiness gate + cascade-order
+  determinism + rm-.mapcache byte-diff ⛳ plan-024 board.
 - 2026-07-14 (arc run, session 7 cont.): 24-A via phase subagent, T1 green
   first try — canonical input fingerprints on cache records (additive field;
   pre-024 grandfathered fresh, no regen storm), stale-replay = fingerprint

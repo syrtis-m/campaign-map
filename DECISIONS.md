@@ -1015,3 +1015,28 @@
 - **Upstream generated-artifact fingerprints deferred to 24-B** (nothing
   consumes another region's output until stages land); FP_VERSION makes the
   composition forward-compatible.
+
+## 2026-07-14 — Plan 024 phase B (stage DAG + cascade, phase subagent)
+- **Edge rule = produces∩consumes ∩ bbox-overlap** (refines §4's bbox-only):
+  a city overlapping a mountain is NOT a dependent (it consumes
+  water/vegetation, not elevation) — avoids wasteful byte-identical
+  recomputes; proven in unit + live gates. Farmland slotted stage 2,
+  consumes elevation, produces nothing downstream (city reads its RAW
+  sketch, not output).
+- **No FP_VERSION bump** (deviates from §5.1's letter): upstream
+  fingerprints append only when non-empty, so no-upstream regions hash
+  byte-identically to 24-A — zero one-time recompute on upgrade. Strictly
+  better back-compat; version tag still available for future breaking
+  compositions.
+- **citynet's consumption of upstream.water deferred to 24-C**: interface
+  built + serialization-tested + host-threaded (empty); the first
+  byte-changing consumer belongs with §6's windiness acceptance golden at
+  the board phase. 24-B stays additive/byte-safe; the cascade is proven
+  behaviorally via the already-legal 23-E elevation coupling.
+- **Gate asserts DAG-determinism, not output bytes**: which dependents
+  regenerated + isolation + undo-restore. Output-byte assertions on
+  timestamp-seeded fixtures are flaky (mm quantization rounds small meander
+  shifts away — observed once). Same fixture-seed lesson as the chip.
+- **Cascade cost cap**: >10 regions → non-modal Notice + explicit
+  apply-pending-cascade command (explicit-only discipline: a big cascade is
+  still the GM's call).

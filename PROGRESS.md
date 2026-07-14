@@ -319,8 +319,20 @@
   fresh; canon excluded (OQ#3); upstream-artifact fps + bbox-relevance to
   24-B. Gate: fast 734/734 · staleness24a 10/10 · dev-vault byte-intact.
   See DECISIONS "24-A".
-- Next: 24-B stage DAG + upstream-as-data worker interface + cascade regen
-  on edit; then 24-C ⛳ board.
+- **24-B DONE** (`af5166c` + `a5bad88`): the cascade — stage DAG (mountain 0
+  → river 1 → forest/park/farmland 2 → city 3 → wall 4; produces∩consumes +
+  bbox edges, deterministic (stage,id) order, acyclic by construction),
+  upstream-as-data worker interface (plain GeoJSON over structured clone,
+  SDFs rebuilt consumer-side), cascade regen wired into every edit-commit
+  path (params/geometry/undo/debounced flush) with a >10-region non-modal
+  cost cap; fingerprints fold in upstream deps append-when-present (no
+  version bump — zero upgrade recompute). citynet channel consumption + §6
+  windiness golden deferred to 24-C. Gate: fast 764/764 · dag fuzz
+  100-world permutation invariance · cascade24b 10/10 · screenshots
+  (terraces densify on steeper relief) · dev-vault byte-intact. See
+  DECISIONS "24-B".
+- Next: 24-C windiness acceptance gate + cascade-order determinism +
+  multi-stage rm-.mapcache byte-diff ⛳ plan-024 board.
 
 ## (pre-arc) Status: Phases 0–5 complete + Phase 6 (sketch) + post-launch corrections. On `main` @ `3e084ea`.
 
