@@ -1,5 +1,5 @@
 {
-  "_comment": "Change-scoped gating manifest (plan 021 \u00a72.5). Maps each live gate script to the source globs it exercises, so `npm run gates:changed` can run only the gates whose coverage intersects a diff. Globs deliberately err toward OVER-inclusion: over-covering just runs an extra gate; under-covering ships a real break unguarded. `determinismCritical` paths bypass scoping entirely and escalate to the FULL board (region/rng/clip/tileCache feed every generator \u2014 a change there can break any gate's determinism). Glob syntax: `**` = any path segments, `*` = any non-slash chars.",
+  "_comment": "Change-scoped gating manifest. Maps each live SMOKE gate to the source globs it exercises, so `npm run gates:changed` runs only the gates whose coverage intersects a diff. The board (`npm run board`) = prologue (unit/fuzz/tsc/build) + these five gates. Every retired live gate has a prove-by-breaking record in review/030B-break-proofs.md; its coverage lives headless (generator suites + testkit invariants + metric bands + perceptual goldens + styleGolden). Globs err toward OVER-inclusion. `determinismCritical` paths escalate to the full board.",
   "determinismCritical": [
     "src/gen/region.ts",
     "src/gen/rng.ts",
@@ -7,476 +7,42 @@
     "src/model/tileCache.ts"
   ],
   "gates": {
-    "phase0": {
-      "script": "scripts/gates/phase0.ts",
+    "smokeBoot": {
+      "script": "scripts/gates/smokeBoot.ts",
       "globs": [
         "src/main.ts",
         "src/view/MapView.ts",
-        "src/model/campaignConfig.ts",
-        "src/map/fictionalCRS.ts",
-        "src/map/pmtilesVaultProtocol.ts"
+        "src/map/themes/**",
+        "src/map/theme.ts",
+        "src/map/glyphs.ts",
+        "src/map/pmtilesVaultProtocol.ts",
+        "src/map/campaignDemProtocol.ts",
+        "src/model/campaignConfig.ts"
       ]
     },
     "phase1": {
       "script": "scripts/gates/phase1.ts",
       "globs": [
         "src/main.ts",
-        "src/view/MapView.ts",
+        "src/view/**",
         "src/vault/**",
         "src/model/locationNote.ts",
         "src/model/connections.ts",
         "src/model/mutationLog.ts",
-        "src/map/locationIndex.ts",
-        "src/map/themes/**",
-        "src/map/theme.ts"
+        "src/map/locationIndex.ts"
       ]
     },
-    "phase2": {
-      "script": "scripts/gates/phase2.ts",
+    "smokeProcgen": {
+      "script": "scripts/gates/smokeProcgen.ts",
       "globs": [
-        "src/map/pmtilesVaultProtocol.ts",
-        "src/map/themes/**",
-        "src/map/theme.ts",
-        "src/map/glyphs.ts",
-        "src/model/campaignConfig.ts",
-        "src/view/MapView.ts"
-      ]
-    },
-    "phase3": {
-      "script": "scripts/gates/phase3.ts",
-      "globs": [
-        "src/main.ts",
         "src/gen/**",
+        "src/controller/**",
         "src/map/generation/**",
-        "src/model/generatedManifest.ts",
-        "src/model/tileCache.ts",
-        "src/vault/generatedManifestStore.ts",
-        "src/view/MapView.ts"
-      ]
-    },
-    "phase4": {
-      "script": "scripts/gates/phase4.ts",
-      "globs": [
-        "src/main.ts",
-        "src/map/generation/**",
-        "src/model/tileCache.ts",
-        "src/gen/**",
-        "src/view/MapView.ts"
-      ]
-    },
-    "phase5": {
-      "script": "scripts/gates/phase5.ts",
-      "globs": [
-        "src/map/posterExport.ts",
-        "src/map/atlasExport.ts",
-        "src/gen/populate.ts",
-        "src/vault/importOps.ts",
-        "src/model/importGeojson.ts",
-        "src/model/sessionPath.ts",
-        "src/model/mutationLog.ts",
-        "src/model/connections.ts",
-        "src/map/themes/connectionLayers.ts",
-        "src/map/themes/sessionPathLayers.ts",
-        "src/view/PopulateAreaModal.ts",
-        "src/view/ImportFileModal.ts",
-        "src/view/MapView.ts"
-      ]
-    },
-    "procgen40": {
-      "script": "scripts/gates/procgen40.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/model/fabric.ts",
-        "src/vault/fabricStore.ts",
-        "src/map/themes/fabricLayers.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/view/MapView.ts",
-        "src/view/SketchController.ts",
-        "src/view/RegionProcgenModal.ts"
-      ]
-    },
-    "procgen41": {
-      "script": "scripts/gates/procgen41.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/model/fabric.ts",
-        "src/vault/fabricStore.ts",
-        "src/map/themes/fabricLayers.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/view/MapView.ts",
-        "src/view/SketchController.ts",
-        "src/view/RegionProcgenModal.ts"
-      ]
-    },
-    "procgen42": {
-      "script": "scripts/gates/procgen42.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/model/fabric.ts",
-        "src/vault/fabricStore.ts",
-        "src/map/themes/fabricLayers.ts",
-        "src/view/MapView.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "procgen43": {
-      "script": "scripts/gates/procgen43.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/gen/procgen/**",
-        "src/model/fabric.ts",
-        "src/map/themes/fabricLayers.ts",
-        "src/view/MapView.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "procgen44": {
-      "script": "scripts/gates/procgen44.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/gen/procgen/**",
-        "src/gen/river.ts",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/model/fabric.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/theme.ts",
-        "src/view/MapView.ts",
-        "src/view/RegionProcgenModal.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "procgen45": {
-      "script": "scripts/gates/procgen45.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/gen/procgen/**",
-        "src/gen/forest.ts",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/model/fabric.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/fabricLayers.ts",
-        "src/map/themes/tokens.ts",
-        "src/map/theme.ts",
-        "src/view/MapView.ts",
-        "src/view/RegionProcgenModal.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "procgen46": {
-      "script": "scripts/gates/procgen46.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/gen/procgen/**",
-        "src/gen/park.ts",
-        "src/gen/waterEmit.ts",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/model/fabric.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/fabricLayers.ts",
-        "src/map/themes/tokens.ts",
-        "src/map/theme.ts",
-        "src/view/MapView.ts",
-        "src/view/RegionProcgenModal.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "procgen47": {
-      "script": "scripts/gates/procgen47.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/gen/procgen/**",
-        "src/gen/wall.ts",
-        "src/gen/citynet/**",
-        "src/gen/fabricConstraints.ts",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/model/fabric.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/fabricLayers.ts",
-        "src/map/themes/tokens.ts",
-        "src/map/theme.ts",
-        "src/view/MapView.ts",
-        "src/view/RegionProcgenModal.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "procgen48": {
-      "script": "scripts/gates/procgen48.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/gen/procgen/**",
-        "src/gen/farmland.ts",
-        "src/gen/citynet/**",
-        "src/gen/fabricConstraints.ts",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/model/fabric.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/fabricLayers.ts",
-        "src/map/themes/tokens.ts",
-        "src/map/theme.ts",
-        "src/view/MapView.ts",
-        "src/view/RegionProcgenModal.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "styleLoad": {
-      "script": "scripts/gates/styleLoad.ts",
-      "globs": [
-        "src/map/theme.ts",
-        "src/map/themes/**",
-        "src/map/glyphs.ts",
-        "src/view/MapView.ts"
-      ]
-    },
-    "procgen49-forest": {
-      "script": "scripts/gates/procgen49-forest.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/gen/procgen/**",
-        "src/gen/forest.ts",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/model/fabric.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/generated/forest.ts",
-        "src/map/theme.ts",
-        "src/view/MapView.ts",
-        "src/view/RegionProcgenModal.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "procgen50-canopy": {
-      "script": "scripts/gates/procgen50-canopy.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/forest.ts",
-        "src/gen/fields/**",
-        "src/gen/citynet/index.ts",
-        "src/gen/procgen/**",
-        "src/controller/MapController.ts",
-        "src/view/MapView.ts",
-        "src/map/generation/generationService.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/generated/forest.ts",
-        "src/map/theme.ts"
-      ]
-    },
-    "procgen51-glyphs": {
-      "script": "scripts/gates/procgen51-glyphs.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/forest.ts",
-        "src/gen/rng.ts",
-        "src/controller/MapController.ts",
-        "src/view/MapView.ts",
-        "src/map/generation/generationService.ts",
         "src/map/treeGlyphs.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/generated/forest.ts",
-        "src/map/theme.ts"
-      ]
-    },
-    "vo27-park": {
-      "script": "scripts/gates/vo27-park.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/gen/procgen/**",
-        "src/gen/park.ts",
-        "src/gen/waterEmit.ts",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/model/fabric.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/generated/park.ts",
-        "src/map/themes/fabricLayers.ts",
-        "src/map/themes/tokens.ts",
-        "src/map/theme.ts",
-        "src/view/MapView.ts",
-        "src/view/RegionProcgenModal.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "procgen49": {
-      "script": "scripts/gates/procgen49.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/river.ts",
-        "src/gen/waterEmit.ts",
-        "src/gen/procgen/**",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/model/fabric.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/generated/river.ts",
-        "src/map/theme.ts",
-        "src/view/MapView.ts",
-        "src/view/RegionProcgenModal.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "fields23a": {
-      "script": "scripts/gates/fields23a.ts",
-      "globs": [
-        "src/gen/fields/**",
-        "src/gen/region.ts",
-        "src/gen/fabricConstraints.ts",
-        "src/gen/citynet/**"
-      ]
-    },
-    "elevation23b": {
-      "script": "scripts/gates/elevation23b.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/gen/procgen/**",
-        "src/gen/mountain.ts",
-        "src/gen/fields/**",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/model/fabric.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/generated/mountain.ts",
-        "src/map/themes/fabricLayers.ts",
-        "src/map/themes/tokens.ts",
-        "src/map/theme.ts",
-        "src/view/MapView.ts",
-        "src/view/RegionProcgenModal.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "contours23c": {
-      "script": "scripts/gates/contours23c.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/mountain.ts",
-        "src/gen/fields/**",
-        "src/gen/procgen/**",
-        "src/controller/MapController.ts",
         "src/model/fabric.ts",
         "src/model/tileCache.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/generated/mountain.ts",
-        "src/map/themes/tokens.ts",
-        "src/map/theme.ts",
-        "src/view/MapView.ts"
-      ]
-    },
-    "hillshade23d": {
-      "script": "scripts/gates/hillshade23d.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/mountain.ts",
-        "src/gen/fields/**",
-        "src/model/demCache.ts",
-        "src/map/campaignDemProtocol.ts",
-        "src/map/themes/hillshadeLayer.ts",
-        "src/map/themes/layerOrder.ts",
-        "src/map/themes/index.ts",
-        "src/map/themes/tokens.ts",
-        "src/map/theme.ts",
-        "src/controller/MapController.ts",
-        "src/view/MapView.ts"
-      ]
-    },
-    "coupling23e": {
-      "script": "scripts/gates/coupling23e.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/farmland.ts",
-        "src/gen/river.ts",
-        "src/gen/mountain.ts",
-        "src/gen/fields/**",
-        "src/gen/procgen/**",
-        "src/controller/MapController.ts",
-        "src/model/fabric.ts",
-        "src/model/tileCache.ts",
-        "src/map/themes/generatedLayers.ts",
-        "src/map/themes/generated/farm.ts",
-        "src/map/themes/generated/river.ts",
-        "src/map/themes/tokens.ts",
-        "src/map/theme.ts",
-        "src/view/MapView.ts"
-      ]
-    },
-    "staleness24a": {
-      "script": "scripts/gates/staleness24a.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/cache/fingerprint.ts",
-        "src/gen/fabricConstraints.ts",
-        "src/gen/region.ts",
-        "src/gen/procgen/**",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/map/generation/generationService.ts",
-        "src/model/tileCache.ts",
-        "src/model/fabric.ts",
-        "src/view/MapView.ts"
-      ]
-    },
-    "cascade24b": {
-      "script": "scripts/gates/cascade24b.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/gen/procgen/**",
-        "src/gen/cache/**",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/model/fabric.ts",
-        "src/model/tileCache.ts",
-        "src/map/generation/**",
         "src/view/MapView.ts",
-        "src/view/RegionProcgenModal.ts",
         "src/view/SketchController.ts"
-      ]
-    },
-    "cascade24c": {
-      "script": "scripts/gates/cascade24c.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/**",
-        "src/gen/citynet/**",
-        "src/gen/procgen/**",
-        "src/gen/cache/**",
-        "src/gen/fabricConstraints.ts",
-        "src/gen/upstream.ts",
-        "src/controller/MapController.ts",
-        "src/controller/FakeHost.ts",
-        "src/model/fabric.ts",
-        "src/model/tileCache.ts",
-        "src/map/generation/**",
-        "src/view/MapView.ts",
-        "src/view/RegionProcgenModal.ts",
-        "src/view/SketchController.ts"
-      ]
-    },
-    "presetGallery": {
-      "script": "scripts/gates/presetGallery.ts",
-      "globs": [
-        "src/main.ts",
-        "src/gen/citynet/**",
-        "src/gen/procgen/registry.ts",
-        "src/gen/region.ts",
-        "src/controller/MapController.ts",
-        "src/map/generation/**",
-        "src/map/themes/**",
-        "src/view/MapView.ts"
       ]
     },
     "version29": {
@@ -488,6 +54,18 @@
         "src/model/fabric.ts",
         "src/view/MapView.ts",
         "src/main.ts"
+      ]
+    },
+    "phase5": {
+      "script": "scripts/gates/phase5.ts",
+      "globs": [
+        "src/map/posterExport.ts",
+        "src/map/atlasExport.ts",
+        "src/model/sessionPath.ts",
+        "src/model/connections.ts",
+        "src/model/importGeojson.ts",
+        "src/gen/populate.ts",
+        "src/view/MapView.ts"
       ]
     }
   }

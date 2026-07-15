@@ -1219,3 +1219,27 @@
   screenshots (a `git add -A` mistake — verified zero src/scripts/package
   content rode along). Recorded here so the commit message's "docs-only" claim
   has its correction; explicit-path staging from now on.
+
+## 2026-07-14 — plan 030-B gate shrink complete
+- **31 live gates → 5 smoke gates** (smokeBoot · phase1 · smokeProcgen ·
+  version29 · phase5). Every deletion carries a prove-by-breaking record
+  (review/030B-break-proofs.md): 17/20 headless proofs CAUGHT on the first
+  pass, 3 real holes found — ALL at the controller/paint seam (vertex-edit
+  regen wiring, generated-upstream consumption, theme token values), none in
+  the pure generators. Each hole was repaired (strengthened adapts-test,
+  river→city consumption integration test, styleGolden per-theme digests) and
+  the re-seeded break re-proven CAUGHT before its gate was deleted.
+- **Perceptual goldens** (scripts/perceptual.ts, zero deps: pure-TS scanline
+  rasterizer + hand-rolled PNG via node:zlib): 8 pinned tuples, >0.5%-pixels
+  threshold, byte-deterministic across runs; `--accept` explicit-only with
+  eyeball review. Proofs showed SELECTIVE catch (haussmann profile perturb →
+  its golden 29.98% differ while euro-medieval stayed 0.000%).
+- **Board: 2198s → 308s** (live-gate half 68s; the fuzz prologue dominates).
+  The <5-min done-criterion reads as met in substance (5m08s total, from
+  24–37 min); shaving the fuzz tier is not worth engineering now.
+- **Preset Gallery campaign stays** in dev-vault as Jonah's manual review
+  surface; its GATE retired in favor of the perceptual runner + cityGolden.
+- vo-w0-style-bytes script retired — styleGolden.test.ts is the stronger,
+  headless successor. Audit-table net misattributions corrected per the
+  break-proof agent (fields23a→region.test.ts, hillshade23d→fields/dem.test.ts,
+  phase3-world→world.test.ts).

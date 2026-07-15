@@ -493,3 +493,20 @@ above; only their on-screen legibility needs `scripts/perceptual.ts`.
 - The 3 NOT-CAUGHT holes are all at the CONTROLLER/paint seam (regen wiring, upstream
   wiring, token values), not in the pure generators — the generator tier's headless net
   is dense; the integration/paint tier is where live gates still carry unique coverage.
+
+## Addendum (orchestrator) — perceptual proofs + net repairs
+
+Perceptual-runner proofs (the 4 deferred rows), each break reverted after:
+| gate | seeded edit | verdict |
+|---|---|---|
+| procgen49 (river visuals) | bank lines shifted +20 m (river.ts bankFeature) | CAUGHT — `river-lazy-lowland-s42` 0.643% differ (>0.5%) |
+| procgen49-forest + procgen50 visual half | tree stipple shifted +25 m (forest.ts treeFeature) | CAUGHT — `forest-broadleaf-s42` 4.366% differ |
+| presetGallery (preset identity) | haussmann arterialCount 5→3 (profiles.ts) | CAUGHT selectively — `city-haussmann-s42` 29.982% differ while `city-euro-medieval-s42` stayed 0.000% |
+| vo27-park (park visuals) | covered by the same class: park bands (path/water shares) + `park-formal-garden-s42` golden | CAUGHT by class (procgen46 band proof + the runner) |
+
+The 3 NOT CAUGHT holes were repaired and re-proven:
+| hole | repair | re-seeded break | verdict |
+|---|---|---|---|
+| procgen41 vertex-edit regen | MapController "adapts" test now asserts generatorRunCount increments + painted id-set moves | commitSketchEdit regen skipped | CAUGHT (`generatorRunCount` assertion) |
+| cascade24c upstream wiring | new MapController test: river param edit re-routes the downstream city via the GENERATED channel | buildRegionUpstream severed | CAUGHT (bytes identical → fail) |
+| phase2 token values | src/map/themes/styleGolden.test.ts — per-theme built-style sha digests snapshot-pinned | parchment land #f2e8cf→#aabbcc | CAUGHT (parchment digest flip) |

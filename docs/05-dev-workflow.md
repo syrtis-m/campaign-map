@@ -110,10 +110,11 @@ obsidian dev:mobile on && obsidian dev:errors && obsidian dev:mobile off
 | Layer | Tool | What |
 |---|---|---|
 | Generator visuals + tuning | **Playground** (`npm run playground`), no Obsidian | Live param knobs, seed sweeps, preset grid, region-shape robustness — the judgment surface BEFORE assertions are written; geometry/composition only (paint shim, not theme truth) |
-| Generators (pure) | **Vitest**, no Obsidian | Seeded snapshot fixtures; 2×2 seam tests; determinism (same seed twice → identical) |
+| Generators (pure) | **Vitest**, no Obsidian | Shared structural invariants (`gen/testkit/invariants.ts`: containment, closed rings, mm lattice, determinism), metric bands (`*Metrics.ts`), ONE byte-golden per algorithm (re-accepted on a version bump via `npm run goldens:accept -- <algorithm>`), 2×2 seam tests |
+| Perceptual (headless) | **`npm run perceptual`**, no Obsidian | Pinned (algorithm, preset, seed, region) tuples rendered by a pure-TS rasterizer → PNGs pixel-diffed against approved goldens in `shots/perceptual/` (>0.5% differing pixels fails). Re-approve with `npm run perceptual -- --accept` alongside a version bump, and EYEBALL the new goldens at acceptance — never auto-accept |
 | Model/validators | Vitest | Zod schemas, frontmatter parse round-trips |
-| Integration | **Obsidian CLI script** (`npm run test:app`) | The loops above: reload → drive → eval-assert → `dev:errors` clean |
-| Visual | CLI screenshots | Per-theme, per-genre screenshots into `shots/`; agent reviews against quality bar; keep goldens in repo |
+| Live smoke | **The 5-gate smoke set** (`scripts/gates/`) | What headless tiers cannot prove: smokeBoot (plugin boots, every style-builder path loads live), phase1 (reconcile round-trip), smokeProcgen (sketch→generate→paint→replay, explicit-only, glyph lifecycle), version29 (migration/adoption), phase5 (exports write files) |
+| Visual judgment | CLI screenshots | The docs/04 screenshot test — a release judgment, not a per-commit gate; playground + perceptual carry the per-commit visual net |
 
 Unit tests need no Obsidian and stay fast — that's why generators are host-agnostic. Integration tests are a bash/TS script of CLI calls with exit-code assertions; run before any commit touching `src/map/`, reconciliation, or themes.
 
@@ -124,9 +125,9 @@ Testing used to mean "run the whole board," which cost an afternoon. It no longe
 | Tier | When | What runs | Command(s) | Budget |
 |---|---|---|---|---|
 | **T0** inner loop | every edit | fast unit suite + tsc | `npm test` (+ `npx tsc --noEmit`) | **<45 s** |
-| **T1** phase checkpoint = **per-phase COMMIT bar** | finishing (and committing) a phase's work | T0 + build **+ that phase's own gate(s), standalone** (+ fuzz tier iff generator behavior changed) | `npm test && npm run build` + `tsx scripts/gates/<phase>.ts` (+ `npm run test:fuzz`) | <5 min |
+| **T1** phase checkpoint = **per-phase COMMIT bar** | finishing (and committing) a phase's work | T0 + build + **perceptual goldens** + that phase's own gate(s) standalone (+ fuzz tier iff generator behavior changed) | `npm test && npm run build && npm run perceptual` + `tsx scripts/gates/<gate>.ts` (+ `npm run test:fuzz`) | <5 min |
 | **T2** targeted re-check (optional, diagnostic) | debugging a suspected cross-gate regression | change-scoped gates | `npm run gates:changed` (add `--run` to execute them) | scoped |
-| **T3** plan-end / release | **ONCE per plan, at its final phase** (the ⛳ boxes in HEARTBEAT) — and releases | **full board** (unit + fuzz + tsc + build + every live gate) | `npm run board` | <15 min |
+| **T3** plan-end / release | **ONCE per plan, at its final phase** — and releases | **the smoke board** (unit + fuzz + tsc + build + the 5 smoke gates) | `npm run board` | **<5 min** |
 
 **Board cadence (Jonah 2026-07-13 — binding):** the full board runs **once per plan**, at the plan's final ⛳ phase — never per commit, never per phase. Per-phase commits gate on T1: fast suite + tsc + build + that phase's OWN live gate run standalone. Unchanged gates inherit the previous board's green; cross-gate regressions are caught at the plan-end board. Multiple ~6-min board runs per phase was measured to turn hours of dev into days — that is the failure mode this rule exists to prevent.
 
@@ -136,9 +137,9 @@ Testing used to mean "run the whole board," which cost an afternoon. It no longe
 - **Screenshot judgment stays mandatory where visual** (docs/04's screenshot test is untouched — the tiers make room for it by removing everything else from the critical path). Never mark visual work done without reading the png. For GENERATOR visuals, do the iterating in the playground (instant re-render beats a build+reload+screenshot cycle per data point) and reserve the in-app screenshot for the final theme-paint judgment — the playground's shim paint can't stand in for themes.
 - **Commit-message tag records the tier that ran:** `[gate: T1 …]` for a phase commit, `[gate: full board N/M]` for the plan-end T3. A commit that only ran T0 says so.
 
-## The board runner (`npm run board`, plan 021 §2.3)
+## The board runner (`npm run board`)
 
-One command runs the whole board in **one Obsidian process**, restarting it only when a health probe says the renderer degraded — no more hand-running a dozen gate scripts one-per-fresh-process.
+The board is the **5-gate smoke set** (smokeBoot · phase1 · smokeProcgen · version29 · phase5) behind the unit/fuzz/tsc/build prologue — everything else that used to be a live gate now lives headless (generator suites + invariants + bands + perceptual goldens; each retired gate carries a prove-by-breaking record in `review/030B-break-proofs.md`). One command, one Obsidian process, restarting only when a health probe says the renderer degraded.
 
 ```bash
 npm run board                          # full board: prologue (unit+fuzz+tsc+build) + every live gate

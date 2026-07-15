@@ -122,9 +122,19 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
     const host = cityHost();
     const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
     const seedBefore = (await host.fabric()).features[0].properties.procgen!.seed;
+    const runsBefore = host.controller.generatorRunCount;
+    const idsBefore = new Set(host.controller.regionFeatureIds(featureId));
 
     const ok = await host.controller.moveVertex(featureId, 0, [8, -28]); // nudge a corner outward
     expect(ok).toBe(true);
+
+    // The edit must actually REGENERATE (a stale cache can silently pass the
+    // containment check when the ring only grew): the generator ran, and the
+    // painted feature set moved.
+    expect(host.controller.generatorRunCount).toBeGreaterThan(runsBefore);
+    const idsAfter = new Set(host.controller.regionFeatureIds(featureId));
+    const overlap = [...idsAfter].filter((id) => idsBefore.has(id)).length;
+    expect(overlap).toBeLessThan(idsAfter.size);
 
     const report = host.controller.regionContainmentReport(featureId);
     expect(report.count).toBeGreaterThan(0);
@@ -745,6 +755,33 @@ describe("MapController — forest polygon-kind procgen", () => {
 // byte-identical. Fabric is in display units (1 unit = 50 m); worldBounds are
 // [-48,-36,48,36] so every fixture must fit inside.
 describe("MapController — cross-layer cascade", () => {
+  it("a river param edit re-routes the downstream city (GENERATED channel consumed as data)", async () => {
+    const host = cityHost();
+    // A windy river crossing the future district: the city consumes the
+    // river's generated channel as upstream data, not just the raw sketch
+    // line — so a params-only river edit (sketch geometry unchanged) must
+    // change the city's bytes. Severed upstream wiring leaves them identical.
+    const river = await host.controller.createSpineForTest(
+      [
+        [6, -30],
+        [18, -18],
+        [30, -6],
+      ],
+      "river",
+      "river",
+      { windiness: 0.5 },
+      "R"
+    );
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const netKey = regionNetworkKey(city.featureId);
+    const bytes1 = JSON.stringify((await host.cache()).get(netKey)!.features);
+
+    await host.controller.setRegionParams(river.featureId, { windiness: 0.95 });
+
+    const bytes2 = JSON.stringify((await host.cache()).get(netKey)!.features);
+    expect(bytes2).not.toBe(bytes1);
+  });
+
   // A mountain, lower-left; a river spine crossing its interior; a city far
   // top-right (no shared field, no bbox overlap → a clean non-dependent).
   const MTN_RING: [number, number][] = [
