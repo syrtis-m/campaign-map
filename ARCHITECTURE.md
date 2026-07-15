@@ -18,6 +18,13 @@ deterministic procedural-generation engine — the GM sketches shapes (districts
 forests…) and the engine fills them with cities, meanders, canopy, terrain — plus
 keepsake outputs (poster PNG, atlas PDF, campaign replay).
 
+History in one line: this began as a standalone PWA design; it pivoted to an Obsidian
+plugin (July 2026) because the vault dissolves the hard problems — browser-storage
+eviction, export-as-survival, cross-device sync — and buys the deep win that **a place
+= a note** (wikilinks, backlinks, session logs and the map share one knowledge graph).
+Non-goals (v1): multiplayer/player view, VTT combat grid, phones, 3D beyond the
+raster-DEM terrain.
+
 Stack: **TypeScript + esbuild** (two bundles: `main.js` plugin + `generation-worker.js`
 Web Worker), **MapLibre GL JS** rendered inside a custom Obsidian `ItemView`, **zod**
 for every IO boundary, **Vitest** for headless tests, the official **Obsidian CLI** for
@@ -153,7 +160,7 @@ overviews sit around z4.5, so a z14 gate is simply unreachable.
 ## 5. Determinism (the sacred contract)
 
 Same durable inputs ⇒ same map, forever, on the same machine. The whole cache design
-depends on it. The discipline is codified as **D1–D6** (from `procgen_v3_design.md`,
+depends on it. The discipline is codified as **D1–D6** (`docs/procgen-design.md`,
 restated in module headers throughout `src/gen/`):
 
 - **D1 — decisions live on integer lattices.** Street-growth topology on a 1 cm integer
@@ -326,9 +333,9 @@ for the one-way migration (disc → 32-gon district polygon, same seed).
 - **`controller/MapController.ts`** — the host-agnostic **lifecycle brain** (plan 021
   extraction): owns generation/regen/clear/undo/replay/migration/region-procgen/
   sketch-commit orchestration and the state they touch (render store, manifest, fabric
-  collection, gate counters). Talks to the world only through seven narrow interfaces —
-  `VaultGateway`, `GenGateway`, `CanonGateway`, `NoteOps`, `NoticeSink`, `RenderSink`,
-  `Viewport` — so it has zero DOM/MapLibre/Obsidian imports and runs headless against
+  collection, gate counters). Talks to the world only through eight narrow interfaces —
+  `VaultGateway`, `GenGateway`, `CanonGateway`, `NoteOps`, `NoticeSink`, `ConfirmSink`,
+  `RenderSink`, `Viewport` — so it has zero DOM/MapLibre/Obsidian imports and runs headless against
   `controller/FakeHost.ts` (in-memory vault) in unit tests. **MapView is wiring + paint;
   the controller is behavior.** `controller/units.ts` owns unit↔meter conversion.
 - **`view/MapView.ts`** — the `ItemView`: MapLibre map construction, style
@@ -366,6 +373,27 @@ Connections (point-crawl lines) are canon-native: a `connections:` wikilink list
 location note's frontmatter resolves at reconcile time into line features — they
 survive renames and vanish with a deleted endpoint.
 
+**The interaction grammar is Google Maps'** (locked decision) — zero learning curve:
+
+- **Click a pin → place card.** Anchored popup: name, type icon, note preview rendered
+  by Obsidian's own markdown renderer (embeds/wikilinks/theme CSS just work). Actions:
+  Open note (adjacent pane) · Edit · Center. Click elsewhere dismisses.
+- **Click empty map → dropped pin** + one primary action **"+ Add location here"** →
+  quick-add modal (name + type) → note created, pin becomes real. This IS the ≤5 s
+  yes-and flow. Esc/click-away dismisses.
+- **Right-click → native Obsidian `Menu`**: Add location here · Generate surroundings ·
+  Measure · Copy coordinates; on a sketch feature: Edit shape / region settings.
+- **Hover pin → name tooltip**; hover targets ≥24 px regardless of icon size.
+- **Search modal → flyTo** with eased camera; the selected feature pulses on arrival.
+
+Host risks and their standing answers: plugin-API churn (pin `minAppVersion`; keep
+generators + MapLibre behind the gateway seam), frontmatter mass-edits by other
+plugins (zod-validate every reconcile — invalid notes get a warning badge, never a
+silent drop), multiple map tabs = multiple WebGL contexts (one view per campaign;
+second open focuses the first), vault-sync conflicts on cache (immune by design:
+deterministic + regenerable + sync-excluded), PMTiles sync size limits (basemaps
+documented local/re-downloadable), mobile (Vault/DataAdapter APIs only, never `fs`).
+
 ---
 
 ## 8. Rendering
@@ -374,8 +402,13 @@ survive renames and vanish with a deleted endpoint.
   paint; generators emit typed features only, never styles.** Five themes:
   `obsidian-native` (default — style generated at runtime from Obsidian CSS variables,
   rebuilt on `css-change`; labels always render in Inter because live glyph-PBF
-  generation for arbitrary fonts isn't a thing) plus handcrafted `parchment`,
-  `ink-soot`, `modern-clean`, `neon-sprawl`.
+  generation for arbitrary fonts isn't a thing) plus four handcrafted genre themes:
+  `parchment` (cream, serif, atlas edge treatments — fantasy), `ink-soot` (dark
+  desaturated, harsh contrast, hatch fills, gaslamp POI glow — Dishonored-esque),
+  `modern-clean` (Google-Maps-like, pairs with Protomaps basemaps), `neon-sprawl`
+  (Cyberpunk-inspired original palette: near-black base, neon light-trail arterials
+  via wide low-opacity casings, acid-yellow selection accent, holographic district
+  labels). Inspired-by aesthetics only — never copied game assets/trade dress.
 - **`map/themes/tokens.ts`** — `ThemeTokens`: ≤8 semantic colors per theme plus
   per-fabric-kind colors. Pinned values (agents may tune ±10 % L/C in OKLCH, logged in
   DECISIONS, never hue). Sketched and generated fabric of the same kind share tokens —
@@ -519,40 +552,79 @@ mitigated by the board's health probes; root-cause work tracked in plan 021).
 
 ## 12. Invariants checklist (the things that must not regress)
 
+This is the **single home** for system invariants. Each entry names what enforces it —
+a test, an assert, or (marked *policy*) a review-time rule with no mechanical guard.
+
 1. Vault = source of truth; map = view. The plugin never writes below a note's
-   frontmatter fence.
-2. Three-layer z-order: procgen < sketch < locations (`layerOrder.ts` throws).
-3. Fabric never becomes a note; no canonize/promote path exists.
-4. Generation is explicit-only. `generatorRunCount` stays flat under any pan/zoom.
+   frontmatter fence. — *enforced:* `vault/locationOps.test.ts` (frontmatter-only
+   writes); reconcile round-trip gates.
+2. Three-layer z-order: procgen < sketch < locations. — *enforced:*
+   `map/themes/layerOrder.ts` throws at style build; `layerOrder.test.ts`.
+3. Fabric never becomes a note; no canonize/promote path exists. — *enforced:* no such
+   code path (*policy*; grep for "canonize" stays empty).
+4. Generation is explicit-only; `generatorRunCount` stays flat under any pan/zoom. —
+   *enforced:* pan/zoom assertions in `MapController.test.ts` and the live gates
+   (procgen41 (g) et al.).
 5. The request is durable (procgen block / manifest); the output is regenerable.
-   Deleting `.mapcache/` is harmless — byte-identical regeneration, per machine.
-6. Seeds are persisted data; never derived from floats at run time. Vertex edits keep
-   the seed; only re-roll replaces it.
-7. All generated output stays inside the sketched ring / spine corridor.
-8. Generators are pure `(seed, region|bbox, params, constraints) => Feature[]`; no
+   Deleting `.mapcache/` is harmless for every region at its algorithm's
+   `currentVersion` — byte-identical regeneration, per machine. Carve-out: regions
+   pinned to OLDER versions need explicit adoption before they can re-render; the map
+   shows a needs-adoption badge and never silently substitutes different bytes. —
+   *enforced:* cache-delete regen tests in `MapController.test.ts`; the adoption
+   family there + `scripts/gates/version29.ts`.
+6. **Determinism is versioned**: same `(seed, params, algorithm version)` ⇒ same
+   bytes, forever, per machine (D1–D6 binding within a version). A change that alters
+   output bytes for the same inputs bumps the algorithm's `currentVersion` and
+   re-goldens (`npm run goldens:accept -- <algorithm>`); prefer an additive param when
+   absence naturally reproduces old behavior (preference, not law). Regions pin their
+   version at creation; only explicit GM adoption raises the pin; no per-version code
+   forks, ever. — *enforced:* `gen/procgen/versioning.test.ts`,
+   `gen/cache/fingerprint.test.ts` (version flips the fingerprint), per-algorithm
+   byte-goldens (one each), `expectDeterministic` in every generator suite.
+7. Seeds are persisted data; never derived from floats at run time. Vertex edits keep
+   the seed; only re-roll replaces it. — *enforced:* seed-stability tests in
+   `MapController.test.ts` (procgen41 family).
+8. All generated output stays inside the sketched ring / spine corridor. — *enforced:*
+   `expectGeneratorInvariants` (gen/testkit/invariants.ts) in every generator suite;
+   containment reports in live gates.
+9. Generators are pure `(seed, region|bbox, params, constraints) => Feature[]`; no
    DOM/map/Obsidian imports in `src/gen/` (worker entry excepted); they emit typed
-   features, never styles.
-9. Params are the whole truth; presets/`presetId` are display sugar. New params must be
-   additive (absent ⇒ byte-identical output).
-10. Every emitted generator-id must be in the algorithm's `tileGeneratorIds`.
-11. Zoom LOD affects location-name visibility only; no absolute zoom thresholds
-    anywhere.
-12. Zod at every IO boundary; bad data → visible warning, never a silent drop, never a
-    crash (degenerate geometry is skipped and counted — "anti-Watabou").
-13. Vault/DataAdapter APIs only; never Node `fs`.
-14. All map-originated writes append to the mutation log and are undoable.
-15. Never bypass `appendCachedTile`; cache appends must serialize.
-16. `world/heightmap.ts` noise is byte-frozen (existing campaigns' world tier).
-17. Locked decisions live in CLAUDE.md and DECISIONS.md — don't relitigate without
-    Jonah.
+   features, never styles. — *enforced:* headless Vitest runs (an Obsidian import
+   would fail to resolve); *policy* on the no-styles half until the 030-D contract
+   test lands.
+10. Params are the whole truth; presets/`presetId` are display sugar a generator never
+    reads. — *enforced:* `gen/procgen/registry.test.ts` preset/params contract.
+11. Every emitted generator-id must be in the algorithm's `tileGeneratorIds` (an
+    uncached gid is silently dropped at the tile clip). — *enforced:* per-generator
+    emitted-gid tests; becomes derived-from-contract + unit-asserted in 030-D.
+12. Zoom LOD affects location-name visibility only; no absolute zoom thresholds
+    anywhere. — *enforced:* no-minzoom assertions (procgen41 (i)); fabric layers carry
+    no `minzoom` (*policy* beyond that).
+13. Zod at every IO boundary; bad data → visible warning, never a silent drop, never a
+    crash (degenerate geometry skipped and counted). — *enforced:* model schema tests;
+    import-parser tests; reconcile gates.
+14. Vault/DataAdapter APIs only; never Node `fs`. — *enforced:* mobile-emulation smoke
+    (docs/05); *policy* in review.
+15. All map-originated writes append to the mutation log and are undoable. —
+    *enforced:* undo round-trip tests in `MapController.test.ts` + mutationLog tests.
+16. Never bypass `appendCachedTile`; cache appends serialize through the per-file
+    promise chain. — *enforced:* `model/tileCache.test.ts` racing-writers test;
+    *policy* at call sites.
+17. `world/heightmap.ts` noise is byte-frozen (world tier has no version pin yet; see
+    plan 029 §7). — *enforced:* world snapshot tests.
+18. Locked decisions live in CLAUDE.md and DECISIONS.md — don't relitigate without
+    Jonah. — *policy.*
+19. New presets of an existing algorithm are params + existing operators — data tables
+    keyed by profile/variety are data; preset-conditional branches inside generator
+    stages are not allowed. Operators move to a shared home only on their second
+    consumer. — *policy* (the 030-C convention), checked at review.
 
 ## 13. Where to read more
 
-- `docs/01`–`08` — research, the (older, plan-020-era) architecture doc, roadmap,
-  quality bar, dev workflow, autonomous protocol, LLM note contract, loop pattern.
-- `plans/README.md` + `plans/NNN-*.md` — the plan ledger; 020 is the current
-  architecture's defining plan; 021–028 the current arc.
-- `procgen_v3_design.md` / `procgen_explainer.md` — the D1–D6 determinism doctrine and
-  the city-generation design in depth.
-- `PROGRESS.md`, `DECISIONS.md`, `HEARTBEAT.md` — live state; read before resuming
-  autonomous work.
+- `docs/01` (research) · `docs/03` (roadmap, historical) · `docs/04` (quality bar) ·
+  `docs/05` (dev workflow + test tiers) · `docs/06`–`08` (autonomous protocol, LLM
+  note contract, loop pattern) · `docs/procgen-design.md` (D1–D6 determinism doctrine
+  + the city-pipeline design rationale, merged from the old procgen design docs).
+- `plans/README.md` + `plans/NNN-*.md` — the plan ledger; 020 defined the current
+  architecture; 029/030 the versioned-determinism + rearchitecture arc.
+- `PROGRESS.md`, `DECISIONS.md` — live state; read before resuming autonomous work.

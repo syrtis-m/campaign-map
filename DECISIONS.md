@@ -1,5 +1,10 @@
 # Decisions Log
 
+*Index (by month — entries are append-only, newest at the bottom):*
+
+- 2026-07
+
+
 *Append-only. Format: date, decision, alternatives considered, reversibility.*
 
 ## 2026-07-08 — Local Node.js install without a package manager

@@ -395,9 +395,10 @@ Full detail: `docs/05-dev-workflow.md`, `docs/06-autonomous-build.md`, `PROGRESS
 
 | File | What |
 |---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | The system map: data model, procgen engine, host, rendering, invariants |
 | [docs/01-sota-research.md](docs/01-sota-research.md) | Prior art: procedural generation, web mapping, offline stack, Obsidian plugin landscape |
-| [docs/02-architecture.md](docs/02-architecture.md) | Vault data model, theming, procedural-LOD + canon design |
-| [docs/03-roadmap.md](docs/03-roadmap.md) | The five build phases + exit tests |
+| [docs/procgen-design.md](docs/procgen-design.md) | Determinism doctrine (D1–D6), seam safety, city-pipeline rationale |
+| [docs/03-roadmap.md](docs/03-roadmap.md) | The original five build phases + exit tests (historical — all shipped) |
 | [docs/04-quality-bar.md](docs/04-quality-bar.md) | Failure modes + acceptance criteria (the screenshot test) |
 | [docs/05-dev-workflow.md](docs/05-dev-workflow.md) | Build & test loop via the official Obsidian CLI |
 | [docs/06-autonomous-build.md](docs/06-autonomous-build.md) | Unattended-build protocol: preflight, gates, pinned defaults |

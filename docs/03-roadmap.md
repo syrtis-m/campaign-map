@@ -1,5 +1,10 @@
 # Build Roadmap — Obsidian Plugin
 
+> **HISTORICAL — the phases below shipped (Phase 0–5 complete; plans/README.md is
+> the ledger, PROGRESS.md the current state).** Kept as the record of the original
+> phase design and exit tests; do not update — new work is planned in
+> `plans/NNN-*.md`.
+
 *Rev 2: re-planned around the Obsidian pivot. Every phase still ends table-usable, with an exit test.*
 
 ## Phase 0 — Plugin skeleton + the two spikes
