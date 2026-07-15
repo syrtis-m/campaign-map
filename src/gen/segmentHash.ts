@@ -79,6 +79,11 @@ export class SegmentHash {
   readonly bounds: BBox;
   /** Segments distance-tested during the most recent `nearest` call. */
   segmentTests = 0;
+  /** Process-wide accumulator across ALL instances — lets a perf budget test
+   * observe hashes created inside a composed field (e.g. `terrainAt`'s internal
+   * relief/landform/carve hashes) without instance access. Reset it before the
+   * measured section. */
+  static totalSegmentTests = 0;
 
   constructor(line: Pt[], opts: SegmentHashOptions = {}) {
     this.cellSize = Math.max(1, opts.cellSize ?? 128);
@@ -135,6 +140,7 @@ export class SegmentHash {
       if (tested.has(seg)) return;
       tested.add(seg);
       this.segmentTests++;
+      SegmentHash.totalSegmentTests++;
       const r = segNearest(seg, x, y);
       if (r.d2 < bestD2) {
         bestD2 = r.d2;

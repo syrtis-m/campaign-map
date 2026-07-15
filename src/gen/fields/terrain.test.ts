@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { terrainAt, macroTerrainField, hasTerrainRelief } from "./terrain";
+import { SegmentHash } from "../segmentHash";
 import { elevationFieldFromFabric } from "./mountainField";
 import type { FabricFeature } from "../../model/fabric";
 
@@ -243,6 +244,24 @@ describe("terrainAt — compact support (disjoint stamps are exactly inert)", ()
     const withStamp = terrainAt([landform("l", ring, { mode: "plateau", target: 500, band: 100 })]);
     const without = terrainAt([]);
     expect(withStamp(9000, 9000)).toEqual(without(9000, 9000));
+  });
+
+  it("far-field samples never pay a nearest-spiral (relief + landform fast reject — the DEM-fill stall)", () => {
+    // A whole-map relief spine + landform ring, then a lattice of samples far
+    // outside both bboxes: with the byte-exact reject, ZERO segments are tested.
+    // Without it, every sample spirals O(dist²) cells — the >120s/DEM-tile stall
+    // the carve already guards against (terrainCarve.test.ts).
+    SegmentHash.totalSegmentTests = 0;
+    const field = terrainAt([
+      relief("spine", [[-4000, 4000], [0, 4400], [4000, 4200]], { polarity: "ridge", height: 400, halfWidth: 900 }),
+      landform("plateau", [[2000, -1000], [5000, -1000], [5000, 2000], [2000, 2000], [2000, -1000]], { mode: "plateau", target: 400, band: 300 }),
+    ]);
+    for (let j = 0; j < 32; j++) {
+      for (let i = 0; i < 32; i++) {
+        field(-30000 + i * 120, -30000 + j * 120); // all ≥ 20 km from every stamp
+      }
+    }
+    expect(SegmentHash.totalSegmentTests).toBe(0);
   });
 });
 

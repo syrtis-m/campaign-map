@@ -127,7 +127,16 @@ function reliefField(spine: Pt[], params: ReliefParams): ElevationField {
   const H = params.height;
   const hw = Math.max(1e-6, params.halfWidth);
   const hash = new SegmentHash(spine, { cellSize: Math.max(32, hw) });
+  const bnd = hash.bounds;
   return (x, y): HeightSample => {
+    // FAR-FIELD FAST REJECT (compact support, BYTE-EXACT — the carve's idiom):
+    // the bbox distance is a lower bound on the true nearest distance, and the
+    // stamp is EXACTLY 0 at any dist ≥ halfWidth, so a sample past the bbox by
+    // ≥ hw takes the same zero branch without paying the O(dist²) spiral. This
+    // is what keeps a whole-map DEM fill from stalling on continental spines.
+    const dLBx = x < bnd.minX ? bnd.minX - x : x > bnd.maxX ? x - bnd.maxX : 0;
+    const dLBy = y < bnd.minY ? bnd.minY - y : y > bnd.maxY ? y - bnd.maxY : 0;
+    if (dLBx * dLBx + dLBy * dLBy >= hw * hw) return { v: 0, dx: 0, dy: 0 };
     const near = hash.nearest(x, y);
     if (near.dist >= hw) return { v: 0, dx: 0, dy: 0 };
     const t = near.dist / hw; // 0 at spine, 1 at rim
@@ -182,7 +191,12 @@ function ringMaskField(ring: Pt[], band: number): (x: number, y: number) => Mask
   const closed = closeRing(ring);
   const hash = new SegmentHash(closed, { cellSize: Math.max(32, band) });
   const b = Math.max(1e-6, band);
+  const bnd = hash.bounds;
   return (x, y): MaskSample => {
+    // FAR-FIELD FAST REJECT (BYTE-EXACT): outside the ring's bbox ⇒ outside the
+    // ring ⇒ signed distance < 0 ⇒ the full path returns the zero mask — take
+    // that branch without the O(dist²) nearest-spiral (the DEM-fill stall).
+    if (x < bnd.minX || x > bnd.maxX || y < bnd.minY || y > bnd.maxY) return { m: 0, dmx: 0, dmy: 0 };
     const near = hash.nearest(x, y);
     const inside = pointInRingClosed(closed, x, y);
     const sd = inside ? near.dist : -near.dist;
