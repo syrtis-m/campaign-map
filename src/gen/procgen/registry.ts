@@ -208,6 +208,14 @@ const cityParamsSchema = z.object({
    * moves the boundary so this point falls outside the ring, generation falls
    * back to the automatic center deterministically. */
   center: z.tuple([z.number().finite(), z.number().finite()]).optional(),
+  /** City-site grading (plan 036-D, ratified DEFAULT OFF): level the district
+   * interior toward the elevation at `center`, fading to natural ground at the
+   * rim. Read ONLY by `terrainAt` (the contour/DEM surface) — the `city`
+   * generator's street/block output ignores it, so an ABSENT `grade` reproduces
+   * pre-036 bytes exactly and no version bump is needed (param-over-bump). */
+  grade: z.boolean().optional(),
+  /** Grading falloff band (meters) inside the ring; absent ⇒ default. */
+  gradeBand: z.number().positive().max(20000).optional(),
 });
 
 /** City presets: each profile becomes a template of the `city` algorithm.

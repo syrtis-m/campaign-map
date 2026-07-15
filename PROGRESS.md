@@ -2,7 +2,73 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 + 034 + 035 COMPLETE (2026-07-15). Plans 020–028 complete. Next: 036 (terrain conforms to rivers — the carve).
+## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 + 034 + 035 COMPLETE (2026-07-15). Plan 036 (global terrain) 36-A/B/D + item 5 COMPLETE, 36-C engine landed (live paint-wiring deferred to a Jonah-eyeball session) — 2026-07-15. Plans 020–028 complete. Next: finish 036-C live wiring; 037.
+
+## Plan 036 — global terrain: terrainAt, stamps, river carve, lazy contour leaves (2026-07-15, 36-A/B/D + item 5 COMPLETE; 36-C engine landed — headless-only per Jonah 2026-07-14)
+`terrainAt(x,y) = grade(carve(replace(add(B))))` — the campaign-wide elevation
+surface as one point-evaluable field over the durable sketch layer (base fBm +
+mountain-union add + relief/landform stamps + river carve + city grading). Base
+DEFAULT campAmp 0 (flat) ⇒ every existing campaign byte-stable until opted in.
+HEADLINE: the mountain migration is BIT-EXACT — on a mountain-only campaign
+`terrainAt ≡ elevationFieldFromFabric` to the float (signed zeros included), so
+no existing mountain re-rolls. Verified Vitest headless only (no live gates);
+1050 fast + 38 fuzz green (+43 tests over the 035 baseline); `npm run build`
+clean per phase.
+- **[x] 036-A — composition + stamps v1** (`0a5afa4`): `fields/terrain.ts`. Base
+  short-circuits to an exact constant at campAmp 0; the mountain add-term IS
+  `elevationFieldFromFabric` (a CALL, not a re-derivation) + a verbatim fast path
+  returns it directly (never `0 + m.v`) ⇒ bit-exact incl. −0 gradients. New
+  sketch kinds (operators+data doctrine — modes are params): `relief` (line, ADD:
+  signed ridge/valley) + `landform` (polygon, REPLACE: plateau/basin/sea, Q4
+  priority last-wins), stage-1 elevation producers emitting NO fabric
+  (`tileGeneratorIds []`; visible form is the composed-field contours). Threaded:
+  FABRIC_KINDS + isPolygonKind, registry (consumesSketch [], margin 0), fabric
+  paint (inert wash reusing the mountain hue — no new theme token), 033 harness
+  (real blocks + fixtures — proven byte-inert vs every algorithm), style/registry
+  /fabric tests. `segmentHash.ts`: the polyline-binding primitive (nearest-on-
+  polyline via a uniform-grid segment hash, byte-identical to distanceToPolyline).
+  Tests: bit-exactness golden, shuffled-stamp determinism, analytic-vs-central
+  gradients (relief/landform/base), priority/id-order, compact-support inertness.
+- **[x] 036-B — river carve** (`77b41ca`): `smin(pre, bed)` per river folded after
+  replace; the bed is a MEMOIZED per-region channel field (plan-023 sanctioned
+  region-scoped exception — the densified spine sampled once, incised by depth,
+  following local terrain), queried through the segment hash (extended for
+  segIndex+t). Compact support ⇒ a river far from its channel is byte-inert;
+  no-river campaigns byte-identical (fast path requires zero carves).
+  `fieldLattice.ts`: the lattice discipline — chunked Float32Array + LRU
+  (computedTiles/evictedTiles counters), never a global Map. Tests: gorge
+  incision + continuity + compact banks, no-river byte identity, segment-tests-
+  per-sample budget (<120 on a 2000-seg spine), lattice entry-count/LRU/laziness.
+- **[~] 036-C — contour re-home ENGINE** (`7f69968`): `TerrainContourLeaves` —
+  viewport-keyed, lazily-traced, LRU-bounded, world-aligned contour leaves of the
+  composed field, keyed on the DURABLE TERRAIN INPUTS INTERSECTING each tile.
+  2×2 SEAM GATE PASSES (both axes, mm-exact — marchingSquares is world-aligned).
+  Tests: seam agreement + determinism, laziness (computedLeaves on first touch),
+  LRU eviction, cache-key input-scoping (distant edit can't touch a tile).
+  **REMAINING (needs Jonah's eyes):** retiring the mountain generator's baked
+  `mountain-contour` (a mountain currentVersion bump + re-golden, byte-stability
+  of massif/hachure/peak) and wiring these leaves into the live worker/paint path
+  — it swaps the VISIBLE contour source, judged in-app per the plan (no scripted
+  live check), so it is deferred to a session that can eyeball the paint rather
+  than removing the baked contours blind (which would leave a contour-less map).
+- **[x] item 5 — consumers read terrainAt** (`e32b8a8`): river slope + farmland
+  paddy read the durable macro terrain via `macroTerrainField` (mountains + base,
+  no relief/landform/carve/grade) in place of `elevationFieldFromFabric` — a
+  BIT-EXACT drop-in (mountain-only byte-identical; null on a flat campaign). Stamp
+  coupling excluded on purpose (logged): a relief's support is its param-driven
+  halfWidth, which the fixed-margin 033 model can't express — consumesSketch stays
+  ["mountain"], margin 0, no harness churn. Awaits a variable-support invalidation
+  model (Jonah).
+- **[x] 036-D — grading + base params** (this commit): city-site GRADE term
+  (`lerp(t3, t3(center), mask)`, center elevation memoized) DEFAULT OFF (Q3) —
+  `grade`/`gradeBand` optional city params READ ONLY by terrainAt (the city
+  generator ignores them ⇒ absent reproduces pre-036 bytes, param-over-bump, no
+  version bump). Grading-off byte-identity + macro-consumers never see grade
+  (include.grade off). Base params (campAmp/seaDatum) are an EXPLICIT terrainAt
+  input — the Apply model: the surface changes only when supplied, never
+  implicitly. **REMAINING (host, needs Jonah):** the map-settings Apply UI + cost
+  notice + headless test-API twin — host plumbing whose paint/flow is judged
+  in-app, deferred with 036-C's live wiring.
 
 ## Plan 035 — stage reorder, river v2, park split, farmland peri-urban (2026-07-15, COMPLETE — headless-only per Jonah 2026-07-14)
 The stage numbers become the product's semantic order: −1 sources · 0 HYDROLOGY

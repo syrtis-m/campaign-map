@@ -60,10 +60,10 @@ export interface TerrainOptions {
   /** Select which operator classes compose (all default ON — the full visible
    * surface). A CONSUMER that wants only the durable MACRO terrain (mountains +
    * base) reads it through `macroTerrainField` / passes `relief`/`landform`
-   * false and `carve` false — the river/farmland slope reads must not couple to
-   * a river's OWN gorge (circular) nor to variable-support stamps (whose
-   * invalidation model is unsettled). */
-  include?: { relief?: boolean; landform?: boolean; carve?: boolean };
+   * false and `carve`/`grade` false — the river/farmland slope reads must not
+   * couple to a river's OWN gorge (circular) nor to variable-support stamps
+   * (whose invalidation model is unsettled). */
+  include?: { relief?: boolean; landform?: boolean; carve?: boolean; grade?: boolean };
 }
 
 /** Coarsest continental base-fBm octave cell (meters) — FIXED absolute-world
@@ -337,6 +337,65 @@ function closeRing(ring: Pt[]): Pt[] {
   return ring.length >= 1 ? [...ring, ring[0]] : ring;
 }
 
+// ─── City-site grading (GRADE) — flatten toward the center's elevation ───────
+// Ratified DEFAULT OFF (Q3): a city sits on the terrain as-is unless the GM opts
+// in. When on, the district interior is levelled toward the elevation at its
+// persisted center (a building platform), fading back to the natural ground at
+// the rim.
+
+const GRADE_DEFAULT_BAND = 150;
+
+interface GradeStamp {
+  id: string;
+  ring: Pt[];
+  cx: number;
+  cy: number;
+  band: number;
+}
+
+function ringCentroid(ring: Pt[]): Pt {
+  let sx = 0;
+  let sy = 0;
+  let n = 0;
+  // Skip the closing duplicate if present.
+  const last = ring.length - (ring.length >= 2 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1] ? 1 : 0);
+  for (let i = 0; i < last; i++) {
+    sx += ring[i][0];
+    sy += ring[i][1];
+    n++;
+  }
+  return n > 0 ? [sx / n, sy / n] : [0, 0];
+}
+
+/** Grade stamps: district regions whose `city` procgen block opts INTO grading
+ * (`params.grade === true`). Center is the persisted `params.center` (the same
+ * anchor the city plaza uses) else the ring centroid. Default-off ⇒ empty ⇒ the
+ * grade operator is a strict no-op (byte-identity). */
+function gradeStampsFromFabric(features: FabricFeature[]): GradeStamp[] {
+  const out: GradeStamp[] = [];
+  for (const f of features) {
+    const block = f.properties.procgen;
+    if (f.properties.kind !== "district" || block?.algorithm !== "city") continue;
+    if (f.geometry.type !== "Polygon") continue;
+    const p = block.params as Record<string, unknown>;
+    if (p.grade !== true) continue;
+    const ring = f.geometry.coordinates[0] as Pt[] | undefined;
+    if (!ring || ring.length < 3) continue;
+    const center = Array.isArray(p.center) && p.center.length === 2 && typeof p.center[0] === "number" && typeof p.center[1] === "number"
+      ? ([p.center[0], p.center[1]] as Pt)
+      : ringCentroid(ring);
+    out.push({
+      id: String(f.id),
+      ring,
+      cx: center[0],
+      cy: center[1],
+      band: Math.max(0, num(p.gradeBand, GRADE_DEFAULT_BAND)),
+    });
+  }
+  out.sort((a, b) => a.id.localeCompare(b.id));
+  return out;
+}
+
 // ─── Stamp collection (defensive parse of the durable sketch layer) ──────────
 
 interface ReliefStamp {
@@ -449,6 +508,7 @@ export function terrainAt(features: FabricFeature[] | undefined, opts: TerrainOp
     relief: opts.include?.relief ?? true,
     landform: opts.include?.landform ?? true,
     carve: opts.include?.carve ?? true,
+    grade: opts.include?.grade ?? true,
   };
 
   // ADD: base + mountain union (verbatim) + Σ relief (id-sorted).
@@ -464,17 +524,19 @@ export function terrainAt(features: FabricFeature[] | undefined, opts: TerrainOp
     : [];
 
   const carveStamps = inc.carve ? riverCarvesFromFabric(feats) : [];
+  const gradeStamps = inc.grade ? gradeStampsFromFabric(feats) : [];
 
   // VERBATIM-MIGRATION FAST PATH: a flat datum-0 base with no add-relief, no
-  // replace stamp, and no river carve IS `elevationFieldFromFabric` — return it
-  // (or the flat field) DIRECTLY, never `0 + m.v`. This preserves the mountain
-  // field's signed zeros bit-for-bit (`(+0) + (-0) === +0` would corrupt a −0
-  // gradient outside a ring), the byte-stability the migration gate asserts to
-  // the float, AND the "no rivers ⇒ byte-identical" carve gate.
+  // replace stamp, no river carve, and no city grading IS
+  // `elevationFieldFromFabric` — return it (or the flat field) DIRECTLY, never
+  // `0 + m.v`. This preserves the mountain field's signed zeros bit-for-bit
+  // (`(+0) + (-0) === +0` would corrupt a −0 gradient outside a ring), the
+  // byte-stability the migration + carve + grading-off gates all assert.
   if (
     reliefs.length === 0 &&
     landforms.length === 0 &&
     carveStamps.length === 0 &&
+    gradeStamps.length === 0 &&
     base.campAmp === 0 &&
     base.seaDatum === 0
   ) {
@@ -512,15 +574,39 @@ export function terrainAt(features: FabricFeature[] | undefined, opts: TerrainOp
     return { v, dx, dy };
   };
 
-  if (carveStamps.length === 0) return pre;
-
   // CARVE: smin(pre, bed) per river, id-sorted; each bed is a memoized per-region
   // channel field (built here, once).
   const carves = carveStamps.map((c) => buildRiverCarve(c, pre));
+  const t3: ElevationField =
+    carves.length === 0
+      ? pre
+      : (x, y): HeightSample => {
+          let s = pre(x, y);
+          for (const carve of carves) s = carve(s, x, y);
+          return s;
+        };
+
+  if (gradeStamps.length === 0) return t3;
+
+  // GRADE: lerp(t3, t3(center), mask) per graded district — the center's
+  // elevation is sampled ONCE (memoized, region-scoped exception, like the
+  // carve). Folded in id order.
+  const grades = gradeStamps.map((g) => ({
+    mask: ringMaskField(g.ring, g.band),
+    centerElev: t3(g.cx, g.cy).v,
+  }));
   return (x, y): HeightSample => {
-    let s = pre(x, y);
-    for (const carve of carves) s = carve(s, x, y);
-    return s;
+    const s = t3(x, y);
+    let { v, dx, dy } = s;
+    for (const g of grades) {
+      const mk = g.mask(x, y);
+      if (mk.m === 0) continue; // exact identity outside the band
+      const diff = g.centerElev - v;
+      dx = dx * (1 - mk.m) + diff * mk.dmx;
+      dy = dy * (1 - mk.m) + diff * mk.dmy;
+      v = v + mk.m * diff;
+    }
+    return { v, dx, dy };
   };
 }
 
@@ -544,5 +630,5 @@ export function macroTerrainField(
   const campAmp = base?.campAmp ?? DEFAULT_TERRAIN_BASE.campAmp;
   const hasMountain = (features ?? []).some((f) => f.properties.procgen?.algorithm === "mountain");
   if (!hasMountain && campAmp === 0) return null; // trivially flat ⇒ the null shortcut
-  return terrainAt(features, { base, include: { relief: false, landform: false, carve: false } });
+  return terrainAt(features, { base, include: { relief: false, landform: false, carve: false, grade: false } });
 }
