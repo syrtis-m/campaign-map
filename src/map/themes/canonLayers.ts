@@ -1,5 +1,6 @@
 import type { LayerSpecification } from "maplibre-gl";
 import { FOCUS_DEPTHS, type FocusDepth } from "../../model/locationNote";
+import { variableAnchorOffsetExpression } from "./labelPlacement";
 
 /** Constant on-map dot radius (px) for every location, canon or generated —
  * consistent size at every zoom, never importance-scaled. Shared so generated
@@ -59,8 +60,17 @@ export function focusLabelLayers(opts: {
           // and picks the first that fits, radially offset from the dot. Priority
           // is `importance` ascending (1 = nation, 2 = city, 3 = town, 4 = POI):
           // lower sort key ⇒ placed first ⇒ wins collisions, so city > town > POI.
-          "text-variable-anchor": ["bottom", "top", "right", "left"],
-          "text-radial-offset": 0.9,
+          //
+          // Water-avoidance: instead of the fixed anchor list, a data-driven
+          // `text-variable-anchor-offset` reads each pin's `dryAnchor` property
+          // (stamped by decorateCanonWaterAvoidance at label-source build time)
+          // and leads with the DRY side, so a riverbank pin prefers to throw its
+          // name onto land. This property supersedes text-variable-anchor +
+          // text-radial-offset (both would be ignored if also present), so it
+          // carries the 0.9-em radial offset per anchor itself. A pin with no
+          // dryAnchor falls through to the original ["bottom","top","right",
+          // "left"] order — byte-identical to the old behavior.
+          "text-variable-anchor-offset": variableAnchorOffsetExpression(),
           "text-justify": "auto",
           "symbol-sort-key": ["get", "importance"],
           "text-padding": 3,

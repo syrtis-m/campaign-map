@@ -6,6 +6,7 @@ import { generatedLayers } from "./generatedLayers";
 import { connectionLayers } from "./connectionLayers";
 import { sessionPathLayers } from "./sessionPathLayers";
 import { fabricLayers, FABRIC_SOURCE_SPEC } from "./fabricLayers";
+import { regionLabelLayers } from "./regionLabels";
 import { hillshadeLayer, hillshadeSourceSpec } from "./hillshadeLayer";
 import {
   terrainContourLayer,
@@ -60,6 +61,9 @@ export function buildThemeStyle(
       ...(dem ? [terrainContourLayer(tokens)] : []),
       ...generatedLayers(tokens),
       ...fabricLayers(tokens),
+      // Named-region overview labels ride the fabric source, above the sketch
+      // fills/lines but still within the fabric z-group (below locations).
+      ...regionLabelLayers(tokens),
       ...connectionLayers({ lineColor: tokens.accent }),
       ...sessionPathLayers({ lineColor: tokens.poi }),
       ...canonLayers({

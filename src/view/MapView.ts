@@ -9,7 +9,7 @@ import {
   MapController,
   type ControllerGenContext,
 } from "../controller/MapController";
-import { boundsToBBox, transformFeatureUnits } from "../controller/units";
+import { boundsToBBox, transformFeatureUnits, metersToUnits } from "../controller/units";
 import {
   FABRIC_KINDS,
   isPolygonKind,
@@ -23,6 +23,12 @@ import { loadFabric, saveFabric } from "../vault/fabricStore";
 import { loadGeneratedManifest, saveGeneratedManifest } from "../vault/generatedManifestStore";
 import { readCachedTiles, removeCachedTiles } from "../model/tileCache";
 import { FABRIC_LAYER_IDS } from "../map/themes/fabricLayers";
+import {
+  decorateCanonWaterAvoidance,
+  waterPolylinesFromFabric,
+  WATER_AVOIDANCE_METERS,
+} from "../map/themes/labelPlacement";
+import { REGION_LABEL_LAYER_ID, regionLabelOpacityRamp } from "../map/themes/regionLabels";
 import { SketchController } from "./SketchController";
 import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
 import { smoothPolyline } from "../map/fabricSmooth";
@@ -1433,6 +1439,15 @@ export class MapView extends ItemView {
     // zoom-gated here — these layers render at every zoom like all fabric. Any
     // far-out readability treatment is a paint-level theme decision, not a
     // zoom gate — see generatedLayers.ts.
+    //
+    // Named-region overview labels: install the campaign-relative opacity ramp
+    // (full at the Wide/overview level, faded to 0 by Mid). An opacity ramp, NOT
+    // a zoom gate — the label feature always exists, it just goes transparent as
+    // you zoom into the detail. Re-applied here so a restyle's constant-opacity
+    // default is replaced by the campaign-relative fade.
+    if (this.map.getLayer(REGION_LABEL_LAYER_ID)) {
+      this.map.setPaintProperty(REGION_LABEL_LAYER_ID, "text-opacity", regionLabelOpacityRamp(base));
+    }
   }
 
   /** Snap the camera to the previous/next focus level (the +/- buttons). Free
@@ -1480,7 +1495,14 @@ export class MapView extends ItemView {
     const source = this.map.getSource("canon") as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
     const fc = this.plugin.getCampaignState(this.campaign.id).index.toFeatureCollection();
-    source.setData(fc);
+    // Water-avoidance (label-feature level): stamp a `dryAnchor` on any pin near
+    // sketched water so the canon label layer's variable-anchor-offset prefers
+    // the dry side. Display-only, deterministic; recomputed here on every canon
+    // refresh (a location/theme change) — a subsequent water sketch edit
+    // re-decorates on the next canon refresh, not live per stroke.
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const water = waterPolylinesFromFabric(this.controller.fabric.features);
+    source.setData(decorateCanonWaterAvoidance(fc, water, metersToUnits(WATER_AVOIDANCE_METERS, scale)));
     this.updateWarningBadge();
     this.refreshConnections();
     this.refreshSessionPath();

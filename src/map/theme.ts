@@ -5,6 +5,7 @@ import { generatedLayers } from "./themes/generatedLayers";
 import { connectionLayers } from "./themes/connectionLayers";
 import { sessionPathLayers } from "./themes/sessionPathLayers";
 import { fabricLayers, FABRIC_SOURCE_SPEC } from "./themes/fabricLayers";
+import { regionLabelLayers } from "./themes/regionLabels";
 import { hillshadeLayer, hillshadeSourceSpec } from "./themes/hillshadeLayer";
 import {
   terrainContourLayer,
@@ -164,6 +165,8 @@ export function obsidianNativeStyle(
       ...(dem ? [terrainContourLayer(t)] : []),
       ...generatedLayers(t),
       ...fabricLayers(t),
+      // Named-region overview labels (same fabric source, fabric z-group).
+      ...regionLabelLayers(t),
       ...connectionLayers({ lineColor: t.accent }),
       ...sessionPathLayers({ lineColor: t.poi }),
       ...canonLayers({
