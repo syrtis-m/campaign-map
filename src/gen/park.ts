@@ -4,7 +4,7 @@
  * ground fabric, lays a REAL path skeleton hung off boundary ENTRANCES, and
  * dresses it per `variety` — everything strictly inside the ring.
  *
- * Four varieties (params, never presetId — mirrors the city algorithm's
+ * Five varieties (params, never presetId — mirrors the city algorithm's
  * `profile` branch): `formal-garden` (axial composition on the ring's principal
  * inertia axis + mirror-symmetric beds/bosquets + a central basin), `city-park`
  * (perimeter loop + curvilinear entrance-to-entrance diagonals + lawns + canopy
@@ -14,7 +14,12 @@
  * winding circuit around an irregular pond, an island + bridge, lanterns at
  * inflections + the water edge, odd-count horizontal-dominant rock groups, a
  * teahouse + roji stepping-stone spur, and an optional raked-gravel
- * `karesansui` court; small regions degrade gracefully).
+ * `karesansui` court; small regions degrade gracefully), and `urban-park`
+ * (plan 035, the PERI-URBAN variety: the city-park composition, but its
+ * boundary entrances additionally align to the GENERATED city street network —
+ * `constraints.upstream.settlement`, the stage-3 output a stage-4 park may
+ * read — so gates land where real streets meet the ring; with no upstream it
+ * degrades to exactly the city-park entrance logic).
  *
  * Figure-ground:
  *  - GROUND is ONE `park-lawn` polygon = the region ring (no cell lattice).
@@ -61,6 +66,7 @@ import { hashSeed, mulberry32 } from "./rng";
 import { distanceToBoundary, insetRing, clipPolylineToRegion, type ProcgenRegion } from "./region";
 import { q, harmonicBlobRing, blobFeature, spanQuad } from "./waterEmit";
 import { indexFabricConstraints } from "./fabricConstraints";
+import { buildUpstreamConstraints } from "./upstream";
 import { fractalNoise2D } from "./world/noise";
 import {
   signedDistancePolygon,
@@ -75,7 +81,7 @@ import type { GenerationConstraints } from "./types";
 
 type Pt = [number, number];
 
-export const PARK_VARIETIES = ["formal-garden", "city-park", "wild-common", "japanese-garden"] as const;
+export const PARK_VARIETIES = ["formal-garden", "city-park", "wild-common", "japanese-garden", "urban-park"] as const;
 export type ParkVariety = (typeof PARK_VARIETIES)[number];
 
 /** Park params. `pathDensity` 0–1 scales the path web; `pond`
@@ -122,6 +128,9 @@ function layoutFor(v: ParkVariety): Layout {
     case "formal-garden":
       return { pathHalfM: 3.5, scatterTrees: false, canopy: false };
     case "city-park":
+    // urban-park shares the city-park composition — the split is WHERE its
+    // entrances come from (generated street crossings), not what it draws.
+    case "urban-park":
       return { pathHalfM: 3, scatterTrees: true, canopy: true };
     case "wild-common":
       return { pathHalfM: 2, scatterTrees: true, canopy: false };
@@ -430,7 +439,18 @@ export function generatePark(
   const [cx, cy] = region.interiorPole; // stable anchor (lattice argmax)
   const maxD = region.maxInteriorDistance;
   const roadLines = indexFabricConstraints(constraints.fabricFeatures).roadLines;
-  const entrances = computeEntrances(seed, region, roadLines);
+  // urban-park (plan 035): the GENERATED city street network arrives as data
+  // (`constraints.upstream.settlement`, stage-3 output a stage-4 consumer may
+  // read). Its polylines join the sketched roads as entrance candidates, so
+  // gates/axes land where real streets cross the ring — the peri-urban read.
+  // Every other variety never touches upstream (rural output is byte-identical
+  // with or without it); an urban-park with no upstream degrades to exactly the
+  // city-park entrance logic through the same arithmetic (empty list).
+  const entranceLines =
+    variety === "urban-park"
+      ? [...roadLines, ...buildUpstreamConstraints(constraints.upstream).settlementLines]
+      : roadLines;
+  const entrances = computeEntrances(seed, region, entranceLines);
 
   // ── Emitters ────────────────────────────────────────────────────────────
   const emitLine = (run: Pt[], cls: string, extra: Record<string, unknown> = {}): void => {
@@ -594,7 +614,9 @@ export function generatePark(
   // ── Per-variety skeleton ────────────────────────────────────────────────────
   if (variety === "formal-garden") {
     buildFormal();
-  } else if (variety === "city-park") {
+  } else if (variety === "city-park" || variety === "urban-park") {
+    // urban-park draws the city-park skeleton — its split is the entrance
+    // source (generated street crossings), resolved above.
     buildCityPark();
   } else if (variety === "wild-common") {
     buildWildCommon();

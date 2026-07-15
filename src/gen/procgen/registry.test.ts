@@ -3,9 +3,12 @@ import {
   algorithmForKind,
   algorithmById,
   allAlgorithms,
+  dagRoleFor,
   CITY_PROFILE_IDS,
   matchingPresetId,
   presetById,
+  type DagRole,
+  type ProcgenAlgorithm,
 } from "./registry";
 import { makeRegion } from "../region";
 import { discToRing, makeDomain } from "../citynet";
@@ -120,6 +123,89 @@ describe("consumption declarations (plan 033-C)", () => {
       expect(alg.consumesSketch).toEqual([]);
       expect(alg.influenceMargin).toBe(0);
     }
+  });
+});
+
+/** Every DAG role an algorithm can resolve to: the static fields plus one per
+ * preset (presets cover every params-dependent branch — park's varieties). */
+function rolesOf(alg: ProcgenAlgorithm): DagRole[] {
+  return [dagRoleFor(alg, {}), ...alg.presets.map((p) => dagRoleFor(alg, p.params))];
+}
+
+// ─── THE CYCLE-GUARD INVARIANT (plan 035 §0 — a standing registry contract) ──
+// Nothing may consume `settlement` while producing a currency the city
+// consumes. This is the bidirectional trap that would make "city ⇄ its own
+// dependent" possible the day someone wires the urban-park (or a plan-037/038
+// consumer) back into the city's growth cost. Asserted over EVERY resolvable
+// role of EVERY algorithm, so a new preset/variety/algorithm that violates it
+// fails here before it can ship. Guards plans 037/038 too — do not weaken.
+describe("cycle guard — settlement consumers produce nothing the city consumes (plan 035)", () => {
+  it("for every algorithm × role: consumes settlement ⇒ produces ∩ city.consumes = ∅", () => {
+    const city = algorithmById("city")!;
+    // The union of everything ANY city role consumes (city has no dagRole today,
+    // but the guard must keep holding if it ever grows one).
+    const cityConsumes = new Set(rolesOf(city).flatMap((r) => [...r.consumes]));
+    for (const alg of allAlgorithms()) {
+      for (const role of rolesOf(alg)) {
+        if (!role.consumes.includes("settlement")) continue;
+        for (const produced of role.produces) {
+          expect(
+            cityConsumes.has(produced),
+            `${alg.id} consumes settlement but produces "${produced}", which the city consumes — ` +
+              `that is a city ⇄ dependent coupling loop (plan 035 cycle guard)`
+          ).toBe(false);
+        }
+        // And a settlement consumer must sit strictly ABOVE the city's stage —
+        // the DAG edge rule makes a same/lower-stage declaration dead, which
+        // would mask a wiring bug rather than surface it.
+        for (const cityRole of rolesOf(city)) {
+          expect(role.stage, `${alg.id} consumes settlement at stage ${role.stage}`).toBeGreaterThan(cityRole.stage);
+        }
+      }
+    }
+  });
+});
+
+describe("park split (plan 035) — variety drives the stage", () => {
+  it("park is at contract version 3 (urban-park joined the schema/varieties)", () => {
+    expect(algorithmById("park")!.currentVersion).toBe(3);
+  });
+
+  it("urban-park resolves to stage 4, consumes settlement, produces NOTHING", () => {
+    const park = algorithmById("park")!;
+    const role = dagRoleFor(park, { variety: "urban-park", pathDensity: 0.5, pond: true });
+    expect(role.stage).toBe(4);
+    expect(role.consumes).toEqual(["settlement"]);
+    expect(role.produces).toEqual([]);
+  });
+
+  it("rural varieties keep the static stage-2 vegetation role", () => {
+    const park = algorithmById("park")!;
+    for (const variety of ["formal-garden", "city-park", "wild-common", "japanese-garden"]) {
+      const role = dagRoleFor(park, { variety, pathDensity: 0.5, pond: false });
+      expect(role.stage, variety).toBe(2);
+      expect(role.produces, variety).toEqual(["vegetation"]);
+      expect(role.consumes, variety).toEqual(["water"]);
+    }
+    // Malformed/absent params fall back to the static rural role (never throw).
+    expect(dagRoleFor(park, {}).stage).toBe(2);
+  });
+
+  it("dagRoleFor falls back to the static fields for every dagRole-less algorithm", () => {
+    for (const alg of allAlgorithms()) {
+      if (alg.dagRole) continue;
+      const role = dagRoleFor(alg, {});
+      expect(role.stage).toBe(alg.stage);
+      expect(role.produces).toEqual(alg.produces);
+      expect(role.consumes).toEqual(alg.consumes);
+    }
+  });
+
+  it("the urban-park preset exists and validates against the park schema", () => {
+    const park = algorithmById("park")!;
+    const preset = presetById(park, "urban-park");
+    expect(preset).toBeDefined();
+    expect(park.paramsSchema.safeParse(preset!.params).success).toBe(true);
   });
 });
 

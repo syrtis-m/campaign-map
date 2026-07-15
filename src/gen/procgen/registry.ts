@@ -60,6 +60,15 @@ export interface ProcgenPreset {
  * street/block/parcel pipeline. */
 export type CostClass = "cheap" | "medium" | "expensive";
 
+/** A region's resolved position in the stage DAG: its stage band + the
+ * currencies it produces/consumes (plan 035). Usually the algorithm's static
+ * fields; params-dependent for algorithms implementing `dagRole` (park). */
+export interface DagRole {
+  stage: Stage;
+  produces: readonly ConstraintKind[];
+  consumes: readonly ConstraintKind[];
+}
+
 export interface ProcgenAlgorithm {
   id: string; // "city"
   label: string; // "City"
@@ -118,6 +127,17 @@ export interface ProcgenAlgorithm {
   /** Regeneration cost band (plan 033-C) — routing data for plan 034's cascade
    * cap; NEVER a generator input. */
   costClass: CostClass;
+  /** Params-dependent DAG role (plan 035, park split): an algorithm whose
+   * stage/currencies depend on a PARAM (park's `urban-park` variety sits at
+   * stage 4 consuming `settlement` while its rural varieties stay stage 2
+   * producing `vegetation`) implements this; hosts resolve every region's
+   * DagNode through `dagRoleFor` (below), which falls back to the static
+   * `stage`/`produces`/`consumes` fields when absent. MUST be a pure total
+   * function of the params (it feeds cascade order — determinism), MUST parse
+   * defensively (persisted params can be malformed ⇒ return the static role,
+   * never throw), and MUST NOT vary `consumesSketch`/`influenceMargin` (the
+   * 033 harness verifies those per-ALGORITHM with the most-consuming params). */
+  dagRole?(params: Record<string, unknown>): DagRole;
   paramsSchema: z.ZodType<Record<string, unknown>>;
   /** Named templates. Every algorithm has ≥1; the host renders
    * these as a dropdown, seeding the param controls from the chosen preset's
@@ -432,10 +452,14 @@ const parkParamsSchema = z.object({
 });
 
 /** Park presets. Params are the whole truth; `japanese-garden` forces
- * `pond: true` (its composition anchor). */
+ * `pond: true` (its composition anchor). `urban-park` (plan 035) is the
+ * peri-urban variety: same composition family as city-park, but its entrances
+ * align to the GENERATED city street crossings on the ring (stage 4, consumes
+ * `settlement` — see `dagRole`). */
 const PARK_PRESETS: readonly ProcgenPreset[] = [
   { id: "formal-garden", label: "Formal garden — axial paths, symmetric beds", params: { variety: "formal-garden", pathDensity: 0.6, pond: false } },
   { id: "city-park", label: "City park — curved paths, lawns, a pond", params: { variety: "city-park", pathDensity: 0.5, pond: true } },
+  { id: "urban-park", label: "Urban park — entrances off the generated city streets", params: { variety: "urban-park", pathDensity: 0.5, pond: true } },
   { id: "wild-common", label: "Wild common — sparse paths, scattered trees", params: { variety: "wild-common", pathDensity: 0.3, pond: false } },
   { id: "japanese-garden", label: "Japanese garden — winding circuit, pond, island, rocks", params: { variety: "japanese-garden", pathDensity: 0.4, pond: true } },
 ];
@@ -448,20 +472,41 @@ export const PARK_TILE_GENERATOR_IDS: readonly string[] = contractGids(PARK_STYL
 const parkAlgorithm: ProcgenAlgorithm = {
   id: "park",
   label: "Park",
+  // Version 3 (plan 035, park split): the `urban-park` variety joined the
+  // schema/varieties. Rural varieties are byte-identical to v2 (the golden is
+  // unchanged — bump is bookkeeping for the schema/variety surface); one
+  // algorithm id serves both roles (the zod enum grew a member — no schema
+  // pressure for a second id).
   // Version 2: blobFeature mm-quantizes its ring (D5), snapping the
   // formal-garden bed / japanese bridge / court coordinates to sub-mm.
-  currentVersion: 2,
+  currentVersion: 3,
   appliesTo: ["park"],
-  // Stage 2 (vegetation), same band as forest: a park pond sits away from a
-  // river channel → consumes `water`; produces `vegetation`.
+  // Rural varieties: stage 2 (vegetation), same band as forest — a park pond
+  // sits away from a river channel → consumes `water`; produces `vegetation`.
+  // The `urban-park` variety re-homes to stage 4 via `dagRole` below.
   stage: 2,
   produces: ["vegetation"],
   consumes: ["water"],
   // Park reads road only: a path enters where a sketched road meets the ring
-  // (ROAD_ENTRANCE_THRESH_M = 30, an exact `<=` cutoff).
+  // (ROAD_ENTRANCE_THRESH_M = 30, an exact `<=` cutoff). Same for BOTH roles
+  // (the harness verifies per-algorithm): urban-park's street alignment reads
+  // GENERATED settlement output via `constraints.upstream`, never a raw sketch,
+  // so it changes nothing here.
   consumesSketch: ["road"],
   influenceMargin: 30,
   costClass: "medium",
+  // PARK SPLIT (plan 035): variety drives the stage — `urban-park` sits in the
+  // stage-4 peri-urban band, consumes the generated `settlement` (entrances/axes
+  // align to street crossings on the ring) and produces NOTHING (the cycle-guard
+  // invariant: nothing may consume settlement while producing a currency the
+  // city consumes — rural varieties are the vegetation producers). Malformed
+  // params fall back to the static rural role (never throw — replay must not
+  // die on a corrupt block; the schema rejects it loudly at the IO boundary).
+  dagRole(params: Record<string, unknown>): DagRole {
+    return params.variety === "urban-park"
+      ? { stage: 4, produces: [], consumes: ["settlement"] }
+      : { stage: this.stage, produces: this.produces, consumes: this.consumes };
+  },
   paramsSchema: parkParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: PARK_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -704,6 +749,17 @@ export function allAlgorithms(): readonly ProcgenAlgorithm[] {
 
 export function algorithmById(id: string): ProcgenAlgorithm | undefined {
   return REGISTRY.find((a) => a.id === id);
+}
+
+/** The resolved DAG role of a region: the algorithm's `dagRole(params)` when it
+ * defines one (park's variety-driven split, plan 035), its static
+ * `stage`/`produces`/`consumes` otherwise. The ONLY sanctioned way for a host
+ * to read a region's stage/currencies — reading `algorithm.stage` directly is
+ * wrong for any params-dependent algorithm. Pure; never throws (implementors
+ * fall back to the static role on malformed params). */
+export function dagRoleFor(algorithm: ProcgenAlgorithm, params: Record<string, unknown>): DagRole {
+  if (algorithm.dagRole) return algorithm.dagRole(params);
+  return { stage: algorithm.stage, produces: algorithm.produces, consumes: algorithm.consumes };
 }
 
 // ─── Preset helpers — pure, host-agnostic ────────────────────────────────────

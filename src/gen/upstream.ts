@@ -21,15 +21,30 @@ import type { UpstreamArtifacts } from "./types";
 import { sdfPolygon, type Field, type Pt } from "./fields/sdf";
 
 /** The rebuilt, consumable form of the upstream artifacts: outer rings of every
- * generated water / vegetation polygon, in gen-space meters. A consumer folds
- * `waterRings` into its existing water index (the `blockedByWater` /
- * `RIVER_HALF_WIDTH` paths) — same currency as `FabricConstraintIndex`. */
+ * generated water / vegetation polygon + the generated settlement STREET
+ * polylines (plan 035), in gen-space meters. A consumer folds `waterRings` into
+ * its existing water index (the `blockedByWater` / `RIVER_HALF_WIDTH` paths) —
+ * same currency as `FabricConstraintIndex`; `settlementLines` feed the stage-4
+ * peri-urban reads (urban-park entrances, farmland lane orientation). */
 export interface UpstreamConstraints {
   waterRings: Pt[][];
   vegetationRings: Pt[][];
+  settlementLines: Pt[][];
 }
 
-const EMPTY: UpstreamConstraints = { waterRings: [], vegetationRings: [] };
+const EMPTY: UpstreamConstraints = { waterRings: [], vegetationRings: [], settlementLines: [] };
+
+/** Every LineString of a feature list, in feature order (a generated street
+ * chain is one LineString; non-lines contribute nothing). */
+function lineStrings(features: GeoJSON.Feature[] | undefined): Pt[][] {
+  if (!features || features.length === 0) return [];
+  const lines: Pt[][] = [];
+  for (const f of features) {
+    const g = f.geometry;
+    if (g && g.type === "LineString" && g.coordinates.length >= 2) lines.push(g.coordinates as Pt[]);
+  }
+  return lines;
+}
 
 /** Every outer ring of a Polygon / MultiPolygon feature, in feature order. A
  * channel `river-channel` is emitted as Polygon(s); a canopy may be one
@@ -64,6 +79,7 @@ export function buildUpstreamConstraints(upstream: UpstreamArtifacts | undefined
   return {
     waterRings: outerRings(upstream.water),
     vegetationRings: outerRings(upstream.vegetation),
+    settlementLines: lineStrings(upstream.settlement),
   };
 }
 

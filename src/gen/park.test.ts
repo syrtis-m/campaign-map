@@ -8,6 +8,14 @@ import { clipNetworkToTile } from "./citynet";
 import { tileBBox, tileXYForPoint } from "./cache/tileGrid";
 import { expectGeneratorInvariants, expectDeterministic } from "./testkit/invariants";
 import { computeParkMetrics, parkBandViolations } from "./parkMetrics";
+import { algorithmById } from "./procgen/registry";
+import {
+  buildMainDistrict,
+  buildParkInner,
+  MAIN_DISTRICT_RING,
+  PARK_RING,
+  OVERLAP_SCALE_M_PER_UNIT,
+} from "./testkit/overlapMap";
 
 type Pt = [number, number];
 
@@ -578,5 +586,110 @@ describe("park generator — metric bands (regression net)", () => {
     const city = computeParkMetrics(generatePark(9, region, PARAMS({ variety: "city-park", pond: true }), CONSTRAINTS), region);
     const wild = computeParkMetrics(generatePark(9, region, PARAMS({ variety: "wild-common", pond: false }), CONSTRAINTS), region);
     expect(city.pathLengthPerSpan).toBeGreaterThan(wild.pathLengthPerSpan);
+  });
+});
+
+// ─── Plan 035-B: urban-park — the stage-4 peri-urban variety ─────────────────
+// Fixture: overlapMap S5 (park strictly nested inside the main district). The
+// city is generated for real (the S5 procgen block: euro-medieval, the locked
+// hashSeed(campaignSeed, featureId) seed); its `city-street` LineStrings arrive
+// at the park as `constraints.upstream.settlement` — exactly the data the host
+// threads to a stage-4 consumer. Map units × OVERLAP_SCALE_M_PER_UNIT = meters.
+describe("park generator — urban-park entrances align to generated street crossings (plan 035-B, S5)", () => {
+  const M = OVERLAP_SCALE_M_PER_UNIT;
+  const scaleRing = (ring: readonly Pt[]): Pt[] => {
+    const open = ring.map(([x, y]): Pt => [x * M, y * M]);
+    return [...open, [open[0][0], open[0][1]]];
+  };
+
+  const cityFeat = buildMainDistrict();
+  const cityBlock = cityFeat.properties.procgen!;
+  const cityRegion = makeRegion(String(cityFeat.id), scaleRing(MAIN_DISTRICT_RING));
+  const cityNet = algorithmById("city")!.generate(cityBlock.seed, cityRegion, cityBlock.params, CONSTRAINTS);
+  const streets = cityNet.filter((f) => (f.properties as { generatorId?: string } | null)?.generatorId === "city-street");
+
+  const parkFeat = buildParkInner();
+  const parkSeed = parkFeat.properties.procgen!.seed;
+  const parkRegion = makeRegion(String(parkFeat.id), scaleRing(PARK_RING));
+  const URBAN = PARAMS({ variety: "urban-park" });
+  const withStreets: GenerationConstraints = { ...CONSTRAINTS, upstream: { settlement: streets } };
+
+  /** Exact street-segment × ring-segment intersection points (the crossings the
+   * entrances must land on). */
+  function ringCrossings(): Pt[] {
+    const ring = parkRegion.ring;
+    const out: Pt[] = [];
+    const seg = (p1: Pt, p2: Pt, p3: Pt, p4: Pt): Pt | null => {
+      const d = (p2[0] - p1[0]) * (p4[1] - p3[1]) - (p2[1] - p1[1]) * (p4[0] - p3[0]);
+      if (d === 0) return null;
+      const t = ((p3[0] - p1[0]) * (p4[1] - p3[1]) - (p3[1] - p1[1]) * (p4[0] - p3[0])) / d;
+      const u = ((p3[0] - p1[0]) * (p2[1] - p1[1]) - (p3[1] - p1[1]) * (p2[0] - p1[0])) / d;
+      if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+      return [p1[0] + t * (p2[0] - p1[0]), p1[1] + t * (p2[1] - p1[1])];
+    };
+    for (const f of streets) {
+      const line = (f.geometry as GeoJSON.LineString).coordinates as Pt[];
+      for (let i = 0; i + 1 < line.length; i++) {
+        for (let j = 0; j + 1 < ring.length; j++) {
+          const hit = seg(line[i], line[i + 1], ring[j], ring[j + 1]);
+          if (hit) out.push(hit);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Boundary endpoints of the entrance-to-entrance 'walk' diagonals — the
+   * entrances the skeleton actually used. */
+  function walkEntranceEndpoints(feats: GeoJSON.Feature[]): Pt[] {
+    const out: Pt[] = [];
+    for (const f of feats) {
+      const props = f.properties as { generatorId?: string; class?: string };
+      if (props.generatorId !== "park-path" || props.class !== "walk") continue;
+      const coords = (f.geometry as GeoJSON.LineString).coordinates as Pt[];
+      for (const end of [coords[0], coords[coords.length - 1]]) {
+        if (distanceToBoundary(parkRegion, end[0], end[1]) < 3) out.push(end as Pt);
+      }
+    }
+    return out;
+  }
+
+  it("S5 premise: the generated city streets really cross the nested park's ring", () => {
+    expect(ringCrossings().length).toBeGreaterThan(0);
+  });
+
+  it("every entrance lands on a generated street crossing (≤ the 30 m road-entrance threshold)", () => {
+    const feats = generatePark(parkSeed, parkRegion, URBAN, withStreets);
+    const crossings = ringCrossings();
+    const entrances = walkEntranceEndpoints(feats);
+    expect(entrances.length).toBeGreaterThanOrEqual(2); // a real web, not a fallback pair
+    for (const [ex, ey] of entrances) {
+      const nearest = Math.min(...crossings.map(([cx2, cy2]) => Math.hypot(ex - cx2, ey - cy2)));
+      // The entrance is the ring-projection of the street's nearest vertex
+      // (≤ ROAD_ENTRANCE_THRESH_M = 30 from the ring), so it sits within the
+      // same threshold of the exact crossing point.
+      expect(nearest, `entrance [${ex.toFixed(1)},${ey.toFixed(1)}] off every street crossing`).toBeLessThanOrEqual(30);
+    }
+  });
+
+  it("the street alignment is wired: with vs without upstream settlement differ; with is deterministic", () => {
+    const a = generatePark(parkSeed, parkRegion, URBAN, withStreets);
+    const b = generatePark(parkSeed, parkRegion, URBAN, CONSTRAINTS);
+    expect(JSON.stringify(a)).not.toBe(JSON.stringify(b));
+    expect(JSON.stringify(generatePark(parkSeed, parkRegion, URBAN, withStreets))).toBe(JSON.stringify(a));
+  });
+
+  it("rural varieties NEVER read upstream settlement (byte-identical with or without — the split's rural half)", () => {
+    for (const variety of ["formal-garden", "city-park", "wild-common", "japanese-garden"] as const) {
+      const p = PARAMS({ variety });
+      const bare = generatePark(parkSeed, parkRegion, p, CONSTRAINTS);
+      const fed = generatePark(parkSeed, parkRegion, p, withStreets);
+      expect(JSON.stringify(fed), variety).toBe(JSON.stringify(bare));
+    }
+  });
+
+  it("an urban-park with NO upstream degrades to the city-park entrance logic (still generates, contained)", () => {
+    const feats = generatePark(parkSeed, parkRegion, URBAN, CONSTRAINTS);
+    expectGeneratorInvariants(feats, parkRegion); // asserts non-empty + contained + mm lattice
   });
 });

@@ -64,11 +64,17 @@ export interface GenerationConstraints {
  * carry so a consumer takes only the field it declared it `consumes`.
  */
 export interface UpstreamArtifacts {
-  /** Generated stage-1 hydrology — the meandered river CHANNEL polygons
-   * (`river-channel` features). The city bridges/quays and the forest canopy
-   * gap read THIS (the real bank), not the original sketched spine. */
+  /** Generated stage-0 hydrology (plan 035 renumber) — the meandered river
+   * CHANNEL polygons (`river-channel` features). The city bridges/quays and the
+   * forest canopy gap read THIS (the real bank), not the original sketched
+   * spine. */
   water?: GeoJSON.Feature[];
   /** Generated stage-2 vegetation — forest/park canopy polygons. The city's
    * growth cost bumps inside these. */
   vegetation?: GeoJSON.Feature[];
+  /** Generated stage-3 settlement (plan 035) — the city STREET network
+   * (`city-street` LineStrings). Stage-4 peri-urban consumers read this: the
+   * urban-park's entrances align to street crossings on its ring; farmland
+   * lanes orient to the nearest gate/arterial. */
+  settlement?: GeoJSON.Feature[];
 }

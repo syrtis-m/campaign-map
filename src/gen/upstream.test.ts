@@ -52,8 +52,28 @@ describe("upstream — buildUpstreamConstraints (worker-side rebuild)", () => {
   });
 
   it("empty / undefined upstream ⇒ empty (back-compat: no coupling)", () => {
-    expect(buildUpstreamConstraints(undefined)).toEqual({ waterRings: [], vegetationRings: [] });
-    expect(buildUpstreamConstraints({})).toEqual({ waterRings: [], vegetationRings: [] });
+    const EMPTY = { waterRings: [], vegetationRings: [], settlementLines: [] };
+    expect(buildUpstreamConstraints(undefined)).toEqual(EMPTY);
+    expect(buildUpstreamConstraints({})).toEqual(EMPTY);
+  });
+
+  it("extracts settlement STREET polylines (plan 035 — the stage-4 peri-urban read)", () => {
+    const street: GeoJSON.Feature = {
+      type: "Feature",
+      properties: { generatorId: "city-street", roadClass: "arterial" },
+      geometry: {
+        type: "LineString",
+        coordinates: [
+          [0, 0],
+          [100, 20],
+          [220, 10],
+        ],
+      },
+    };
+    const rebuilt = buildUpstreamConstraints({ settlement: [street, channel(0, 0, 5)] });
+    expect(rebuilt.settlementLines).toHaveLength(1); // the polygon contributes nothing
+    expect(rebuilt.settlementLines[0][0]).toEqual([0, 0]);
+    expect(rebuilt.settlementLines[0]).toHaveLength(3);
   });
 });
 

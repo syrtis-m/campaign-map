@@ -1554,6 +1554,45 @@ describe("MapController — cross-layer cascade", () => {
     expect(bytes2).not.toBe(bytes1);
   });
 
+  it("a city edit cascades to a nested urban-park (stage 4); the park edit never touches the city (plan 035-B)", async () => {
+    const host = cityHost();
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    // A park strictly inside the district, urban-park variety → stage 4,
+    // consumes the generated settlement (street-aligned entrances).
+    const park = await host.controller.createRegionForTest(
+      [
+        [14, -22],
+        [21, -22],
+        [21, -15],
+        [14, -15],
+      ],
+      "park",
+      { variety: "urban-park", pathDensity: 0.5, pond: true },
+      "__ub_park__",
+      "park"
+    );
+    expect(park.count).toBeGreaterThan(0);
+    const cityKey = regionNetworkKey(city.featureId);
+    const parkKey = regionNetworkKey(park.featureId);
+    const parkBytes1 = JSON.stringify((await host.cache()).get(parkKey)!.features);
+    const cityBytes1 = JSON.stringify((await host.cache()).get(cityKey)!.features);
+
+    // City edit (profile swap) → the urban-park is a settlement dependent:
+    // it regenerates AND its bytes track the new street network.
+    await host.controller.setRegionParams(city.featureId, { profile: "euro-continental" });
+    expect(host.controller.cascadeRegeneratedIds).toContain(park.featureId);
+    const parkBytes2 = JSON.stringify((await host.cache()).get(parkKey)!.features);
+    expect(parkBytes2).not.toBe(parkBytes1);
+
+    // Park edit → the city is NOT downstream of a stage-4 producer-of-nothing:
+    // no cascade back, city bytes untouched (the cycle-guard, integration-proven).
+    const cityBytesAfterProfileSwap = JSON.stringify((await host.cache()).get(cityKey)!.features);
+    void cityBytes1; // the profile swap legitimately changed the city itself
+    await host.controller.setRegionParams(park.featureId, { variety: "urban-park", pathDensity: 0.9, pond: false });
+    expect(host.controller.cascadeRegeneratedIds).not.toContain(city.featureId);
+    expect(JSON.stringify((await host.cache()).get(cityKey)!.features)).toBe(cityBytesAfterProfileSwap);
+  });
+
   // A mountain, lower-left; a river spine crossing its interior; a city far
   // top-right (no shared field, no bbox overlap → a clean non-dependent).
   const MTN_RING: [number, number][] = [

@@ -96,6 +96,7 @@ import {
 import {
   algorithmById,
   algorithmForKind,
+  dagRoleFor,
   migrateParamsForAdoption,
   presetById,
   type ProcgenAlgorithm,
@@ -475,8 +476,10 @@ export class MapController {
     if (!key.startsWith("region:")) return MapController.WORLD_STAGE;
     const id = key.slice("region:".length).split(":")[0];
     const feature = this.fabricCollection.features.find((f) => f.id === id);
-    const algo = feature?.properties.procgen ? algorithmById(feature.properties.procgen.algorithm) : undefined;
-    return algo?.stage ?? MapController.WORLD_STAGE;
+    const block = feature?.properties.procgen;
+    const algo = block ? algorithmById(block.algorithm) : undefined;
+    // Params-aware (plan 035): a park's urban-park variety renders at stage 4.
+    return algo && block ? dagRoleFor(algo, block.params).stage : MapController.WORLD_STAGE;
   }
 
   /** Display-space generated features grouped by DAG stage (032-D) — the host
@@ -871,7 +874,7 @@ export class MapController {
             10000
           );
         }
-        this.repaintGenerated(algorithm.stage);
+        this.repaintGenerated(dagRoleFor(algorithm, block.params).stage);
         return [];
       }
       this.needsAdoption.delete(feature.id);
@@ -896,7 +899,7 @@ export class MapController {
       this.pendingGenerations--;
       this.host.render.loadingChanged();
     }
-    this.repaintGenerated(algorithm.stage);
+    this.repaintGenerated(dagRoleFor(algorithm, block.params).stage);
     return all;
   }
 
@@ -905,23 +908,30 @@ export class MapController {
   /**
    * Build this region's UPSTREAM artifacts: the fresh GENERATED output of
    * strictly-lower-stage regions whose `produces` this region `consumes` and
-   * whose bbox (grown by the influence reach) overlaps it. Today the sole WIRED
-   * consumption is `water` — the meandered river channel (`river-channel`
-   * polygons) the city bridges/quays track (`indexConstraints` folds it in).
-   * Vegetation stays declared-but-inert (a forest edit still recomputes the
-   * city byte-identically — an accepted over-invalidation).
+   * whose bbox (grown by the influence reach) overlaps it. Two consumptions are
+   * WIRED (plan 035): `water` — the meandered river channel (`river-channel`
+   * polygons) the city bridges/quays track (`indexConstraints` folds it in) —
+   * and `settlement` — the generated `city-street` network the stage-4
+   * peri-urban consumers read (urban-park entrances, farmland lane
+   * orientation). Vegetation stays declared-but-inert (a forest edit still
+   * recomputes the city byte-identically — an accepted over-invalidation);
+   * the wall's declared `settlement` consumption receives data its generator
+   * ignores until plan 037 wires it (byte-inert by construction).
    *
-   * The channel is read from the upstream region's NETWORK cache record: in the
-   * replay/flush path it is already in the shared `cache` map (no extra IO); in
-   * the cascade path (each region regenerated in `(stage, regionId)` order,
-   * upstream before downstream) the upstream network was just written to the
-   * vault, so a one-shot read backfills it. Returns `undefined` when there is no
-   * upstream water — the generator then runs with no upstream water folded in.
+   * Roles are params-aware (`dagRoleFor`, plan 035): an urban-park is a stage-4
+   * settlement consumer while its rural siblings consume nothing wired.
    *
-   * Determinism/replay: a city cache HIT returns cached bytes without ever
-   * calling the generator, so this upstream is built but unused on a hit (the
-   * bytes are already right); only a MISS consumes it, and by then the lower
-   * stage has landed. Feature order is `(stage, id)`-deterministic.
+   * The artifacts are read from the upstream region's NETWORK cache record: in
+   * the replay/flush path it is already in the shared `cache` map (no extra
+   * IO); in the cascade path (each region regenerated in `(stage, regionId)`
+   * order, upstream before downstream) the upstream network was just written to
+   * the vault, so a one-shot read backfills it. Returns `undefined` when there
+   * is nothing to consume — the generator then runs with no upstream folded in.
+   *
+   * Determinism/replay: a cache HIT returns cached bytes without ever calling
+   * the generator, so this upstream is built but unused on a hit (the bytes are
+   * already right); only a MISS consumes it, and by then the lower stage has
+   * landed. Feature order is `(stage, id)`-deterministic.
    */
   private async buildRegionUpstream(
     feature: FabricFeature,
@@ -930,17 +940,25 @@ export class MapController {
     cache: Map<string, CachedTile> | undefined,
     folder: string
   ): Promise<UpstreamArtifacts | undefined> {
-    if (!algorithm.consumes.includes("water")) return undefined;
+    const block = feature.properties.procgen;
+    const role = block ? dagRoleFor(algorithm, block.params) : algorithm;
+    const wantWater = role.consumes.includes("water");
+    const wantSettlement = role.consumes.includes("settlement");
+    if (!wantWater && !wantSettlement) return undefined;
     const reach = MapController.CONSTRAINT_REACH;
     const rb = region.bbox;
-    // Lower-stage water producers overlapping this region (computed directly so
-    // it holds even for a just-attached feature not yet in the DAG node set).
-    // Sorted by id for deterministic feature order.
+    // Lower-stage producers of a wanted currency overlapping this region
+    // (computed directly so it holds even for a just-attached feature not yet
+    // in the DAG node set). Sorted by id for deterministic feature order.
     const upstreamFeatures = this.regionFeatures()
       .filter((f) => {
         const b = f.properties.procgen;
         const a = b ? algorithmById(b.algorithm) : undefined;
-        if (!a || a.stage >= algorithm.stage || !a.produces.includes("water")) return false;
+        if (!a || !b) return false;
+        const pRole = dagRoleFor(a, b.params);
+        if (pRole.stage >= role.stage) return false;
+        const produced = pRole.produces;
+        if (!((wantWater && produced.includes("water")) || (wantSettlement && produced.includes("settlement")))) return false;
         const r = this.buildRegionFromFeature(f);
         if (!r) return false;
         const e = r.bbox;
@@ -950,6 +968,7 @@ export class MapController {
     if (upstreamFeatures.length === 0) return undefined;
     let full: Map<string, CachedTile> | null = null;
     const water: GeoJSON.Feature[] = [];
+    const settlement: GeoJSON.Feature[] = [];
     for (const up of upstreamFeatures) {
       const key = regionNetworkKey(up.id);
       let rec = cache?.get(key);
@@ -960,10 +979,15 @@ export class MapController {
       if (!rec) continue;
       for (const f of rec.features as unknown as GeoJSON.Feature[]) {
         const gid = (f.properties as { generatorId?: string } | null)?.generatorId;
-        if (gid === "river-channel") water.push(f);
+        if (wantWater && gid === "river-channel") water.push(f);
+        else if (wantSettlement && gid === "city-street") settlement.push(f);
       }
     }
-    return water.length > 0 ? { water } : undefined;
+    if (water.length === 0 && settlement.length === 0) return undefined;
+    return {
+      ...(water.length > 0 ? { water } : {}),
+      ...(settlement.length > 0 ? { settlement } : {}),
+    };
   }
 
   /** Build a `DagNode` per procgen region from the registry (stage + the
@@ -977,11 +1001,14 @@ export class MapController {
       const algo = block ? algorithmById(block.algorithm) : undefined;
       const region = this.buildRegionFromFeature(f);
       if (!block || !algo || !region) continue;
+      // Params-aware role (plan 035): park's urban-park variety is stage 4,
+      // consumes settlement, produces nothing.
+      const role = dagRoleFor(algo, block.params);
       nodes.push({
         id: f.id,
-        stage: algo.stage,
-        produces: algo.produces,
-        consumes: algo.consumes,
+        stage: role.stage,
+        produces: role.produces,
+        consumes: role.consumes,
         bbox: region.bbox,
         // Plan 034: carry the raw-sketch consumption so a source→region edge can
         // reproduce the 033-C reach inside the unified closure.
