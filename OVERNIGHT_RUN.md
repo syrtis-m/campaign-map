@@ -27,6 +27,21 @@ the top items are the ones that change what you'd do next.
    shipping **§1.1 only** (market-pin → plaza snap), per the plan's own "ship §1.1 first and
    alone". Temple/gate variants stay deferred.
 
+## ✅ GLOBAL-TERRAIN RULING + FULL SHORTLIST: DONE (2026-07-15 afternoon)
+Ruling implemented (`bfb7a41` gen half, `c41743f`/`2e2bf2f` host half), full shortlist landed
+(paint: `ee04401` hillshade mask, `5dacd08` wall mass, `38bd0e6` sea water, `00db9f1` road
+smoothing, `e8777b8` labels, `28ef9de` exaggeration 3; generators: `089460a` relief apron,
+`94807b3` lane fan, `3ef19d7` faubourg — farmland v5, mountain v2), Vailmarch terrain-native
+(`ce2b250`: NO mountain polygons, base campAmp 220 on, endpoint-keyed organic rings).
+Final verify: suite 1253/1253 + fuzz 40/40; in-app fresh pass clean (31/31 regions, 0 errors,
+renderer responsive — DEM/contours now worker-side). Verification screenshots:
+`review/vailmarch-final-{overview,capital,spine3d}.png`.
+**Remaining threads for a future session:** wall glacis apron needs outboard geometry
+(paint agent's needs-geometry note); label water-avoidance + named-region overview labels;
+mountain-stamp apron (frozen mountainField internals — relief-only for now); grown-town-edge
+carries the wall (longer-term, your item-4 note); sea-rim moiré at the 3D mesh edge (minor);
+hillshade+terrain shared-source maplibre warning (cosmetic).
+
 ## NEEDS JONAH'S EYES
 - **VAILMARCH 3D INSPECTION — the make-it-look-real shortlist** (screenshots in
   `review/vailmarch-{overview,capital,spine-3d,dem-raster-debug}.png`; ranked by visual payoff):
