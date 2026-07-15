@@ -2,8 +2,8 @@
  * Wall generator — the second LINE-kind procgen algorithm (river was the
  * first). Pure/headless (no DOM/map/Obsidian imports; reads only its
  * arguments): a sketched `wall` LINE is the SPINE; this elaborates it into a
- * masonry band, towers, gates and an optional moat — all strictly inside the
- * spine corridor.
+ * masonry band, towers, gates, an optional moat and an outboard earthwork
+ * glacis apron — all strictly inside the spine corridor.
  *
  * Determinism:
  *  - Closed-form arithmetic on a mm-quantized spine, seeded only by
@@ -69,6 +69,8 @@ const CORNER_TOWER_HALF_M = 5.5; // corner tower at an interior vertex (curtain)
 const BASTION_HALF_M = 9; // bastion (bastioned) half-size at each corner — the star-fort protrusion
 const MOAT_GAP_M = 5; // gap from the wall outer face to the moat inner edge
 const MOAT_WIDTH_M = 12; // moat channel width
+const GLACIS_GAP_M = 3; // gap from the moat/band outer edge to the glacis inner edge
+const GLACIS_WIDTH_M = 10; // earthwork apron width (≈1.7× the 6 m masonry band)
 const GATE_HALF_M = 6; // gate opening half-length along the wall (× gatehouseScale)
 const CORRIDOR_MARGIN_M = 4;
 const MIN_TOWER_SPACING_M = 15; // clamp — a denser spacing would carpet the wall
@@ -122,15 +124,20 @@ function gatehouseHalf(params: WallParams): number {
 /**
  * Corridor half-width: a pure, monotonic function of the params.
  * Every emitted point sits at most this far from the spine, so it is a strict
- * upper bound on how far output leaves the sketched line. Adding a moat or a
- * larger tower/gatehouse widens it; a palisade (no towers, no moat) is the
- * tightest corridor.
+ * upper bound on how far output leaves the sketched line. The outboard glacis
+ * apron is the outermost band (beyond the moat where present), so it sets the
+ * floor: even a palisade (no towers, no moat) reaches the glacis. Adding a moat
+ * pushes the glacis — and the corridor — further out.
  */
 export function wallMaxOffset(params: WallParams): number {
   const bandHalf = WALL_HALF_WIDTH_M;
   const towers = Math.max(towerHalf(params), gatehouseHalf(params));
   const moat = params.moat ? bandHalf + MOAT_GAP_M + MOAT_WIDTH_M : 0;
-  return q(Math.max(bandHalf, towers, moat) + CORRIDOR_MARGIN_M);
+  // Glacis inner edge sits just outside the moat (or the band when there is no
+  // moat); its outer edge is the widest point of the whole wall.
+  const glacisInner = params.moat ? bandHalf + MOAT_GAP_M + MOAT_WIDTH_M : bandHalf;
+  const glacis = glacisInner + GLACIS_GAP_M + GLACIS_WIDTH_M;
+  return q(Math.max(bandHalf, towers, moat, glacis) + CORRIDOR_MARGIN_M);
 }
 
 function unit(dx: number, dy: number): Pt {
@@ -222,9 +229,10 @@ function towerFeature(
  * Generate a wall inside a spine corridor. `region.spine` is the
  * mm-quantized sketched polyline; output is the masonry band (`wall-quad`),
  * `wall-tower` footprints, `wall-gate` markers where a sketched road crosses,
- * and (when `moat`) a `wall-moat` channel — all strictly within
- * `wallMaxOffset(params)` of the spine. `constraints.fabricFeatures` (gen-space
- * meters) supplies the crossing ROADS for gates.
+ * an outboard earthwork `wall-glacis` apron, and (when `moat`) a `wall-moat`
+ * channel — all strictly within `wallMaxOffset(params)` of the spine.
+ * `constraints.fabricFeatures` (gen-space meters) supplies the crossing ROADS
+ * for gates.
  */
 export function generateWall(
   seed: number,
@@ -369,6 +377,61 @@ export function generateWall(
         const dryEnd = w0 ? c1 : c0;
         if (Math.hypot(bank[0] - dryEnd[0], bank[1] - dryEnd[1]) < 0.5) continue;
         out.push(spanQuad(seed, "wall-moat", dryEnd, bank, moatHalf, { wallStyle: params.style, leat: true }));
+      }
+    }
+  }
+
+  // ── Glacis: an outboard earthwork APRON — the last, sloping defensive band
+  //    beyond the wall. It sits OUTSIDE the moat where present (else just outside
+  //    the masonry band), on the SAME away-from-interior side as the moat, ~1.7×
+  //    the masonry band wide. Like the band it gaps at gate openings (the road
+  //    ramps through) and over GENERATED water (river-is-the-moat — the apron
+  //    never spans the channel/canal). Emitted for every style (an earthwork
+  //    apron is style-agnostic); its far edge is bounded by `wallMaxOffset`, so a
+  //    wall with NO settlement AND no water gains ONLY this band and is otherwise
+  //    byte-identical to the pre-glacis output. Side selection mirrors the moat:
+  //    left normal by default, flipped away from the town interior when the
+  //    settlement payload names one. ─────────────────────────────────────────────
+  {
+    const glacisHalf = GLACIS_WIDTH_M / 2;
+    const innerBase = params.moat ? WALL_HALF_WIDTH_M + MOAT_GAP_M + MOAT_WIDTH_M : WALL_HALF_WIDTH_M;
+    const centerOff = innerBase + GLACIS_GAP_M + glacisHalf;
+    const interior = settlement?.interior ?? null;
+    for (let k = 0; k < pts.length - 1; k++) {
+      const a = pts[k];
+      const b = pts[k + 1];
+      const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (segLen <= 0) continue;
+      const [ux, uy] = unit(b[0] - a[0], b[1] - a[1]);
+      let nx = -uy;
+      let ny = ux;
+      if (interior) {
+        const mmx = (a[0] + b[0]) / 2;
+        const mmy = (a[1] + b[1]) / 2;
+        if (nx * (interior[0] - mmx) + ny * (interior[1] - mmy) > 0) {
+          nx = -nx;
+          ny = -ny;
+        }
+      }
+      const steps = Math.max(1, Math.ceil(segLen / RESAMPLE_STEP_M));
+      for (let j = 0; j < steps; j++) {
+        const s0 = (j * segLen) / steps;
+        const s1 = ((j + 1) * segLen) / steps;
+        const c0: Pt = [a[0] + ux * s0 + nx * centerOff, a[1] + uy * s0 + ny * centerOff];
+        const c1: Pt = [a[0] + ux * s1 + nx * centerOff, a[1] + uy * s1 + ny * centerOff];
+        // Gate proximity is measured on the SPINE (the causeway axis), like the
+        // band/moat; a straddled gate opening breaks the apron too.
+        const smx = a[0] + ux * ((s0 + s1) / 2);
+        const smy = a[1] + uy * ((s0 + s1) / 2);
+        if (nearGate(smx, smy)) continue;
+        // Skip water gaps like the band: drop a step whose apron centerline (mid
+        // or either end) falls in the channel/canal, so the quad never spans the
+        // bank. With NO water in reach `inWater` is always false ⇒ every step is
+        // dry ⇒ the apron is a plain continuous band.
+        const mx = (c0[0] + c1[0]) / 2;
+        const my = (c0[1] + c1[1]) / 2;
+        if (inWater(mx, my) || inWater(c0[0], c0[1]) || inWater(c1[0], c1[1])) continue;
+        out.push(spanQuad(seed, "wall-glacis", c0, c1, glacisHalf, { wallStyle: params.style }));
       }
     }
   }

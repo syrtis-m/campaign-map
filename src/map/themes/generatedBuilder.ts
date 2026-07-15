@@ -785,6 +785,17 @@ const RECIPES: Record<string, Recipe> = {
   // rim, the towers a cased edge, and the gate markers three distinct reads:
   // a water-hued sluice at water-gate crossings, a heavier stone gatehouse at
   // road gates (bearing present), a plain marker otherwise.
+  // Glacis: a subtle outboard earthwork apron. Painted in the terrain/earth
+  // (relief) hue at low opacity so it reads as a graded bank beyond the moat —
+  // present but never competing with the masonry band or the moat ribbon.
+  "wall-glacis": (roles) => [
+    L({
+      id: "generated-wall-glacis",
+      type: "fill",
+      filter: gidFilter("wall-glacis"),
+      paint: { "fill-color": roles.relief, "fill-opacity": 0.22 },
+    }),
+  ],
   "wall-moat": (roles) => [
     L({
       id: "generated-wall-moat",

@@ -156,8 +156,11 @@ export const PARK_STYLE_CONTRACT: readonly BucketStyle[] = [
   { gid: "park-court-rake", mark: "line", role: "path-casing", z: 36 },
 ];
 
-/** Wall. Bucket order matches `WALL_TILE_GENERATOR_IDS`. */
+/** Wall. Bucket order matches `WALL_TILE_GENERATOR_IDS`. `wall-glacis` is the
+ * outboard earthwork apron — an earth (`relief`) tint drawn just UNDER the moat
+ * (z 45.5) so the moat ribbon and masonry read on top of it. */
 export const WALL_STYLE_CONTRACT: readonly BucketStyle[] = [
+  { gid: "wall-glacis", mark: "fill", role: "relief", z: 45.5 },
   { gid: "wall-moat", mark: "fill", role: "water-body", z: 46 },
   { gid: "wall-quad", mark: "fill", role: "boundary", z: 47 },
   { gid: "wall-tower", mark: "fill", role: "boundary", z: 48 },

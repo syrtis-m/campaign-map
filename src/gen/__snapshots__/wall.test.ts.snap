@@ -2,10 +2,11 @@
 
 exports[`wall generator — determinism > matches the seeded snapshot fixture (bastioned + moat — golden drift tripwire) 1`] = `
 {
-  "sha256": "ce9df1264b2a4fca4bd0a78025bada2683cc76fa166a92c6913bc1c2bf7389fe",
+  "sha256": "88e7f2b15459313c2dc2b7ec378aaee1240cdb8dccf705069184a89be686e4ae",
   "summary": {
-    "total": 667,
+    "total": 990,
     "wall-gate": 1,
+    "wall-glacis": 323,
     "wall-moat": 323,
     "wall-quad": 323,
     "wall-tower": 20,

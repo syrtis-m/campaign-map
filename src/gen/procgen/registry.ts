@@ -313,10 +313,11 @@ const riverParamsSchema = z.object({
    * mountains' elevation field) straightens the meander. DEFAULT 0 (coupling
    * OFF, plan 035 river v2): a river is a canon stroke that terrain conforms to,
    * not the reverse, so a fresh river ignores terrain unless the GM opts in
-   * (>0). With no mountain sketch the output is identical for ANY value, so this
-   * only matters where a river crosses a sketched mountain; the opt-in reads the
-   * elevation field as a durable macro-terrain input (`elevationFieldFromFabric`
-   * — the raw sketch, never the mountain generator's output). */
+   * (>0). With no terrain in reach — no mountain/relief/landform stamps AND a
+   * zero base field — the output is identical for ANY value; it only matters
+   * where a river crosses composed terrain. The opt-in reads the global
+   * macro-terrain field (`macroTerrainField` — relief/landform stamps + base fBm
+   * over the raw sketch, never the mountain generator's output). */
   slopeSensitivity: z.number().min(0).max(1).default(0),
   /** GM-editable per-vertex carve DEPTH (m), aligned to the sketch spine
    * vertices (plan 040 river depths). Absent (default) ⇒ the uniform
@@ -647,6 +648,12 @@ export const WALL_TILE_GENERATOR_IDS: readonly string[] = contractGids(WALL_STYL
 const wallAlgorithm: ProcgenAlgorithm = {
   id: "wall",
   label: "Wall",
+  // Version 4 (plan 033 glacis apron): the wall now emits an outboard earthwork
+  // `wall-glacis` band beyond the moat (or beyond the masonry band when there is
+  // no moat), on the away-from-interior side, gapped at gates and over generated
+  // water. It is emitted for EVERY style, so every wall's bytes change vs v3 (the
+  // golden re-accepts) — but the band/tower/moat/gate features are byte-untouched;
+  // the glacis is purely additive, and the corridor widens to bound its far edge.
   // Version 3 (plan 038 item 8): water-gate refinements — a `wall-gate`
   // (`waterGate: true`) sluice marker where the spine crosses the GENERATED
   // channel or a city canal, and (with a moat) a leat quad snapping the offset
@@ -662,7 +669,7 @@ const wallAlgorithm: ProcgenAlgorithm = {
   // `water` joins consumes. The 035 cycle guard holds: wall consumes settlement
   // at stage 5 and produces `detail`, which the city never reads — no
   // city→wall→city cycle.
-  currentVersion: 3,
+  currentVersion: 4,
   appliesTo: ["wall"],
   // Stage 5 (DETAIL — plan 035 renumber): the procgen wall ELABORATION
   // (towers/gates/moat) consumes stage-3 `settlement` (gates/gatehouses, moat
