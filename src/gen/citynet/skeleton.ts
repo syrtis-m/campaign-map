@@ -503,6 +503,30 @@ interface GateHit {
   u: number; // parameter along that ring edge
 }
 
+/** EVERY crossing of a polyline with the inset ring (plan 038.5, sketched-road
+ * promotion): a through-road crosses the ring twice (entering + leaving), and
+ * BOTH become forced gates. Deterministic: outer loop over polyline segments in
+ * order, inner over ring edges; each intersection emits a GateHit. Points are
+ * mm-quantized so a gate lies bit-exactly on the ring. */
+function allRingCrossings(line: Pt[], ring: Pt[]): GateHit[] {
+  const hits: GateHit[] = [];
+  for (let i = 0; i < line.length - 1; i++) {
+    const [ax, ay] = line[i];
+    const [bx, by] = line[i + 1];
+    for (let j = 0; j < ring.length - 1; j++) {
+      const [px, py] = ring[j];
+      const [qx, qy] = ring[j + 1];
+      const d = (bx - ax) * (qy - py) - (by - ay) * (qx - px);
+      if (d === 0) continue;
+      const t = ((px - ax) * (qy - py) - (py - ay) * (qx - px)) / d;
+      const u = ((px - ax) * (by - ay) - (py - ay) * (bx - ax)) / d;
+      if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+      hits.push({ p: [qmm(ax + t * (bx - ax)), qmm(ay + t * (by - ay))], ringEdge: j, u });
+    }
+  }
+  return hits;
+}
+
 /** First crossing of an arterial polyline with the inset ring, walking the
  * arterial from its start (the center end): the gate where the road leaves
  * the walled core. Deterministic: segments in order, min arterial-parameter,
@@ -564,6 +588,7 @@ function buildWall(
   region: ProcgenRegion,
   profile: CityProfile,
   arterials: ArterialPath[],
+  sketchedRoads: Pt[][],
   blockedAt: (x: number, y: number) => boolean,
   suppressedAt: (x: number, y: number) => boolean
 ): WallOutput | null {
@@ -576,17 +601,25 @@ function buildWall(
   const base = insetRing(region, inset);
   if (base.length < 4) return null; // degenerate inset — no wall
 
-  // Gates: first ring crossing per arterial part. Dedupe identical points
-  // (two parts of one clipped arterial can cross at the same spot).
+  // Gates: first ring crossing per arterial part, PLUS every crossing of an
+  // in-region sketched road (plan 038.5 — a promoted arterial forces a gate
+  // where it pierces the ring). Dedupe identical points (two parts of one
+  // clipped arterial can cross at the same spot; a road can graze an arterial's
+  // crossing). Empty `sketchedRoads` ⇒ arterial-only gates (byte-identical).
   const hits: GateHit[] = [];
   const seen = new Set<string>();
-  for (const art of arterials) {
-    const hit = firstRingCrossing(art.coords, base);
-    if (!hit) continue;
+  const addHit = (hit: GateHit): void => {
     const key = `${hit.p[0]},${hit.p[1]}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return;
     seen.add(key);
     hits.push(hit);
+  };
+  for (const art of arterials) {
+    const hit = firstRingCrossing(art.coords, base);
+    if (hit) addHit(hit);
+  }
+  for (const road of sketchedRoads) {
+    for (const hit of allRingCrossings(road, base)) addHit(hit);
   }
   if (hits.length < 3) return null; // no closed ring worth building
 
@@ -741,11 +774,21 @@ export function buildSkeleton(
   // constraint index (incl. the generated channel) so the wall band is
   // segmented at rivers and the meandered channel alike.
   const wallIdx = indexConstraints(constraints);
+  // In-region sketched roads: their ring crossings become forced gates (plan
+  // 038.5). Clipped to the region so a road that only grazes outside adds no
+  // gate; empty when there are no sketched roads (arterial-only gates).
+  const inRegionRoads: Pt[][] = [];
+  for (const road of wallIdx.roadLines) {
+    for (const run of clipPolylineToRegion(region, road)) {
+      if (run.length >= 2) inRegionRoads.push(run);
+    }
+  }
   const wall = buildWall(
     citySeed,
     region,
     profile,
     arterials,
+    inRegionRoads,
     (x, y) => blockedByWater(wallIdx, x, y),
     (x, y) => suppressedBySketchedWall(wallIdx, x, y)
   );

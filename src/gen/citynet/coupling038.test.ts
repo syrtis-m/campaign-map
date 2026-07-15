@@ -334,3 +334,68 @@ describe("038.6 — adjacent districts derive bit-matching shared-edge stubs (S6
     expect(withFar).toBe(alone);
   });
 });
+
+// ─── 038.5 — in-region sketched road forces gates at ring crossings ───────────
+
+describe("038.5 — sketched road ×  wall inset ring ⇒ forced gates", () => {
+  const region = makeRegion("road-region", [
+    [-600, -550],
+    [600, -550],
+    [600, 550],
+    [-600, 550],
+  ]);
+  // A road crossing straight through the walled core (enters + leaves ⇒ two ring
+  // crossings ⇒ two forced gates on the road).
+  const roadLine: Pt[] = [
+    [-900, 30],
+    [900, -30],
+  ];
+  const road: FabricFeature = {
+    type: "Feature",
+    id: "road-1",
+    geometry: { type: "LineString", coordinates: roadLine },
+    properties: { kind: "road" },
+  };
+
+  const gatesOnRoad = (net: GeoJSON.Feature[]): Pt[] =>
+    net
+      .filter((f) => f.geometry.type === "Point" && (f.properties as { type?: string })?.type === "gate")
+      .map((f) => (f.geometry as GeoJSON.Point).coordinates as Pt)
+      .filter((p) => nearestOnLine(roadLine, p[0], p[1]).dist < 3);
+
+  it("euro-medieval walls, and the road pierces the ring at two forced gates", () => {
+    const withRoad = generateCityNetwork(7, region, "euro-medieval", {
+      worldBounds: WORLD,
+      fabricFeatures: [road],
+    });
+    const onRoad = gatesOnRoad(withRoad);
+    expect(onRoad.length).toBe(2); // one entering, one leaving
+    // Each forced gate is a genuine ring crossing (not merely near the road) —
+    // it moved the total gate count up vs no road.
+    const noRoad = generateCityNetwork(7, region, "euro-medieval", { worldBounds: WORLD });
+    expect(gatesOnRoad(noRoad).length).toBe(0);
+    const countGates = (net: GeoJSON.Feature[]): number =>
+      net.filter((f) => f.geometry.type === "Point" && (f.properties as { type?: string })?.type === "gate").length;
+    expect(countGates(withRoad)).toBeGreaterThan(countGates(noRoad));
+  });
+
+  it("no sketched road ⇒ byte-identical to the uncoupled city", () => {
+    const a = JSON.stringify(generateCityNetwork(7, region, "euro-medieval", { worldBounds: WORLD }));
+    const b = JSON.stringify(generateCityNetwork(7, region, "euro-medieval", { worldBounds: WORLD }));
+    expect(a).toBe(b);
+  });
+
+  it("a road that never enters the region adds no forced gate (byte-inert)", () => {
+    const farRoad: FabricFeature = {
+      type: "Feature",
+      id: "road-far",
+      geometry: { type: "LineString", coordinates: [[3000, 3000], [4000, 3200]] },
+      properties: { kind: "road" },
+    };
+    const alone = JSON.stringify(generateCityNetwork(7, region, "euro-medieval", { worldBounds: WORLD }));
+    const withFar = JSON.stringify(
+      generateCityNetwork(7, region, "euro-medieval", { worldBounds: WORLD, fabricFeatures: [farRoad] })
+    );
+    expect(withFar).toBe(alone);
+  });
+});

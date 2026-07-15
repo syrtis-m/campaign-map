@@ -251,14 +251,15 @@ const cityAlgorithm: ProcgenAlgorithm = {
   // bytes ⇒ the bump gates adoption.
   // Version 3 (plans 038 + 039 §1.1, coupling wave 2): (038.1) bank-tangent
   // street alignment + building-only setback near the generated river channel;
-  // (038.5) in-region sketched roads promote to arterials w/ frontage ribbons +
-  // forced gates at road×ring crossings; (038.6) adjacent districts sharing a
-  // ring edge derive bit-matching arterial stubs/gates by hashing the shared
-  // edge (never reading the neighbor's output); (039 §1.1) a typed `market`
-  // canon pin anchors the plaza + arterial star. Each coupling is a no-op when
-  // its trigger is absent, so a city with no channel / no in-region road / no
-  // adjacent district / no market pin is byte-identical to v2; any trigger
-  // present changes bytes ⇒ the bump gates adoption.
+  // (038.5) an in-region sketched road forces a gate where it crosses the wall
+  // inset ring (the frontage/ribbon-lot promotion is DEFERRED — see plans/038);
+  // (038.6) adjacent districts sharing a ring edge derive bit-matching arterial
+  // stubs/gates by hashing the shared edge (never reading the neighbor's
+  // output); (039 §1.1) a typed `market` canon pin anchors the plaza + arterial
+  // star. Each coupling is a no-op when its trigger is absent, so a city with no
+  // channel / no in-region road crossing a wall / no adjacent district / no
+  // market pin is byte-identical to v2; any trigger present changes bytes ⇒ the
+  // bump gates adoption.
   currentVersion: 3,
   appliesTo: ["district"],
   // Stage 3 (settlement): bridges over the meandered channel + a growth-cost
