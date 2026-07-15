@@ -234,7 +234,7 @@ Registered algorithms and their stages:
 
 | algorithm | kind | stage | produces → consumes | generator |
 |---|---|---|---|---|
-| mountain | polygon | 0 elevation | elevation ← ∅ | `gen/mountain.ts` (massif, hachures, peaks, contours over the elevation field) |
+| mountain | polygon | 0 elevation | elevation ← ∅ | `gen/mountain.ts` (massif, hachures, peaks). Contours are NOT a mountain feature — iso-lines trace the campaign-wide composed terrain field as a global viewport-keyed surface (`gen/fields/terrainContours.ts` → the `terrain-contour` paint role), rendering everywhere the field has relief (Jonah 2026-07-15) |
 | river | line | 1 hydrology | water ← elevation | `gen/river.ts` (meanders/braiding/width growth, banks, islands, confluences, estuary, oxbows) |
 | forest | polygon | 2 vegetation | vegetation ← water | `gen/forest.ts` (Thomas-cluster trees, marching-squares cloud canopy with clearing holes) |
 | park | polygon | 2 vegetation | vegetation ← water | `gen/park.ts` (variety-driven layouts incl. japanese-garden; paths, pond, court, rocks) |
@@ -316,9 +316,10 @@ for the one-way migration (disc → 32-gon district polygon, same seed).
 - `gen/fields/` — reusable point-evaluable scalar fields (`f(x,y)` from durable inputs
   only — the property that makes tiles seam-free): SDFs (`sdf.ts` — the bit-exact
   source of truth that `region.ts` and `fabricConstraints.ts` import back),
-  combinators, metaballs, **marching squares** (shared iso-line machinery: mountain
-  contours, forest canopy), smoothing, analytic-derivative fBm elevation
-  (`elevation.ts`), mountain height field, and DEM lattice/terrarium packing
+  combinators, metaballs, **marching squares** (shared iso-line machinery: global
+  terrain contours, forest canopy), smoothing, analytic-derivative fBm elevation
+  (`elevation.ts`), mountain height field, viewport-keyed global contour leaves of
+  the composed terrain field (`terrainContours.ts`), and DEM lattice/terrarium packing
   (`dem.ts` — numeric half only; PNG encoding is host-side and is *not* a determinism
   surface).
 - `gen/world/` — the world tier: per-tile `(seed, bbox, constraints) => Feature[]`
@@ -372,9 +373,12 @@ for the one-way migration (disc → 32-gon district polygon, same seed).
   Cache hits never re-check constraints (freshness is the fingerprint's job).
 - **`map/generation/workerClient.ts` + `gen/worker/generationWorker.ts`** — the worker
   boundary. The worker bundle is loaded via a Blob URL (Electron CSP workaround). Jobs:
-  per-tile world generators and whole-region procgen (`{ algorithmId, seed, ring,
+  per-tile world generators, whole-region procgen (`{ algorithmId, seed, ring,
   params, constraints }` — the worker rebuilds the region and consults the same
-  registry). Main-thread fallback preserved everywhere.
+  registry), and per-tile terrain SAMPLING (`dem-tile` lattice fill + `contour-leaf`
+  extraction, carrying plain-data terrain inputs — the worker rebuilds the same
+  composed `terrainAt` field, so a cold DEM/contour fill never stalls the renderer;
+  Jonah 2026-07-15). Main-thread fallback preserved everywhere (byte-identical).
 - **`vault/*.ts`** — the App-typed IO for fabric/manifest/locations/imports
   (`fabricStore`, `generatedManifestStore`, `locationOps`, `campaignOps`, `importOps`).
 - **`model/*.ts`** — zod schemas + pure helpers (fabric ops, tile cache, mutation log,
