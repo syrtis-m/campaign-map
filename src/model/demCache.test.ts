@@ -89,6 +89,48 @@ describe("append/read round-trip", () => {
   });
 });
 
+describe("persistent in-memory view (032-B pattern: read once, append-through)", () => {
+  /** A read-counting adapter — proves the view is not re-parsing the log per
+   * request (the growing-file main-thread stall this fix removes). */
+  function countingApp(): { app: App; reads: () => number; files: Map<string, string> } {
+    const { app, files } = fakeApp();
+    const adapter = (app as unknown as { vault: { adapter: Record<string, unknown> } }).vault.adapter;
+    let reads = 0;
+    const rawRead = adapter.read as (p: string) => Promise<string>;
+    adapter.read = async (p: string) => {
+      reads++;
+      return rawRead(p);
+    };
+    return { app, reads: () => reads, files };
+  }
+
+  it("serves 20 tile requests with ONE file read (not one per request)", async () => {
+    const { app, reads } = countingApp();
+    for (let i = 0; i < 5; i++) await appendDemTile(app, FOLDER, tile(6, 24 + i, 33, [i]));
+    const readsAfterWrites = reads();
+    for (let r = 0; r < 20; r++) await getDemTile(app, FOLDER, 6, 24 + (r % 5), 33);
+    // Every getDemTile after the view is loaded is served from memory — zero
+    // additional reads (the old path re-read+parsed the whole log each call).
+    expect(reads()).toBe(readsAfterWrites);
+  });
+
+  it("compacts superseded records on load (bounds unbounded log growth)", async () => {
+    const { app, files } = fakeApp();
+    const path = `${FOLDER}/.mapcache/dem.jsonl`;
+    // Ten rewrites of the SAME tile — an append-only log with nine superseded
+    // records, exactly what a pan-heavy session accumulates per re-filled tile.
+    for (let v = 0; v < 10; v++) await appendDemTile(app, FOLDER, tile(6, 24, 33, [v], `dig${v}`));
+    expect(files.get(path)!.trimEnd().split("\n").length).toBe(10);
+    // A FRESH session: a second App over the SAME storage gets its own (unloaded)
+    // view (the view is App-keyed), so its first read compacts the log.
+    const adapter = (app as unknown as { vault: { adapter: unknown } }).vault.adapter;
+    const app2 = { vault: { adapter } } as unknown as App;
+    const got = await getDemTile(app2, FOLDER, 6, 24, 33);
+    expect(got?.heights).toEqual([9]); // last write wins — byte-identical record
+    expect(files.get(path)!.trimEnd().split("\n").length).toBe(1); // compacted
+  });
+});
+
 describe("cache delete is harmless (CLAUDE.md quality bar)", () => {
   it("clearDemCache empties the read; a re-append reconstructs identically", async () => {
     const { app } = fakeApp();
