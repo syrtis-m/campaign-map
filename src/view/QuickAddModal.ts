@@ -1,12 +1,12 @@
 import { App, Modal, Setting } from "obsidian";
 import {
-  LOCATION_TYPES,
   VISIBILITY_VALUES,
   defaultVisibilityForType,
   type Visibility,
 } from "../model/locationNote";
 import { generateNameSuggestions } from "../gen/naming/culture";
 import type { NamingCulture } from "../gen/naming/culture";
+import { quickAddTypeOptions } from "./locationTypeOptions";
 
 export interface QuickAddResult {
   name: string;
@@ -72,7 +72,7 @@ export class QuickAddModal extends Modal {
     let visibilityDropdown: import("obsidian").DropdownComponent | null = null;
 
     new Setting(contentEl).setName("Type").addDropdown((dropdown) => {
-      for (const t of LOCATION_TYPES) dropdown.addOption(t, t);
+      for (const opt of quickAddTypeOptions()) dropdown.addOption(opt.value, opt.label);
       dropdown.setValue(this.type);
       dropdown.onChange((v) => {
         this.type = v;

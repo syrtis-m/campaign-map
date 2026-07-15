@@ -4,6 +4,7 @@ import type { MapView } from "./MapView";
 import type { ParsedCampaign } from "../model/campaignConfig";
 import { THEME_IDS } from "../model/campaignConfig";
 import { genreForCampaign, culturesForGenre } from "../gen/naming/cultures";
+import { normalizeTerrainBlock, terrainBlockOrDefaults } from "./terrainSettings";
 
 /**
  * Single discoverable entry point for everything that previously had no UI at
@@ -32,6 +33,7 @@ export class CampaignControlModal extends Modal {
     this.renderGenerateAndExport(contentEl);
     this.renderTheme(contentEl);
     this.renderNamingCultures(contentEl);
+    if (this.campaign.config.crs === "fictional") this.renderBaseTerrain(contentEl);
     if (this.campaign.config.crs === "real") this.renderBasemap(contentEl);
   }
 
@@ -175,6 +177,70 @@ export class CampaignControlModal extends Modal {
       if (isFullSet) delete fm.namingCultures;
       else fm.namingCultures = [...active];
     });
+  }
+
+  /**
+   * Base terrain (plan 036-D): the campaign-wide elevation base that the DEM
+   * (hillshade + 3D) and terrain-reading generators compose over. Edited behind
+   * an EXPLICIT Apply (never a live slider): a base-param change re-derives every
+   * DEM tile — a real cost the notice names. Fictional campaigns only (the DEM
+   * source is fictional-only). All-default ⇒ the frontmatter key is omitted.
+   */
+  private renderBaseTerrain(root: HTMLElement): void {
+    new Setting(root).setName("Base terrain").setHeading();
+    root.createEl("p", {
+      cls: "setting-item-description",
+      text: "The campaign-wide elevation base under your mountains/relief. Apply is explicit: changing it re-derives every terrain tile (hillshade + 3D). Leave at 0 for a flat base.",
+    });
+
+    const current = terrainBlockOrDefaults(this.campaign.config.terrain);
+    const draft = { ...current };
+
+    new Setting(root)
+      .setName("Continental amplitude (m)")
+      .setDesc("Broad continental relief added under everything. 0 = flat base.")
+      .addText((text) => {
+        text.setValue(String(draft.campAmp));
+        text.inputEl.type = "number";
+        text.inputEl.min = "0";
+        text.onChange((v) => {
+          const n = Number.parseFloat(v);
+          if (Number.isFinite(n)) draft.campAmp = Math.max(0, n);
+        });
+      });
+
+    new Setting(root)
+      .setName("Sea datum (m)")
+      .setDesc("Sea-level height for the flat base and the `sea` landform target.")
+      .addText((text) => {
+        text.setValue(String(draft.seaDatum));
+        text.inputEl.type = "number";
+        text.onChange((v) => {
+          const n = Number.parseFloat(v);
+          if (Number.isFinite(n)) draft.seaDatum = n;
+        });
+      });
+
+    new Setting(root)
+      .setName("City-site grading")
+      .setDesc("Level each district's interior toward its center elevation (per-district opt-in still required).")
+      .addToggle((toggle) => {
+        toggle.setValue(draft.grade);
+        toggle.onChange((v) => (draft.grade = v));
+      });
+
+    new Setting(root)
+      .setName("Apply base terrain")
+      .setDesc("Persists these values and re-derives the elevation surface.")
+      .addButton((btn) =>
+        btn
+          .setButtonText("Apply")
+          .setCta()
+          .onClick(() => {
+            void this.view.applyTerrainSettings(normalizeTerrainBlock(draft));
+            this.close();
+          })
+      );
   }
 
   private renderBasemap(root: HTMLElement): void {

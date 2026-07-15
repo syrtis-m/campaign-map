@@ -235,6 +235,19 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "toggle-terrain-relief",
+      name: "Toggle terrain relief (hillshade + 3D)",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        // Fictional campaigns only — the DEM/hillshade source is fictional-only,
+        // matching the on-map terrain ribbon button's own guard.
+        if (!view?.campaign || view.campaign.config.crs !== "fictional") return false;
+        if (!checking) view.setTerrainEnabled(!view.isTerrainEnabled());
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "generate-fabric-here",
       name: "Generate fabric here",
       checkCallback: (checking) => {
