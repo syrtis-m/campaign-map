@@ -30,6 +30,7 @@ import {
   BANK_SETBACK_M,
   BANK_ALIGN_FALLOFF_M,
 } from "./bankTangent";
+import { allCoordsInside } from "./citynet.fixtures";
 
 type Pt = [number, number];
 
@@ -238,5 +239,98 @@ describe("038.1 — bank-tangent street alignment near the generated channel", (
     const bare = JSON.stringify(generateCityNetwork(SEED, region, "euro-medieval", { worldBounds: WORLD }));
     const again = JSON.stringify(generateCityNetwork(SEED, region, "euro-medieval", { worldBounds: WORLD }));
     expect(bare).toBe(again);
+  });
+});
+
+// ─── 038.6 — adjacent districts, hashed shared-edge stubs/gates (S6) ───────────
+
+describe("038.6 — adjacent districts derive bit-matching shared-edge stubs (S6)", () => {
+  const mainRing = ringMeters(MAIN_DISTRICT_RING);
+  const annexRing = ringMeters(ANNEX_DISTRICT_RING);
+  const mainRegion = makeRegion("overlap-district-main", mainRing);
+  const annexRegion = makeRegion("overlap-district-annex", annexRing);
+
+  const mainPoly: FabricFeature = {
+    type: "Feature",
+    id: "overlap-district-main",
+    geometry: { type: "Polygon", coordinates: [mainRing] },
+    properties: { kind: "district" },
+  };
+  const annexPoly: FabricFeature = {
+    type: "Feature",
+    id: "overlap-district-annex",
+    geometry: { type: "Polygon", coordinates: [annexRing] },
+    properties: { kind: "district" },
+  };
+
+  // The shared south edge in generation-space meters: y = -250, x ∈ [-300, 300].
+  const onSharedEdge = (p: Pt): boolean => Math.abs(p[1] - -250) < 1 && p[0] >= -300 - 1 && p[0] <= 300 + 1;
+
+  const sharedGates = (net: GeoJSON.Feature[]): Pt[] =>
+    net
+      .filter((f) => f.geometry.type === "Point" && (f.properties as { type?: string })?.type === "gate")
+      .map((f) => (f.geometry as GeoJSON.Point).coordinates as Pt)
+      .filter(onSharedEdge)
+      .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
+  it("both regions place gates on the shared edge at BIT-IDENTICAL points", () => {
+    // Each region computed INDEPENDENTLY, seeing only the neighbour's sketch ring.
+    const mainNet = generateCityNetwork(111, mainRegion, "euro-medieval", {
+      worldBounds: WORLD,
+      fabricFeatures: [annexPoly],
+    });
+    const annexNet = generateCityNetwork(999, annexRegion, "euro-continental", {
+      worldBounds: WORLD,
+      fabricFeatures: [mainPoly],
+    });
+    const mainGates = sharedGates(mainNet);
+    const annexGates = sharedGates(annexNet);
+    expect(mainGates.length).toBeGreaterThanOrEqual(1);
+    expect(mainGates.length).toBeLessThanOrEqual(3);
+    // Different seeds AND different profiles, yet the on-edge points match to the
+    // bit (the seam-style agreement).
+    expect(annexGates).toEqual(mainGates);
+  });
+
+  it("each stub starts exactly on the shared edge and runs inward, inside the region", () => {
+    const mainNet = generateCityNetwork(111, mainRegion, "euro-medieval", {
+      worldBounds: WORLD,
+      fabricFeatures: [annexPoly],
+    });
+    expect(allCoordsInside(mainNet, mainRegion)).toBe(true);
+    const stubs = mainNet.filter(
+      (f) =>
+        f.geometry.type === "LineString" &&
+        (f.properties as { roadClass?: string })?.roadClass === "arterial" &&
+        onSharedEdge((f.geometry as GeoJSON.LineString).coordinates[0] as Pt)
+    );
+    expect(stubs.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("an isolated district (no neighbour) ⇒ byte-identical to no shared edge", () => {
+    const withNeighbour = JSON.stringify(
+      generateCityNetwork(111, mainRegion, "euro-medieval", { worldBounds: WORLD })
+    );
+    const alone = JSON.stringify(
+      generateCityNetwork(111, mainRegion, "euro-medieval", { worldBounds: WORLD })
+    );
+    expect(withNeighbour).toBe(alone);
+  });
+
+  it("a far-away district (no shared edge) adds no stubs (byte-inert)", () => {
+    const farPoly: FabricFeature = {
+      type: "Feature",
+      id: "far",
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[5000, 5000], [5300, 5000], [5300, 5300], [5000, 5300], [5000, 5000]]],
+      },
+      properties: { kind: "district" },
+    };
+    const alone = JSON.stringify(generateCityNetwork(111, mainRegion, "euro-medieval", { worldBounds: WORLD }));
+    const withFar = JSON.stringify(
+      generateCityNetwork(111, mainRegion, "euro-medieval", { worldBounds: WORLD, fabricFeatures: [farPoly] })
+    );
+    expect(withFar).toBe(alone);
   });
 });

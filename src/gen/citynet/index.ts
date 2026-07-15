@@ -47,6 +47,7 @@ import { buildWards } from "./wards";
 import { buildOutskirts } from "./outskirts";
 import { makeCityness, attenuateCitynessByCanopy } from "./cityness";
 import { inBankSetback } from "./bankTangent";
+import { sharedEdgeStubs } from "./adjacentDistricts";
 import { buildUpstreamVegetationField } from "../upstream";
 
 // Package barrel: the host (MapView, generationService, worker, modal) imports
@@ -658,6 +659,42 @@ export function generateCityNetwork(
         generatorId: "city-landmark",
         type: "canal",
         width: 30,
+        regionId: region.id,
+      },
+    });
+  });
+
+  // Adjacent-district shared-edge agreement (plan 038.6): where a neighbouring
+  // district sketch ring shares an edge with this region, both sides hash the
+  // shared-edge geometry to derive bit-matching arterial stubs + gates that meet
+  // exactly on the edge (the tile-seam pattern — never reads the neighbour's
+  // OUTPUT). Empty when no district is adjacent ⇒ byte-inert. Stubs are
+  // arterial-grade streets; gates are `city-landmark` points on the edge.
+  const shared = sharedEdgeStubs(citySeed, region, constraints);
+  shared.stubs.forEach((st) => {
+    features.push({
+      type: "Feature",
+      id: hashSeed(citySeed, "sharedstub", st.key),
+      geometry: { type: "LineString", coordinates: qLine(st.coords) },
+      properties: {
+        generated: true,
+        generatorId: "city-street",
+        type: "street",
+        roadClass: "arterial",
+        width: widthFor(profile, "arterial"),
+        regionId: region.id,
+      },
+    });
+  });
+  shared.gates.forEach(([gx, gy], i) => {
+    features.push({
+      type: "Feature",
+      id: hashSeed(citySeed, "sharedgate", Math.round(gx * 10), Math.round(gy * 10), i),
+      geometry: { type: "Point", coordinates: [q(gx), q(gy)] },
+      properties: {
+        generated: true,
+        generatorId: "city-landmark",
+        type: "gate",
         regionId: region.id,
       },
     });
