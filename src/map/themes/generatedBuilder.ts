@@ -780,38 +780,71 @@ const RECIPES: Record<string, Recipe> = {
   ],
 
   // Wall ────────────────────────────────────────────────────────────────────
+  // Give the 037/038 wall data MASS (shortlist 4). The band gets a darker casing
+  // edge (double-line masonry read), the moat a fuller water ribbon with a shore
+  // rim, the towers a cased edge, and the gate markers three distinct reads:
+  // a water-hued sluice at water-gate crossings, a heavier stone gatehouse at
+  // road gates (bearing present), a plain marker otherwise.
   "wall-moat": (roles) => [
     L({
       id: "generated-wall-moat",
       type: "fill",
       filter: gidFilter("wall-moat"),
-      paint: { "fill-color": roles["water-body"], "fill-opacity": 0.8 },
+      // A crisp water ribbon: fuller fill + a shore rim (water-edge) so the moat
+      // channel reads as a defined band hugging the wall, not a faint wash.
+      paint: {
+        "fill-color": roles["water-body"],
+        "fill-opacity": 0.92,
+        "fill-outline-color": roles["water-edge"],
+      },
     }),
   ],
-  "wall-quad": (roles) => [
-    L({
-      id: "generated-wall-quad",
-      type: "fill",
-      filter: gidFilter("wall-quad"),
-      paint: { "fill-color": roles.boundary, "fill-opacity": 0.85 },
-    }),
-  ],
-  "wall-tower": (roles) => [
-    L({
-      id: "generated-wall-tower",
-      type: "fill",
-      filter: gidFilter("wall-tower"),
-      paint: { "fill-color": roles.boundary, "fill-opacity": 1 },
-    }),
-  ],
-  "wall-gate": (roles) => [
-    L({
-      id: "generated-wall-gate",
-      type: "circle",
-      filter: gidFilter("wall-gate"),
-      paint: { "circle-radius": 3, "circle-color": roles.boundary, "circle-opacity": 0.95 },
-    }),
-  ],
+  "wall-quad": (roles) => {
+    const casing = rgbToHex(scale(hexToRgb(roles.boundary), 0.55));
+    return [
+      L({
+        id: "generated-wall-quad",
+        type: "fill",
+        // Masonry band with a darker casing edge — the fill + outline reads as a
+        // parapet double-line, giving the thin band visual mass.
+        filter: gidFilter("wall-quad"),
+        paint: { "fill-color": roles.boundary, "fill-opacity": 0.95, "fill-outline-color": casing },
+      }),
+    ];
+  },
+  "wall-tower": (roles) => {
+    const casing = rgbToHex(scale(hexToRgb(roles.boundary), 0.5));
+    return [
+      L({
+        id: "generated-wall-tower",
+        type: "fill",
+        filter: gidFilter("wall-tower"),
+        paint: { "fill-color": roles.boundary, "fill-opacity": 1, "fill-outline-color": casing },
+      }),
+    ];
+  },
+  "wall-gate": (roles) => {
+    const stone = hexToRgb(roles.boundary);
+    const gatehouseFill = rgbToHex(towardWhite(stone, 0.28)); // a lighter gatehouse mass
+    const darkStone = rgbToHex(scale(stone, 0.5));
+    return [
+      L({
+        id: "generated-wall-gate",
+        type: "circle",
+        filter: gidFilter("wall-gate"),
+        paint: {
+          // waterGate (river/canal pierces the wall) → a water-hued sluice;
+          // bearing present (a road gate w/ gatehouse) → a heavier lighter stone
+          // gatehouse; otherwise a plain gate marker.
+          "circle-radius": ["case", ["has", "waterGate"], 3.4, ["has", "bearing"], 4.6, 3],
+          "circle-color": ["case", ["has", "waterGate"], roles.water, ["has", "bearing"], gatehouseFill, roles.boundary],
+          "circle-stroke-width": ["case", ["has", "bearing"], 1.6, 1.1],
+          "circle-stroke-color": ["case", ["has", "waterGate"], roles["water-edge"], darkStone],
+          "circle-opacity": 0.95,
+        },
+      }),
+    ];
+  },
 };
 
 /** Water-hued channel fills (channel/confluence/distributary/estuary/oxbow) —

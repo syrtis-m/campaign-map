@@ -147,12 +147,15 @@ describe("generatedLayers — river bank/channel/island/junction/dressing paint 
   });
 });
 
-/** A generated color from either a fill or a circle layer. */
+/** A generated color from either a fill or a circle layer — a plain token
+ * string, or a normalized form of a data-driven expression (e.g. the wall-gate
+ * marker, which is a `case` over waterGate/bearing). Coverage still holds: a
+ * layer must paint SOMETHING, and two plain-token layers still compare. */
 function anyColor(layer: LayerSpecification): string {
   const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
   const c = paint["fill-color"] ?? paint["circle-color"];
-  expect(typeof c, `${layer.id} must paint a plain token color`).toBe("string");
-  return (c as string).toLowerCase();
+  expect(c, `${layer.id} must paint a color`).toBeDefined();
+  return (typeof c === "string" ? c : JSON.stringify(c)).toLowerCase();
 }
 
 describe("generatedLayers — forest canopy/clearing/glyph-tree paint coverage", () => {
