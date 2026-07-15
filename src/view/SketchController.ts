@@ -124,7 +124,9 @@ export class SketchController {
     const hit = this.handleAt(e.point.x, e.point.y);
     this.hoverVertexIndex = hit && hit.handle === "vertex" ? hit.index : null;
     const cvs = this.map.getCanvas();
-    cvs.style.cursor = hit ? "move" : "";
+    // The extrude grip is a VERTICAL drag — advertise it (ns-resize), the one
+    // cursor cue that separates it from every horizontal-move handle.
+    cvs.style.cursor = hit ? (hit.handle === "height" ? "ns-resize" : "move") : "";
   };
 
   private readonly downHandler = (e: MapMouseEvent): void => {
@@ -467,7 +469,10 @@ export class SketchController {
       const p = this.map.project(f.geometry.coordinates as Pt);
       // Distance, with a small bias so height/center win over vertex win over
       // midpoint on a near-tie (the big deliberate targets go first).
-      const bias = handle === "height" ? -1 : handle === "center" ? -1 : handle === "vertex" ? 0 : 0.5;
+      // The extrude grip wins decisively near the centroid (it overlaps the
+      // center/move handle's neighbourhood — the "extrude feels horizontal"
+      // report was a center-handle grab).
+      const bias = handle === "height" ? -6 : handle === "center" ? -1 : handle === "vertex" ? 0 : 0.5;
       const d = Math.hypot(p.x - x, p.y - y) + bias;
       if (d < bestScore) {
         bestScore = d;
@@ -564,9 +569,9 @@ export class SketchController {
         source: DRAFT_SOURCE,
         filter: ["==", ["get", "handle"], "height"],
         paint: {
-          "circle-radius": 6,
+          "circle-radius": 11,
           "circle-color": this.accent,
-          "circle-stroke-width": 3,
+          "circle-stroke-width": 4,
           "circle-stroke-color": "#ffffff",
         },
       } as unknown as LayerSpecification,
