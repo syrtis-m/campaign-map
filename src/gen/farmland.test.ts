@@ -653,6 +653,43 @@ describe("farmland generator — peri-urban settlement coupling (plan 035-C, S4)
     expectGeneratorInvariants(coupled, farmRegion);
   });
 
+  it("faubourg band: tagged garden plots + orchard rows line the city-facing ring, none without a city (shortlist item 9)", () => {
+    const distToStreets = (p: Pt): number => {
+      let best = Infinity;
+      for (const f of streets) {
+        for (const [sx, sy] of (f.geometry as GeoJSON.LineString).coordinates as Pt[]) {
+          best = Math.min(best, Math.hypot(p[0] - sx, p[1] - sy));
+        }
+      }
+      return best;
+    };
+    const faub = (feats: GeoJSON.Feature[]): GeoJSON.Feature[] =>
+      feats.filter((f) => (f.properties as { faubourg?: boolean }).faubourg === true);
+    // No city ⇒ NO faubourg feature (the byte-identity path).
+    expect(faub(bare).length).toBe(0);
+    const fb = faub(coupled);
+    expect(fb.length).toBeGreaterThan(0);
+    // Both kinds present + tagged: garden PLOTS (farm-field, crop "garden") and
+    // orchard ROWS (orchard-tree points).
+    const plots = fb.filter((f) => (f.properties as { generatorId?: string }).generatorId === "farm-field");
+    const rows = fb.filter((f) => (f.properties as { generatorId?: string }).generatorId === "orchard-tree");
+    expect(plots.length).toBeGreaterThan(0);
+    expect(rows.length).toBeGreaterThan(0);
+    expect((plots[0].properties as { crop?: string }).crop).toBe("garden");
+    // Every faubourg feature is a NARROW strip just inside the ring (between the
+    // wall and the fields) AND near the generated city fabric.
+    for (const f of fb) {
+      const c = (f.geometry.type === "Point"
+        ? (f.geometry as GeoJSON.Point).coordinates
+        : ((f.geometry as GeoJSON.Polygon).coordinates[0][0] as number[])) as Pt;
+      expect(distanceToBoundary(farmRegion, c[0], c[1])).toBeGreaterThanOrEqual(0);
+      expect(distanceToBoundary(farmRegion, c[0], c[1])).toBeLessThan(40);
+      // distToStreets here measures to street VERTICES; the generator gates on
+      // point-to-SEGMENT distance ≤ 120 m, so a comfortable vertex-distance bound.
+      expect(distToStreets(c)).toBeLessThan(250);
+    }
+  });
+
   it("gate lanes are tamed: no farm-lane crosses more than 2 field cells in a straight diagonal run (shortlist item 8)", () => {
     // N = 2 cells. Justification: the ONLY diagonal run of a gate lane is the stub
     // from the ring gate to the first field-cell boundary, capped at

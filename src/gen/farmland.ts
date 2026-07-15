@@ -56,11 +56,13 @@
  * a raw farmland ring — see `citynet/outskirts.ts`: "ring = land claim, output
  * = interior dressing", unchanged by plan 035); farmland — a STAGE-4 PERI-URBAN
  * consumer since plan 035 — sees the city's GENERATED street network
- * (`constraints.upstream.settlement`): gate lanes radiate from the arterial
- * exits and a field-size gradient runs toward the wall line (both pure
- * functions of the upstream data + absolute position, zero rng draws — no
- * upstream ⇒ byte-identical to the uncoupled generator). It also reads the raw
- * mountain SKETCH for paddy elevation. There is NO farmland → city output edge
+ * (`constraints.upstream.settlement`): tamed gate lanes hang off the arterial
+ * exits (a short jittered stub to the first field boundary, then field-edge
+ * legs), a field-size gradient runs toward the wall line, and a FAUBOURG band of
+ * `faubourg: true` orchard rows + garden plots lines the ring where it faces the
+ * city (all pure functions of the upstream data + absolute position, zero rng
+ * draws — no upstream ⇒ byte-identical to the uncoupled generator). It also reads
+ * the raw mountain SKETCH for paddy elevation. There is NO farmland → city output edge
  * (the cycle guard). Farmland-vs-city overlap is legal (overlap keys on the
  * algorithm id — MapController.overlappingRegion).
  */
@@ -150,6 +152,20 @@ const GATE_LANE_JITTER_RAD = 0.32;
 const GATE_STUB_MAX_CELLS = 1.5;
 /** Field-size gradient reach, meters from the nearest generated street. */
 const NEAR_CITY_M = 240;
+// ── Faubourg transition band (plan 035 peri-urban, shortlist item 9) ──────────
+// Where the belt's ring FACES the generated city, a narrow strip of orchard rows
+// + garden plots (tagged `faubourg: true`) sits between the wall/city edge and
+// the first fields — the built-up suburb that grows against a town wall. Reads
+// ONLY the settlement streets farmland already consumes; no upstream city ⇒ zero
+// faubourg features (byte-identity). All keyed on absolute position (zero rng).
+/** A ring point this near the generated city fabric faces the wall/city edge. */
+const FAUBOURG_REACH_M = 120;
+/** Spacing along the city-facing ring between faubourg garden plots. */
+const FAUBOURG_STEP_M = 22;
+/** Garden-plot square size (meters). */
+const FAUBOURG_PLOT_M = 16;
+/** Plot-centre offset inward from the ring (keeps the strip just inside the wall). */
+const FAUBOURG_INSET_M = 12;
 // ── Paddy terraces ───────────────────────────────────────────────────────────
 // World-aligned marching-squares lattice for the terrace banks. Finer than the
 // mountain's 20 m contour lattice — banks are field-scale features and the run
@@ -790,6 +806,60 @@ export function generateFarmland(
           for (const run of clipPolylineToRegion(region, path)) emitLaneRun(run);
         }
       }
+    }
+  }
+
+  // ── Faubourg transition band (plan 035 peri-urban, shortlist item 9): where the
+  //    belt's ring FACES the generated city, a narrow strip of orchard rows +
+  //    garden plots (tagged `faubourg: true`) sits between the wall/city edge and
+  //    the first fields. Walks the ring by arc length; a ring point within
+  //    FAUBOURG_REACH_M of the city fabric drops a garden plot just inside the ring
+  //    (inward normal chosen by which side lands deeper inside — winding-robust)
+  //    plus an orchard-row tree at its centre. Pure f(ring, streets, position),
+  //    zero rng; `streetSegs` empty (no upstream city, or city out of reach) ⇒ no
+  //    faubourg feature ⇒ byte-identical to the uncoupled generator. ─────────────
+  if (streetSegs.length > 0) {
+    const fring = region.ring; // closed (first === last)
+    let carry = 0;
+    for (let i = 0; i + 1 < fring.length; i++) {
+      const a = fring[i];
+      const b = fring[i + 1];
+      const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (segLen <= 1e-6) continue; // degenerate edge: keep the arc-length carry
+      const tx = (b[0] - a[0]) / segLen;
+      const ty = (b[1] - a[1]) / segLen;
+      // Inward unit normal: pick the perpendicular whose short step lands DEEPER
+      // inside the region (robust to ring winding).
+      let nx = -ty;
+      let ny = tx;
+      const mx = (a[0] + b[0]) / 2;
+      const my = (a[1] + b[1]) / 2;
+      if (
+        distanceToBoundary(region, mx + nx * FAUBOURG_INSET_M, my + ny * FAUBOURG_INSET_M) <
+        distanceToBoundary(region, mx - nx * FAUBOURG_INSET_M, my - ny * FAUBOURG_INSET_M)
+      ) {
+        nx = -nx;
+        ny = -ny;
+      }
+      for (let s = FAUBOURG_STEP_M - carry; s < segLen; s += FAUBOURG_STEP_M) {
+        const px = a[0] + tx * s;
+        const py = a[1] + ty * s;
+        if (distToCity(px, py) > FAUBOURG_REACH_M) continue; // not a city-facing stretch
+        const cx = px + nx * FAUBOURG_INSET_M;
+        const cy = py + ny * FAUBOURG_INSET_M;
+        const half = FAUBOURG_PLOT_M / 2;
+        const rect = rectOf(cx - half, cy - half, cx + half, cy + half);
+        if (!rectContained(region, rect, FIELD_MARGIN_M)) continue;
+        if (rectHitsChannel(rect, channel)) continue; // no garden across the channel
+        out.push(fieldFeature(seed, rect, { crop: "garden", fieldType, faubourg: true }));
+        out.push({
+          type: "Feature",
+          id: hashSeed(seed, "faubourg-tree", q(cx), q(cy)),
+          geometry: { type: "Point", coordinates: [q(cx), q(cy)] },
+          properties: { generatorId: "orchard-tree", type: "orchard-tree", fieldType, faubourg: true },
+        });
+      }
+      carry = (carry + segLen) % FAUBOURG_STEP_M;
     }
   }
 
