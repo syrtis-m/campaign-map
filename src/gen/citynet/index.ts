@@ -111,6 +111,40 @@ function resolveCenter(region: ProcgenRegion, override?: [number, number]): Pt {
   return generationCenter(region);
 }
 
+/** The `type:` frontmatter value that marks a Location pin as a market square
+ * (plan 039 §1.1). A pin of this type inside the district anchors the plaza. */
+export const MARKET_PIN_TYPE = "market";
+
+/**
+ * The generation center a typed `market` canon pin implies (plan 039 §1.1), or
+ * `undefined` when there is none. Considers only `Point` canon features of
+ * `type: market` strictly inside the region; when several qualify, the one
+ * NEAREST the computed `generationCenter` wins (closed-form distance, tie-broken
+ * by mm-quantized x then y — no seed, no order dependence). The returned point
+ * is the pin's own mm-quantized position, so the plaza snaps exactly onto the
+ * GM's square. Untyped pins never qualify ⇒ absent ⇒ byte-identical to v2.
+ */
+function marketPinCenter(region: ProcgenRegion, canonFeatures?: GeoJSON.Feature[]): Pt | undefined {
+  if (!canonFeatures || canonFeatures.length === 0) return undefined;
+  const auto = generationCenter(region);
+  let best: Pt | null = null;
+  let bestD = Infinity;
+  for (const f of canonFeatures) {
+    if (f.geometry.type !== "Point") continue;
+    const type = String((f.properties as Record<string, unknown> | null)?.type ?? "");
+    if (type !== MARKET_PIN_TYPE) continue;
+    const [rx, ry] = f.geometry.coordinates as Pt;
+    if (!regionContains(region, rx, ry)) continue;
+    const c: Pt = [q(rx), q(ry)];
+    const d = Math.hypot(c[0] - auto[0], c[1] - auto[1]);
+    if (best === null || d < bestD || (d === bestD && (c[0] < best[0] || (c[0] === best[0] && c[1] < best[1])))) {
+      best = c;
+      bestD = d;
+    }
+  }
+  return best ?? undefined;
+}
+
 /** First coordinate of a feature, for the canonical sort key. */
 function firstCoord(f: GeoJSON.Feature): Pt {
   const g = f.geometry;
@@ -177,6 +211,14 @@ export function generateCityNetwork(
   centerOverride?: [number, number],
   overrides?: CityParamOverrides
 ): GeoJSON.Feature[] {
+  // Plan 039 §1.1: a typed `market` canon pin inside the region ATTRACTS the
+  // plaza + arterial star, generalizing the shipped `center` param. Precedence
+  // is closed-form: an explicit `centerOverride` (params.center) wins; else the
+  // deterministic nearest market pin; else the computed generationCenter. Untyped
+  // pins keep today's route-around behavior (they never become a center), so a
+  // city with no explicit center AND no market pin is byte-identical to v2. No
+  // new seed derivation — the pin's own mm-quantized position IS the center.
+  const effCenter = centerOverride ?? marketPinCenter(region, constraints.canonFeatures);
   // Effective profile: the data-table profile plus the additive per-run params.
   // A fresh clone (never mutating PROFILES). Absent overrides ⇒ identical to
   // the base profile.
@@ -199,7 +241,7 @@ export function generateCityNetwork(
   let effConstraints = constraints;
   let canalRuns: Pt[][] = [];
   if (profile.concentric?.mode === "canals") {
-    const center = resolveCenter(region, centerOverride);
+    const center = resolveCenter(region, effCenter);
     canalRuns = concentricCanalRuns(region, center, profile.concentric);
     if (canalRuns.length > 0) {
       const canalFeatures: FabricFeature[] = canalRuns.map((run, i) => ({
@@ -223,7 +265,7 @@ export function generateCityNetwork(
   // through paint order, the standing rejection of "city clips canopy").
   const canopy = buildUpstreamVegetationField(constraints.upstream);
   const cost = makeCostField(citySeed, region, effConstraints);
-  const skel = buildSkeleton(citySeed, region, profile, effConstraints, cost, centerOverride);
+  const skel = buildSkeleton(citySeed, region, profile, effConstraints, cost, effCenter);
   const features: GeoJSON.Feature[] = [];
 
   /** Plan-020 containment guard for center-built decorative rings. */

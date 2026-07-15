@@ -249,7 +249,17 @@ const cityAlgorithm: ProcgenAlgorithm = {
   // added there). A city with NO upstream vegetation AND no contained region is
   // byte-identical to v1 (golden unchanged); either coupling present changes
   // bytes ⇒ the bump gates adoption.
-  currentVersion: 2,
+  // Version 3 (plans 038 + 039 §1.1, coupling wave 2): (038.1) bank-tangent
+  // street alignment + building-only setback near the generated river channel;
+  // (038.5) in-region sketched roads promote to arterials w/ frontage ribbons +
+  // forced gates at road×ring crossings; (038.6) adjacent districts sharing a
+  // ring edge derive bit-matching arterial stubs/gates by hashing the shared
+  // edge (never reading the neighbor's output); (039 §1.1) a typed `market`
+  // canon pin anchors the plaza + arterial star. Each coupling is a no-op when
+  // its trigger is absent, so a city with no channel / no in-region road / no
+  // adjacent district / no market pin is byte-identical to v2; any trigger
+  // present changes bytes ⇒ the bump gates adoption.
+  currentVersion: 3,
   appliesTo: ["district"],
   // Stage 3 (settlement): bridges over the meandered channel + a growth-cost
   // bump from canopy → consumes water + vegetation. Produces `settlement` for
@@ -595,16 +605,22 @@ export const WALL_TILE_GENERATOR_IDS: readonly string[] = contractGids(WALL_STYL
 const wallAlgorithm: ProcgenAlgorithm = {
   id: "wall",
   label: "Wall",
-  // Version 2 (plan 037 item 4): the `settlement` payload is now WIRED — gates
-  // fall where GENERATED streets cross the spine (class precedence, gatehouse
-  // axis = crossing bearing), the moat sits AWAY from the town interior, and the
-  // moat/masonry band gaps over the generated channel + canals (river-is-the-
-  // moat) → `water` joins consumes. A wall with NO settlement AND no upstream
-  // water in reach is byte-identical to v1 (golden unchanged); either present
-  // changes bytes ⇒ the bump gates adoption. The 035 cycle guard holds: wall
-  // consumes settlement at stage 5 and produces `detail`, which the city never
-  // reads — no city→wall→city cycle.
-  currentVersion: 2,
+  // Version 3 (plan 038 item 8): water-gate refinements — a `wall-gate`
+  // (`waterGate: true`) sluice marker where the spine crosses the GENERATED
+  // channel or a city canal, and (with a moat) a leat quad snapping the offset
+  // moat to that bank crossing. The city canal is now fed into the settlement
+  // payload (`buildSettlementPayload.canalLines`); the wall gaps its moat/band
+  // over canals too. A wall with NO upstream water AND no canal in reach is
+  // byte-identical to v2 (golden unchanged); water in reach changes bytes ⇒ the
+  // bump gates adoption.
+  // Version 2 (plan 037 item 4): the `settlement` payload wired — gates fall
+  // where GENERATED streets cross the spine (class precedence, gatehouse axis =
+  // crossing bearing), the moat sits AWAY from the town interior, and the
+  // moat/masonry band gaps over the generated channel (river-is-the-moat) →
+  // `water` joins consumes. The 035 cycle guard holds: wall consumes settlement
+  // at stage 5 and produces `detail`, which the city never reads — no
+  // city→wall→city cycle.
+  currentVersion: 3,
   appliesTo: ["wall"],
   // Stage 5 (DETAIL — plan 035 renumber): the procgen wall ELABORATION
   // (towers/gates/moat) consumes stage-3 `settlement` (gates/gatehouses, moat
