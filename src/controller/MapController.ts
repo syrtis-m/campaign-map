@@ -104,7 +104,7 @@ import {
 import { cascadeOrder, downstreamClosure, upstreamEdges, type DagNode } from "../gen/procgen/dag";
 import { isCacheRecordFresh, regionFingerprint } from "../gen/cache/fingerprint";
 import { mountainHeightField, type MountainTerrain } from "../gen/mountain";
-import { unionFields, demVerticalScale, type ElevationField } from "../gen/fields";
+import { terrainAt, demVerticalScale, type ElevationField, type TerrainBaseParams } from "../gen/fields";
 import type { GeneratorId } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
 import { hashSeed } from "../gen/rng";
@@ -2739,40 +2739,105 @@ export class MapController {
     return demVerticalScale(this.campaign.config.scaleMetersPerUnit);
   }
 
+  /** Campaign base-terrain params from the persisted (optional) config block —
+   * defaults inert (flat base at datum 0), so a campaign with no `terrain` block
+   * is byte-identical to the pre-036 mountain-only union. */
+  private terrainBase(): TerrainBaseParams {
+    const t = this.campaign?.config.terrain;
+    return { campAmp: t?.campAmp ?? 0, seaDatum: t?.seaDatum ?? 0 };
+  }
+
   /**
-   * Campaign-wide elevation field for the DEM: the UNION of every sketched
-   * mountain region's height field (masked to its ring), rebuilt from persisted
-   * seeds/params — so it is a pure function of the durable sketch layer
-   * (point-evaluable, deterministic). Base continental terrain + water carve are
-   * out of scope here; `heightAt` stays untouched. Returns
-   * the field plus a `digest` fingerprinting the mountain set (id + seed + params
-   * + ring geometry): the DEM cache treats a record with a different digest as a
-   * stale miss, so a mountain edit/re-roll is picked up without reactive tile
-   * invalidation. `null` when no campaign is loaded.
+   * Campaign-wide elevation field for the DEM (hillshade + 3D terrain): the FULL
+   * composed terrain surface `T = grade(carve(replace(add(B))))` (plan 036),
+   * evaluated through `terrainAt` over the durable sketch layer —
+   *   base (persisted campaign params; default amplitude 0 ⇒ flat)
+   *     + mountain add-stamps (VERBATIM `elevationFieldFromFabric`)
+   *     + relief add-stamps (signed ridge/valley cross-profiles)
+   *     + landform replace-stamps (plateau/basin/sea, priority/id order)
+   *     + river carves (per-river memoized smin channel beds)
+   *     + city-site grading (only when enabled in the config `terrain` block).
+   * A pure, point-evaluable function of persisted seeds/params/geometry — no
+   * global pass, no eager whole-campaign fill (the DEM samples it lazily per
+   * tile). `heightAt` (world-tier biomes) stays untouched.
+   *
+   * BIT-EXACTNESS: on a mountain-only campaign with the default flat base and no
+   * relief/landform/river/grade stamps, `terrainAt`'s verbatim fast path returns
+   * the mountain union UNCHANGED — byte-identical (incl. signed zeros) to the
+   * pre-036 `unionFields(mountainHeightField…)` this replaced.
+   *
+   * The fabric geometry is display units, but the field (and every DEM consumer)
+   * works in gen-space METERS — so region features are converted exactly as
+   * `generationContext` threads constraints to generators (`transformFeatureUnits`
+   * + `unitsToMeters`); params (relief halfWidth, river width, landform band, grade
+   * center) are already meters and pass through untouched.
+   *
+   * `digest` fingerprints EVERY input that can move the field (each terrain stamp's
+   * id/kind/algorithm/seed/params/geometry, river spines+params feeding carves,
+   * the base params, campaign seed, grade-enable, and the vertical scale K): the
+   * DEM cache treats a record with a different digest as a stale miss, so any
+   * edit/re-roll/base-param change is picked up without reactive tile
+   * invalidation. The `t2|` prefix salts the format change so pre-036 mountain-only
+   * cached tiles (old digest shape) always re-derive. `null` when no campaign is
+   * loaded.
    */
   campaignElevationSnapshot(): { field: ElevationField; digest: string } | null {
     if (!this.campaign) return null;
-    const fields: ElevationField[] = [];
-    const parts: string[] = [];
-    // Deterministic order (feature id) so the digest is stable across enumerations.
-    const mountains = this.regionFeatures()
-      .filter((f) => f.properties.procgen?.algorithm === "mountain")
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    // Gen-space (meters) region features — the exact conversion generators see.
+    const feats = this.regionFeatures().map(
+      (f) => transformFeatureUnits(f, (n) => unitsToMeters(n, scale)) as FabricFeature
+    );
+    const base = this.terrainBase();
+    const gradeEnabled = this.campaign.config.terrain?.grade ?? false;
+    const campaignSeed = this.campaign.config.seed;
+    const field = terrainAt(feats, {
+      base,
+      campaignSeed,
+      include: { relief: true, landform: true, carve: true, grade: gradeEnabled },
+    });
+    const digest = this.elevationDigest(feats, base, gradeEnabled, campaignSeed);
+    return { field, digest };
+  }
+
+  /** Fingerprint the composed-terrain inputs: the id-sorted digest of every
+   * terrain-affecting region (mountain / relief / landform add+replace stamps,
+   * river carves, and — only when grading is enabled — graded districts) plus the
+   * base params, campaign seed, grade-enable, and K. id-sorted so a shuffled
+   * fabric enumeration yields the identical string (the fold discipline). Cheap
+   * string hash — compared, never a persisted determinism surface. */
+  private elevationDigest(
+    feats: FabricFeature[],
+    base: TerrainBaseParams,
+    gradeEnabled: boolean,
+    campaignSeed: number
+  ): string {
+    const relevant = feats
+      .filter((f) => {
+        const alg = f.properties.procgen?.algorithm;
+        if (alg === "mountain" || alg === "relief" || alg === "landform" || alg === "river") return true;
+        // Graded districts only move the field (and thus the digest) when grading
+        // is enabled AND the district opted in — else they contribute nothing.
+        return (
+          gradeEnabled &&
+          f.properties.kind === "district" &&
+          alg === "city" &&
+          (f.properties.procgen?.params as Record<string, unknown> | undefined)?.grade === true
+        );
+      })
       .sort((a, b) => String(a.id).localeCompare(String(b.id)));
-    for (const feature of mountains) {
-      const block = feature.properties.procgen!;
-      const region = this.buildRegionFromFeature(feature);
-      if (!region) continue;
-      const p = block.params as Record<string, unknown>;
-      const terrain = (typeof p.terrain === "string" ? p.terrain : "alpine") as MountainTerrain;
-      const amplitude = typeof p.amplitude === "number" ? p.amplitude : 0.6;
-      const roughness = typeof p.roughness === "number" ? p.roughness : 0.5;
-      fields.push(mountainHeightField(block.seed, region, { terrain, amplitude, roughness }));
-      parts.push(
-        JSON.stringify({ id: feature.id, seed: block.seed, terrain, amplitude, roughness, ring: region.ring })
-      );
-    }
-    const digest = `k${this.demVerticalScale()}|${parts.join("|")}`;
-    return { field: unionFields(fields), digest };
+    const parts = relevant.map((f) => {
+      const p = f.properties.procgen!;
+      return JSON.stringify({
+        id: f.id,
+        kind: f.properties.kind,
+        algorithm: p.algorithm,
+        seed: p.seed,
+        params: p.params,
+        geometry: f.geometry.coordinates,
+      });
+    });
+    return `t2|k${this.demVerticalScale()}|b${base.campAmp}:${base.seaDatum}|s${campaignSeed}|g${gradeEnabled ? 1 : 0}|${parts.join("|")}`;
   }
 
   /** Set (or clear, with `null`) a region's persisted generation center. */

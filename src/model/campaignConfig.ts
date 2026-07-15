@@ -23,6 +23,22 @@ export const CampaignConfigSchema = z.object({
   // genre (existing default behavior). Ids not matching the derived genre are
   // ignored rather than rejected — see culturesForGenre's restrictTo fallback.
   namingCultures: z.array(z.string()).optional(),
+  // Campaign base-terrain params (plan 036-D) — the persisted home for the ONE
+  // whole-campaign elevation invalidation, so they live behind an explicit Apply
+  // (never a live slider) and default INERT: absent block ⇒ dead-flat base at
+  // datum 0 with grading off ⇒ `campaignElevationSnapshot` stays byte-identical
+  // to the pre-036 mountain-only union (the DEM/hillshade bit-exactness gate).
+  //  - campAmp:  continental relief amplitude, meters. 0 ⇒ flat base.
+  //  - seaDatum: sea-level datum, meters (flat base height + `sea` landform target).
+  //  - grade:    enable city-site grading (per-district `params.grade` opt-in only
+  //              composes when this is on). Default off (ratified Q3).
+  terrain: z
+    .object({
+      campAmp: z.number().nonnegative().default(0),
+      seaDatum: z.number().default(0),
+      grade: z.boolean().default(false),
+    })
+    .optional(),
 });
 
 export type CampaignConfig = z.infer<typeof CampaignConfigSchema>;

@@ -24,9 +24,12 @@ import { appendDemTile, getDemTile, demTileKey, type DemTile } from "../model/de
 export const DEM_TILE_RES = 256;
 
 /** What the handler needs per campaign, re-read live on every tile request so a
- * mountain edit is reflected once the source is refreshed. `snapshot()` returns
- * the composed campaign field + a digest fingerprinting the inputs (mountain set
- * + vertical scale); a cached tile whose digest differs is a stale miss. */
+ * terrain edit is reflected once the source is refreshed. `snapshot()` returns
+ * the FULL composed campaign terrain field (`terrainAt`: base + mountain/relief/
+ * landform stamps + river carves + optional grading — plan 036-C/036-D) + a
+ * digest fingerprinting every input that can move the field (each stamp's
+ * id/seed/params/geometry, river spines, base params, campaign seed, grade-enable,
+ * and the vertical scale K); a cached tile whose digest differs is a stale miss. */
 export interface DemProvider {
   app: App;
   campaignFolder: string;

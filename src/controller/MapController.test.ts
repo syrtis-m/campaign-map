@@ -12,8 +12,10 @@ import { generatedManifestPath } from "../vault/generatedManifestStore";
 import { fabricPath } from "../vault/fabricStore";
 import { discToRing, citySeedFor, type CityDomain } from "../gen/citynet";
 import { regionNetworkKey } from "../map/generation/generationService";
-import { isProcgenRegion } from "../model/fabric";
+import { isProcgenRegion, type FabricFeature } from "../model/fabric";
 import { algorithmById } from "../gen/procgen/registry";
+import { unionFields } from "../gen/fields";
+import { mountainHeightField } from "../gen/mountain";
 
 /** A district ring in display units (1 unit = 50 m ⇒ an 800 m square), the
  * same fixture geometry the live procgen40 gate sketches. */
@@ -2377,5 +2379,181 @@ describe("MapController — staged repaint (032-D)", () => {
     const stages = host.repaintGeneratedStages.slice(before);
     expect(stages.length).toBeGreaterThan(0);
     for (const s of stages) expect(s).toBe(-1); // WORLD_STAGE, never a region stage
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// campaignElevationSnapshot — the DEM (hillshade + 3D terrain) now samples the
+// FULL composed terrain field (plan 036-C/036-D live-wiring), not just the
+// mountain union. These prove: (a) BYTE-IDENTITY to the pre-036 union on a
+// mountain-only default-base campaign; (b) relief/landform/river stamps are
+// actually visible in the sampled DEM field; (c) the digest fingerprints every
+// input and is order-independent. All headless, meters-space (the field the DEM
+// samples is gen-space meters; scale is 50 m/unit ⇒ display×50 = meters).
+
+/** A district-square ring in display units (800 m at scale 50), reused as a
+ * mountain / landform footprint. */
+const TRING: [number, number][] = [
+  [10, -26],
+  [26, -26],
+  [26, -10],
+  [10, -10],
+];
+
+/** A straight west→east spine through the middle of TRING (display units). */
+const TSPINE: [number, number][] = [
+  [10, -18],
+  [26, -18],
+];
+
+function mountainFeature(id: string, seed: number, params: Record<string, unknown>): FabricFeature {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "Polygon", coordinates: [[...TRING, TRING[0]]] },
+    properties: { kind: "mountain", procgen: { algorithm: "mountain", seed, version: 1, params } },
+  };
+}
+
+function reliefFeature(id: string, seed: number, params: Record<string, unknown>): FabricFeature {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "LineString", coordinates: TSPINE },
+    properties: { kind: "relief", procgen: { algorithm: "relief", seed, version: 1, params } },
+  };
+}
+
+describe("MapController — campaignElevationSnapshot composed terrain (036-C/036-D DEM wiring)", () => {
+  it("is BYTE-IDENTICAL to the pre-036 mountain union on a mountain-only default-base campaign", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(
+      TRING,
+      "mountain",
+      { terrain: "alpine", amplitude: 0.7, roughness: 0.4 },
+      "Peak",
+      "mountain"
+    );
+
+    const snap = host.controller.campaignElevationSnapshot();
+    expect(snap).not.toBeNull();
+
+    // Reconstruct the OLD union exactly the way campaignElevationSnapshot used to:
+    // buildRegionFromFeature (meters) → mountainHeightField → unionFields.
+    const feat = (await host.fabric()).features.find((f) => f.id === featureId)!;
+    const region = host.controller.buildRegionFromFeature(feat)!;
+    const p = feat.properties.procgen!.params as Record<string, unknown>;
+    const oldUnion = unionFields([
+      mountainHeightField(feat.properties.procgen!.seed, region, {
+        terrain: p.terrain as "alpine",
+        amplitude: p.amplitude as number,
+        roughness: p.roughness as number,
+      }),
+    ]);
+
+    // Sample a lattice ACROSS THE MASSIF IN METERS (ring is 500..1300 × −1300..−500)
+    // and compare to the float, signed zeros included (Object.is).
+    let compared = 0;
+    for (let i = 0; i <= 8; i++) {
+      for (let j = 0; j <= 8; j++) {
+        const x = 500 + (800 * i) / 8;
+        const y = -1300 + (800 * j) / 8;
+        const a = snap!.field(x, y);
+        const b = oldUnion(x, y);
+        expect(Object.is(a.v, b.v)).toBe(true);
+        expect(Object.is(a.dx, b.dx)).toBe(true);
+        expect(Object.is(a.dy, b.dy)).toBe(true);
+        compared++;
+      }
+    }
+    expect(compared).toBe(81);
+  });
+
+  it("makes a relief ridge stamp visible in the sampled field (nonzero on the spine, zero far away)", async () => {
+    const host = cityHost();
+    await host.controller.createSpineForTest(TSPINE, "relief", "relief", {
+      polarity: "ridge",
+      height: 300,
+      halfWidth: 180,
+    });
+    const snap = host.controller.campaignElevationSnapshot()!;
+    // On the spine midpoint (18,−18)×50 = (900,−900): a ridge raises the surface.
+    expect(snap.field(900, -900).v).toBeGreaterThan(0);
+    // Far away (well beyond the 180 m half-width), the flat amp-0 base is exactly 0
+    // — the compact-support inertness of a disjoint stamp.
+    expect(snap.field(6000, 6000).v).toBe(0);
+  });
+
+  it("makes a landform plateau stamp saturate the interior to its target (zero far away)", async () => {
+    const host = cityHost();
+    await host.controller.createRegionForTest(
+      TRING,
+      "landform",
+      { mode: "plateau", band: 120, priority: 0 },
+      "Tableland",
+      "landform"
+    );
+    const snap = host.controller.campaignElevationSnapshot()!;
+    // Deep interior center (900,−900) is >band from every edge ⇒ mask 1 ⇒ the
+    // plateau default target (400 m) exactly, on the flat 0 base.
+    expect(snap.field(900, -900).v).toBe(400);
+    expect(snap.field(6000, 6000).v).toBe(0);
+  });
+
+  it("carves a river channel BELOW the surrounding surface along the spine", async () => {
+    const host = cityHost();
+    await host.controller.createSpineForTest(TSPINE, "river", "river", {
+      windiness: 0,
+      braiding: 0,
+      width: 20,
+      widthGrowth: 0,
+      braidBias: 0,
+    });
+    const snap = host.controller.campaignElevationSnapshot()!;
+    const onSpine = snap.field(900, -900).v; // on the channel
+    const beside = snap.field(900, -1500).v; // 600 m off the spine, past the gorge wall
+    expect(onSpine).toBeLessThan(beside);
+    expect(onSpine).toBeLessThan(0); // incised below the flat datum
+    expect(beside).toBe(0); // far bank recovers to the flat base
+  });
+
+  it("digest changes with a stamp param, a stamp seed, and a base param; is stable across enumeration order", async () => {
+    // Param sensitivity: same fixed id, different relief height ⇒ different digest.
+    const hA = cityHost();
+    hA.controller.addSketchedFeature(reliefFeature("r", 5, { polarity: "ridge", height: 300, halfWidth: 180 }));
+    const hB = cityHost();
+    hB.controller.addSketchedFeature(reliefFeature("r", 5, { polarity: "ridge", height: 900, halfWidth: 180 }));
+    expect(hA.controller.campaignElevationSnapshot()!.digest).not.toBe(
+      hB.controller.campaignElevationSnapshot()!.digest
+    );
+
+    // Seed sensitivity: same id + params, different seed ⇒ different digest.
+    const hC = cityHost();
+    hC.controller.addSketchedFeature(reliefFeature("r", 999, { polarity: "ridge", height: 300, halfWidth: 180 }));
+    expect(hC.controller.campaignElevationSnapshot()!.digest).not.toBe(
+      hA.controller.campaignElevationSnapshot()!.digest
+    );
+
+    // Base-param sensitivity: opting the campaign base off flat ⇒ different digest.
+    const hD = cityHost();
+    await hD.controller.createRegionForTest(TRING, "mountain", { terrain: "alpine", amplitude: 0.6, roughness: 0.5 }, "M", "mountain");
+    const flat = hD.controller.campaignElevationSnapshot()!.digest;
+    hD.campaign.config.terrain = { campAmp: 500, seaDatum: 0, grade: false };
+    expect(hD.controller.campaignElevationSnapshot()!.digest).not.toBe(flat);
+
+    // Order independence: same id set, opposite insertion order ⇒ identical digest
+    // AND identical sampled field (the id-sorted fold).
+    const mtn = mountainFeature("m", 5, { terrain: "alpine", amplitude: 0.6, roughness: 0.5 });
+    const rel = reliefFeature("r", 5, { polarity: "ridge", height: 300, halfWidth: 180 });
+    const h1 = cityHost();
+    h1.controller.addSketchedFeature(mtn);
+    h1.controller.addSketchedFeature(rel);
+    const h2 = cityHost();
+    h2.controller.addSketchedFeature(rel);
+    h2.controller.addSketchedFeature(mtn);
+    const s1 = h1.controller.campaignElevationSnapshot()!;
+    const s2 = h2.controller.campaignElevationSnapshot()!;
+    expect(s1.digest).toBe(s2.digest);
+    expect(s1.field(900, -900).v).toBe(s2.field(900, -900).v);
   });
 });

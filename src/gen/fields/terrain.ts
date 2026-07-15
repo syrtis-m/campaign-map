@@ -286,12 +286,31 @@ function buildRiverCarve(carve: RiverCarve, pre: ElevationField): (s: HeightSamp
   // whole-artifact pass: sample the pre-carve surface once per vertex, incise by
   // `depth`, so the gorge follows the terrain at ~CARVE_RESAMPLE_M resolution.
   const bedVert = new Float64Array(spine.length);
+  let bedMin = Infinity; // lowest per-vertex floor — a lower bound on the bed floor anywhere
   for (let i = 0; i < spine.length; i++) {
     const [vx, vy] = spine[i];
     bedVert[i] = pre(vx, vy).v - carve.depth;
+    if (bedVert[i] < bedMin) bedMin = bedVert[i];
   }
   const hw = carve.halfWidth;
+  const bnd = hash.bounds;
   return (s: HeightSample, x: number, y: number): HeightSample => {
+    // FAR-FIELD FAST REJECT (compact support, BYTE-EXACT). The segment hash's
+    // nearest-query spirals cells outward, so a point far from THIS river's spine
+    // (e.g. a DEM sample near a DIFFERENT river) is O(dist²) to answer — the
+    // cold-carve blow-up plan 036-B calls out, and the reason a naive per-pixel
+    // DEM fill over several rivers is unusably slow. But the carve has tiny
+    // compact support: `smin(pre, bed)` returns `pre` UNCHANGED once `bed ≥ pre+k`
+    // (h≥1). A cheap lower bound on the bed at (x,y) is `bedMin + slope·max(0,
+    // dLB−hw)`, where `dLB` (distance from the point to the spine's bbox) ≤ the
+    // true nearest distance and `bedMin` ≤ any per-vertex floor. If even that
+    // lower bound already clears `pre+k`, the full carve is provably inert here —
+    // return `s` and skip the hash query. Only short-circuits where the full path
+    // would ALSO return `s` (h≥1), so it is byte-identical to evaluating the carve.
+    const dLBx = x < bnd.minX ? bnd.minX - x : x > bnd.maxX ? x - bnd.maxX : 0;
+    const dLBy = y < bnd.minY ? bnd.minY - y : y > bnd.maxY ? y - bnd.maxY : 0;
+    const dLB = Math.hypot(dLBx, dLBy);
+    if (bedMin + CARVE_BANK_SLOPE * Math.max(0, dLB - hw) >= s.v + CARVE_SMIN_K) return s;
     const near = hash.nearest(x, y);
     if (near.segIndex < 0) return s;
     const i = near.segIndex;

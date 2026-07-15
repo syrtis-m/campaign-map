@@ -109,6 +109,27 @@ describe("terrainAt carve — byte-identity for campaigns with no rivers", () =>
     }
   });
 
+  it("a point FAR outside a river's bbox is byte-identical with and without the carve (far-field reject)", () => {
+    // The DEM samples several rivers per tile; a point near one river is far from
+    // the others, where the carve is provably inert. The far-field fast-reject
+    // (compact support) must return `pre` to the FLOAT — same bytes, gradients
+    // included. Force BOTH fields through the composed path with a non-flat base
+    // (so the reject is compared against the true composed `pre`, not the
+    // mountain-only fast path whose signed-zero gradients differ by construction).
+    const spine: Pt[] = [[0, 0], [400, 20], [900, -10], [1500, 0]];
+    const opts = { base: { campAmp: 200, seaDatum: 0 }, campaignSeed: 3 } as const;
+    const feats = [mountain("m", RING), river("far", spine)];
+    const carveOff = terrainAt(feats, { ...opts, include: { carve: false } });
+    const carveOn = terrainAt(feats, opts);
+    // Points thousands of metres from the spine's bbox (the "near a different
+    // river" case) and just-outside-the-bbox points alike: reject ⇒ exactly `pre`.
+    for (const [x, y] of [[5000, 5000], [-4000, 3000], [750, 4000], [3000, -20], [-2000, 0]] as Pt[]) {
+      expect(carveOn(x, y)).toEqual(carveOff(x, y));
+    }
+    // Sanity: ON the channel the carve is NOT rejected — it genuinely lowers.
+    expect(carveOn(750, 5).v).toBeLessThan(carveOff(750, 5).v);
+  });
+
   it("adding an INERT (blockless) river sketch changes nothing", () => {
     const withMtn = terrainAt([mountain("m", RING)]);
     const inertRiver = {
