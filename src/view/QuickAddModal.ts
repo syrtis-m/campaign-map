@@ -14,8 +14,8 @@ export interface QuickAddResult {
   visibility: Visibility;
 }
 
-/** Self-explanatory picker labels (plan 015) — the value maps 1:1 to a focus
- * level, so the GM never reasons from `type`. */
+/** Self-explanatory picker labels — the value maps 1:1 to a focus level, so the
+ * GM never reasons from `type`. */
 const VISIBILITY_LABELS: Record<Visibility, string> = {
   wide: "Wide — name always shown",
   mid: "Mid — name from mid zoom",
@@ -25,7 +25,7 @@ const VISIBILITY_LABELS: Record<Visibility, string> = {
 /**
  * The ≤5s yes-and flow (architecture §3b): name + type + visibility, with 3
  * culture-consistent name suggestions offered up front (tab/click to accept —
- * faster than typing). Label visibility is set here EXPLICITLY (plan 015) so the
+ * faster than typing). Label visibility is set here EXPLICITLY so the
  * GM never has to remember which type is legible at which focus level.
  */
 export class QuickAddModal extends Modal {
@@ -76,7 +76,7 @@ export class QuickAddModal extends Modal {
       dropdown.setValue(this.type);
       dropdown.onChange((v) => {
         this.type = v;
-        // `type` is only a pre-selection hint (plan 015): re-seed the picker
+        // `type` is only a pre-selection hint: re-seed the picker
         // until the GM sets it themselves, then leave their choice alone.
         if (!this.visibilityTouched) {
           this.visibility = defaultVisibilityForType(v);

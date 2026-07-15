@@ -17,7 +17,7 @@ import { clipNetworkToTile } from "../../gen/citynet";
 import type { ProcgenRegion } from "../../gen/region";
 
 /** Sync (direct pure-generator) or async (worker-dispatched) — `generateTile`
- * awaits either uniformly, so the Phase 4 viewport dispatcher can pass a
+ * awaits either uniformly, so the viewport dispatcher can pass a
  * `(seed, bbox, constraints) => workerClient.generate(...)` closure through
  * the exact same cache path a direct generator call uses. */
 export type TileGenerator = (
@@ -31,15 +31,15 @@ export interface GenerationContext {
   campaign: ParsedCampaign;
   worldBounds: BBox;
   canonFeatures: GeoJSON.Feature[];
-  /** Sketched fabric in generation-space (meters) — plan 019 Phase 3:
-   * every generator run sees the GM's hand-drawn geometry as constraints. */
+  /** Sketched fabric in generation-space (meters): every generator run sees the
+   * GM's hand-drawn geometry as constraints. */
   fabricFeatures?: FabricFeature[];
-  /** Plan 024 §3 (24-C) — the strictly-lower-stage GENERATED output this
-   * region's algorithm consumes (the meandered river channel etc.), built by
-   * the host PER region from fresh lower-stage artifacts and threaded to the
-   * generator as DATA (`constraints.upstream`). Absent for a region with no
-   * upstream coupling ⇒ byte-identical to before the cascade. A cache HIT never
-   * reads it (the bytes are already right — plan 024 §5). */
+  /** The strictly-lower-stage GENERATED output this region's algorithm consumes
+   * (the meandered river channel etc.), built by the host PER region from fresh
+   * lower-stage artifacts and threaded to the generator as DATA
+   * (`constraints.upstream`). Absent for a region with no upstream coupling ⇒
+   * byte-identical to an uncoupled run. A cache HIT never reads it (the bytes
+   * are already right). */
   upstream?: UpstreamArtifacts;
 }
 
@@ -92,21 +92,20 @@ export async function generateTile(
 }
 
 /** Sync (direct) or async (worker) whole-region network computation. The
- * closure captures the algorithm id, seed, and params (plan 020 §3.1) — the
- * service only supplies the (host-built) region and current constraints. */
+ * closure captures the algorithm id, seed, and params — the service only
+ * supplies the (host-built) region and current constraints. */
 export type RegionNetworkCompute = (
   region: ProcgenRegion,
   constraints: GenerationConstraints
 ) => GeoJSON.Feature[] | Promise<GeoJSON.Feature[]>;
 
-/** Whole-region network cache key (plan 020 §3.3): the unclipped network
- * artifact, namespaced by region id so two overlapping regions on the same
- * tile never clobber. */
+/** Whole-region network cache key: the unclipped network artifact, namespaced
+ * by region id so two overlapping regions on the same tile never clobber. */
 export function regionNetworkKey(regionId: string): string {
   return `region:${regionId}:network`;
 }
 
-/** Per-tile clip cache key (plan 020 §3.3): `region:<id>:<x>:<y>:<gid>`. */
+/** Per-tile clip cache key: `region:<id>:<x>:<y>:<gid>`. */
 export function regionTileKey(regionId: string, tileX: number, tileY: number, generatorId: string): string {
   return `region:${regionId}:${tileX}:${tileY}:${generatorId}`;
 }
@@ -123,7 +122,7 @@ function regionConstraints(ctx: GenerationContext): GenerationConstraints {
 }
 
 /**
- * Procgen v4 (plan 020 §3.3): cache-or-compute one tile of a procgen region.
+ * Cache-or-compute one tile of a procgen region.
  * The whole-region network is computed ONCE per region — internally
  * sequential growth is legal because every tile that overlaps the region
  * reads the SAME artifact and clips its own bbox from it. Two cache record
@@ -151,10 +150,10 @@ export async function generateRegionTile(
   const seed = ctx.campaign.config.seed;
   const tileKeys = tileGeneratorIds.map((gid) => regionTileKey(region.id, tileX, tileY, gid));
 
-  // Plan 024 §5.1: a key hit whose stored fingerprint ≠ the caller's current
-  // expected fingerprint is STALE (an external `Fabric.geojson` edit no in-app
-  // commit path observed) — drop it so the miss below recomputes. Pre-024
-  // records (no fingerprint) and callers that pass none are grandfathered fresh.
+  // A key hit whose stored fingerprint ≠ the caller's current expected
+  // fingerprint is STALE (an external `Fabric.geojson` edit no in-app commit
+  // path observed) — drop it so the miss below recomputes. Records with no
+  // fingerprint and callers that pass none are grandfathered fresh.
   const readCached = async (key: string): Promise<CachedTile | undefined> => {
     const cached = opts.preloadedCache ? opts.preloadedCache.get(key) : await getCachedTile(ctx.app, campaignFolder, key);
     if (cached && !isCacheRecordFresh(cached.fingerprint, opts.fingerprint)) return undefined;

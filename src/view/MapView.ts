@@ -62,7 +62,7 @@ import type CampaignMapPlugin from "../main";
 export const VIEW_TYPE_MAP = "campaign-map-view";
 
 /** Picks a session note (`<campaign>/Sessions/*.md`) whose body's `[[wikilinks]]`
- * become a travel path (plan 009) — same FuzzySuggestModal pattern as
+ * become a travel path — same FuzzySuggestModal pattern as
  * `ThemeSwitcherModal`/`CampaignPickerModal`. */
 class SessionSearchModal extends FuzzySuggestModal<TFile> {
   constructor(
@@ -117,7 +117,7 @@ export class MapView extends ItemView {
    * city (overview ~z11) both get the same three-step feel. */
   private focusZooms: [number, number, number] | null = null;
   private focusReadoutEl: HTMLElement | null = null;
-  /** Last-shown per-session travel path (plan 009, Phase 5), if any — kept
+  /** Last-shown per-session travel path, if any — kept
    * in memory (not derived from the index like `connections`) so it can be
    * re-applied to the `session-path` source after a theme switch wipes and
    * rebuilds every source (mirrors how `refreshConnections` re-derives
@@ -127,18 +127,18 @@ export class MapView extends ItemView {
    * campaign switch, or the view closing stops it cleanly instead of two
    * loops racing to fly the camera around. */
   private replayToken = 0;
-  /** Sketch mode (plan 013): the durable fabric collection now lives on the
+  /** Sketch mode: the durable fabric collection lives on the
    * MapController; MapView reads it via `this.controller.fabric` to paint and
    * hit-test, and `refreshFabric()` re-applies it after any style rebuild. */
   private sketchMode = false;
   private sketchKind: FabricKind = "road";
   private sketchController: SketchController | null = null;
   private sketchBarEl: HTMLDivElement | null = null;
-  /** Select-tool panel (plan 020 §9): name field + procgen section for the
+  /** Select-tool panel: name field + procgen section for the
    * currently-selected fabric feature. Anchored under the sketch sub-bar. */
   private selectionPanelEl: HTMLDivElement | null = null;
   private selectedFabricId: string | null = null;
-  /** Which sketch tool is armed (plan 020 §9): the Select arrow (edit an
+  /** Which sketch tool is armed: the Select arrow (edit an
    * existing shape) or the draw palette (add a new one). */
   private sketchTool: "draw" | "select" = "draw";
   /** Re-syncs the sub-bar tool highlights to `sketchTool`/`sketchKind` — set by
@@ -147,18 +147,18 @@ export class MapView extends ItemView {
   private syncSketchToolButtons: (() => void) | null = null;
   private sketchKeyHandler: ((ev: KeyboardEvent) => void) | null = null;
   /** Toolbar pencil button — kept so sketch mode can show a pressed/active
-   * state on it (plan 016: re-click to exit is only discoverable if the button
+   * state on it (re-click to exit is only discoverable if the button
    * looks toggled). */
   private pencilBtnEl: HTMLButtonElement | null = null;
   private terrainBtnEl: HTMLButtonElement | null = null;
-  /** Debounce for regenerating manifest tiles a sketch edit touches (plan
-   * 019 Phase 3: "sketch a river, streets adapt" is one gesture) — cleared
+  /** Debounce for regenerating manifest tiles a sketch edit touches
+   * ("sketch a river, streets adapt" is one gesture) — cleared
    * on mode exit / onClose so it can never fire after teardown. The debounce
    * TIMER lives here (MapView owns `window`); the queued work + flush logic
    * live on the controller (armed via the render sink's `armRegenFlush`). */
   private sketchAutoBuildTimer: number | null = null;
 
-  /** The host-agnostic lifecycle brain (plan 021 §2.4). Owns generation /
+  /** The host-agnostic lifecycle brain. Owns generation /
    * regen / clear / undo / replay / migration / region-procgen / sketch-commit
    * orchestration and the state those touch (render store, manifest, fabric).
    * MapView is wiring + paint: it builds the controller with Obsidian-backed
@@ -226,8 +226,8 @@ export class MapView extends ItemView {
   }
 
   /** Add the Obsidian `app` back onto a controller gen-context before handing
-   * it to the App-based generation service (keeps `App` out of the controller,
-   * plan 021 §2.4). */
+   * it to the App-based generation service (keeps `App` out of the
+   * controller). */
   private withApp(ctx: ControllerGenContext): GenerationContext {
     return { ...ctx, app: this.app };
   }
@@ -296,9 +296,9 @@ export class MapView extends ItemView {
       this.updateTerrainButton();
     }
     if (this.map) this.applyCampaign();
-    // Plan 019: the ONLY generation on open is replaying the GM's own past
-    // requests (cache hit or deterministic regenerate) — pan/zoom never
-    // dispatches generators.
+    // The ONLY generation on open is replaying the GM's own past requests
+    // (cache hit or deterministic regenerate) — pan/zoom never dispatches
+    // generators.
     void this.controller.replayGeneratedManifest();
   }
 
@@ -314,7 +314,7 @@ export class MapView extends ItemView {
     }).open();
   }
 
-  // ─── Terrain: hillshade relief + 3D (plan 023 §4.2) ────────────────────────
+  // ─── Terrain: hillshade relief + 3D ────────────────────────────────────────
   /** 3D-mesh vertical exaggeration. The encoded DEM already scales heights by K
    * (terrarium-capped, `demVerticalScale`); the 3D mesh raises vertices in
    * mercator-meters, so a fictional mountain (tiny in campaign meters, huge on
@@ -328,13 +328,12 @@ export class MapView extends ItemView {
     return this.terrainEnabled;
   }
 
-  /** The single terrain toggle (button + headless twin, plan 023 §4.2). ON is
+  /** The single terrain toggle (button + headless twin). ON is
    * PITCH-ADAPTIVE (applyTerrainMode): top-down → the hillshade layer (2D
    * shaded relief); pitched → the 3D terrain mesh with hillshade hidden. The
    * two never render together: maplibre-gl 4.7.1 misrenders the hillshade
    * layer while a terrain mesh is active (the draped hillshade texture smears/
-   * stretches past the relief — verified live 2026-07-14, hillshade-only and
-   * mesh-only are both clean), so each mode uses the one that renders
+   * stretches past the relief), so each mode uses the one that renders
    * correctly, and the draped hachures/contours carry the relief read in 3D.
    * VISIBILITY + mesh only — never generation (explicit-only survives: DEM
    * tiles are field evaluation, generatorRunCount stays flat). Fictional
@@ -417,10 +416,10 @@ export class MapView extends ItemView {
         url: registerVaultBasemap(this.app, config.basemap),
       };
     }
-    // DEM/hillshade/terrain (plan 023 §4.2) is fictional-campaign-only in v1
-    // (§5 OQ#2 — real-city elevation is a later plan). The hillshade layer +
-    // raster-dem source are always PRESENT in a fictional style but default
-    // hidden (layout visibility "none"); the terrain toggle flips them on.
+    // DEM/hillshade/terrain is fictional-campaign-only (real-city elevation
+    // isn't supported yet). The hillshade layer + raster-dem source are always
+    // PRESENT in a fictional style but default hidden (layout visibility
+    // "none"); the terrain toggle flips them on.
     let dem: { sourceId: string; url: string } | undefined;
     if (config.crs === "fictional") {
       dem = { sourceId: `dem-${campaign.id}`, url: campaignDemUrlTemplate(campaign.id) };
@@ -432,8 +431,8 @@ export class MapView extends ItemView {
     return obsidianNativeStyle(readObsidianCssTokens(this.containerEl), glyphsUrlTemplate(), basemap, dem);
   }
 
-  /** Point the `campaigndem` protocol at this campaign's live elevation field
-   * (plan 023 §4.2). The provider re-reads the composed field + digest on every
+  /** Point the `campaigndem` protocol at this campaign's live elevation field.
+   * The provider re-reads the composed field + digest on every
    * tile request, so a mountain edit is reflected once the source is refreshed
    * (refreshTerrain). Serving is off the region-generation path — it never moves
    * generatorRunCount (DEM tiles are field evaluation, not procgen). */
@@ -511,7 +510,7 @@ export class MapView extends ItemView {
       renderWorldCopies: false,
     });
 
-    // Tree glyph SDF images (plan 026-C) — `installTreeGlyphProvider` wires a
+    // Tree glyph SDF images — `installTreeGlyphProvider` wires a
     // `styleimagemissing` handler that lazily supplies any tree glyph the style
     // asks for. It lives on the map (not the style), so it survives every
     // setStyle (theme switch, css-change) and campaign switch with no per-callsite
@@ -530,10 +529,9 @@ export class MapView extends ItemView {
       // effect immediately, pre-load, they just don't paint until the style
       // is ready — so re-applying here would silently stomp any camera
       // move made in between (e.g. a caller jumping to a specific tile
-      // right after opening), which is exactly what broke Phase 4's
-      // viewport dispatcher: a live "load" firing after an explicit jumpTo
-      // reset the camera mid-flight, discarding whatever the dispatcher had
-      // already started fetching for the jumped-to viewport.
+      // right after opening): a live "load" firing after an explicit jumpTo
+      // would reset the camera mid-flight, discarding whatever had already
+      // been started for the jumped-to viewport.
       if (this.campaign && !this.campaignAppliedOnce) this.applyCampaign();
       registerTreeGlyphs(this.map!);
       registerParkGlyphs(this.map!);
@@ -586,20 +584,20 @@ export class MapView extends ItemView {
       this.openQuickAdd([c.lng, c.lat]);
     });
 
-    // Toolbar holds only the frequent, in-the-moment builder actions (plan 018).
+    // Toolbar holds only the frequent, in-the-moment builder actions.
     // The occasional/heavy actions — Generate fabric here, Export poster,
     // Export atlas — now live in the settings/control-panel modal under
     // "Generate & export" (still on the command palette too). See
     // generateFabricHere() for the shared "here" logic.
-    // The pencil keeps a ref so sketch mode can show an active/pressed state (016).
+    // The pencil keeps a ref so sketch mode can show an active/pressed state.
     this.pencilBtnEl = btn("pencil", "Sketch fabric (roads, walls, rivers, districts…)", () =>
       this.toggleSketchMode()
     );
     this.pencilBtnEl.toggleClass("is-active", this.sketchMode);
     btn("search", "Search locations", () => this.openSearch());
     btn("palette", "Switch map theme", () => this.switchTheme());
-    // Terrain toggle (plan 023 §4.2) — fictional campaigns only (DEM/hillshade
-    // is fictional-only in v1). Next to the theme switcher; flips hillshade
+    // Terrain toggle — fictional campaigns only (DEM/hillshade is
+    // fictional-only). Next to the theme switcher; flips hillshade
     // relief + 3D terrain on/off (visibility only, never generation).
     this.terrainBtnEl = null;
     if (this.campaign?.config.crs === "fictional") {
@@ -612,13 +610,13 @@ export class MapView extends ItemView {
   }
 
   /**
-   * "Generate fabric here" (plan 019/020) — the explicit generation trigger
+   * "Generate fabric here" — the explicit generation trigger
    * for the WORLD tier, and the re-clip trigger for a procgen region at city
    * zoom. World tier: paints the clicked tile and appends a durable manifest
    * entry (unchanged). City tier: city procgen is polygon-scoped now — a
    * click INSIDE a region re-clips/repaints it (cache path); a click outside
    * any region points the GM at the district tool. Founding a city by
-   * clicking is retired (plan 020 §8.1): sketch a district instead.
+   * clicking is retired: sketch a district instead.
    */
   async generateFabricHere(
     point?: [number, number],
@@ -629,7 +627,7 @@ export class MapView extends ItemView {
   }
 
   /**
-   * "Regenerate fabric here" (plan 019/020, D4): re-runs generation at this
+   * "Regenerate fabric here": re-runs generation at this
    * spot against CURRENT constraints. A region under the point regenerates
    * whole (drops its network + tile records, recomputes); world-tier entries
    * on the tile regenerate their tile. Nothing here → first-time generate.
@@ -639,7 +637,7 @@ export class MapView extends ItemView {
     return this.controller.regenerateFabricHere(point);
   }
 
-  /** "Clear generated fabric here" (plan 019, D4): drops this tile's WORLD
+  /** "Clear generated fabric here": drops this tile's WORLD
    * manifest entries + cache records + paint. City procgen is removed via
    * "Remove generated city here" (strips the shape's procgen block) instead. */
   async clearGeneratedHere(point?: [number, number]): Promise<number> {
@@ -647,7 +645,7 @@ export class MapView extends ItemView {
     return this.controller.clearGeneratedHere(point);
   }
 
-  /** "Clear all generated fabric" (plan 019/020, D4): removes world manifest
+  /** "Clear all generated fabric": removes world manifest
    * entries + records, and strips every region's procgen block (each shape
    * stays, inert). Sketched geometry and locations are untouched. */
   async clearAllGenerated(): Promise<number> {
@@ -710,11 +708,9 @@ export class MapView extends ItemView {
   }
 
   /**
-   * Per-session travel path (plan 009, Phase 5: "session notes already
-   * date-stamp the log" — but here it's the note's own `[[wikilinks]]` that
-   * carry the route). Lists `<campaign>/Sessions/*.md`, and on pick, draws
-   * a line through the locations that session note links, in the order they
-   * appear in the body.
+   * Per-session travel path: the note's own `[[wikilinks]]` carry the route.
+   * Lists `<campaign>/Sessions/*.md`, and on pick, draws a line through the
+   * locations that session note links, in the order they appear in the body.
    */
   showSessionPath(): void {
     if (!this.campaign || !this.map) return;
@@ -757,12 +753,11 @@ export class MapView extends ItemView {
   }
 
   /**
-   * Campaign replay (plan 009, Phase 5: "campaign replay from the mutation
-   * log"): flies the camera to every `create` entry in `.mapcache/log.jsonl`,
-   * oldest first, pulsing each location as it's visited — a stepped tour of
-   * how the map came to be, not a tweened camera path (scoped out, see
-   * plan's maintenance notes). Interruptible: stops if the view closes
-   * (`this.map` goes null) or the campaign changes mid-replay.
+   * Campaign replay: flies the camera to every `create` entry in
+   * `.mapcache/log.jsonl`, oldest first, pulsing each location as it's visited —
+   * a stepped tour of how the map came to be, not a tweened camera path.
+   * Interruptible: stops if the view closes (`this.map` goes null) or the
+   * campaign changes mid-replay.
    */
   async replayCampaign(): Promise<void> {
     if (!this.campaign || !this.map) return;
@@ -788,7 +783,7 @@ export class MapView extends ItemView {
   }
 
   /**
-   * v1 poster export (docs/03 Phase 5: "poster export first"): a high-res PNG
+   * v1 poster export: a high-res PNG
    * of the *current* view with a title cartouche, saved into the vault next
    * to the campaign note. Renders via a separate offscreen map (see
    * posterExport.ts) rather than capturing the live map's own canvas, since
@@ -825,7 +820,7 @@ export class MapView extends ItemView {
     }
   }
 
-  /** Plan 011: generic GeoJSON importer (covers Azgaar/Watabou exports and
+  /** Generic GeoJSON importer (covers Azgaar/Watabou exports and
    * anything else that speaks GeoJSON). No network, no Node fs — the GM
    * drops the export into the vault first; this just picks it, converts
    * Point/Line/Polygon features to note specs, and writes them via
@@ -864,8 +859,8 @@ export class MapView extends ItemView {
   }
 
   /**
-   * v1 atlas export (docs/03 Phase 5: "Atlas export: PDF from maps +
-   * location notes ... the notes ARE the gazetteer now"). Reuses the same
+   * v1 atlas export: a PDF built from the map plus location notes (the notes
+   * ARE the gazetteer). Reuses the same
    * offscreen renderPoster pipeline as exportPoster() for the cover image,
    * then reads every canon location's note body (stripping frontmatter the
    * same way showPlaceCard does) and hands it all to buildAtlasPdf
@@ -930,15 +925,15 @@ export class MapView extends ItemView {
     return this.controller.undoLastEdit();
   }
 
-  /** Apply a cross-layer cascade the confirm cap deferred (plan 024 §4) — the
-   * non-modal affordance for the "that edit affects N downstream regions" Notice
+  /** Apply a cross-layer cascade the confirm cap deferred — the non-modal
+   * affordance for the "that edit affects N downstream regions" Notice
    * (a command, not a modal — modals hang CLI automation, docs/05). */
   async applyPendingCascade(): Promise<void> {
     return this.controller.applyPendingCascade();
   }
 
-  /** The downstream regions the most recent cascade regenerated (plan 024-B
-   * gate observability) — DAG-deterministic, seed-independent. */
+  /** The downstream regions the most recent cascade regenerated (gate
+   * observability) — DAG-deterministic, seed-independent. */
   cascadeRegeneratedIds(): string[] {
     return [...this.controller.cascadeRegeneratedIds];
   }
@@ -976,8 +971,8 @@ export class MapView extends ItemView {
     }).open();
   }
 
-  /** Plan 010 / docs/03 Phase 5 "populate this district with N shops" —
-   * offline, deterministic (no LLM/API): scatter `count` seeded points across
+  /** "Populate this district with N shops" — offline, deterministic (no
+   * LLM/API): scatter `count` seeded points across
    * the current viewport and create a real location note for each, named via
    * the same region-culture sequence as openQuickAdd so populated notes read
    * as belonging to whatever culture territory they land in. */
@@ -1025,20 +1020,19 @@ export class MapView extends ItemView {
   }
 
   /** Test/perf-gate surface: how many tile entries the render store holds
-   * (bounded by what the GM has explicitly generated, plan 019). */
+   * (bounded by what the GM has explicitly generated). */
   get loadedTileCount(): number {
     return this.controller.loadedTileCount;
   }
 
   /** The render store (generation-space features, keyed by tier/region tile),
    * re-surfaced from the controller for the CLI eval-testing surface: gate
-   * scripts iterate `view.loadedTiles.forEach(...)` directly (docs/05, plan
-   * 021 §2.4 keeps this eval surface byte-identical to callers). */
+   * scripts iterate `view.loadedTiles.forEach(...)` directly (docs/05). */
   get loadedTiles(): Map<string, GeoJSON.Feature[]> {
     return this.controller.renderStore;
   }
 
-  /** Gate surface (plan 019 Phase 2): actual generator executions this
+  /** Gate surface: actual generator executions this
    * session — pan/zoom aggressively and this must not move. */
   get generatorRunCount(): number {
     return this.controller.generatorRunCount;
@@ -1068,16 +1062,16 @@ export class MapView extends ItemView {
     return [lng, lat];
   }
 
-  // ─── Region procgen lifecycle (plan 020 §8.1/§8.4) ────────────────────
+  // ─── Region procgen lifecycle ─────────────────────────────────────────
 
-  /** "Remove generated city here" (plan 020 §8.4): strips the procgen block
+  /** "Remove generated city here": strips the procgen block
    * of the region under the point — the shape stays, the city is gone. */
   async removeGeneratedCityHere(point?: [number, number]): Promise<number> {
     if (!this.map) return 0;
     return this.controller.removeGeneratedCityHere(point);
   }
 
-  /** Offer procgen for a just-finished district sketch (plan 020 §8.1): the
+  /** Offer procgen for a just-finished district sketch: the
    * interactive (modal) path stays in MapView — validate the ring, reject
    * overlap, open the modal, and (on confirm) hand off to the controller's
    * headless attach+generate lifecycle. Cancel keeps the shape inert. */
@@ -1085,7 +1079,7 @@ export class MapView extends ItemView {
     if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return;
     const algorithm = algorithmForKind(feature.properties.kind);
     if (!algorithm) return;
-    // Kind-aware validation (plan 022 §2): polygon → ring + overlap; line →
+    // Kind-aware validation: polygon → ring + overlap; line →
     // spine polyline (spines may cross, so no overlap rejection). Unit math
     // stays on the controller.
     const validation = this.controller.validateForProcgen(feature, algorithm.id);
@@ -1121,9 +1115,9 @@ export class MapView extends ItemView {
     return this.controller.createRegionForTest(ringUnits, algorithmId, params, name, kind);
   }
 
-  /** Headless spine (line-kind) creation — the gate/test twin for rivers (plan
-   * 022 §2). Sketches a `kind` line, attaches a procgen block, generates, and
-   * returns the corridor containment summary. */
+  /** Headless spine (line-kind) creation — the gate/test twin for rivers.
+   * Sketches a `kind` line, attaches a procgen block, generates, and returns
+   * the corridor containment summary. */
   async createSpineForTest(
     coordsUnits: [number, number][],
     kind: FabricKind,
@@ -1244,18 +1238,14 @@ export class MapView extends ItemView {
     if (!this.map || this.overviewZoom == null) return;
     const base = this.overviewZoom;
     const reveal: Record<string, number> = { deep: 0, medium: base + 1.5, shallow: base + 4.5 };
-    // Canon only: generated content has no label layers anymore — named
-    // places are Locations (plan 019, D2).
+    // Canon only: generated content has no label layers — named places are
+    // Locations.
     for (const depth of ["deep", "medium", "shallow"] as const) {
       const id = `canon-label-${depth}`;
       if (this.map.getLayer(id)) this.map.setLayerZoomRange(id, reveal[depth], 24);
     }
-    // Generated building detail (footprints/parcels) is NO LONGER zoom-gated
-    // (Jonah 2026-07-12: "the small buildings pop in and out at different
-    // zooms — i'd rather they always show"). The former relative reveal
-    // floors (overview+4 / overview+5) are gone; these layers now render at
-    // every zoom like all other fabric, matching the standing Kanto-test
-    // ruling ("LOD should only impact visibility of location names"). Any
+    // Generated building detail (footprints/parcels) is deliberately NOT
+    // zoom-gated here — these layers render at every zoom like all fabric. Any
     // far-out readability treatment is a paint-level theme decision, not a
     // zoom gate — see generatedLayers.ts.
   }
@@ -1312,8 +1302,8 @@ export class MapView extends ItemView {
     this.refreshFabric();
   }
 
-  /** Point-crawl travel connections declared in `connections:` frontmatter
-   * (plan 004) — resolved from the same index as canon pins, so a rename,
+  /** Point-crawl travel connections declared in `connections:` frontmatter —
+   * resolved from the same index as canon pins, so a rename,
    * delete, or theme switch that refreshes `canon` also refreshes these lines. */
   private refreshConnections(): void {
     if (!this.map || !this.campaign) return;
@@ -1323,7 +1313,7 @@ export class MapView extends ItemView {
     source.setData({ type: "FeatureCollection", features: buildConnectionFeatures(locations) });
   }
 
-  /** Per-session travel path (plan 009) — modeled on `refreshConnections`,
+  /** Per-session travel path — modeled on `refreshConnections`,
    * but the feature is user-picked state (`currentSessionPathFeature`), not
    * derived fresh from the index, so this just re-applies it (or clears the
    * source when there's nothing shown). Called from `refreshSource()` so a
@@ -1345,7 +1335,7 @@ export class MapView extends ItemView {
     this.refreshSessionPath();
   }
 
-  /** Sketched fabric (plan 013) — modeled on `refreshConnections`: re-applies
+  /** Sketched fabric — modeled on `refreshConnections`: re-applies
    * the controller's in-memory collection to the `fabric` source; called from
    * `refreshSource()` so a theme switch's setStyle (which wipes every source)
    * doesn't drop the GM's sketches, and from the controller's render sink after
@@ -1371,7 +1361,7 @@ export class MapView extends ItemView {
     return readObsidianCssTokens(this.containerEl).interactiveAccent;
   }
 
-  /** Enters/exits sketch mode (plan 013): shows the kind palette sub-bar,
+  /** Enters/exits sketch mode: shows the kind palette sub-bar,
    * activates the draw controller, suspends the normal click grammar (see
    * handleClick), and disables double-click zoom so dblclick can mean
    * "finish the draft". */
@@ -1381,7 +1371,7 @@ export class MapView extends ItemView {
       this.sketchMode = false;
       // NOTE: a pending constraint-regen debounce is deliberately NOT
       // cancelled here — "sketch a river, hit done" must still adapt the
-      // generated tiles (plan 019). onClose still cancels it on teardown.
+      // generated tiles. onClose still cancels it on teardown.
       this.sketchController?.deactivate();
       this.sketchController = null;
       this.sketchBarEl?.remove();
@@ -1411,8 +1401,8 @@ export class MapView extends ItemView {
     this.sketchController.activate(this.sketchKind);
     this.buildSketchBar();
     // Capture phase so Escape / Cmd-Z reach us before MapLibre's canvas
-    // handlers or Obsidian's global shortcuts can swallow them (plan 016:
-    // "Escape should reliably leave sketch mode").
+    // handlers or Obsidian's global shortcuts can swallow them — Escape must
+    // reliably leave sketch mode.
     this.sketchKeyHandler = (ev: KeyboardEvent) => this.sketchKeydown(ev);
     window.addEventListener("keydown", this.sketchKeyHandler, true);
     this.pencilBtnEl?.toggleClass("is-active", true);
@@ -1422,15 +1412,15 @@ export class MapView extends ItemView {
     return this.sketchMode;
   }
 
-  /** Kind-palette sub-bar (plan 013 chose the inline sub-bar over a modal:
-   * the GM switches kinds constantly while landscaping — a modal per switch
-   * would break the flow). */
+  /** Kind-palette sub-bar — an inline sub-bar rather than a modal: the GM
+   * switches kinds constantly while landscaping, and a modal per switch would
+   * break the flow. */
   private buildSketchBar(): void {
     this.sketchBarEl?.remove();
     this.sketchBarEl = this.contentEl.createDiv({ cls: "campaign-map-sketch-bar" });
     const kindButtons = new Map<FabricKind, HTMLButtonElement>();
 
-    // Select tool (plan 020 §9): first position, arrow icon. Arming it lets a
+    // Select tool: first position, arrow icon. Arming it lets a
     // click pick an existing shape to edit (vertices + properties); arming a
     // kind returns to drawing new shapes.
     const selectBtn = this.sketchBarEl.createEl("button", {
@@ -1464,9 +1454,9 @@ export class MapView extends ItemView {
       syncToolButtons();
     };
 
-    // Plan 019: no feed-mode toggle, no "build" button — EVERY sketched
-    // feature is a generator constraint, and tiles the GM already generated
-    // regenerate on their own after a sketch edit (queueConstraintRegen).
+    // No feed-mode toggle, no "build" button — EVERY sketched feature is a
+    // generator constraint, and tiles the GM already generated regenerate on
+    // their own after a sketch edit (queueConstraintRegen).
     const undoBtn = this.sketchBarEl.createEl("button", {
       text: "↶ undo",
       cls: "campaign-map-sketch-kind-btn",
@@ -1499,7 +1489,7 @@ export class MapView extends ItemView {
     if (!this.sketchMode) return;
     if ((ev.metaKey || ev.ctrlKey) && (ev.key === "z" || ev.key === "Z") && !ev.shiftKey) {
       // Intercept before Obsidian's global undo so Cmd/Ctrl-Z means "undo the
-      // last sketch" while landscaping (plan 016).
+      // last sketch" while landscaping.
       ev.preventDefault();
       ev.stopPropagation();
       void this.undoInSketchMode();
@@ -1519,7 +1509,7 @@ export class MapView extends ItemView {
     } else if (ev.key === "Delete" || ev.key === "Backspace") {
       const c = this.sketchController;
       // Grabbed/hovered vertex → delete just that vertex (min-vertex floored);
-      // otherwise the whole selected shape (plan 020 §9).
+      // otherwise the whole selected shape.
       if (c?.hasActiveVertex) {
         ev.preventDefault();
         const result = c.deleteActiveVertex();
@@ -1598,8 +1588,8 @@ export class MapView extends ItemView {
   }
 
   /** (Re)arm the SketchController's edit handles for a feature — includes the
-   * effective generation-center handle (Addendum 2, computed on the lifecycle
-   * controller) for a procgen region. */
+   * effective generation-center handle (computed on the lifecycle controller)
+   * for a procgen region. */
   private reselectController(feature: FabricFeature): void {
     const center = isProcgenRegion(feature) ? this.controller.effectiveRegionCenterDisplay(feature) : null;
     this.sketchController?.select({
@@ -1646,15 +1636,15 @@ export class MapView extends ItemView {
     this.controller.addSketchedFeature(feature);
     // Immediate confirmation regardless of zoom (a below-minzoom stroke paints
     // into the `fabric` source but its themed layer may be hidden until you
-    // zoom in — the toast guarantees "something happened" feedback). Plan 016.
+    // zoom in — the toast guarantees "something happened" feedback).
     new Notice(`Campaign Map: ${kind} added`);
-    // Plan 020 §8.1: a district sketch IS the request for city procgen — offer
-    // it (modal); other kinds (or a cancelled modal) stay inert overlay shapes.
+    // A district sketch IS the request for city procgen — offer it (modal);
+    // other kinds (or a cancelled modal) stay inert overlay shapes.
     this.maybeOfferProcgen(feature);
   }
 
-  /** Arms the debounced constraint/region regen (plan 019 Phase 3 "sketch a
-   * river, streets adapt") — MapView owns the `window` timer; the queued work
+  /** Arms the debounced constraint/region regen ("sketch a river, streets
+   * adapt") — MapView owns the `window` timer; the queued work
    * lives on the controller, which arms this via the render sink. Cleared on
    * mode exit / onClose so it can never fire after teardown. */
   private armSketchRegen(): void {
@@ -1685,7 +1675,7 @@ export class MapView extends ItemView {
     await this.controller.undoInSketchMode();
   }
 
-  // ─── Selected-feature panel (plan 020 §9) ──────────────────────────────
+  // ─── Selected-feature panel ─────────────────────────────────────────────
 
   /** Render-sink hook: the controller changed a feature in place. If it's the
    * selected one, re-sync the edit handles (`reselect`) and/or rebuild the
@@ -1787,13 +1777,12 @@ export class MapView extends ItemView {
       adopt.onclick = () =>
         void this.controller.adoptRegion(feature.id).then(() => this.refreshSelectionPanel());
     }
-    // Template (preset) dropdown (plan 022 §1) — the primary control. For city
-    // the four profiles ARE the presets, so this replaces the old profile
-    // dropdown: picking a template re-seeds params from that preset. When the
-    // params have been customised away from every preset the dropdown shows a
-    // synthetic "Custom (from …)" option (unreachable for city today, since its
-    // only knob IS the preset discriminator — the mechanism is here for the
-    // param-carrying algorithms of later 022 phases).
+    // Template (preset) dropdown — the primary control. For city the four
+    // profiles ARE the presets: picking a template re-seeds params from that
+    // preset. When the params have been customised away from every preset the
+    // dropdown shows a synthetic "Custom (from …)" option (unreachable for city
+    // today, since its only knob IS the preset discriminator — the mechanism is
+    // here for param-carrying algorithms).
     if (algorithm.presets.length > 0) {
       const row = section.createDiv({ cls: "campaign-map-sketch-selection-row" });
       row.createSpan({ cls: "campaign-map-sketch-selection-label", text: "Template" });
@@ -1813,7 +1802,7 @@ export class MapView extends ItemView {
         void this.setRegionPreset(feature.id, dd.value);
       };
     }
-    // Center hint (Addendum 2): drag the diamond handle to place the plaza.
+    // Center hint: drag the diamond handle to place the plaza.
     // Polygon regions only — spine (line) algorithms have no center concept.
     const isPolygonRegion = feature.geometry.type === "Polygon";
     const hasCenter = isPolygonRegion && "center" in block.params;
@@ -1833,7 +1822,7 @@ export class MapView extends ItemView {
       const resetCenter = actions.createEl("button", { cls: "campaign-map-sketch-procgen-btn", text: "Reset center" });
       resetCenter.onclick = () => void this.setRegionCenter(feature.id, null);
     }
-    // "Remove", kind-agnostic (Jonah 2026-07-13: it read "Remove city" on a
+    // "Remove", kind-agnostic (a city-specific label would be wrong on a
     // selected river). Strips the procgen block; the sketch stays inert.
     const remove = actions.createEl("button", {
       cls: "campaign-map-sketch-procgen-btn campaign-map-sketch-procgen-btn-warning",
@@ -1842,7 +1831,7 @@ export class MapView extends ItemView {
     remove.onclick = () => void this.removeRegionById(feature.id);
   }
 
-  // ─── Region param actions (panel + test API, plan 020 §9 item 4/7) ─────
+  // ─── Region param actions (panel + test API) ──────────────────────────
 
   /** Change a region's procgen params (v1: profile) — logs a
    * `sketch-procgen-set` {before: oldBlock, after: newBlock} and force-regens
@@ -1852,11 +1841,10 @@ export class MapView extends ItemView {
   }
 
   /** Apply a template (preset) to a region — the headless twin of the panel's
-   * Template dropdown (plan 022 §1). Resolves the preset → params (keeping any
-   * orthogonal params like `center`) and runs the full setRegionParams commit
-   * path. City presets carry no `presetId` (params always match a preset), so
-   * the persisted block stays byte-identical to the pre-022 `{ profile }`
-   * shape. */
+   * Template dropdown. Resolves the preset → params (keeping any orthogonal
+   * params like `center`) and runs the full setRegionParams commit path. City
+   * presets carry no `presetId` (params always match a preset), so the
+   * persisted block stays the plain `{ profile }` shape. */
   async setRegionPreset(featureId: string, presetId: string): Promise<void> {
     return this.controller.setRegionPreset(featureId, presetId);
   }
@@ -1881,11 +1869,11 @@ export class MapView extends ItemView {
     return this.controller.removeRegionById(featureId);
   }
 
-  // ─── Programmatic edit test API (plan 020 §9 item 7, gate procgen41) ────
+  // ─── Programmatic edit test API ─────────────────────────────────────────
   // Each runs the FULL commit path (validation, sketch-edit log, persist,
   // regen) synchronously-awaitable, so a gate can assert on the settled state.
-  // These forward to the host-agnostic MapController (plan 021 §2.4) — the
-  // same surface the FakeHost integration tests drive headlessly.
+  // These forward to the host-agnostic MapController — the same surface the
+  // FakeHost integration tests drive headlessly.
 
   /** Create a plain (non-procgen) fabric feature headlessly (gate path — the
    * constraint-loop test needs a river/road/wall/water shape to edit). */
@@ -1895,8 +1883,8 @@ export class MapView extends ItemView {
 
   /** Delete a fabric feature by id through the real select→delete path
    * (gate/test path for the sketch-remove lifecycle — a region takes its
-   * generated city + cache records with it, plan 020 §8.4). Returns whether
-   * the feature was found and removed. */
+   * generated city + cache records with it). Returns whether the feature was
+   * found and removed. */
   async deleteFabricForTest(id: string): Promise<boolean> {
     await this.controller.loadFabric();
     if (!this.controller.fabricFeature(id)) return false;
@@ -1940,16 +1928,16 @@ export class MapView extends ItemView {
     return this.controller.regionContainmentReport(regionId);
   }
 
-  /** Numeric elevation samples for a mountain region (plan 023 §3 gate): the
-   * point-evaluable height field rebuilt from the persisted seed+params and
-   * sampled at deterministic gen-space points — heights compared numerically,
-   * never rendered bytes (§4.2). Two calls across a regenerate must match. */
+  /** Numeric elevation samples for a mountain region: the point-evaluable
+   * height field rebuilt from the persisted seed+params and sampled at
+   * deterministic gen-space points — heights compared numerically, never
+   * rendered bytes. Two calls across a regenerate must match. */
   regionElevationReport(regionId: string): { x: number; y: number; h: number; dx: number; dy: number }[] {
     return this.controller.regionElevationReport(regionId);
   }
 
-  /** DEM tile report for the terrain gate (plan 023 §4.2): resolves one raster-
-   * DEM tile through the FULL protocol path (digest-checked cache read → compute
+  /** DEM tile report for the terrain gate: resolves one raster-DEM tile through
+   * the FULL protocol path (digest-checked cache read → compute
    * → persisted append — exactly a MapLibre fetch minus the PNG encode) and
    * returns compact numeric stats over the raw int lattice. HEIGHTS are the
    * determinism surface — the FNV-1a hash lets a gate compare lattices across
@@ -1978,7 +1966,7 @@ export class MapView extends ItemView {
 
   /** Set (or clear, with `null`) a region's persisted generation center
    * (params.center, gen-space meters) via the full commit path — the
-   * draggable-plaza feature (Addendum 2). `centerDisplay` is in DISPLAY units. */
+   * draggable-plaza feature. `centerDisplay` is in DISPLAY units. */
   async setRegionCenter(featureId: string, centerDisplay: [number, number] | null): Promise<boolean> {
     return this.controller.setRegionCenter(featureId, centerDisplay);
   }
@@ -2008,7 +1996,7 @@ export class MapView extends ItemView {
       // the generated fabric must be re-pushed here exactly as setCampaign's and
       // load's styledata handlers do — without this, a css-change on the
       // obsidian-native theme blanked every generated feature until the next
-      // explicit generation (found via vo27-park c8, plan 027-C).
+      // explicit generation.
       this.refreshGeneratedSource();
       this.applyFocusReveal();
       // css-change setStyle also resets hillshade/terrain — restore the toggle.
@@ -2055,7 +2043,7 @@ export class MapView extends ItemView {
 
   private handleClick(e: MapMouseEvent): void {
     if (!this.map || !this.campaign) return;
-    // Sketch mode owns the click pipeline (plan 013): every click is a
+    // Sketch mode owns the click pipeline: every click is a
     // vertex/select action; the normal pin/popup grammar is suspended.
     if (this.sketchMode) {
       this.handleSketchClick(e);
@@ -2083,8 +2071,8 @@ export class MapView extends ItemView {
     const point: [number, number] = [lngLat.lng, lngLat.lat];
     const menu = new Menu();
 
-    // Right-click a sketch feature (works OUTSIDE sketch mode too, plan 020
-    // §9): "Edit shape" enters sketch mode with it selected; a region also
+    // Right-click a sketch feature (works OUTSIDE sketch mode too): "Edit
+    // shape" enters sketch mode with it selected; a region also
     // gets "City settings…" (its procgen section in the same panel). The pin/
     // place-card/dropped-pin grammar below is untouched.
     const fabricId = this.fabricFeatureIdAt(e.point);
@@ -2121,7 +2109,7 @@ export class MapView extends ItemView {
           new Notice("Campaign Map: coordinates copied");
         })
     );
-    // Explicit generation lives on the right-click grammar (plan 019): the
+    // Explicit generation lives on the right-click grammar: the
     // only way procedural fabric appears, changes, or goes away is the GM
     // asking at a spot. Fictional campaigns only — real cities have basemaps.
     if (this.campaign.config.crs === "fictional") {
@@ -2248,9 +2236,9 @@ export class MapView extends ItemView {
       });
     }
 
-    // Plan 015: retune label visibility mid-session in one click — no
-    // frontmatter edit. Writes the explicit `visibility` field; the metadataCache
-    // change re-reconciles and the map updates.
+    // Retune label visibility mid-session in one click — no frontmatter edit.
+    // Writes the explicit `visibility` field; the metadataCache change
+    // re-reconciles and the map updates.
     const VIS_LABELS: Record<Visibility, string> = {
       wide: "Wide — always shown",
       mid: "Mid — from mid zoom",
@@ -2326,9 +2314,9 @@ export class MapView extends ItemView {
       .addTo(this.map);
   }
 
-  /** Click-a-line-to-remove (plan 005): the reciprocal gesture to "Connect
-   * to..." — `from`/`to` on a `connection-line` feature are vault paths (plan
-   * 004), so resolve them to basenames the same way the frontmatter stores
+  /** Click-a-line-to-remove: the reciprocal gesture to "Connect to..." —
+   * `from`/`to` on a `connection-line` feature are vault paths, so resolve them
+   * to basenames the same way the frontmatter stores
    * them. Only the declaring end actually has the entry, so removal is
    * attempted on both ends; the non-declaring side is a harmless no-op. */
   private showConnectionCard(feature: MapGeoJSONFeature, lngLat: maplibregl.LngLat): void {

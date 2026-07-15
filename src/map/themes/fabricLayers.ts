@@ -3,14 +3,13 @@ import type { ThemeTokens } from "./tokens";
 import { FABRIC_KINDS, isPolygonKind, type FabricKind } from "../../model/fabric";
 
 /**
- * Sketched-fabric layers (plan 013) — one line/fill layer per fabric kind on
- * the `fabric` geojson source, themed via tokens like connections/session-path
- * so sketches read consistently across every map style.
+ * Sketched-fabric layers — one line/fill layer per fabric kind on the `fabric`
+ * geojson source, themed via tokens like connections/session-path so sketches
+ * read consistently across every map style.
  *
- * NO zoom-based LOD here: fabric renders at EVERY zoom (Jonah's decision after
- * the Kanto test — "LOD should only impact visibility of location names", so a
- * drawn road/wall/river/park/water/district is always visible, never gated by a
- * per-kind `minzoom`). Only the source's `tolerance` still applies — that's
+ * NO zoom-based LOD here: fabric renders at EVERY zoom — a drawn
+ * road/wall/river/park/water/district is always visible, never gated by a
+ * per-kind `minzoom`. Only the source's `tolerance` still applies — that's
  * geometry *simplification* for perf (fewer vertices far out), not hiding: the
  * feature always draws, just with a coarser outline when zoomed way out.
  */
@@ -29,15 +28,15 @@ export const FABRIC_SOURCE_SPEC = {
 function kindFilter(kind: FabricKind): unknown {
   // Filter by kind ONLY. Never put a `["zoom"]` expression in a layer `filter`
   // — it silently invalidates the ENTIRE style (map loads blank, no console
-  // error; the 006-class failure). Fabric has no zoom gating at all now, so
-  // there's nothing zoom-related to express here anyway.
+  // error). Fabric has no zoom gating at all, so there's nothing zoom-related
+  // to express here anyway.
   return ["==", ["get", "kind"], kind];
 }
 
 export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
   const layers: Record<FabricKind, unknown> = {
     // Polygons (drawn first, under the line kinds)
-    // Per-kind colors are the dedicated fabric tokens (plan 017): each of the
+    // Per-kind colors are the dedicated fabric tokens: each of the
     // six kinds must read visibly distinct in every theme — river ≠ water,
     // park reads green, wall reads stony, district is a subtle wash. Never
     // reuse a label/poi/road token here; that's exactly what made the map
@@ -80,8 +79,7 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       },
     },
     forest: {
-      // Inert sketched forest (plan 022 §3.2, open question §5.2 — Jonah
-      // 2026-07-13 decision): a FAINT canopy-green wash so an un-generated
+      // Inert sketched forest: a FAINT canopy-green wash so an un-generated
       // forest outline reads as "woodland here" without competing with the
       // dense generated canopy. Once a procgen block is attached the generated
       // `forest-canopy` cells ARE the paint, so the raw polygon drops to
@@ -98,7 +96,7 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       },
     },
     farmland: {
-      // Inert sketched farmland (plan 022 §3.5, forest §5.2 precedent): a faint
+      // Inert sketched farmland: a faint
       // cultivated-tan wash so an un-generated farmland outline reads as
       // "fields here" without competing with the dense generated fields. Once a
       // procgen block is attached the generated `farm-field` polygons ARE the
@@ -116,7 +114,7 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       },
     },
     mountain: {
-      // Inert sketched mountain (plan 023 §3, forest §5.2 precedent): a faint
+      // Inert sketched mountain: a faint
       // rocky wash so an un-generated mountain outline reads as "relief here"
       // without competing with the generated massif/hachures. Once a procgen
       // block is attached the generated `mountain-massif` + hachures ARE the
@@ -143,9 +141,9 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       paint: {
         "line-color": tokens.fabricRiver,
         "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 14, 5],
-        // A river carrying a procgen block paints as its GENERATED channel
-        // (plan 022 §3.1) — hide the raw spine line so the water doesn't
-        // double-paint (Jonah 2026-07-13). Opacity 0, NOT a filter: the line
+        // A river carrying a procgen block paints as its GENERATED channel —
+        // hide the raw spine line so the water doesn't double-paint. Opacity 0,
+        // NOT a filter: the line
         // must stay rendered so queryRenderedFeatures still hit-tests it for
         // selection — the sketch stays the selectable handle on the output.
         "line-opacity": ["case", ["has", "procgen"], 0, 0.95],
@@ -173,7 +171,7 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
         "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.5, 16, 3],
         "line-dasharray": [4, 1.5],
         // A wall carrying a procgen block paints as its GENERATED masonry band +
-        // towers (plan 022 §3.4) — the sketch line goes invisible to avoid a
+        // towers — the sketch line goes invisible to avoid a
         // dashed line double-painted over the band (same mechanism as the river
         // spine / forest fill). Corridor selection still hits via the line-kind
         // fallback (MapController.regionForSpinePoint).

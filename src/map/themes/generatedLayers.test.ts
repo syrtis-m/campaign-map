@@ -6,11 +6,10 @@ import { obsidianNativeStyle, type ObsidianCssTokens } from "../theme";
 import { assertLayerOrder } from "./layerOrder";
 
 /** Every generated feature `type` must be painted in EVERY theme — a missing
- * entry means invisible output that passes every non-visual gate (plan 022 §4
- * new-feature-type checklist). This is the coverage guard for the river types
- * added in plan 022-B. */
-// Water-hued fills that must stay EXACTLY fabricRiver (hue discipline, plan 028
-// §1.1/§1.4): channel + the 28-C junction/mouth features + oxbow lakes.
+ * entry means invisible output that passes every non-visual gate. Coverage
+ * guard for the river types. */
+// Water-hued fills that must stay EXACTLY fabricRiver (hue discipline): channel
+// + the junction/mouth features + oxbow lakes.
 const RIVER_WATER_FILL_IDS = [
   "generated-river-channel",
   "generated-river-confluence",
@@ -18,9 +17,9 @@ const RIVER_WATER_FILL_IDS = [
   "generated-river-estuary",
   "generated-river-oxbow",
 ] as const;
-// All river layers needing paint in every theme (plan 022 §4 + plan 028
-// §1.1/§1.4): bank casing (line) + water fills + island/point-bar (land/silt
-// fills) + the ford/rapids/falls glyph (symbol).
+// All river layers needing paint in every theme: bank casing (line) + water
+// fills + island/point-bar (land/silt fills) + the ford/rapids/falls glyph
+// (symbol).
 const RIVER_LAYER_IDS = [
   "generated-river-bank",
   ...RIVER_WATER_FILL_IDS,
@@ -28,9 +27,9 @@ const RIVER_LAYER_IDS = [
   "generated-river-point-bar",
   "generated-river-glyph",
 ] as const;
-/** Every emitted park feature type (plan 022 §3.3) needs paint in every theme —
- * ground (lawn/bed), path web, water (pond/island/bridge), gravel court, and the
- * rock + tree stipples. Coverage guard for the park types added in plan 022-D. */
+/** Every emitted park feature type needs paint in every theme — ground
+ * (lawn/bed), path web, water (pond/island/bridge), gravel court, and the rock +
+ * tree stipples. Coverage guard for the park types. */
 const PARK_LAYER_IDS = [
   "generated-park-lawn",
   "generated-park-bed",
@@ -43,9 +42,9 @@ const PARK_LAYER_IDS = [
   "generated-park-tree",
 ] as const;
 
-/** Every emitted wall feature type (plan 022 §3.4) needs paint in every theme:
- * the outboard moat, the masonry band, the tower/bastion footprints and the
- * gate markers. Coverage guard for the wall types added in plan 022-E. */
+/** Every emitted wall feature type needs paint in every theme: the outboard
+ * moat, the masonry band, the tower/bastion footprints and the gate markers.
+ * Coverage guard for the wall types. */
 const WALL_LAYER_IDS = [
   "generated-wall-moat",
   "generated-wall-quad",
@@ -60,7 +59,7 @@ function fillColor(layer: LayerSpecification): string {
   return (c as string).toLowerCase();
 }
 
-/** The bank casing's line-color (plan 028 §1.1) — river-block-local helper. */
+/** The bank casing's line-color — river-block-local helper. */
 function bankLineColor(layer: LayerSpecification): string {
   const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
   const c = paint["line-color"];
@@ -68,7 +67,7 @@ function bankLineColor(layer: LayerSpecification): string {
   return (c as string).toLowerCase();
 }
 
-describe("generatedLayers — river bank/channel/island/junction/dressing paint coverage (plan 022 §4 + plan 028 §1.1/§1.4)", () => {
+describe("generatedLayers — river bank/channel/island/junction/dressing paint coverage", () => {
   it("all river layers exist on the generated source, filter on generatorId, no zoom LOD", () => {
     const layers = generatedLayers(PARCHMENT);
     for (const id of RIVER_LAYER_IDS) {
@@ -85,7 +84,7 @@ describe("generatedLayers — river bank/channel/island/junction/dressing paint 
     }
   });
 
-  it("depth idiom order: bank UNDER channel; island, point-bar and glyph ABOVE channel (plan 028 §1.1/§1.4)", () => {
+  it("depth idiom order: bank UNDER channel; island, point-bar and glyph ABOVE channel", () => {
     const ids = generatedLayers(PARCHMENT).map((l) => l.id);
     const channel = ids.indexOf("generated-river-channel");
     expect(ids.indexOf("generated-river-bank")).toBeLessThan(channel);
@@ -114,8 +113,8 @@ describe("generatedLayers — river bank/channel/island/junction/dressing paint 
       expect(bank.length).toBeGreaterThan(0);
       expect(bank, `${id}: bank casing must differ from the channel fill`).not.toBe(channel);
       // Every water-hued fill (channel + confluence/distributary/estuary/oxbow)
-      // stays EXACTLY the theme's river token (hue discipline, plan 028
-      // §1.1/§1.4: water-hued paint never drifts, so overlaps never artifact).
+      // stays EXACTLY the theme's river token (hue discipline: water-hued paint
+      // never drifts, so overlaps never artifact).
       for (const wid of RIVER_WATER_FILL_IDS) {
         expect(fillColor(layers.find((l) => l.id === wid)!), `${id}: ${wid} must be fabricRiver`).toBe(
           tokens.fabricRiver.toLowerCase()
@@ -156,14 +155,13 @@ function anyColor(layer: LayerSpecification): string {
   return (c as string).toLowerCase();
 }
 
-describe("generatedLayers — forest canopy/clearing/glyph-tree paint coverage (plan 026-C §1.3)", () => {
-  // Local id lists: plan 026-C replaced the 026-A shadow/base/highlight CIRCLE
-  // stack with TWO SYMBOL layers drawing per-variety SDF tree glyphs — a dark
-  // `icon-translate` shadow below, and the variety-tinted base with an
+describe("generatedLayers — forest canopy/clearing/glyph-tree paint coverage", () => {
+  // Local id lists: TWO SYMBOL layers draw the per-variety SDF tree glyphs — a
+  // dark `icon-translate` shadow below, and the variety-tinted base with an
   // `icon-halo` rim above (highlight folds into the halo).
   const FOREST_FILL_IDS = ["generated-forest-canopy", "generated-forest-clearing"] as const;
   const FOREST_TREE_IDS = ["generated-forest-tree-shadow", "generated-forest-tree"] as const;
-  const FOREST_RIM_ID = "generated-forest-rim"; // plan 026-B: canopy outline line
+  const FOREST_RIM_ID = "generated-forest-rim"; // canopy outline line
   const FOREST_ALL_IDS = [...FOREST_FILL_IDS, FOREST_RIM_ID, ...FOREST_TREE_IDS];
 
   /** Read a variety's colour out of a `["match", ["get","forestType"], …]`. */
@@ -260,7 +258,7 @@ describe("generatedLayers — forest canopy/clearing/glyph-tree paint coverage (
       expect(canopy, `${id}: canopy and clearing share a colour`).not.toBe(clearing);
 
       // Every tree glyph layer tints via a data-driven per-variety `icon-color`
-      // match on forestType (SDF glyphs are tinted at draw time, plan 026-C).
+      // match on forestType (SDF glyphs are tinted at draw time).
       for (const treeId of FOREST_TREE_IDS) {
         const color = (layers.find((l) => l.id === treeId)! as { paint?: Record<string, unknown> }).paint![
           "icon-color"
@@ -297,22 +295,20 @@ describe("generatedLayers — forest canopy/clearing/glyph-tree paint coverage (
   });
 });
 
-describe("generatedLayers — park paint coverage (plan 022 §3.3 + 027-A)", () => {
-  // Plan 027-A adds the second-green CANOPY and splits the old park-path fill
-  // into a CASED path (casing line under fill line) + a pond SHORE casing. The
-  // top-of-file PARK_LAYER_IDS const is shared file surface (sits by the
-  // forest/river consts 26-A/28-A may touch) — spread it here so all park edits
-  // stay inside this describe block.
+describe("generatedLayers — park paint coverage", () => {
+  // The second-green CANOPY plus the CASED path (casing line under fill line)
+  // and the pond SHORE casing. The top-of-file PARK_LAYER_IDS const is spread
+  // here so all park ids live in one list.
   const PARK_IDS = [
     ...PARK_LAYER_IDS,
     "generated-park-canopy",
-    "generated-park-canopy-rim", // plan 027-C: seam-safe organic-canopy outline
-    "generated-park-court-rake", // plan 027-C: karesansui raked-gravel furrows
+    "generated-park-canopy-rim", // seam-safe organic-canopy outline
+    "generated-park-court-rake", // karesansui raked-gravel furrows
     "generated-park-path-casing",
     "generated-park-pond-shore",
-    "generated-park-point", // plan 027-B point dressing (fountain/bandstand/monument/lantern/teahouse)
+    "generated-park-point", // point dressing (fountain/bandstand/monument/lantern/teahouse)
   ] as const;
-  // Plan 027-C: rocks / trees / landmark points are now SDF-glyph SYMBOL layers
+  // Rocks / trees / landmark points are SDF-glyph SYMBOL layers
   // (icon-image + icon-color), not circles — they colour via `icon-color`, so the
   // fill/line/circle `hasColor` probe doesn't apply. Split them out.
   const PARK_SYMBOL_IDS = ["generated-park-tree", "generated-park-rock", "generated-park-point"] as const;
@@ -330,13 +326,13 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3 + 027-A)", () 
       expect((layer as { source?: string }).source).toBe("generated");
       const filter = JSON.stringify((layer as { filter?: unknown }).filter);
       expect(filter).toContain('"generatorId"');
-      expect(filter).not.toContain('"zoom"'); // NO zoom LOD in the FILTER (Jonah 2026-07-12)
+      expect(filter).not.toContain('"zoom"'); // NO zoom LOD in the FILTER
     }
   });
 
   it("the merged lawn is ONE fill (no per-cell lattice) and the path is a cased LINE pair", () => {
     const layers = generatedLayers(PARCHMENT);
-    // Ground: a single fill filtered on park-lawn (the 027-A merged polygon).
+    // Ground: a single fill filtered on park-lawn (the merged polygon).
     expect(layers.find((l) => l.id === "generated-park-lawn")!.type).toBe("fill");
     // Path: BOTH the casing and the fill are line layers filtered on park-path.
     const casing = layers.find((l) => l.id === "generated-park-path-casing")!;
@@ -377,7 +373,7 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3 + 027-A)", () 
     expect(rock).toBeGreaterThan(court);
     // Point dressing (landmarks) reads on top of the greenery stipple.
     expect(point).toBeGreaterThan(tree);
-    // Plan 027-C: canopy rim above the canopy fill; the rake above the court wash.
+    // Canopy rim above the canopy fill; the rake above the court wash.
     expect(ids.indexOf("generated-park-canopy-rim")).toBeGreaterThan(canopy);
     expect(ids.indexOf("generated-park-court-rake")).toBeGreaterThan(court);
   });
@@ -424,7 +420,7 @@ describe("generatedLayers — park paint coverage (plan 022 §3.3 + 027-A)", () 
   });
 });
 
-describe("generatedLayers — wall moat/band/tower/gate paint coverage (plan 022 §3.4)", () => {
+describe("generatedLayers — wall moat/band/tower/gate paint coverage", () => {
   it("all four wall layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
     const layers = generatedLayers(PARCHMENT);
     for (const id of WALL_LAYER_IDS) {
@@ -433,7 +429,7 @@ describe("generatedLayers — wall moat/band/tower/gate paint coverage (plan 022
       expect((layer as { source?: string }).source).toBe("generated");
       const filter = JSON.stringify((layer as { filter?: unknown }).filter);
       expect(filter).toContain('"generatorId"');
-      expect(filter).not.toContain('"zoom"'); // NO zoom LOD (Jonah 2026-07-12)
+      expect(filter).not.toContain('"zoom"'); // NO zoom LOD
     }
   });
 
@@ -480,16 +476,15 @@ describe("generatedLayers — wall moat/band/tower/gate paint coverage (plan 022
   });
 });
 
-/** Every emitted farmland feature type (plan 022 §3.5) needs paint in every
- * theme: the tilled fields, the lane web, the field-edge hedges/fences, the
- * farmstead footprints and the orchard tree stipple. Coverage guard for the
- * farmland types added in plan 022-F. Two of these are LINE layers and
- * `generated-farm-hedge` paints `line-color` as a `["match", …]` expression —
- * the loose helper below reads fill/circle/line color and validates the match
- * outputs, unlike the fill-only `anyColor`. */
+/** Every emitted farmland feature type needs paint in every theme: the tilled
+ * fields, the lane web, the field-edge hedges/fences, the farmstead footprints
+ * and the orchard tree stipple. Coverage guard for the farmland types. Two of
+ * these are LINE layers and `generated-farm-hedge` paints `line-color` as a
+ * `["match", …]` expression — the loose helper below reads fill/circle/line
+ * color and validates the match outputs, unlike the fill-only `anyColor`. */
 const FARM_LAYER_IDS = [
   "generated-farm-field",
-  "generated-farm-bank", // paddy terrace bunds (box 23-E)
+  "generated-farm-bank", // paddy terrace bunds
   "generated-farm-lane",
   "generated-farm-hedge",
   "generated-farm-building",
@@ -512,7 +507,7 @@ function hasColor(layer: LayerSpecification): boolean {
   return false;
 }
 
-describe("generatedLayers — farmland field/lane/hedge/building/tree paint coverage (plan 022 §3.5)", () => {
+describe("generatedLayers — farmland field/lane/hedge/building/tree paint coverage", () => {
   it("all six farmland layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
     const layers = generatedLayers(PARCHMENT);
     for (const id of FARM_LAYER_IDS) {
@@ -521,7 +516,7 @@ describe("generatedLayers — farmland field/lane/hedge/building/tree paint cove
       expect((layer as { source?: string }).source).toBe("generated");
       const filter = JSON.stringify((layer as { filter?: unknown }).filter);
       expect(filter).toContain('"generatorId"');
-      expect(filter).not.toContain('"zoom"'); // NO zoom LOD (Jonah 2026-07-12)
+      expect(filter).not.toContain('"zoom"'); // NO zoom LOD
     }
   });
 
@@ -575,10 +570,10 @@ describe("generatedLayers — farmland field/lane/hedge/building/tree paint cove
   });
 });
 
-/** Every emitted mountain feature type (plan 023 §3 + §4.1) needs paint in
- * every theme: the rocky massif fill, the topographic contour iso-lines (LINE),
- * the downslope hachure ticks (LINE) and the summit peak markers (CIRCLE).
- * Coverage guard for the mountain types added in plan 023-B/23-C. */
+/** Every emitted mountain feature type needs paint in every theme: the rocky
+ * massif fill, the topographic contour iso-lines (LINE), the downslope hachure
+ * ticks (LINE) and the summit peak markers (CIRCLE). Coverage guard for the
+ * mountain types. */
 const MOUNTAIN_LAYER_IDS = [
   "generated-mountain-massif",
   "generated-mountain-contour",
@@ -586,7 +581,7 @@ const MOUNTAIN_LAYER_IDS = [
   "generated-mountain-peak",
 ] as const;
 
-describe("generatedLayers — mountain massif/contour/hachure/peak paint coverage (plan 023 §3 + §4.1)", () => {
+describe("generatedLayers — mountain massif/contour/hachure/peak paint coverage", () => {
   it("all mountain layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
     const layers = generatedLayers(PARCHMENT);
     for (const id of MOUNTAIN_LAYER_IDS) {
@@ -595,7 +590,7 @@ describe("generatedLayers — mountain massif/contour/hachure/peak paint coverag
       expect((layer as { source?: string }).source).toBe("generated");
       const filter = JSON.stringify((layer as { filter?: unknown }).filter);
       expect(filter).toContain('"generatorId"');
-      expect(filter).not.toContain('"zoom"'); // NO zoom LOD (Jonah 2026-07-12)
+      expect(filter).not.toContain('"zoom"'); // NO zoom LOD
     }
   });
 

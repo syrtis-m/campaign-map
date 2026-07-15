@@ -2,12 +2,12 @@ import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "../tokens";
 
 /**
- * Farmland fabric (plan 022 §4.9, plan 022 §3.5).
+ * Farmland fabric.
  * Farmland is stage 2 (agriculture) and the city is stage 3, so the whole
  * farm stack sits EARLY in the emitted array — BELOW the district/footprint/street
  * layers — so a city sketched over/beside farmland reads with the city on
- * top (advisor 2026-07-13; deliberately NOT forest's mid-array slot, which
- * paints canopy above city footprints). NO zoom LOD (Jonah 2026-07-12).
+ * top (deliberately NOT forest's mid-array slot, which paints canopy above city
+ * footprints). No zoom LOD — fabric renders at every zoom.
  */
 export function farmLayers(t: ThemeTokens): LayerSpecification[] {
   return [
@@ -24,7 +24,7 @@ export function farmLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricFarmland, "fill-opacity": 0.7 },
     } as unknown as LayerSpecification,
     {
-      // Paddy terrace banks (box 23-E) — the contour-following bunds of the
+      // Paddy terrace banks — the contour-following bunds of the
       // paddy-terraces field type, thin earthen `fabricWall`-hued steps drawn
       // OVER the paddy wash but UNDER the lanes (a lane crosses the terraces).
       // Same class of mark as the mountain contour but field-scale.

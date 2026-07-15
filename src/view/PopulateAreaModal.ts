@@ -11,9 +11,8 @@ const MIN_COUNT = 1;
 const MAX_COUNT = 20;
 
 /**
- * Phase 5 "populate this district with N shops" (docs/03), offline and
- * deterministic (plan 010): just a type + count, no LLM/API. Modeled on
- * QuickAddModal.
+ * "Populate this district with N shops", offline and deterministic: just a type
+ * + count, no LLM/API. Modeled on QuickAddModal.
  */
 export class PopulateAreaModal extends Modal {
   private type = "shop/tavern/venue";

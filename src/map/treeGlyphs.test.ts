@@ -42,7 +42,7 @@ describe("treeGlyphs — generic SDF synthesis", () => {
   });
 });
 
-describe("treeGlyphs — forest tree glyph set (plan 026-C)", () => {
+describe("treeGlyphs — forest tree glyph set", () => {
   it("registers 5 families × 4 variants = 20 square SDF images", () => {
     const images = treeGlyphImages();
     expect(images.size).toBe(FAMILIES.length * TREE_VARIANTS);

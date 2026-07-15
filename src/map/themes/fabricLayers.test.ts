@@ -5,7 +5,7 @@ import { HANDCRAFTED_THEMES, PARCHMENT } from "./tokens";
 import { obsidianNativeStyle, type ObsidianCssTokens } from "../theme";
 import { FABRIC_KINDS, isPolygonKind, type FabricKind } from "../../model/fabric";
 
-describe("fabricLayers — always visible, no zoom LOD (Jonah's Kanto-test decision)", () => {
+describe("fabricLayers — always visible, no zoom LOD", () => {
   const layers = fabricLayers(PARCHMENT);
 
   it("emits exactly one layer per fabric kind, on the fabric source", () => {
@@ -55,7 +55,7 @@ describe("fabricLayers — always visible, no zoom LOD (Jonah's Kanto-test decis
   });
 });
 
-describe("fabric kinds are visibly distinct per theme (plan 017)", () => {
+describe("fabric kinds are visibly distinct per theme", () => {
   // The user's #1 complaint: road/wall/river/water/district/park shared
   // colors (river == water; park borrowed a road color), so nothing read as
   // itself. Guard: in every theme, each of the six kinds paints in its OWN

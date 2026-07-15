@@ -2,15 +2,15 @@ import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "../tokens";
 
 /**
- * Mountain fabric paint (plan 023 §3 + §4.1). Relief drawn bottom-up: the
+ * Mountain fabric paint. Relief drawn bottom-up: the
  * rocky-ground MASSIF wash first, faint topographic CONTOUR iso-lines over it
  * (the base topo read; major index lines heavier than minor), downslope HACHURE
  * ticks above those (a darker stroke of the massif hue — the classic dark-line
  * relief read), then the summit PEAK markers on top. Mountain is BASE TERRAIN,
  * so this block sits EARLY in the emitted
  * array (after world-region, before farm/city) — a town sketched on a mountain
- * paints its footprints on top. NO zoom LOD (Jonah 2026-07-12): density is
- * paint, never a minzoom gate.
+ * paints its footprints on top. No zoom LOD: density is paint, never a minzoom
+ * gate.
  *
  * Generators emit typed features only; all paint (incl. the darker hachure/peak
  * shades derived by relative channel moves from `fabricMountain`) lives here, so
@@ -65,8 +65,8 @@ export function mountainLayers(t: ThemeTokens): LayerSpecification[] {
   return [
     {
       // Rocky-ground massif: a restrained stony wash so a bare mountain reads as
-      // relief without slabbing the base (the district purple-slab lesson —
-      // opacity stays low on the dark themes). `fill-antialias: false` kills the
+      // relief without slabbing the base — opacity stays low on the dark
+      // themes. `fill-antialias: false` kills the
       // per-polygon hairline. Painted FIRST so hachures + peaks layer above.
       id: "generated-mountain-massif",
       type: "fill",
@@ -75,11 +75,11 @@ export function mountainLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricMountain, "fill-opacity": 0.45, "fill-antialias": false },
     } as unknown as LayerSpecification,
     {
-      // Topographic contour iso-lines (plan 023 §4.1) — the base topo read, over
-      // the massif and UNDER the hachures. One layer, data-driven by the feature's
-      // `index`: major index lines paint heavier + more opaque than minor lines
-      // (the standard every-5th cadence). NO zoom LOD gate — width ramps with
-      // zoom for legibility, but the layer renders at every zoom (Jonah 2026-07-12).
+      // Topographic contour iso-lines — the base topo read, over the massif and
+      // UNDER the hachures. One layer, data-driven by the feature's `index`:
+      // major index lines paint heavier + more opaque than minor lines (the
+      // standard every-5th cadence). No zoom LOD gate — width ramps with zoom
+      // for legibility, but the layer renders at every zoom.
       id: "generated-mountain-contour",
       type: "line",
       source: "generated",

@@ -10,7 +10,7 @@ import { genreForCampaign, culturesForGenre } from "../gen/naming/cultures";
  * all (Jonah: "how do i ... change themes of a map, etc? no UIUX right now" /
  * "how do i change what the naming generator is doing"): theme, naming
  * culture selection, basemap status/acquisition, plus the occasional/heavy
- * "Generate & export" actions moved off the on-map toolbar (plan 018). All in
+ * "Generate & export" actions moved off the on-map toolbar. All in
  * one place. Reachable via the "settings" ribbon icon or the campaign-settings
  * command.
  */

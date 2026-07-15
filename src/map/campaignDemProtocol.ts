@@ -4,16 +4,16 @@ import { demTileLattice, latticeToRGBA, type ElevationField } from "../gen/field
 import { appendDemTile, getDemTile, demTileKey, type DemTile } from "../model/demCache";
 
 /**
- * Custom protocol serving generated raster-DEM tiles for hillshade + 3D terrain
- * (plan 023 §4.2), precedent `pmtilesVaultProtocol.ts`. Fictional campaigns
- * only (§5 OQ#2 — real-city elevation is a later plan). MapLibre requests
+ * Custom protocol serving generated raster-DEM tiles for hillshade + 3D
+ * terrain, precedent `pmtilesVaultProtocol.ts`. Fictional campaigns only
+ * (real-city elevation isn't supported yet). MapLibre requests
  * `campaigndem://<campaignId>/{z}/{x}/{y}`; we sample the campaign elevation
  * field on that tile's lattice, cache the QUANTIZED INTEGER lattice (the durable
  * determinism record), and encode a terrarium PNG at SERVE time via a canvas —
- * PNG bytes are re-derived, never cached or byte-compared (§4.2 trap).
+ * PNG bytes are re-derived, never cached or byte-compared.
  *
  * Serving is entirely OFF the region-generation path: DEM tiles fetch on
- * pan/zoom by design ("on demand", §4.2), but that is field EVALUATION, not
+ * pan/zoom by design (on demand), but that is field EVALUATION, not
  * procgen — `generatorRunCount` never moves. A DEM tile is just a view over the
  * elevation the mountain sketches already define (no new request surface).
  */

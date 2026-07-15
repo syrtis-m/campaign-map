@@ -14,7 +14,7 @@ export interface ThemeTokens {
   accent: string;
   poi: string;
   /**
-   * Sketched-fabric per-kind colors (plan 017). Every fabric kind must render
+   * Sketched-fabric per-kind colors. Every fabric kind must render
    * visibly distinct from the other five in every theme — river ≠ water, park
    * reads green, wall reads stony, road reads as road, district is a subtle
    * wash. Shades of existing theme hues where that reads fine (fabricWater is
@@ -25,20 +25,20 @@ export interface ThemeTokens {
   fabricWater: string; // water-body fill
   fabricRiver: string; // river line — same family as water but clearly distinct in shade
   fabricRoad: string; // sketched road line
-  /** Darker under-line for a CASED path (plan 027-A): drawn below + wider than
+  /** Darker under-line for a CASED path: drawn below + wider than
    * `fabricRoad` so a park path reads with a rim on both banks. Optional so the
    * addition stays additive against older theme literals; paint falls back to
    * `fabricWall`. */
   fabricPathCasing?: string;
-  /** Shore-casing rim on a water body (plan 027-A): a thin line on the pond
+  /** Shore-casing rim on a water body: a thin line on the pond
    * boundary, distinct from `fabricWater`. Optional (additive); paint falls back
    * to `fabricRiver`. */
   fabricWaterShore?: string;
   fabricWall: string; // masonry/boundary line (dashed) — stony, never a label gray
   fabricPark: string; // greenspace fill — the per-theme green (manicured/lawn)
-  fabricForest: string; // woodland canopy fill — a DEEPER, less-manicured green than fabricPark (plan 022 §3.2)
-  fabricFarmland: string; // tilled-field fill — a warm cultivated ochre/khaki, distinct from both greens (plan 022 §3.5)
-  fabricMountain: string; // rocky-relief massif fill — a stony grey-brown, distinct from the wall stone + the greens (plan 023 §3)
+  fabricForest: string; // woodland canopy fill — a DEEPER, less-manicured green than fabricPark
+  fabricFarmland: string; // tilled-field fill — a warm cultivated ochre/khaki, distinct from both greens
+  fabricMountain: string; // rocky-relief massif fill — a stony grey-brown, distinct from the wall stone + the greens
   fabricDistrict: string; // neighborhood wash — rendered at low opacity, must not slab the base
   fontRegular: string; // glyph stack name (fontstack)
   fontRegion: string; // glyph stack name for region/accent labels
@@ -62,7 +62,7 @@ export const MODERN_CLEAN: ThemeTokens = {
   labelMinor: "#7a786f",
   accent: "#1a73e8",
   poi: "#5f6368",
-  // Fabric (plan 017), Google-genre: water blue reused; river a deeper road-map
+  // Fabric, Google-genre: water blue reused; river a deeper road-map
   // blue; sketched roads get the arterial gold (distinct from white generated
   // streets); wall a warm concrete gray; park the classic pale-park green;
   // district the "area of interest" peach wash.
@@ -91,7 +91,7 @@ export const PARCHMENT: ThemeTokens = {
   labelMinor: "#7d6a4f",
   accent: "#7d1f1f",
   poi: "#5c4a2e",
-  // Fabric (plan 017), atlas-genre: water keeps the sage wash; rivers are the
+  // Fabric, atlas-genre: water keeps the sage wash; rivers are the
   // blue-gray ink line of hand-drawn atlases (clearly not the sage); roads stay
   // the theme's brown ink; walls a darker, grayer stone ink (plus the existing
   // dash) so masonry ≠ road; parks an olive-leaf green distinct from the sage
@@ -121,7 +121,7 @@ export const INK_SOOT: ThemeTokens = {
   labelMinor: "#7d7871",
   accent: "#b8860b",
   poi: "#948b7f",
-  // Fabric (plan 017), ink-noir: water lifted a touch bluer than the pinned
+  // Fabric, ink-noir: water lifted a touch bluer than the pinned
   // basemap water so a sketched harbor doesn't vanish into the soot land;
   // rivers a steel-blue line readable on near-black; roads keep the theme's
   // ink gray; walls a dark-khaki sandstone (visibly lighter + warmer than
@@ -152,7 +152,7 @@ export const NEON_SPRAWL: ThemeTokens = {
   labelMinor: "#8a93a6",
   accent: "#fcee0a",
   poi: "#00e5ff",
-  // Fabric (plan 017), neon-noir: water a deep teal clearly bluer than the
+  // Fabric, neon-noir: water a deep teal clearly bluer than the
   // near-black land (the pinned #101820 was indistinguishable from #0d0d11);
   // rivers an electric blue distinct from the cyan roads; roads keep the cyan
   // glow; walls a warning-stripe orange (security perimeter, plus dash);

@@ -1,6 +1,6 @@
 import { App, FuzzySuggestModal, TFile } from "obsidian";
 
-/** Picks a vault `.geojson`/`.json` file to import (plan 011) — the vault is
+/** Picks a vault `.geojson`/`.json` file to import — the vault is
  * the only source (no network, no Node fs): the GM drops an Azgaar/Watabou
  * export into it first, then picks it here. */
 export class ImportFileModal extends FuzzySuggestModal<TFile> {

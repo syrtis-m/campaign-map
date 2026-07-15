@@ -18,7 +18,7 @@ function hashImage(img: GlyphImage): string {
   return `${img.width}x${img.height}:${h}`;
 }
 
-describe("parkGlyphs — SDF point + rock glyph set (plan 027-C)", () => {
+describe("parkGlyphs — SDF point + rock glyph set", () => {
   it("registers 5 point kinds + 3 rock variants = 8 square SDF images", () => {
     const images = parkGlyphImages();
     expect(images.size).toBe(PARK_POINT_KINDS.length + PARK_ROCK_VARIANTS);

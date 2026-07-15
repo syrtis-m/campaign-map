@@ -16,11 +16,11 @@ type Pt = [number, number];
 
 /** What the controller reports back to the host on a committed edit — a
  * whole-feature geometry replacement (MapView turns it into a `sketch-edit`
- * mutation-log entry + persist + regen, plan 020 §9). */
+ * mutation-log entry + persist + regen). */
 export interface SketchControllerHandlers {
   onGeometryEdit(featureId: string, geometry: FabricGeometry): void;
-  /** Drag-commit of a procgen region's generation center (Addendum 2),
-   * display units. Only regions pass a center to `select`. */
+  /** Drag-commit of a procgen region's generation center, display units. Only
+   * regions pass a center to `select`. */
   onCenterEdit?(featureId: string, center: Pt): void;
 }
 
@@ -39,10 +39,10 @@ interface EditState {
 /**
  * Hand-rolled draw + edit controller.
  *
- * DRAW tool (plan 013): straight-segment line/polygon — click to add a vertex,
+ * DRAW tool: straight-segment line/polygon — click to add a vertex,
  * double-click/Enter to finish, Esc to cancel.
  *
- * SELECT tool (plan 020 §9, PowerPoint-style): click a fabric feature (routed
+ * SELECT tool (PowerPoint-style): click a fabric feature (routed
  * from MapView.handleClick — one click pipeline, no second handler race) to
  * select it; the shape gets an accent highlight, draggable vertex handles, and
  * midpoint insert handles. Drag a vertex to move it; drag a midpoint to insert
@@ -417,7 +417,7 @@ export class SketchController {
         },
       } as unknown as LayerSpecification,
       {
-        // Generation-center handle (Addendum 2): deliberately UNLIKE a vertex —
+        // Generation-center handle: deliberately UNLIKE a vertex —
         // bigger, inverted (white core, thick accent ring) so it reads as "the
         // plaza / city center," not another corner. Drawn on top.
         id: "fabric-draft-center",

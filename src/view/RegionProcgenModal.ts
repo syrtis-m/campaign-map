@@ -7,7 +7,7 @@ export interface RegionProcgenChoice {
 }
 
 /**
- * Region procgen picker (plan 020 §8.1, plan 022 §1): shown when a district
+ * Region procgen picker: shown when a district
  * sketch finishes and the sketch-kind has a registry algorithm. The form is
  * driven by the algorithm entry — a **Template** dropdown lists the
  * algorithm's presets (city's four profiles), pre-selected via

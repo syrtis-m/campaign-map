@@ -1,27 +1,25 @@
 /**
- * Park glyph synthesis + registration (plan 027-C, visual-overhaul wave 2) — the
- * park half of the SDF glyph dressing, built on the GENERIC host machinery
- * 026-C parked in `treeGlyphs.ts` (`rasterizeSdf` / `ensureSdfImages` /
- * `installSdfImageProvider`). This module owns only the PARK-specific shape specs
- * and their icon-image expressions; it never edits `treeGlyphs.ts` (the shared
- * module is imported, not forked — plan 026 §1.3).
+ * Park glyph synthesis + registration — the park half of the SDF glyph
+ * dressing, built on the GENERIC host machinery in `treeGlyphs.ts`
+ * (`rasterizeSdf` / `ensureSdfImages` / `installSdfImageProvider`). This module
+ * owns only the PARK-specific shape specs and their icon-image expressions; it
+ * never edits `treeGlyphs.ts` (the shared module is imported, not forked).
  *
  * Two glyph families here:
  *  1. `park-point-<kind>` — the landmark point dressing (fountain / bandstand /
- *     monument / lantern / teahouse), replacing 027-B's flat circle markers with
- *     legible little silhouettes (a tiered stone lantern reads as a lantern, an
- *     obelisk as a monument). Anchored at the BOTTOM so the icon stands on its
- *     point.
+ *     monument / lantern / teahouse), legible little silhouettes (a tiered stone
+ *     lantern reads as a lantern, an obelisk as a monument). Anchored at the
+ *     BOTTOM so the icon stands on its point.
  *  2. `park-rock-<variant>` — low, horizontal-dominant boulders for the japanese
  *     rock groups (Sakuteiki: wider than tall), anchored CENTER (a stone lies
  *     flat, it doesn't stand up). Three hashed variants so a 3/5-stone cluster
  *     doesn't read as stamped copies.
  *
  * Park TREES reuse the forest tree glyphs (`tree-<family>-<variant>`, registered
- * by `registerTreeGlyphs`): a shade tree is a shade tree, and the plan's §3
- * explicitly routes park trees onto 026's shared glyph layers. `parkTreeIconExpr`
- * builds that id from the park-tree feature's own `treeFamily` + `variant` props,
- * so no new tree image bytes are synthesized here.
+ * by `registerTreeGlyphs`): a shade tree is a shade tree, so park trees route
+ * onto the shared glyph layers. `parkTreeIconExpr` builds that id from the
+ * park-tree feature's own `treeFamily` + `variant` props, so no new tree image
+ * bytes are synthesized here.
  *
  * Everything is pure + deterministic (SDF bytes are a function of the shape spec
  * alone, THEME-INDEPENDENT — one image set tints to any theme via `icon-color`),
@@ -85,7 +83,7 @@ function primsToInside(prims: Prim[]): InsidePredicate {
 }
 
 // Native glyph size kept small so the base zoom renders it near 1:1 (icon-size
-// ≈ 1) — a downscaled SDF goes soft and its shadow AA smears (026-C note). All
+// ≈ 1) — a downscaled SDF goes soft and its shadow AA smears. All
 // widths below are CONTENT fractions, so the silhouettes are res-independent.
 const GLYPH_DIM = 52;
 const GLYPH_BUFFER = 6;

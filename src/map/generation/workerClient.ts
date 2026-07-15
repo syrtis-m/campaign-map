@@ -60,8 +60,8 @@ export class GenerationWorkerClient {
     });
   }
 
-  /** Procgen v4 (plan 020 §5): whole-region network computation — the
-   * expensive job that must run off-thread. `seed`/`params` come from the
+  /** Whole-region network computation — the expensive job that must run
+   * off-thread. `seed`/`params` come from the
    * region's persisted procgen block; the worker rebuilds the region from
    * `ring` + `regionId` and dispatches the registry algorithm. */
   generateRegion(

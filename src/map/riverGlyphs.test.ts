@@ -3,14 +3,14 @@ import { riverGlyphImages, riverGlyphId, riverIconImageExpr, RIVER_GLYPHS, type 
 import type { GlyphImage } from "./treeGlyphs";
 
 /** djb2 over the RGBA bytes — a cheap deterministic fingerprint of an image
- * (the treeGlyphs pixel-hash idiom, plan 026-C). */
+ * (the treeGlyphs pixel-hash idiom). */
 function hashImage(img: GlyphImage): string {
   let h = 5381;
   for (let i = 0; i < img.data.length; i++) h = ((h << 5) + h + img.data[i]) >>> 0;
   return `${img.width}x${img.height}:${h}`;
 }
 
-describe("riverGlyphs — water-symbol SDF set (plan 028-C)", () => {
+describe("riverGlyphs — water-symbol SDF set", () => {
   it("registers one square SDF image per water symbol (ford / rapids / falls)", () => {
     const images = riverGlyphImages();
     expect(images.size).toBe(RIVER_GLYPHS.length);

@@ -1,14 +1,13 @@
 /**
- * River water-symbol glyphs (plan 028-C, visual-overhaul wave 2) — the runtime
- * SDF glyph set for the river dressing pass (ford / rapids / falls), the twin
- * of 026-C's tree glyphs for water. It REUSES the generic host-side machinery
- * from `treeGlyphs.ts` (`rasterizeSdf` / `ensureSdfImages` /
- * `installSdfImageProvider`) WITHOUT touching that module — only the
- * river-specific glyph SPECS live here (plan 028-C file protocol). SDF so one
- * image set tints to any theme's river hue at draw time via `icon-color` and
- * never regenerates on css-change (only re-registers after setStyle drops it).
+ * River water-symbol glyphs — the runtime SDF glyph set for the river dressing
+ * (ford / rapids / falls), the water twin of the tree glyphs. It REUSES the
+ * generic host-side machinery from `treeGlyphs.ts` (`rasterizeSdf` /
+ * `ensureSdfImages` / `installSdfImageProvider`) WITHOUT touching that module —
+ * only the river-specific glyph SPECS live here. SDF so one image set tints to
+ * any theme's river hue at draw time via `icon-color` and never regenerates on
+ * css-change (only re-registers after setStyle drops it).
  *
- * The three USGS-style water symbols (plan 028 §1.4):
+ * The three USGS-style water symbols:
  *  - `ford`   — a dashed crossing line (stepping stones): a row of dots.
  *  - `rapids` — stacked chevrons/wavelets: the turbulent-water tick idiom.
  *  - `falls`  — a bar with short drop ticks below (a cartographic waterfall).
@@ -24,9 +23,9 @@ import { rasterizeSdf, ensureSdfImages, installSdfImageProvider, type GlyphImage
 export const RIVER_GLYPHS = ["ford", "rapids", "falls"] as const;
 export type RiverGlyph = (typeof RIVER_GLYPHS)[number];
 
-// Native glyph size kept small so the base zoom renders near 1:1 (the 026-C
-// downscale-smear lesson). All shape extents below are CONTENT fractions, so
-// the silhouettes are resolution-independent if this changes.
+// Native glyph size kept small so the base zoom renders near 1:1 — a downscaled
+// SDF goes soft and its shadow AA smears. All shape extents below are CONTENT
+// fractions, so the silhouettes are resolution-independent if this changes.
 const GLYPH_DIM = 40;
 const GLYPH_BUFFER = 5;
 const CONTENT = GLYPH_DIM - 2 * GLYPH_BUFFER;

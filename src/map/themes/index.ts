@@ -17,7 +17,7 @@ export function isHandcraftedTheme(id: string): id is keyof typeof HANDCRAFTED_T
 
 /**
  * Assembles a full style for a handcrafted genre theme. `basemap` is present only for
- * real-city campaigns with a registered vault PMTiles source (Phase 2); fictional
+ * real-city campaigns with a registered vault PMTiles source; fictional
  * campaigns get the theme's land/water/canon layers with no basemap source at all —
  * unexplored space reads as the theme's land color, not a void (quality-bar F4).
  */
@@ -42,9 +42,9 @@ export function buildThemeStyle(
         : {}),
       ...(dem ? { [dem.sourceId]: hillshadeSourceSpec(dem.url) } : {}),
     },
-    // Z-order invariant (plan 019 / layerOrder.ts): Locations always above
-    // fabric; sketched fabric above generated (the GM's hand wins). Hillshade
-    // relief (plan 023 §4.2) sits below the vector fabric, default-hidden.
+    // Z-order invariant (see layerOrder.ts): Locations always above fabric;
+    // sketched fabric above generated (the GM's hand wins). Hillshade relief
+    // sits below the vector fabric, default-hidden.
     layers: assertOrdered([
       { id: "background", type: "background", paint: { "background-color": tokens.land } },
       ...(basemap ? basemapLayers(basemap.sourceId, tokens) : []),

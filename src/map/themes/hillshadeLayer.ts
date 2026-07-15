@@ -3,21 +3,19 @@ import type { ThemeTokens } from "./tokens";
 import { DEM_TILE_RES } from "../campaignDemProtocol";
 
 /**
- * Hillshade relief shading over the generated DEM (plan 023 §4.2). ONE `hillshade`
+ * Hillshade relief shading over the generated DEM. ONE `hillshade`
  * layer fed by a `raster-dem` source (terrarium encoding, served by the
  * `campaigndem` protocol). Sits in the `hillshade` z-group — below the vector
  * mountain fabric (massif/hachures/contours read on top of the shaded ground),
  * above basemap. Generators emit no paint here — like the rest of the theme, the
  * shading COLORS are theme-owned so every genre's relief tracks its palette.
  *
- * Default visibility is OFF (`none`): terrain is a toggle (§4.2 — "verify perf
- * before default-on"), and an always-visible raster-dem source would make every
- * fictional map fetch DEM tiles on pan. The view's terrain toggle is
+ * Default visibility is OFF (`none`): an always-visible raster-dem source would
+ * make every fictional map fetch DEM tiles on pan. The view's terrain toggle is
  * pitch-adaptive (MapView.applyTerrainMode): top-down it flips THIS layer
  * visible; pitched it hides it and attaches the 3D mesh instead — the two never
  * render together (maplibre-gl 4.7.1 misrenders hillshade while a terrain mesh
- * is active). Fictional campaigns only — real-city elevation is a later plan
- * (§5 OQ#2).
+ * is active). Fictional campaigns only — real-city elevation isn't supported yet.
  */
 
 type Rgb = [number, number, number];

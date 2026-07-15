@@ -10,20 +10,19 @@ import { parkLayers } from "./generated/park";
 import { wallLayers } from "./generated/wall";
 
 /**
- * Generated fabric, painted with the SAME per-kind fabric tokens (plan 017)
- * as sketched fabric — quality-bar F2 (plan 019 rewrite): a generated road
- * and a sketched road differ in provenance, not legend. The two sources/
- * modules stay separate (generated output is regenerable cache; sketches are
- * durable), but the eye reads one class of thing per kind.
+ * Generated fabric, painted with the SAME per-kind fabric tokens as sketched
+ * fabric — quality-bar F2: a generated road and a sketched road differ in
+ * provenance, not legend. The two sources/modules stay separate (generated
+ * output is regenerable cache; sketches are durable), but the eye reads one
+ * class of thing per kind.
  *
- * No settlement point/label layers anymore: named places are Locations
- * (plan 019, D2) — the world-settlement generator is unwired from
- * generate-here, so nothing emits point features into this source.
+ * No settlement point/label layers: named places are Locations — the
+ * world-settlement generator is unwired from generate-here, so nothing emits
+ * point features into this source.
  *
  * The per-kind layer builders live in `./generated/{world,mountain,farm,city,
- * river,forest,park,wall}.ts` (split VO-W0 so the three visual-overhaul plans —
- * 026 forest / 027 park / 028 river — touch disjoint files). This function is
- * the sole composer: it concatenates the fragments in EXACTLY the emitted
+ * river,forest,park,wall}.ts`. This function is the sole composer: it
+ * concatenates the fragments in EXACTLY the emitted
  * order. That order is deliberately interleaved — world-region opens the stack
  * and world-route paints near the end; the city block sits mid-stack and city
  * streets paint last — so the world/city builders each contribute two

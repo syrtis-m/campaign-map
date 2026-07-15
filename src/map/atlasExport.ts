@@ -1,8 +1,8 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 /**
- * v1 atlas export (docs/03 Phase 5: "Atlas export: PDF from maps + location
- * notes ... the notes ARE the gazetteer now"). Composes a multi-page PDF:
+ * v1 atlas export: a PDF built from the map plus location notes (the notes ARE
+ * the gazetteer). Composes a multi-page PDF:
  * a cover page with the campaign's poster render (see posterExport.ts,
  * reused as-is — this module never touches MapLibre/WebGL) followed by
  * gazetteer pages listing every canon location with its note body preview.

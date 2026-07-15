@@ -1,6 +1,6 @@
 import type { LayerSpecification } from "maplibre-gl";
 
-/** Per-session travel path (Phase 5) — a solid line tracing the locations a
+/** Per-session travel path — a solid line tracing the locations a
  * session note wikilinks, in order. Modeled on `connectionLayers`: themed via
  * a passed token so it reads consistently across every map style, drawn above
  * terrain/basemap and connections, below canon pins/labels. Solid (vs.

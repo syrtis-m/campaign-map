@@ -58,8 +58,8 @@ function fakeApp(): { app: App; files: Map<string, string> } {
 
 const WORLD_BOUNDS: BBox = { minX: -2000, minY: -2000, maxX: 2000, maxY: 2000 };
 
-/** Tiny stand-in tile generator (the legacy city generators are deleted in
- * v3.4): deterministic, constraint-sensitive enough for the cache tests. */
+/** Tiny stand-in tile generator: deterministic, constraint-sensitive enough
+ * for the cache tests. */
 function fakeStreets(seed: number, bbox: BBox, constraints: { canonFeatures?: GeoJSON.Feature[] }): GeoJSON.Feature[] {
   const canonCount = constraints.canonFeatures?.length ?? 0;
   const n = 4 - Math.min(canonCount, 2);
@@ -163,9 +163,9 @@ describe("generateTile naming constraints", () => {
   });
 });
 
-describe("generateRegionTile (procgen v4, plan 020 §3.3)", () => {
-  // A region built from a v3 disc (32-gon), with the v3-equivalent seed —
-  // the same fixture the citynet unit gates use.
+describe("generateRegionTile", () => {
+  // A region built from a disc (32-gon), with the matching seed — the same
+  // fixture the citynet unit gates use.
   const domain = makeDomain(300, 300, 900, "euro-medieval", 1720000000000);
   const region = makeRegion("fabric-region-1", discToRing(domain));
   const seed = citySeedFor(4181, domain);
@@ -219,7 +219,7 @@ describe("generateRegionTile (procgen v4, plan 020 §3.3)", () => {
   });
 });
 
-describe("generateRegionTile staleness fingerprints (plan 024 §5.1)", () => {
+describe("generateRegionTile staleness fingerprints", () => {
   const domain = makeDomain(300, 300, 900, "euro-medieval", 1720000000000);
   const region = makeRegion("fabric-region-1", discToRing(domain));
   const seed = citySeedFor(4181, domain);
@@ -249,11 +249,11 @@ describe("generateRegionTile staleness fingerprints (plan 024 §5.1)", () => {
     expect(compute).toHaveBeenCalledTimes(1);
   });
 
-  it("BACK-COMPAT: a pre-024 record (no stored fingerprint) is grandfathered fresh — no regen storm", async () => {
+  it("BACK-COMPAT: a record with no stored fingerprint is grandfathered fresh — no regen storm", async () => {
     const { app, files } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
     const compute = vi.fn(directCompute);
-    // Simulate a pre-024 cache: records written WITHOUT any fingerprint.
+    // Simulate an old cache: records written WITHOUT any fingerprint.
     await generateRegionTile(ctx, region, gids, 0, 0, compute, {});
     expect(compute).toHaveBeenCalledTimes(1);
     const path = "Campaigns/Ashfall/.mapcache/generated.jsonl";
@@ -290,7 +290,7 @@ describe("generateRegionTile staleness fingerprints (plan 024 §5.1)", () => {
   });
 });
 
-describe("removeCachedTiles (plan 019 'clear generated fabric')", () => {
+describe("removeCachedTiles ('clear generated fabric')", () => {
   it("a cleared tile is a true cache MISS: the next generate re-runs the generator (not a blank tombstone)", async () => {
     const { app } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };

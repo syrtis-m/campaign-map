@@ -4,12 +4,11 @@ import { riverIconImageExpr } from "../../riverGlyphs";
 
 /**
  * Derive the bank-casing stroke from the theme's river hue: same hue, darker —
- * the deliberate dark-edge stroke of the cartographic depth idiom (plan 028
- * §1.1; OSM Carto rule: everything WATER-hued stays exactly `fabricRiver`, so
- * fill/fill overlaps never artifact — the casing is the one deliberate
- * departure). Derived here because tokens.ts is outside this box's footprint
- * (∥ P1 protocol); if a dedicated casing token lands later, this helper
- * collapses into it. Non-6-digit-hex inputs pass through unchanged.
+ * the deliberate dark-edge stroke of the cartographic depth idiom (OSM Carto
+ * rule: everything WATER-hued stays exactly `fabricRiver`, so fill/fill overlaps
+ * never artifact — the casing is the one deliberate departure). Derived locally;
+ * if a dedicated casing token lands later, this helper collapses into it.
+ * Non-6-digit-hex inputs pass through unchanged.
  */
 function darken(hex: string, amount: number): string {
   const m = /^#([0-9a-f]{6})$/i.exec(hex);
@@ -25,8 +24,7 @@ function darken(hex: string, amount: number): string {
 /** Linear channel-wise hex blend `a*(1−t) + b*t` — the point-bar SAND tone is a
  * blend of the theme's land and its cultivated ochre (`fabricFarmland`), so a
  * point bar reads as warm silt distinct from both the land island and the
- * water (plan 028 §1.4). Kept local for the same ∥-protocol reason as
- * `darken` (tokens.ts is outside this box). */
+ * water. Kept local for the same reason as `darken`. */
 function mix(a: string, b: string, t: number): string {
   const ma = /^#([0-9a-f]{6})$/i.exec(a);
   const mb = /^#([0-9a-f]{6})$/i.exec(b);
@@ -41,15 +39,14 @@ function mix(a: string, b: string, t: number): string {
 }
 
 /**
- * River fabric (plan 022 §3.1; bank casing + merged channel per plan 028
- * §1.1). Order is the depth idiom: dark bank casing UNDER the channel fill
- * (only the outer half of the stroke shows → dark edge, light core), islands
- * land-hued ABOVE the water. NO zoom LOD (Jonah 2026-07-12).
+ * River fabric. Order is the depth idiom: dark bank casing UNDER the channel
+ * fill (only the outer half of the stroke shows → dark edge, light core),
+ * islands land-hued ABOVE the water. No zoom LOD — fabric renders at every zoom.
  */
 export function riverLayers(t: ThemeTokens): LayerSpecification[] {
   return [
     {
-      // Bank casing (plan 028 §1.1): the generator's left/right/braid bank
+      // Bank casing: the generator's left/right/braid bank
       // LineStrings, stroked dark UNDER the channel fill. Round joins/caps keep
       // the casing continuous across the shared per-segment joint vertices.
       id: "generated-river-bank",
@@ -61,7 +58,7 @@ export function riverLayers(t: ThemeTokens): LayerSpecification[] {
     } as unknown as LayerSpecification,
     {
       // The generated channel is water — same hue as a sketched river/water
-      // (F2: one legend per kind). Opacity 1 (was 0.85 pre-028): the merged
+      // (F2: one legend per kind). Opacity 1: the merged
       // ribbons deliberately OVERLAP at joints and braids, and any opacity < 1
       // double-darkens the overlap into a visible seam bar; full opacity also
       // lets the under-painted casing read as an edge, not a wash.
@@ -72,7 +69,7 @@ export function riverLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricRiver, "fill-opacity": 1 },
     } as unknown as LayerSpecification,
     {
-      // Confluence Y-merge gusset (plan 028 §1.4): the widened water wedge that
+      // Confluence Y-merge gusset: the widened water wedge that
       // smooths two rivers meeting into a Y. Water-hued (hue discipline — the
       // overlap with the channel shares the fabricRiver fill, never artifacts).
       id: "generated-river-confluence",
@@ -82,7 +79,7 @@ export function riverLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricRiver, "fill-opacity": 1 },
     } as unknown as LayerSpecification,
     {
-      // Delta distributaries (plan 028 §1.4): the bird's-foot arms fanning off
+      // Delta distributaries: the bird's-foot arms fanning off
       // the terminal mouth — water, same hue as the channel.
       id: "generated-river-distributary",
       type: "fill",
@@ -91,7 +88,7 @@ export function riverLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricRiver, "fill-opacity": 1 },
     } as unknown as LayerSpecification,
     {
-      // Estuary trumpet (plan 028 §1.4): the exponential tidal flare at a mouth
+      // Estuary trumpet: the exponential tidal flare at a mouth
       // opening into open water — water-hued.
       id: "generated-river-estuary",
       type: "fill",
@@ -100,7 +97,7 @@ export function riverLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricRiver, "fill-opacity": 1 },
     } as unknown as LayerSpecification,
     {
-      // Oxbow lakes (plan 028 §1.4): abandoned-meander water bodies beside the
+      // Oxbow lakes: abandoned-meander water bodies beside the
       // tightest bends — still water, the same river hue.
       id: "generated-river-oxbow",
       type: "fill",
@@ -119,7 +116,7 @@ export function riverLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.land, "fill-opacity": 0.95 },
     } as unknown as LayerSpecification,
     {
-      // Point bars (plan 028 §1.4): sandy inner-bend crescents — a warm silt
+      // Point bars: sandy inner-bend crescents — a warm silt
       // tone (land ↔ cultivated-ochre blend), painted above the channel water
       // like a small beach.
       id: "generated-river-point-bar",
@@ -129,10 +126,10 @@ export function riverLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": mix(t.land, t.fabricFarmland, 0.6), "fill-opacity": 0.95 },
     } as unknown as LayerSpecification,
     {
-      // Water-symbol glyphs (plan 028 §1.4): ford / rapids / falls SDF icons at
-      // hashed steep/calm candidates. Tinted to a dark river tone; the symbol
-      // is rotated across-stream by the generator's `rotation` prop. NO zoom
-      // LOD (Jonah 2026-07-12) — icon-allow-overlap so they always render.
+      // Water-symbol glyphs: ford / rapids / falls SDF icons at hashed
+      // steep/calm candidates. Tinted to a dark river tone; the symbol is
+      // rotated across-stream by the generator's `rotation` prop. No zoom LOD —
+      // icon-allow-overlap so they always render.
       id: "generated-river-glyph",
       type: "symbol",
       source: "generated",

@@ -16,7 +16,7 @@ import type { ThemeTokens } from "./themes/tokens";
  * are per-campaign overrides with their own craft budget (quality-bar F6).
  *
  * Font caveat: "inherit theme font" is aspirational — generating glyph PBFs for an
- * arbitrary live Obsidian font is a real asset pipeline (see DECISIONS.md, the Phase 1
+ * arbitrary live Obsidian font is a real asset pipeline (see DECISIONS.md, the
  * glyph-PBF entry), so obsidian-native always renders labels in Inter regardless of the
  * user's actual body font. Colors/layout genuinely follow the live theme; typeface does not.
  */
@@ -69,7 +69,7 @@ function isDarkBackground(color: string): boolean {
 }
 
 /**
- * Fabric colors for obsidian-native (plan 017). Obsidian CSS variables carry
+ * Fabric colors for obsidian-native. Obsidian CSS variables carry
  * no green or blue we can rely on, so the nature hues (water/river/park) and
  * wall stone are fixed neutral values chosen per background luminance — the
  * *derivation* from the live theme is the light/dark split plus reusing
@@ -84,8 +84,8 @@ const FABRIC_ON_LIGHT = {
   fabricForest: "#5f9560", // deeper than park; woodland on a light Obsidian theme
   fabricFarmland: "#cdb679", // warm cultivated tan on a light Obsidian theme
   fabricMountain: "#ab9d8d", // rocky taupe massif on a light Obsidian theme
-  fabricPathCasing: "#6b6b6b", // darker gray rim under the road-gray park path (plan 027-A)
-  fabricWaterShore: "#6f97b4", // deeper blue rim on the pale pond (plan 027-A)
+  fabricPathCasing: "#6b6b6b", // darker gray rim under the road-gray park path
+  fabricWaterShore: "#6f97b4", // deeper blue rim on the pale pond
 } as const;
 const FABRIC_ON_DARK = {
   fabricWater: "#26384c",
@@ -95,8 +95,8 @@ const FABRIC_ON_DARK = {
   fabricForest: "#3f5c38", // dark canopy, distinct from the park green on dark
   fabricFarmland: "#6b5d3f", // dark tilled-earth khaki on a dark Obsidian theme
   fabricMountain: "#565046", // dark slate-brown rock on a dark Obsidian theme
-  fabricPathCasing: "#3a3a3a", // near-black rim under the road-gray park path (plan 027-A)
-  fabricWaterShore: "#4a6a86", // lighter steel rim, reads on the dark pond (plan 027-A)
+  fabricPathCasing: "#3a3a3a", // near-black rim under the road-gray park path
+  fabricWaterShore: "#4a6a86", // lighter steel rim, reads on the dark pond
 } as const;
 
 function obsidianTokensAsThemeTokens(tokens: ObsidianCssTokens): ThemeTokens {
@@ -145,7 +145,7 @@ export function obsidianNativeStyle(
       ...(basemap ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } } : {}),
       ...(dem ? { [dem.sourceId]: hillshadeSourceSpec(dem.url) } : {}),
     },
-    // Same z-order contract as buildThemeStyle (plan 019 / layerOrder.ts).
+    // Same z-order contract as buildThemeStyle (see layerOrder.ts).
     layers: assertOrdered([
       { id: "background", type: "background", paint: { "background-color": t.land } },
       ...(basemap ? basemapLayers(basemap.sourceId, t) : []),

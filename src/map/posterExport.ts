@@ -1,7 +1,7 @@
 import maplibregl, { type StyleSpecification } from "maplibre-gl";
 
 /**
- * v1 poster export (docs/03 Phase 5: "poster export first"). Renders a
+ * v1 poster export. Renders a
  * *separate, offscreen* MapLibre map rather than capturing the live map's
  * canvas — the live map is created without `preserveDrawingBuffer` (see
  * MapView.onOpen), so its WebGL backbuffer can't be reliably read back after

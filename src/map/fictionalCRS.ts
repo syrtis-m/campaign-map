@@ -1,6 +1,6 @@
 /**
- * Fictional worlds use fake [lng, lat] coordinates in a bounded box (architecture §4,
- * Phase 0 Spike B). MapLibre still assumes Web Mercator under the hood, so all fake
+ * Fictional worlds use fake [lng, lat] coordinates in a bounded box (architecture §4).
+ * MapLibre still assumes Web Mercator under the hood, so all fake
  * coordinates are kept near the equator (lat in roughly [-10, 10]) to keep Mercator
  * distortion negligible across a campaign's extent.
  *

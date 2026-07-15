@@ -3,31 +3,30 @@ import type { ThemeTokens } from "../tokens";
 import { parkPointIconExpr, parkRockIconExpr, parkTreeIconExpr } from "../../parkGlyphs";
 
 /**
- * Park fabric (procgen v4.7 → plan 027-A figure-ground → 027-C organic dressing).
- * Composed bottom-up: the merged lawn ground, then the darker CANOPY (the second
- * green — now ONE organic marching-squares MultiPolygon with a seam-safe rim, so
- * overlapping clumps no longer double-darken), then beds/court + karesansui rake,
- * then the CASED path lines (casing under fill), then the organic pond + a
- * seam-safe shore-casing rim + island + bridge, then the rock + tree + landmark
- * SDF-glyph symbols on top. NO zoom LOD in any FILTER (Jonah 2026-07-12) — the
- * size/width/opacity ramps below key on zoom in PAINT only, the endorsed density
- * fix, never a zoom gate.
+ * Park fabric. Composed bottom-up: the merged lawn ground, then the darker
+ * CANOPY (the second green — ONE organic marching-squares MultiPolygon with a
+ * seam-safe rim, so overlapping clumps no longer double-darken), then
+ * beds/court + karesansui rake, then the CASED path lines (casing under fill),
+ * then the organic pond + a seam-safe shore-casing rim + island + bridge, then
+ * the rock + tree + landmark SDF-glyph symbols on top. No zoom LOD in any FILTER
+ * — the size/width/opacity ramps below key on zoom in PAINT only, never a zoom
+ * gate.
  *
- * Plan 027-C changes (all theme-side — generators emit typed features only):
+ * All differentiation is theme-side (generators emit typed features only):
  *  - CANOPY is a single organic MultiPolygon (`fill-antialias:false` kills the
  *    per-polygon hairline) + a `park-canopy-rim` LineString outline (seam-safe:
- *    a separate line feature, never a line layer on the fill — plan 026-B).
- *  - POND shore casing filters the SEPARATE `park-pond-shore` LineStrings (the
- *    027-A line-on-fill shore would stroke tile-clip seams on a pond straddling
- *    a tile edge).
+ *    a separate line feature, never a line layer on the fill).
+ *  - POND shore casing filters the SEPARATE `park-pond-shore` LineStrings (a
+ *    line-on-fill shore would stroke tile-clip seams on a pond straddling a
+ *    tile edge).
  *  - `park-court-rake` = raked-gravel furrow lines over the karesansui court.
  *  - Rocks / trees / landmark points are SDF-glyph SYMBOL layers (shared
  *    `treeGlyphs.ts` machinery via `parkGlyphs.ts`): tinted per theme by
- *    `icon-color`, rimmed by `icon-halo`, zoom-ramped size/opacity (halo→0 at the
- *    overview so the downscaled SDF AA doesn't smear into a box, 026-C note).
+ *    `icon-color`, rimmed by `icon-halo`, zoom-ramped size/opacity (halo→0 at
+ *    the overview so the downscaled SDF AA doesn't smear into a box).
  */
 export function parkLayers(t: ThemeTokens): LayerSpecification[] {
-  // Casing tokens are additive (plan 027-A) — fall back to stony/water hues so
+  // Casing tokens are optional — fall back to stony/water hues so
   // the layers always paint even against an older ThemeTokens literal.
   const pathCasing = t.fabricPathCasing ?? t.fabricWall;
   const waterShore = t.fabricWaterShore ?? t.fabricRiver;
@@ -46,7 +45,7 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
     "symbol-z-order": "viewport-y",
   });
   // Halo ramps to ~0 toward the fictional overview (~z4.5) so the SDF downscale
-  // AA doesn't read as a pale box (plan 026-C). Pure `["zoom"]` = paint.
+  // AA doesn't read as a pale box. Pure `["zoom"]` = paint.
   const haloWidth: unknown = ["interpolate", ["linear"], ["zoom"], 5.5, 0, 9, 1.6];
 
   return [
@@ -60,7 +59,7 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricPark, "fill-opacity": 0.6 },
     } as unknown as LayerSpecification,
     {
-      // Canopy: the second green — ONE organic MultiPolygon (plan 027-C) in the
+      // Canopy: the second green — ONE organic MultiPolygon in the
       // deeper `fabricForest` green, above the lawn so the park reads as figure
       // (canopy) vs ground (lawn). `fill-antialias:false` removes the per-polygon
       // hairline. A blob-UNION now, so overlapping clumps paint one flat mass.
@@ -71,7 +70,7 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricForest, "fill-opacity": 0.85, "fill-antialias": false },
     } as unknown as LayerSpecification,
     {
-      // Canopy RIM (plan 027-C): a darker line tracing the canopy outline (+ any
+      // Canopy RIM: a darker line tracing the canopy outline (+ any
       // hole) so the wooded mass reads as a drawn shape. Filters the SEPARATE
       // `park-canopy-rim` LineStrings (seam-safe — never a line on the fill). No LOD.
       id: "generated-park-canopy-rim",
@@ -99,7 +98,7 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricWall, "fill-opacity": 0.4 },
     } as unknown as LayerSpecification,
     {
-      // Karesansui RAKE (plan 027-C): the gravel furrow lines, ABOVE the court
+      // Karesansui RAKE: the gravel furrow lines, ABOVE the court
       // wash. A darker stony hue so the raked texture reads. Seam-safe LineStrings.
       id: "generated-park-court-rake",
       type: "line",
@@ -154,7 +153,7 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       },
     } as unknown as LayerSpecification,
     {
-      // Pond: the composition anchor — an organic MultiPolygon (plan 027-C) in
+      // Pond: the composition anchor — an organic MultiPolygon in
       // the water hue. Above the ground + paths so it reads as a pool.
       id: "generated-park-pond",
       type: "fill",
@@ -163,7 +162,7 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricWater, "fill-opacity": 0.9 },
     } as unknown as LayerSpecification,
     {
-      // Pond SHORE casing (plan 027-C): the SEPARATE `park-pond-shore` LineStrings
+      // Pond SHORE casing: the SEPARATE `park-pond-shore` LineStrings
       // (seam-safe) — a thin rim on the water edge, ABOVE the pond fill so the
       // shore reads crisply (a rim, not an under-casing).
       id: "generated-park-pond-shore",
@@ -197,8 +196,8 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricWall, "fill-opacity": 0.95 },
     } as unknown as LayerSpecification,
     {
-      // Park trees (plan 027-C): specimen/scatter trees as SDF tree GLYPHS (shared
-      // 026-C set, keyed on treeFamily+variant), tinted the deeper canopy green,
+      // Park trees: specimen/scatter trees as SDF tree GLYPHS (the shared
+      // tree-glyph set, keyed on treeFamily+variant), tinted the deeper canopy green,
       // painted ABOVE the greenery. Zoom-ramped footprint so a wooded park is not
       // a field of dots at z4.5; a lighter `icon-halo` rim (park green) lifts each
       // crown off the same-family canopy, ramped to 0 at the overview.
@@ -238,7 +237,7 @@ export function parkLayers(t: ThemeTokens): LayerSpecification[] {
       },
     } as unknown as LayerSpecification,
     {
-      // Park point dressing (plan 027-C): fountain / bandstand / monument /
+      // Park point dressing: fountain / bandstand / monument /
       // lantern / teahouse as per-kind SDF landmark GLYPHS (parkGlyphs.ts),
       // painted ON TOP so the composition's focal points read. Tinted per
       // `pointKind` (water fountains, stony lanterns/monuments, accent bandstands).

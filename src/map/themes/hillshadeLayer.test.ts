@@ -6,7 +6,7 @@ import { obsidianNativeStyle, type ObsidianCssTokens } from "../theme";
 import { DEM_TILE_RES } from "../campaignDemProtocol";
 
 /**
- * Hillshade paint coverage (plan 023 §4.2) — the per-family checklist every
+ * Hillshade paint coverage — the per-family checklist every
  * generated layer family gets: present in every theme's built style when the
  * campaign has a DEM, absent when not, colors theme-derived, default-hidden
  * (terrain is a toggle), and NO zoom LOD (Jonah's standing ruling).
@@ -51,7 +51,7 @@ describe("hillshadeLayer across every theme", () => {
       expect(layer.source).toBe("dem-x");
       // Terrain is a TOGGLE: relief shading must not surprise-render on open.
       expect(layer.layout?.visibility).toBe("none");
-      // Zoom LOD is location-name-only (Jonah 2026-07-12) — never a zoom gate.
+      // Zoom LOD is location-name-only — never a zoom gate.
       expect(layer.minzoom).toBeUndefined();
       expect(layer.maxzoom).toBeUndefined();
       // All three shading colors present and rgba-formatted (theme-derived).

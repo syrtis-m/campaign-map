@@ -2,16 +2,16 @@ import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "../tokens";
 
 /**
- * Per-feature street-width → px multiplier (plan 025 §3.3), reused at every zoom
+ * Per-feature street-width → px multiplier, reused at every zoom
  * stop of `generated-street`'s `line-width`. It reads the emitted `width`
  * (metres) and normalises to the 12 m ordinary-street reference, FLOORED at 0.7
  * (alleys never blink out sub-pixel) and CAPPED at 6 (an 85 m superblock canyon
  * stays legible without swallowing the frame). A widthless legacy feature
  * (sketch-corridor, roadClass "major") derives its metres from `roadClass` so
  * it flows through the identical ramp. Kept OUTSIDE the zoom `interpolate` (a
- * pure data expression, no `["zoom"]`) — nesting zoom under `["*", …]`
- * invalidates the whole style at load (006-class), so only this multiplier is
- * folded into each interpolate output.
+ * pure data expression, no `["zoom"]`) — MapLibre silently invalidates the
+ * whole style at load if `zoom` is nested under `["*", …]` (map loads blank,
+ * no error), so only this multiplier is folded into each interpolate output.
  */
 const W_MULT: unknown = [
   "max",
@@ -48,7 +48,7 @@ export function cityLayers(t: ThemeTokens): LayerSpecification[] {
       // hue as sketched districts (fabricDistrict); opacity sits below the
       // sketched 0.18 because generated districts tile EVERY cell — a
       // full-coverage wash at sketch opacity slabbed the near-black neon
-      // base (see plan 017 notes), while a sketched district is one shape.
+      // base, while a sketched district is one shape.
       id: "generated-district",
       type: "fill",
       source: "generated",
@@ -56,13 +56,9 @@ export function cityLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricDistrict, "fill-opacity": 0.09 },
     } as unknown as LayerSpecification,
     {
-      // NO zoom LOD (Jonah 2026-07-12): generated building detail follows the
-      // same standing Kanto-test ruling as all fabric — "LOD should only
-      // impact visibility of location names; fabric always visible" (see
-      // src/model/fabric.ts). The former minzoom:14 made footprints pop in/out
-      // across zooms; they now render at every zoom like every other fabric
-      // layer. (Paint-level treatment — e.g. an opacity ramp for far-out
-      // readability — stays a theme decision, deliberately not re-added here.)
+      // No zoom LOD: footprints render at every zoom like all fabric (see
+      // src/model/fabric.ts) — never re-add a minzoom gate. Far-out
+      // readability (e.g. an opacity ramp) stays a theme paint decision.
       id: "generated-footprint",
       type: "fill",
       source: "generated",
@@ -70,9 +66,8 @@ export function cityLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.roadMinor, "fill-opacity": 0.3 },
     } as unknown as LayerSpecification,
     {
-      // Procgen v3.2 parcels: hairline lot boundaries. NO zoom LOD (Jonah
-      // 2026-07-12, same ruling as generated-footprint above) — parcels
-      // render at every zoom now instead of the former minzoom:15.
+      // Parcels: hairline lot boundaries. No zoom LOD — parcels render at
+      // every zoom (same ruling as generated-footprint above).
       id: "generated-parcel",
       type: "line",
       source: "generated",
@@ -80,7 +75,7 @@ export function cityLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "line-color": t.roadMinor, "line-width": 0.5, "line-opacity": 0.35 },
     } as unknown as LayerSpecification,
     {
-      // Procgen v3 city landmarks: the plaza reads as paved open ground
+      // City landmarks: the plaza reads as paved open ground
       // (road hue, light wash); church/market footprints read like heavier
       // buildings (denser than the ambient footprint fill); walls share the
       // sketched-wall stone hue (F2: one legend per kind); farm fields get a
@@ -100,7 +95,7 @@ export function cityLayers(t: ThemeTokens): LayerSpecification[] {
           "plaza", t.fabricRoad,
           "wall", t.fabricWall,
           "field", t.fabricPark,
-          // cul-de-sac court bulbs (na-suburb, v3.4) read as pavement
+          // cul-de-sac court bulbs (na-suburb) read as pavement
           "court", t.fabricRoad,
           t.roadMinor,
         ],
@@ -108,7 +103,7 @@ export function cityLayers(t: ThemeTokens): LayerSpecification[] {
       },
     } as unknown as LayerSpecification,
     {
-      // Canal rings (plan 025 §2.7 canal-rings): the concentric canals emit as
+      // Canal rings (the canal-rings preset): the concentric canals emit as
       // `city-landmark` type=`canal` LINES (the water machinery reads them as
       // rivers internally; here they read as WATER). A fat blue casing ≈ the
       // 30 m canal width — same water hue as a sketched river (F2: provenance
@@ -131,7 +126,7 @@ export function cityLayers(t: ThemeTokens): LayerSpecification[] {
       },
     } as unknown as LayerSpecification,
     {
-      // City gates (v3.3): unnamed fabric points where arterials pierce the
+      // City gates: unnamed fabric points where arterials pierce the
       // wall — small stone-hued dots, never Location pins (I4).
       id: "generated-gate",
       type: "circle",
@@ -153,8 +148,8 @@ export function cityStreetLayers(t: ThemeTokens): LayerSpecification[] {
       id: "generated-street",
       type: "line",
       source: "generated",
-      // sketch-corridor (plan 014) streets are city streets by another
-      // generator — same paint, so old cached elaborations read as native.
+      // sketch-corridor streets are city streets by another generator — same
+      // paint, so old cached elaborations read as native.
       filter: ["match", ["get", "generatorId"], ["city-street", "sketch-corridor"], true, false],
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
@@ -166,25 +161,20 @@ export function cityStreetLayers(t: ThemeTokens): LayerSpecification[] {
         // takes to be seen — it thickens with zoom for detail, but the low end
         // holds a visible minimum so the road network doesn't blink out.
         // Corridor avenues (roadClass "major") render a step wider so the
-        // GM's drawn arterial stays legible over its branches. NOTE: the
-        // zoom `interpolate` MUST be the top-level expression — MapLibre
-        // rejects `zoom` nested inside another expression (e.g. `["*", …,
-        // interpolate(zoom)]`) and that silently invalidates the whole style
-        // (map loads blank, no error — 006-class). So the per-feature avenue
-        // multiplier is folded into each interpolate output instead.
-        // Plan 025 §3.3: WIDTH-DRIVEN. Every generated street now carries an
-        // explicit `width` (metres); the theme ramps px from it so a preset's
-        // form hierarchy (Manhattan avenues vs streets, a superblock's 85 m
-        // arterial CANYONS vs its lanes) reads directly, not just via roadClass.
-        // The multiplier = width ÷ 12 m (the ordinary-street reference),
-        // FLOORED at 0.7 so alleys never blink out sub-pixel and CAPPED at 6 so
-        // an 85 m canyon stays legible without swallowing the frame. Legacy
-        // features with no `width` (sketch-corridor, roadClass "major") fall
-        // back to the class→width the pre-025 ramp used, so their px is
-        // unchanged. The zoom `interpolate` MUST stay the top-level expression
-        // (MapLibre rejects `zoom` nested inside `["*", …]` — it silently
-        // invalidates the whole style, 006-class), so the per-feature width
-        // multiplier is folded into each interpolate output.
+        // GM's drawn arterial stays legible over its branches.
+        // Width-driven: every generated street carries an explicit `width`
+        // (metres); the theme ramps px from it so a preset's form hierarchy
+        // (Manhattan avenues vs streets, a superblock's 85 m arterial CANYONS
+        // vs its lanes) reads directly, not just via roadClass. The multiplier
+        // = width ÷ 12 m (the ordinary-street reference), FLOORED at 0.7 so
+        // alleys never blink out sub-pixel and CAPPED at 6 so an 85 m canyon
+        // stays legible without swallowing the frame. Legacy features with no
+        // `width` (sketch-corridor, roadClass "major") fall back to a
+        // class→width mapping, so their px is unchanged. The zoom `interpolate`
+        // MUST stay the top-level expression — MapLibre rejects `zoom` nested
+        // inside `["*", …]` and silently invalidates the whole style (map loads
+        // blank, no error), so the per-feature width multiplier is folded into
+        // each interpolate output.
         "line-width": [
           "interpolate",
           ["linear"],

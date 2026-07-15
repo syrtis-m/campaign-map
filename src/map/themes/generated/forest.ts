@@ -3,43 +3,38 @@ import type { ThemeTokens } from "../tokens";
 import { treeIconImageExpr } from "../../treeGlyphs";
 
 /**
- * Forest fabric paint (plan 022 §3.2, tree layers overhauled in plan 026-A).
- * Canopy first, clearings, then a stacked shadow/base/highlight tree glyph
- * above. Forest is stage 2 (below city, stage 3): this block sorts before the
- * district/street/footprint layers in the emitted array, so a town in the
- * woods reads as a clearing without the forest ever seeing the city (plan 022
- * §3.2 one-direction rule). NO zoom LOD (Jonah 2026-07-12).
+ * Forest fabric paint. Canopy first, then clearings, then a stacked shadow/base
+ * tree glyph above. Forest is stage 2 (below city, stage 3): this block sorts
+ * before the district/street/footprint layers in the emitted array, so a town
+ * in the woods reads as a clearing without the forest ever seeing the city (the
+ * one-direction rule). No zoom LOD — fabric renders at every zoom.
  *
- * Plan 026-A changes (all theme-side — generators emit typed features only):
+ * All differentiation is theme-side (generators emit typed features only):
  *  - `fill-antialias: false` on the canopy kills MapLibre's per-polygon
  *    hairline, so the cell lattice stops showing through (mapbox-gl-js #4880).
  *  - Per-variety hues derived by RELATIVE channel moves from the theme's own
  *    `fabricForest` (broadleaf warm, conifer deep blue-green, swamp teal-muddy,
  *    dead-wood grey-brown; mixed = the base green) — Azgaar's biome-color
- *    principle, hue carries the read before glyphs do (plan 026-A Q1 default:
- *    `match` expressions on `forestType`, no new tokens).
- *
- * Plan 026-C upgrade (symbol glyphs replace the 026-A circle stack):
- *  - The three data-driven CIRCLE layers (shadow/base/highlight) become TWO
- *    SYMBOL layers drawing per-variety SDF tree glyphs (`src/map/treeGlyphs.ts`,
- *    a reusable host-side glyph module). `icon-image` is a data expression
+ *    principle: hue carries the read before glyphs do (`match` on `forestType`,
+ *    no new tokens).
+ *  - Trees are TWO SYMBOL layers drawing per-variety SDF tree glyphs
+ *    (`src/map/treeGlyphs.ts`). `icon-image` is a data expression
  *    (`tree-<forestType>-<variant>`) so one layer draws every variety and its
  *    four hashed variants; `icon-color` tints the SDF per variety (same relative
  *    `fabricForest` moves), `icon-halo-color` (a lighter tint) is the rim
- *    highlight the third circle layer used to give. A duplicated dark
- *    `icon-translate` layer below is the shared drop shadow (Here Dragons
- *    Abound's blob + offset shadow). `icon-allow-overlap` + `icon-ignore-
- *    placement` skip collision detection (the symbol perf cliff, maplibre
- *    #6192); `symbol-z-order: "viewport-y"` + `icon-anchor: "bottom"` paint
- *    southern trees over northern ones (painter's order) for free.
+ *    highlight. A duplicated dark `icon-translate` layer below is the shared
+ *    drop shadow (Here Dragons Abound's blob + offset shadow).
+ *    `icon-allow-overlap` + `icon-ignore-placement` skip collision detection
+ *    (the symbol perf cliff, maplibre #6192); `symbol-z-order: "viewport-y"` +
+ *    `icon-anchor: "bottom"` paint southern trees over northern ones (painter's
+ *    order) for free.
  *  - `icon-size` = `sizeN` factor × a gentle ZOOM ramp so trees shrink toward
  *    the fictional overview (~z4.5) instead of clotting into a mess, and
  *    `icon-opacity` = zoom ramp × a `rank` step (0 core / 1 fringe / 2 loner —
- *    loners fade first). This is the zoom-ramped fade 026-A deferred to the live
- *    screenshot (§1.3): it is paint treatment on `["zoom"]`, NOT a minzoom gate,
- *    so fabric still renders at every zoom (Jonah 2026-07-12).
+ *    loners fade first). Paint on `["zoom"]`, NOT a minzoom gate, so fabric
+ *    still renders at every zoom.
  *  - `icon-rotate` jitters broadleaf/mixed/swamp/dead-wood a few degrees off
- *    the variant index; conifers stay upright (they read wrong tilted, §1.3).
+ *    the variant index; conifers stay upright (they read wrong tilted).
  */
 
 type Rgb = [number, number, number];
@@ -104,13 +99,13 @@ function matchByVariety(base: Rgb, shade: (c: Rgb) => Rgb): unknown {
 export function forestLayers(t: ThemeTokens): LayerSpecification[] {
   const base = hexToRgb(t.fabricForest);
 
-  // ── Tree glyph symbol layout/paint (plan 026-C) ─────────────────────────────
+  // ── Tree glyph symbol layout/paint ──────────────────────────────────────────
   // Shared layout for the shadow + base symbol layers (same glyph, same
   // placement — only the paint differs). icon-image is data-driven so ONE layer
   // draws every variety/variant; allow-overlap + ignore-placement skip collision
   // detection; viewport-y + bottom anchor y-sort the overlap.
   const iconImage = treeIconImageExpr();
-  // sizeN → footprint factor (trees vary ≥2× in size, §5).
+  // sizeN → footprint factor (trees vary ≥2× in size).
   const sizeFactor: unknown = ["interpolate", ["linear"], ["get", "sizeN"], 0, 0.55, 1, 1.15];
   // icon-size = a gentle ZOOM ramp × sizeFactor (trees shrink toward the
   // fictional overview so a dense wood doesn't clot). MapLibre only allows the
@@ -118,7 +113,7 @@ export function forestLayers(t: ThemeTokens): LayerSpecification[] {
   // never nested in an arithmetic op — so the zoom interpolate is the outer
   // shell and the per-feature sizeFactor rides in each stop OUTPUT (a legal
   // zoom-and-property composite). NOT a minzoom gate: every tree renders at
-  // every zoom, only the pixel footprint ramps (Jonah 2026-07-12).
+  // every zoom, only the pixel footprint ramps.
   const iconSize: unknown = [
     "interpolate",
     ["linear"],
@@ -148,7 +143,7 @@ export function forestLayers(t: ThemeTokens): LayerSpecification[] {
     "icon-padding": 0,
     "symbol-z-order": "viewport-y",
   };
-  // Opacity: a rank step (loner/fringe fade first — §1.3) scaled by a gentle
+  // Opacity: a rank step (loner/fringe fade first) scaled by a gentle
   // zoom ramp. Same zoom-outer / property-inner composite as icon-size.
   const rankStep: unknown = ["step", ["get", "rank"], 1, 1, 0.85, 2, 0.6];
   const iconOpacity: unknown = [
@@ -182,8 +177,8 @@ export function forestLayers(t: ThemeTokens): LayerSpecification[] {
     {
       // Woodland canopy fill (deeper `fabricForest` green — F2: a generated and
       // a sketched forest read as one class). `fill-antialias: false` removes
-      // the per-polygon hairline so the cell lattice no longer shows through
-      // (plan 026-A §1.3). Canopy paints FIRST so clearings + trees layer above.
+      // the per-polygon hairline so the cell lattice no longer shows through.
+      // Canopy paints FIRST so clearings + trees layer above.
       id: "generated-forest-canopy",
       type: "fill",
       source: "generated",
@@ -191,7 +186,7 @@ export function forestLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.fabricForest, "fill-opacity": 0.8, "fill-antialias": false },
     } as unknown as LayerSpecification,
     {
-      // Canopy RIM (plan 026-B): a slightly darker line tracing the canopy
+      // Canopy RIM: a slightly darker line tracing the canopy
       // outline — outer edge AND clearing-hole edges — so the organic silhouette
       // + glades read as drawn masses, not flat washes. Filters the SEPARATE
       // `forest-canopy-rim` LineString features (not the fill), so the tile clip
@@ -216,7 +211,7 @@ export function forestLayers(t: ThemeTokens): LayerSpecification[] {
       paint: { "fill-color": t.land, "fill-opacity": 0.85 },
     } as unknown as LayerSpecification,
     {
-      // Tree SHADOW (plan 026-C): the same glyph, tinted dark and pushed
+      // Tree SHADOW: the same glyph, tinted dark and pushed
       // down-right by `icon-translate` — the shared drop shadow at the bottom of
       // the painter's stack (Here Dragons Abound's blob + offset shadow). No
       // halo. Emitted BEFORE the base so it paints underneath.
@@ -235,7 +230,7 @@ export function forestLayers(t: ThemeTokens): LayerSpecification[] {
       },
     } as unknown as LayerSpecification,
     {
-      // Tree BASE (plan 026-C): the variety-tinted SDF glyph. `icon-color` is the
+      // Tree BASE: the variety-tinted SDF glyph. `icon-color` is the
       // per-variety hue; `icon-halo-color` (a lighter tint) is the rim highlight
       // the old third circle layer gave. `icon-size` scales with sizeN × zoom;
       // `icon-opacity` fades loners/fringe first via the rank step (all trees

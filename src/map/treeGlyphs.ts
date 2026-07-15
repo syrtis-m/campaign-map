@@ -1,9 +1,8 @@
 /**
- * Tree glyph synthesis + registration (plan 026-C, visual-overhaul wave 2) — the
- * runtime SDF glyph module that upgrades the 026-A stacked-circle tree paint to
- * per-variety symbol glyphs. Two parts, and BOTH are meant to be reused by the
- * later dressing phases (27-C park props, 28-C river props), so the generic
- * host-side machinery is exported separately from the forest-specific specs:
+ * Tree glyph synthesis + registration — the runtime SDF glyph module that draws
+ * per-variety tree symbols. Two parts, and BOTH are meant to be reused by the
+ * park and river glyph modules, so the generic host-side machinery is exported
+ * separately from the forest-specific specs:
  *
  *  1. GENERIC SDF host machinery (reusable):
  *     - `rasterizeSdf(inside, dim)` turns a pure inside/outside predicate into an
@@ -17,26 +16,23 @@
  *       safety net so images survive every `setStyle` (theme switch, css-change)
  *       and campaign switch without per-callsite bookkeeping.
  *
- *  2. FOREST glyph specs (this plan): five varieties × four hashed variants,
+ *  2. FOREST glyph specs: five varieties × four hashed variants,
  *     drawn as tree silhouettes (broadleaf/mixed lumpy blob, conifer scalloped
  *     tiers, swamp frond tuft, dead-wood bare fork). Deterministic from
  *     `(family, variant)` so `treeGlyphImages()` is a pure function.
  *
- * Why SDF and not per-theme canvas rasters (plan 026 §1.3 Q, decided here):
+ * Why SDF and not per-theme canvas rasters:
  * SDF glyphs are THEME-INDEPENDENT — one image set tints to any theme's woodland
  * green at draw time via `icon-color`, so the bytes never depend on theme tokens
  * and never need regenerating on css-change (only re-registering after setStyle
- * drops them). The multi-tone shadow/highlight the 026-A circle stack got from
- * three layers is recovered with symbol LAYERS instead: a duplicated dark
- * `icon-translate` shadow layer below, and the base layer's lighter `icon-halo`
- * as the rim highlight (forest.ts). Canvas multi-tone rasters were the plan's
- * stretch fallback "only if SDF disappoints on screenshot" — SDF held up, so we
- * stay tintable + reusable.
+ * drops them). The multi-tone shadow/highlight is produced with symbol LAYERS: a
+ * duplicated dark `icon-translate` shadow layer below, and the base layer's
+ * lighter `icon-halo` as the rim highlight (forest.ts).
  */
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { hashSeed, mulberry32 } from "../gen/rng";
 
-// ── Generic SDF host machinery (reusable by 27-C / 28-C) ─────────────────────
+// ── Generic SDF host machinery (reusable) ────────────────────────────────────
 
 export interface GlyphImage {
   width: number;
@@ -186,11 +182,11 @@ export function installSdfImageProvider(map: MapLibreMap, images: Map<string, Gl
   });
 }
 
-// ── Forest tree glyph specs (plan 026-C) ─────────────────────────────────────
+// ── Forest tree glyph specs ──────────────────────────────────────────────────
 
 /** Glyph families keyed by the generator's `forestType`. `mixed` reuses the
  * broadleaf silhouette (a broadleaf-dominant stand — the generator already
- * splits its populations by placement, plan 026-A §1.1; the glyph carries the
+ * splits its populations by placement; the glyph carries the
  * canopy read, hue carries the rest). */
 const TREE_FAMILIES = ["broadleaf", "conifer", "mixed", "swamp", "dead-wood"] as const;
 export type TreeFamily = (typeof TREE_FAMILIES)[number];

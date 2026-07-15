@@ -2,15 +2,15 @@ import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "../tokens";
 
 /**
- * Wall fabric (procgen v4.8, plan 022 §3.4). Composed bottom-up: outboard moat
- * water first, then the masonry band, then towers/bastions, then the gate
- * markers. NO zoom LOD (Jonah 2026-07-12).
+ * Wall fabric. Composed bottom-up: outboard moat water first, then the masonry
+ * band, then towers/bastions, then the gate markers. No zoom LOD — fabric
+ * renders at every zoom.
  */
 export function wallLayers(t: ThemeTokens): LayerSpecification[] {
   return [
     {
-      // Procgen v4.8 wall (plan 022 §3.4): the outboard MOAT — water hue (F2:
-      // reads as the same water as a sketched river/pond). Painted FIRST of the
+      // The outboard MOAT — water hue (F2: reads as the same water as a
+      // sketched river/pond). Painted FIRST of the
       // wall stack so the masonry band + towers sit above it. NO zoom LOD.
       id: "generated-wall-moat",
       type: "fill",
