@@ -1195,3 +1195,27 @@
   (new `testing/` campaign + Preset Gallery changes) — Jonah ruled these
   green with visual confirmation, same day. His content stays untracked and
   untouched by this session's commits.
+
+## 2026-07-14 — plan 030-A sweep complete
+- **Executed as 4 concurrent worktree agents** (citynet+fields / rest of gen /
+  map+view / model+controller+vault+main) + a docs slice, integrated serially
+  by cherry-pick, each slice byte-green (same 864 collected tests, zero
+  `__snapshots__` changes, tsc+build clean, only comment/name-string lines in
+  the diffs).
+- **Grep-budget deviation (20 vs ≤10), accepted:** `grep "plan 0NN" src/`
+  ends at 20, but every survivor is a STRING, not a comment — 19 are
+  describe/it names in the six snapshot-bearing generator test files (renaming
+  would re-key the .snap files and break the sweep's zero-golden-change
+  proof) + 1 runtime error message in layerOrder.ts. Comment citations: 0
+  (from ~630). The strings retire naturally when 030-B reshapes those tests;
+  not worth breaking the stronger guarantee for the proxy metric.
+- **Docs slice:** docs/02 folded into ARCHITECTURE.md and deleted; the three
+  procgen design docs merged into docs/procgen-design.md and deleted;
+  ARCHITECTURE §12 = single invariants home w/ enforcement pointers; docs/03
+  bannered historical; PROGRESS pre-029 archived to review/progress-archive.md;
+  DECISIONS month index added; 030-C convention added to CLAUDE.md.
+- **Commit-hygiene note:** the docs-slice commit (9bb4328) unintentionally also
+  carried the parallel session's plans 031–039 + research doc + board-refreshed
+  screenshots (a `git add -A` mistake — verified zero src/scripts/package
+  content rode along). Recorded here so the commit message's "docs-only" claim
+  has its correction; explicit-path staging from now on.
