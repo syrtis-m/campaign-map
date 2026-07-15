@@ -28,6 +28,20 @@ eyes lands HERE. Newest items at the top of each section.
   faubourg reading). Flag if plan-037 gate work wants a cleaner separation fixture instead.
 
 ## Landed
+- **Plan 034 COMPLETE — the keystone** (`4a1d932`, `2239983`, `d8f0829`, `41e125f`, `cba1986`):
+  sketches/pins are stage −1 DAG source nodes; ONE `runForwardPass` drives every trigger (flush,
+  cascade, adopt, replay, undo) — `regenerateAffectedTiles`, `cascadeDownstream`,
+  `cascadeFromRoot`, `forceRegenInStageOrder` all DELETED; runtime guards (stage monotonicity +
+  closure bound) throw and are proven to fire via injected violations; cost-weighted cap
+  (cheap 1/medium 2/expensive 4, budget 24, bills only fp-stale deferrable work); declined bills
+  reopen to an OUTDATED badge with zero generator runs; preview mode (drag = root-only ephemeral,
+  release = one pass, kill leaves no trace); adopt-all O(k). 955→974 fast + fuzz green.
+  **Jonah's eyes:**
+  1. Found + fixed a REAL live-vs-replay divergence: a city reading a procgen wall's raw line
+     was left stale live but recomputed on replay — region roots now mint their own −1 source.
+  2. Pinned-old + fp-stale on a cost-deferred replay serves pinned bytes WITH the outdated badge
+     (visible-not-silent; ordinary pinned-old semantics untouched).
+  3. Cap weights/budget (24) and Notice/panel wording are conservative picks — reword freely.
 - **Plan 033 COMPLETE** (`790caff`, `58a3622`, `f593564` + 033-A `d9dacc2`): two-lane 32-bit
   hasher (measured 56 → 975 MB/s, 17.3×; FP_VERSION fp1→fp3 self-heals), registry
   `consumesSketch`/`influenceMargin`/`costClass` seeded from the HARNESS table, raw-channel
