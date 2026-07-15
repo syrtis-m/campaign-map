@@ -44,10 +44,10 @@ type NPt = [number, number]; // normalized reference point (x 0..100 →, y 0..1
 
 // ─── Campaign constants ──────────────────────────────────────────────────────
 /** Fixed campaign seed — mirrored in `Cradle.map.md` frontmatter. */
-const CRADLE_CAMPAIGN_SEED = 20931;
+export const CRADLE_CAMPAIGN_SEED = 20931;
 /** 1 map unit = 500 m (Vailmarch idiom: small fake-lng/lat units, low Mercator
  * distortion) over the ~7 × 6 km island. */
-const SCALE_M_PER_UNIT = 500;
+export const SCALE_M_PER_UNIT = 500;
 /** Meters per normalized reference unit — sets the island's real size. The
  * island occupies normalized x 5..85 (80 u) × y 15..85 (70 u), so at 90 m/u it
  * is ~7.2 × 6.3 km. */
@@ -55,20 +55,22 @@ const METERS_PER_NORM = 90;
 /** Campaign id the location notes reference in `map:` frontmatter. */
 const CRADLE_MAP_ID = "cradle";
 /** Modern survival-island genre → the clean contemporary theme. */
-const CRADLE_THEME = "modern-clean";
+export const CRADLE_THEME = "modern-clean";
 /** Fictional bounded box, MAP UNITS. The whole normalized 0..100 canvas maps to
  * ±(50·90/500)=±9 units on both axes; a hair of margin encloses the sea plate. */
-const CRADLE_BOUNDS: readonly [number, number, number, number] = [-9.2, -9.2, 9.2, 9.2];
+export const CRADLE_BOUNDS: readonly [number, number, number, number] = [-9.2, -9.2, 9.2, 9.2];
 /** Base-terrain params (plan 036-D). `campAmp > 0` ⇒ the continental fBm is ON;
  * it IS the island floor (a gentle rolling ADD, ~30–60 m); on top of it the
  * island-from-coastline sea (replaces the coast's EXTERIOR to the datum), the
  * islet plateau, and the highland relief stamps build the terrain. */
-const CRADLE_BASE = { campAmp: 140, seaDatum: 0 } as const;
+export const CRADLE_BASE = { campAmp: 140, seaDatum: 0 } as const;
 
 // ─── Coordinate conversion ───────────────────────────────────────────────────
 /** Normalized reference point → generation-space METERS (origin at canvas
- * centre; y FLIPPED so screen-top/north is +y). */
-function N([nx, ny]: NPt): Pt {
+ * centre; y FLIPPED so screen-top/north is +y). Exported so a headless test can
+ * sample the composed elevation field at a named landmark (ridge crest, islet)
+ * in the SAME gen-space meters the controller feeds `terrainAt`. */
+export function N([nx, ny]: NPt): Pt {
   return [q((nx - 50) * METERS_PER_NORM), q((50 - ny) * METERS_PER_NORM)];
 }
 /** Meters → map units (÷ scale). */
@@ -569,7 +571,7 @@ function fabricFeatureOf(def: RegionDef): FabricFeature {
   };
 }
 
-function buildCradleFabric(): FabricCollection {
+export function buildCradleFabric(): FabricCollection {
   return { type: "FeatureCollection", features: DEFS.map(fabricFeatureOf) };
 }
 
@@ -833,4 +835,6 @@ function main(): void {
   );
 }
 
-main();
+// Emit ONLY when run directly (`npx tsx scripts/emit-cradle-campaign.ts`); a test
+// that imports `buildCradleFabric` gets the pure builder without the file writes.
+if (process.argv[1] === fileURLToPath(import.meta.url)) main();
