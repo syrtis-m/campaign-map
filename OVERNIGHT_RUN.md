@@ -28,6 +28,16 @@ eyes lands HERE. Newest items at the top of each section.
   faubourg reading). Flag if plan-037 gate work wants a cleaner separation fixture instead.
 
 ## Landed
+- **Plan 033 COMPLETE** (`790caff`, `58a3622`, `f593564` + 033-A `d9dacc2`): two-lane 32-bit
+  hasher (measured 56 → 975 MB/s, 17.3×; FP_VERSION fp1→fp3 self-heals), registry
+  `consumesSketch`/`influenceMargin`/`costClass` seeded from the HARNESS table, raw-channel
+  invalidation now kind+margin-scoped (P4 fixture: road edit 3 regens → 1; district-add ⇒ zero
+  neighbors), scoped fingerprints (P5 load-storm reopen recomputes ZERO out-of-reach regions;
+  pinned-old region SURVIVES an unrelated far edit — the old global hash would have
+  false-blanked it). 939→955 tests, fuzz harness green off the registry. Judgment calls:
+  fp-equality force-skip is opt-in for the flush/cascade walk only (direct GM regenerate always
+  recomputes); river/farmland's `mountain` consumption rides the upstream DAG fp path (mountain
+  isn't a raw-constraint bucket) — no special-casing.
 - **Plan 032 COMPLETE** (`8b2cc5a`, `5b5e4f0`, `6d77f3a`, `ff1f065`): per-region cache shards
   with verbatim-line streaming migration (pinned-old network record proven byte-identical —
   STOP condition never triggered), persistent per-controller cache view (one disk read per
