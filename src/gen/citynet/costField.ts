@@ -18,6 +18,7 @@
 import { bboxWithMargin, type ProcgenRegion } from "../region";
 import type { GenerationConstraints } from "../types";
 import {
+  blockedByHole,
   indexConstraints,
   nearestOnLine,
   pointInRing,
@@ -120,7 +121,9 @@ export function makeCostField(
   region: ProcgenRegion,
   constraints: GenerationConstraints
 ): CostField {
-  const idx = indexConstraints(constraints);
+  // Region-aware index: the outer ring lets contained nested regions (plan 037
+  // item 5) surface as `holeRings` — impassable to arterials, like open water.
+  const idx = indexConstraints(constraints, region.ring);
   const canon = canonPoints(constraints);
   const worldBounds = constraints.worldBounds;
   const bbox = bboxWithMargin(region.bbox, COST_FIELD_MARGIN_M);
@@ -192,8 +195,9 @@ export function makeCostField(
     const y = cellToWorld(cellY);
     let cost: number;
 
-    // Open water is impassable outright.
-    if (inWater(idx, x, y)) {
+    // Open water — and a contained nested-region hole (plan 037 item 5) — are
+    // impassable outright, so arterials route AROUND them.
+    if (inWater(idx, x, y) || blockedByHole(idx, x, y)) {
       cost = Infinity;
     } else {
       cost = BASE_COST;

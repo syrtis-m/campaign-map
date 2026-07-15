@@ -111,11 +111,22 @@ describe("regionFingerprint — invariances (no false staleness)", () => {
     expect(a).toBe(b);
   });
 
-  it("a non-constraint sketch (park/district) is ISOLATED — it never changes the fingerprint", () => {
-    // Parks/districts impose nothing on generators (fabricConstraints.ts), so
-    // editing one must not invalidate a neighbouring region's cache.
-    const withPark = regionFingerprint({ ...base(), fabricFeatures: [parkPolygon("p1")] });
-    expect(withPark).toBe(regionFingerprint(base()));
+  it("a park/district sketch flips the fingerprint ONLY when the algorithm consumes it (plan 037 item 5)", () => {
+    // Pre-037 a park/district imposed nothing. Since plan 037 item 5 the CITY
+    // consumes a strictly-contained park/district as a HOLE, so its ring must
+    // flip the city's fingerprint when scoped in (kind ∈ consumesSketch ∧ within
+    // margin) — else a contained region's move would silently serve stale bytes.
+    const cityScope = {
+      consumesSketch: ["water", "river", "road", "wall", "farmland", "park", "district"] as const,
+      influenceMargin: 1500,
+    };
+    const withPark = regionFingerprint({ ...base(), ...cityScope, fabricFeatures: [parkPolygon("p1")] });
+    expect(withPark).not.toBe(regionFingerprint({ ...base(), ...cityScope }));
+    // A region that consumes NOTHING (forest/mountain) stays ISOLATED from a park.
+    const inert = { consumesSketch: [] as const, influenceMargin: 0 };
+    expect(regionFingerprint({ ...base(), ...inert, fabricFeatures: [parkPolygon("p1")] })).toBe(
+      regionFingerprint({ ...base(), ...inert })
+    );
   });
 });
 

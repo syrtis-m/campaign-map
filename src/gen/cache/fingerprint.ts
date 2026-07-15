@@ -205,12 +205,28 @@ function canonicalConstraints(fabricFeatures: FabricFeature[] | undefined): stri
       .sort()
       .join(",") +
     "]";
+  // Nested-region rings (plan 037 item 5): `park`/`district` polygons the CITY
+  // consumes as holes are NOT bucketed by `indexFabricConstraints` (they are
+  // procgen regions, not raw constraints), so hash their rings HERE — else a
+  // contained region's move would not flip the city's fingerprint (silent stale
+  // bytes). Only the city scopes these in (its `consumesSketch`), so this bucket
+  // is empty for every other algorithm; APPENDED ONLY WHEN NON-EMPTY so a
+  // park/district-free region's fingerprint string is unchanged (no churn).
+  const nestedRings: number[][][] = [];
+  for (const f of fabricFeatures ?? []) {
+    const kind = f.properties.kind;
+    if ((kind === "park" || kind === "district") && f.geometry.type === "Polygon") {
+      nestedRings.push(f.geometry.coordinates[0] as number[][]);
+    }
+  }
+  const nested = nestedRings.length > 0 ? "N" + bucket(nestedRings) : "";
   return (
     "W" + bucket(idx.waterRings) +
     "R" + bucket(idx.riverLines) +
     "D" + bucket(idx.roadLines) +
     "L" + bucket(idx.wallLines) +
-    "F" + bucket(idx.farmlandRings)
+    "F" + bucket(idx.farmlandRings) +
+    nested
   );
 }
 

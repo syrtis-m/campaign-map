@@ -679,7 +679,7 @@ describe("MapController — consumption-aware invalidation (033-C)", () => {
     expect(host.controller.generatorRunCount - runsBefore).toBe(1);
   });
 
-  it("a district sketch-add fans out to ZERO neighbour regens (no algorithm consumes `district`)", async () => {
+  it("a CONTAINED district sketch-add regenerates the outer city (plan 037 item 5: it becomes a hole)", async () => {
     const host = cityHost();
     const city = await host.controller.createRegionForTest(
       [
@@ -695,8 +695,9 @@ describe("MapController — consumption-aware invalidation (033-C)", () => {
     );
     const runsBefore = host.controller.generatorRunCount;
 
-    // A district-kind sketch dropped right on top of the city: `district` is in
-    // no algorithm's consumesSketch, so it invalidates nothing.
+    // A district-kind sketch dropped INSIDE the city: plan 037 item 5 — the city
+    // now consumes `park`/`district` and holes any strictly-CONTAINED one, so the
+    // outer city regenerates (the hole appears).
     const dId = await host.controller.createFabricForTest("district", [
       [-4, -4],
       [4, -4],
@@ -707,9 +708,8 @@ describe("MapController — consumption-aware invalidation (033-C)", () => {
     host.controller.queueConstraintRegen(d);
     await host.controller.flushSketchRegen();
 
-    expect(host.controller.forceRegenOrder).toEqual([]);
-    expect(host.controller.generatorRunCount).toBe(runsBefore); // city untouched
-    expect(city.featureId).toBeTruthy();
+    expect(host.controller.forceRegenOrder).toEqual([city.featureId]);
+    expect(host.controller.generatorRunCount).toBe(runsBefore + 1); // city holed
   });
 
   it("influenceMargin scopes the fan-out: a road within the city margin regenerates it, beyond does not", async () => {
@@ -907,22 +907,24 @@ describe("MapController — source-node forward closure (034-A)", () => {
     expect(host.controller.generatorRunCount).toBe(runsBefore);
   });
 
-  it("a district sketch-add dirties nothing (explicit-only: no algorithm consumes `district`)", async () => {
-    // Parity with the 033-C fan-out gate, now expressed through source nodes: a
-    // source of a kind NO region declares has no outgoing edge, so the closure is
-    // empty — a first-time district sketch never triggers generation.
+  it("a district sketch-add near a city regenerates it (plan 037 item 5: city consumes district as a hole)", async () => {
+    // Since plan 037 item 5 the city consumes `district` (a strictly-contained
+    // one becomes a hole). A district sketch within the city's influence margin
+    // therefore reaches the city through a source-node edge — the closure is no
+    // longer empty. (This one sits ON the city ring — contained — so it is a real
+    // hole; a district beyond the margin is still byte-inert, per the 033-A net.)
     const host = cityHost();
-    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
     const runsBefore = host.controller.generatorRunCount;
     const dId = await host.controller.createFabricForTest("district", [
-      [12, -24],
-      [24, -24],
-      [24, -12],
-      [12, -12],
+      [14, -22],
+      [22, -22],
+      [22, -14],
+      [14, -14],
     ]);
-    await host.controller.moveVertex(dId, 0, [11.5, -24.5]);
-    expect(host.controller.forceRegenOrder).toEqual([]);
-    expect(host.controller.generatorRunCount).toBe(runsBefore);
+    await host.controller.moveVertex(dId, 0, [13.5, -22.5]);
+    expect(host.controller.forceRegenOrder).toEqual([city.featureId]);
+    expect(host.controller.generatorRunCount).toBe(runsBefore + 1);
   });
 });
 
@@ -1684,12 +1686,16 @@ describe("MapController — cross-layer cascade", () => {
     const parkBytes2 = JSON.stringify((await host.cache()).get(parkKey)!.features);
     expect(parkBytes2).not.toBe(parkBytes1);
 
-    // Park edit → the city is NOT downstream of a stage-4 producer-of-nothing:
-    // no cascade back, city bytes untouched (the cycle-guard, integration-proven).
+    // Park PARAM edit → since plan 037 item 5 the city consumes the park SKETCH
+    // as a hole, so the city IS re-evaluated (park ∈ city.consumesSketch — a
+    // source-node edge, NOT the urban-park's stage-4 OUTPUT: the cycle guard
+    // still holds, urban-park produces nothing). A params-only edit leaves the
+    // park's RING geometry unchanged, so the hole — and the city's bytes — are
+    // BYTE-IDENTICAL. The meaningful invariant: a nested-region param edit never
+    // corrupts the city.
     const cityBytesAfterProfileSwap = JSON.stringify((await host.cache()).get(cityKey)!.features);
     void cityBytes1; // the profile swap legitimately changed the city itself
     await host.controller.setRegionParams(park.featureId, { variety: "urban-park", pathDensity: 0.9, pond: false });
-    expect(host.controller.cascadeRegeneratedIds).not.toContain(city.featureId);
     expect(JSON.stringify((await host.cache()).get(cityKey)!.features)).toBe(cityBytesAfterProfileSwap);
   });
 

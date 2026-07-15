@@ -31,6 +31,7 @@ import { hashSeed, mulberry32 } from "../rng";
 import type { GenerationConstraints } from "../types";
 import {
   blockedByWater,
+  blockedByHole,
   crossesWall,
   fabricAngleSampler,
   indexConstraints,
@@ -311,7 +312,9 @@ export function growNetwork(
   canopy: Field | null = null
 ): { graph: StreetGraph; stats: GrowthStats } {
   const graph = new StreetGraph();
-  const idx = indexConstraints(constraints);
+  // Region-aware index so contained nested regions surface as holes (plan 037
+  // item 5) — streets stop at a hole exactly as they stop at water.
+  const idx = indexConstraints(constraints, region.ring);
   // Canon-bumped cityness: the GM's settlement pins pull density toward
   // themselves; then ATTENUATED inside the generated canopy (plan 037) — streets
   // thin in the woods. `canopy === null` (no upstream vegetation) is the
@@ -491,6 +494,7 @@ export function growNetwork(
     if (canon.some(([px, py]) => Math.hypot(px - exM, py - eyM) < CANON_RADIUS_M)) continue; // canon clearance (end)
     if (canon.some(([px, py]) => pointSegDist(px, py, fxM, fyM, exM, eyM) < CANON_SEGMENT_CLEARANCE_M)) continue; // canon clearance (span)
     if (blockedByWater(idx, exM, eyM) || blockedByWater(idx, (fxM + exM) / 2, (fyM + eyM) / 2)) continue; // water (bridges are Stage-A only)
+    if (blockedByHole(idx, exM, eyM) || blockedByHole(idx, (fxM + exM) / 2, (fyM + eyM) / 2)) continue; // contained nested region (plan 037)
     if (crossesWall(idx, [fxM, fyM], [exM, eyM])) continue; // sketched walls: never cross (no sketch gates)
     if (crossesGeneratedWall(fxM, fyM, exM, eyM)) continue; // generated wall: pass only at gates
 

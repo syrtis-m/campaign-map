@@ -98,7 +98,7 @@ describe("consumption declarations (plan 033-C)", () => {
     string,
     { kinds: string[]; margin: number; cost: "cheap" | "medium" | "expensive" }
   > = {
-    city: { kinds: ["water", "river", "road", "wall", "farmland"], margin: 1500, cost: "expensive" },
+    city: { kinds: ["water", "river", "road", "wall", "farmland", "park", "district"], margin: 1500, cost: "expensive" },
     river: { kinds: ["water", "river", "mountain"], margin: 30, cost: "medium" },
     forest: { kinds: [], margin: 0, cost: "cheap" },
     park: { kinds: ["road"], margin: 30, cost: "medium" },

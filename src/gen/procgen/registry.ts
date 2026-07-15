@@ -259,9 +259,12 @@ const cityAlgorithm: ProcgenAlgorithm = {
   consumes: ["water", "vegetation"],
   // Raw sketch reads: water/river (channel banks, bridges), road (street tensor
   // alignment — no distance cutoff, hence the 1500 m margin), wall (street
-  // truncation, double-wall suppression), farmland (outskirt-field suppression).
-  // park/district join in plan 037 item 5 (contained-region holes).
-  consumesSketch: ["water", "river", "road", "wall", "farmland"],
+  // truncation, double-wall suppression), farmland (outskirt-field suppression),
+  // and (plan 037 item 5) park/district — a strictly-CONTAINED region's ring
+  // becomes a hole (perimeter frontage + hashed entrances). Containment gap is 0,
+  // so the existing 1500 m margin covers it; an adjacent/overlapping (non-
+  // contained) park/district is byte-inert (033-A harness verifies).
+  consumesSketch: ["water", "river", "road", "wall", "farmland", "park", "district"],
   influenceMargin: 1500,
   costClass: "expensive",
   paramsSchema: cityParamsSchema as unknown as z.ZodType<Record<string, unknown>>,

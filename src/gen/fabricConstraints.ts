@@ -17,7 +17,7 @@ import { sampleFieldAngle, type TensorFieldParams } from "./city/tensorField";
 // The water-polygon predicate is fields' `pointInRingClosed`, imported back so
 // the constraint math shares the fields distance/containment currency. See
 // fields/sdf.ts.
-import { pointInRingClosed } from "./fields/sdf";
+import { pointInRingClosed, signedDistancePolygon } from "./fields/sdf";
 
 type Pt = [number, number];
 
@@ -47,6 +47,15 @@ export interface FabricConstraintIndex {
    * `river` spine (`riverLines` is emptied): the
    * generated channel is the river's real geometry the city tracks. */
   channelRings: Pt[][];
+  /** Rings of CONTAINED nested regions (`park`/`district` polygons strictly
+   * inside the outer city's ring — plan 037 item 5). The outer city treats each
+   * as a HOLE: no streets/blocks/parcels/footprints inside it (a perimeter
+   * frontage street traces just outside). Distinct from `farmlandRings` (which
+   * SUPPRESS the city's own outskirt fields but do NOT hole the interior) — "ring
+   * = land claim" vs "contained region = hole". Populated only by the
+   * region-aware `indexConstraints(constraints, region)`; strict empty
+   * otherwise. */
+  holeRings: Pt[][];
 }
 
 const EMPTY: FabricConstraintIndex = {
@@ -56,6 +65,7 @@ const EMPTY: FabricConstraintIndex = {
   wallLines: [],
   farmlandRings: [],
   channelRings: [],
+  holeRings: [],
 };
 
 /** Buckets fabric features by the constraint role their kind plays. Park
@@ -71,6 +81,7 @@ export function indexFabricConstraints(features: FabricFeature[] | undefined): F
     wallLines: [],
     farmlandRings: [],
     channelRings: [],
+    holeRings: [],
   };
   for (const f of features) {
     const g = f.geometry;
@@ -110,11 +121,64 @@ export function indexFabricConstraints(features: FabricFeature[] | undefined): F
  * would lose its constraint. The suite has no such fixture (Vespergate has one
  * river); acceptable for v1.
  */
-export function indexConstraints(constraints: GenerationConstraints): FabricConstraintIndex {
+export function indexConstraints(
+  constraints: GenerationConstraints,
+  outerRing?: Pt[]
+): FabricConstraintIndex {
   const base = indexFabricConstraints(constraints.fabricFeatures);
   const channelRings = buildUpstreamConstraints(constraints.upstream).waterRings;
-  if (channelRings.length === 0) return base;
-  return { ...base, riverLines: [], channelRings };
+  // Contained nested regions become holes (plan 037 item 5) — computed only when
+  // the caller (the city) supplies its own ring, so the raw index stays a pure
+  // per-feature bucketing. A far/adjacent/overlapping-but-not-contained region
+  // is NOT a hole (all-vertices-strictly-inside is the containment test).
+  const holeRings = outerRing ? containedRegionRings(constraints.fabricFeatures, outerRing) : [];
+  if (channelRings.length === 0 && holeRings.length === 0) return base;
+  if (channelRings.length === 0) return { ...base, holeRings };
+  return { ...base, riverLines: [], channelRings, holeRings };
+}
+
+/** Minimum inside-depth (m) a nested region's every vertex must clear to count as
+ * CONTAINED — excludes the outer city's OWN district ring (its vertices sit ON
+ * the boundary, depth ≈ 0) and any region that merely crosses/touches. */
+const CONTAINED_EPS_M = 1;
+
+/**
+ * Rings of `park`/`district` sketch polygons STRICTLY inside `outerRing` (every
+ * vertex ≥ `CONTAINED_EPS_M` inside — plan 037 item 5). The outer city holes
+ * these; it never reads the inner region's generated OUTPUT, only its sketch
+ * ring. Uniform for park-in-city and district-in-district (a citadel). Pure
+ * f(features, outer ring): seam-safe (position-only), edit-local. Empty when
+ * nothing is contained.
+ */
+export function containedRegionRings(features: FabricFeature[] | undefined, outerRing: Pt[]): Pt[][] {
+  if (!features || features.length === 0) return [];
+  const out: Pt[][] = [];
+  for (const f of features) {
+    const kind = f.properties.kind;
+    if (kind !== "park" && kind !== "district") continue;
+    const g = f.geometry;
+    if (g.type !== "Polygon") continue;
+    const ring = g.coordinates[0] as Pt[];
+    let contained = ring.length >= 4;
+    for (const [x, y] of ring) {
+      if (signedDistancePolygon(outerRing, x, y) < CONTAINED_EPS_M) {
+        contained = false;
+        break;
+      }
+    }
+    if (contained) out.push(ring);
+  }
+  return out;
+}
+
+/** Inside a CONTAINED nested-region hole? True ⇒ the outer city places no
+ * street/block/parcel/footprint here (plan 037 item 5). Strict `false` when the
+ * index carries no holes. `blockedByWater`-shaped. */
+export function blockedByHole(idx: FabricConstraintIndex, x: number, y: number): boolean {
+  for (const ring of idx.holeRings) {
+    if (pointInRing(ring, x, y)) return true;
+  }
+  return false;
 }
 
 /** Inside a raw `farmland` sketch polygon? True ⇒ the city suppresses its own

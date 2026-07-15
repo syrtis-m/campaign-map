@@ -25,11 +25,13 @@
  * neighbors, so the 2×2 seam gate passes.
  */
 import { CITY_STYLE_CONTRACT, contractGids } from "../procgen/styleContract";
-import { hashSeed } from "../rng";
+import { hashSeed, mulberry32 } from "../rng";
 import type { BBox } from "../spatialHash";
 import { clipPolylineToBBox, clipPolygonToBBox, type Vec2 } from "../clip";
 import type { GenerationConstraints } from "../types";
-import { blockedByWater, indexConstraints } from "../fabricConstraints";
+import { blockedByWater, blockedByHole, indexConstraints, type FabricConstraintIndex } from "../fabricConstraints";
+import { sdfPolygon, type Field } from "../fields/sdf";
+import { splitLineOutsideChannel } from "../upstream";
 import { generationCenter, regionContains, type ProcgenRegion } from "../region";
 import type { FabricFeature } from "../../model/fabric";
 import { PROFILES, type AxialConfig, type CityProfile } from "./profiles";
@@ -45,7 +47,6 @@ import { buildWards } from "./wards";
 import { buildOutskirts } from "./outskirts";
 import { makeCityness, attenuateCitynessByCanopy } from "./cityness";
 import { buildUpstreamVegetationField } from "../upstream";
-import type { Field } from "../fields/sdf";
 
 // Package barrel: the host (MapView, generationService, worker, modal) imports
 // domain + profile helpers and types from `../citynet` directly.
@@ -434,10 +435,11 @@ export function generateCityNetwork(
   // footprint identity is (blockKey, split path) — never emission order (D2).
   // effConstraints folds in the canal rings as water, so blocks that span a
   // canal are dropped and footprints stay out of the water.
-  const fabricIdx = indexConstraints(effConstraints);
+  const fabricIdx = indexConstraints(effConstraints, region.ring);
   const { blocks } = extractBlocks(graph, region);
   const dryBlocks = blocks.filter((b) => {
-    // A face bounded by two quays can span the river; buildings don't swim.
+    // A face bounded by two quays can span the river; buildings don't swim. A
+    // face falling in a contained nested-region hole (plan 037) is dropped too.
     let sx = 0;
     let sy = 0;
     const n = b.ring.length - 1;
@@ -445,7 +447,9 @@ export function generateCityNetwork(
       sx += b.ring[i][0];
       sy += b.ring[i][1];
     }
-    return !blockedByWater(fabricIdx, sx / n, sy / n);
+    const cx = sx / n;
+    const cy = sy / n;
+    return !blockedByWater(fabricIdx, cx, cy) && !blockedByHole(fabricIdx, cx, cy);
   });
   // Corner treatment: chamfered profiles (eixample) cut every convex block
   // corner back before emission AND before parcelling, so the octagonal blocks
@@ -488,9 +492,20 @@ export function generateCityNetwork(
     }
     return canopy(cx / ring.length, cy / ring.length) >= CANOPY_DENSE_M;
   };
+  const ringCentroid = (ring: Pt[]): Pt => {
+    let px = 0;
+    let py = 0;
+    for (let i = 0; i < ring.length; i++) {
+      px += ring[i][0];
+      py += ring[i][1];
+    }
+    return [px / ring.length, py / ring.length];
+  };
   const { parcels, footprints } = subdivideBlocks(citySeed, shapedBlocks, profile, cityness);
   for (const p of parcels) {
     if (deepInCanopy(p.ring)) continue; // no parcel deep in the wood (plan 037)
+    const [pcx, pcy] = ringCentroid(p.ring);
+    if (blockedByHole(fabricIdx, pcx, pcy)) continue; // no parcel in a contained region (plan 037)
     const ring = [...p.ring, p.ring[0]];
     features.push({
       type: "Feature",
@@ -515,7 +530,10 @@ export function generateCityNetwork(
       cx += fp.ring[i][0];
       cy += fp.ring[i][1];
     }
-    if (blockedByWater(fabricIdx, cx / fp.ring.length, cy / fp.ring.length)) continue;
+    const fcx = cx / fp.ring.length;
+    const fcy = cy / fp.ring.length;
+    if (blockedByWater(fabricIdx, fcx, fcy)) continue;
+    if (blockedByHole(fabricIdx, fcx, fcy)) continue; // no footprint in a contained region (plan 037)
     if (deepInCanopy(fp.ring)) continue; // buildings don't grow under a closed canopy (plan 037)
     const ring = [...fp.ring, fp.ring[0]];
     features.push({
@@ -598,8 +616,195 @@ export function generateCityNetwork(
     });
   });
 
+  // Contained nested regions (plan 037 item 5): every emitted feature is CLIPPED
+  // against the holes — street lines split at the ring (interior parts dropped),
+  // points/polygons whose site falls inside a hole removed — so NO city geometry
+  // sits inside a contained park/district (the skeleton ring/arterials/plaza/
+  // wards are caught here, not just the centroid-guarded blocks). Then the HOLE
+  // gets a perimeter FRONTAGE street tracing just OUTSIDE its ring + hashed
+  // ENTRANCE points ON the ring (position-derived — the tile-seam hash). The city
+  // never reads the inner region's OUTPUT, only its sketch ring. Uniform for
+  // park-in-city and district-in-district (a citadel). No holes ⇒ the whole pass
+  // is skipped (byte-identical to the uncoupled city).
+  if (fabricIdx.holeRings.length > 0) {
+    const clipped = clipFeaturesToHoles(features, fabricIdx.holeRings);
+    features.length = 0;
+    features.push(...clipped);
+    emitHoleFrontage(citySeed, region, fabricIdx, features);
+  }
+
   sortCanonical(features);
   return features;
+}
+
+/** Union SDF of the hole rings (positive inside any hole). */
+function holeField(holeRings: Pt[][]): Field {
+  const fields = holeRings.map((r) => sdfPolygon(r));
+  return (x, y): number => {
+    let max = -Infinity;
+    for (const f of fields) {
+      const d = f(x, y);
+      if (d > max) max = d;
+    }
+    return max;
+  };
+}
+
+/** Representative site of a polygon ring (outer-ring vertex mean). */
+function ringSite(ring: Pt[]): Pt {
+  let sx = 0;
+  let sy = 0;
+  const n = ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1] ? ring.length - 1 : ring.length;
+  for (let i = 0; i < n; i++) {
+    sx += ring[i][0];
+    sy += ring[i][1];
+  }
+  return [sx / n, sy / n];
+}
+
+/**
+ * Clip every network feature against the contained-region holes (plan 037 item
+ * 5): a street LineString is split at the hole boundary (interior runs dropped;
+ * an untouched line keeps its original id + feature); a Point or Polygon whose
+ * site falls inside a hole is removed. Pure f(features, holeRings).
+ */
+function clipFeaturesToHoles(features: GeoJSON.Feature[], holeRings: Pt[][]): GeoJSON.Feature[] {
+  const field = holeField(holeRings);
+  const inside = (x: number, y: number): boolean => field(x, y) >= 0;
+  const out: GeoJSON.Feature[] = [];
+  for (const f of features) {
+    const g = f.geometry;
+    if (g.type === "Point") {
+      const [x, y] = g.coordinates as Pt;
+      if (!inside(x, y)) out.push(f);
+    } else if (g.type === "LineString") {
+      const coords = g.coordinates as Pt[];
+      const parts = splitLineOutsideChannel(coords, field);
+      if (parts.length === 1 && parts[0].length === coords.length) {
+        out.push(f); // untouched — keep the original id
+      } else {
+        parts.forEach((part, i) => {
+          if (part.length < 2) return;
+          out.push({
+            type: "Feature",
+            id: hashSeed(Number(f.id) >>> 0, "hole-clip", i),
+            geometry: { type: "LineString", coordinates: part.map(([x, y]) => [q(x), q(y)]) },
+            properties: f.properties,
+          });
+        });
+      }
+    } else if (g.type === "Polygon") {
+      const [x, y] = ringSite(g.coordinates[0] as Pt[]);
+      if (!inside(x, y)) out.push(f);
+    } else if (g.type === "MultiPolygon") {
+      const [x, y] = ringSite((g.coordinates as Pt[][][])[0][0]);
+      if (!inside(x, y)) out.push(f);
+    } else {
+      out.push(f);
+    }
+  }
+  return out;
+}
+
+/** Half-width offset (m) of the frontage street from the contained ring. */
+const FRONTAGE_OFFSET_M = 6;
+/** Per-ring-edge hashed inclusion probability for an entrance point. */
+const ENTRANCE_P = 0.4;
+/** A ring edge shorter than this hosts no entrance (a degenerate stub). */
+const MIN_ENTRANCE_EDGE_M = 16;
+
+/** Signed shoelace area × 2 of a ring (open or closed). */
+function ringArea2(ring: Pt[]): number {
+  let a = 0;
+  const n = ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1] ? ring.length - 1 : ring.length;
+  for (let i = 0; i < n; i++) {
+    const b = ring[(i + 1) % n];
+    a += ring[i][0] * b[1] - b[0] * ring[i][1];
+  }
+  return a;
+}
+
+/**
+ * Emit the perimeter frontage street + hashed entrances for every contained
+ * nested region. The frontage is the ring pushed OUTWARD along per-vertex
+ * normals (winding-aware) by `FRONTAGE_OFFSET_M`, containment-guarded to the
+ * outer region; entrances are the midpoints of the ring's longer edges whose
+ * hashed score clears `ENTRANCE_P` (position-keyed — the tile-seam pattern).
+ */
+function emitHoleFrontage(
+  citySeed: number,
+  region: ProcgenRegion,
+  idx: FabricConstraintIndex,
+  features: GeoJSON.Feature[]
+): void {
+  for (let h = 0; h < idx.holeRings.length; h++) {
+    const ring = idx.holeRings[h];
+    const n = ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1] ? ring.length - 1 : ring.length;
+    if (n < 3) continue;
+    const outwardSign = ringArea2(ring) > 0 ? -1 : 1; // left normal points inward for CCW
+    const frontage: Pt[] = [];
+    for (let i = 0; i < n; i++) {
+      const prev = ring[(i - 1 + n) % n];
+      const cur = ring[i];
+      const next = ring[(i + 1) % n];
+      const l1 = leftUnitNormal(prev, cur);
+      const l2 = leftUnitNormal(cur, next);
+      let mx = l1[0] + l2[0];
+      let my = l1[1] + l2[1];
+      const ml = Math.hypot(mx, my) || 1;
+      mx /= ml;
+      my /= ml;
+      frontage.push([cur[0] + outwardSign * FRONTAGE_OFFSET_M * mx, cur[1] + outwardSign * FRONTAGE_OFFSET_M * my]);
+    }
+    frontage.push(frontage[0]); // close
+    // Containment guard: skip a frontage that pokes outside the outer region
+    // (a hole hugging the boundary) — the hole rejection still holds either way.
+    if (frontage.every(([x, y]) => regionContains(region, x, y))) {
+      features.push({
+        type: "Feature",
+        id: hashSeed(citySeed, "frontage", h),
+        geometry: { type: "LineString", coordinates: qLine(frontage) },
+        properties: {
+          generated: true,
+          generatorId: "city-street",
+          type: "street",
+          roadClass: "street",
+          width: 4,
+          regionId: region.id,
+        },
+      });
+    }
+    // Entrances hashed on the ring edges (position-keyed, deterministic).
+    for (let i = 0; i < n; i++) {
+      const a = ring[i];
+      const b = ring[(i + 1) % n];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (len < MIN_ENTRANCE_EDGE_M) continue;
+      const rng = mulberry32(hashSeed(citySeed, "entrance", Math.round(a[0]), Math.round(a[1]), Math.round(b[0]), Math.round(b[1])));
+      if (rng() >= ENTRANCE_P) continue;
+      const ex = q((a[0] + b[0]) / 2);
+      const ey = q((a[1] + b[1]) / 2);
+      features.push({
+        type: "Feature",
+        id: hashSeed(citySeed, "entrance", Math.round(ex * 10), Math.round(ey * 10)),
+        geometry: { type: "Point", coordinates: [ex, ey] },
+        properties: {
+          generated: true,
+          generatorId: "city-landmark",
+          type: "gate",
+          regionId: region.id,
+        },
+      });
+    }
+  }
+}
+
+/** Unit left-normal of edge a→b (deterministic; zero-length edge ⇒ [0,0]). */
+function leftUnitNormal(a: Pt, b: Pt): Pt {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy) || 1;
+  return [-dy / len, dx / len];
 }
 
 function toVec2(coords: Pt[]): Vec2[] {

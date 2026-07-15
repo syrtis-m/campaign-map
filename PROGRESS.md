@@ -2,7 +2,54 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 + 034 + 035 COMPLETE (2026-07-15). Plan 036 (global terrain) 36-A/B/D + item 5 COMPLETE, 36-C engine landed (live paint-wiring deferred to a Jonah-eyeball session) — 2026-07-15. Plans 020–028 complete. Next: finish 036-C live wiring; 037.
+## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 + 034 + 035 + 037 COMPLETE (2026-07-15). Plan 036 (global terrain) 36-A/B/D + item 5 COMPLETE, 36-C engine landed (live paint-wiring deferred to a Jonah-eyeball session) — 2026-07-15. Plans 020–028 complete. Next: finish 036-C live wiring; 038.
+
+## Plan 037 — coupling edges wave 1 (correctness) (2026-07-15, 37-A/B/C/D COMPLETE — headless-only per Jonah 2026-07-14)
+Wired the declared/correctness cross-layer edges. Each item: its own algorithm
+version bump + goldens; every consumer stays BYTE-IDENTICAL when the upstream is
+absent (the 23-E no-field discipline — proved per consumer in a dedicated test).
+Version bumps: forest 1→2, park 3→4, farmland 2→3 (+water), city 1→2
+(+park/district in consumesSketch), wall 1→2 (+water). No-upstream goldens are
+byte-identical (the bumps are adoption gates, not byte changes; `.snap` tests
+pass unchanged). suite 1075 + fuzz 38 green; `npm run build` clean per phase.
+- **[x] 37-A — river → forest/park/farmland channel exclusion + riparian**
+  (`ca75994`): the generated meandered channel (`upstream.water`) is a hard
+  exclusion — no canopy/tree/field/lane/bank in the channel; forest canopy
+  density RAMPS toward the bank within a ~100 m (≈4–6 width) riparian band; park
+  ponds avoid the channel. `upstream.ts` shares `insideUpstreamChannel` +
+  `splitLineOutsideChannel` over the channel SDF; null field (no upstream) ⇒
+  uncoupled bytes verbatim. `consumesSketch` UNCHANGED (all reads are the
+  `upstream.water` OUTPUT edge, not raw sketch — 033-A harness green).
+  Metric band: forest riparian density monotone in bank distance.
+- **[x] 37-B — vegetation → city growth cost** (`8e98a42`): the forest/park
+  canopy (`upstream.vegetation`, new host collection) ATTENUATES cityness
+  (`attenuateCitynessByCanopy`) so streets thin + blocks coarsen in the woods, and
+  parcels/footprints deep in the canopy are rejected. Canopy NEVER clipped (the
+  town reads as a clearing via paint order — the standing rejection). Metric:
+  street density inside canopy < outside; forest output un-mutated by the city.
+- **[x] 37-C — settlement payload → wall** (`59a13dd`): `buildSettlementPayload`
+  rebuilds `{ streets(+roadClass), ring, canalLines, interior }` from
+  `upstream.settlement`. Gates fall where a GENERATED street crosses the spine
+  (class precedence merge, gatehouse axis = crossing bearing), moat side = away
+  from the town interior, moat/masonry band gaps over the channel (+water in
+  consumes). With no settlement (all gates rank 0) the merge reduces to today's
+  sort-dedupe ⇒ byte-identical. Cycle guard intact (wall produces `detail`).
+- **[x] 37-D — nested region → outer city hole-with-frontage** (this commit):
+  the outer city holes any strictly-CONTAINED park/district sketch ring
+  (`containedRegionRings`/`blockedByHole` in fabricConstraints.ts) — impassable
+  in the cost field, street-end rejection in growth, block/parcel/footprint
+  centroid rejection, and a comprehensive post-pass `clipFeaturesToHoles` (splits
+  skeleton lines, drops interior polygons/points) so ZERO city geometry sits
+  inside. A perimeter FRONTAGE street + hashed ENTRANCE points (tile-seam hash)
+  ring each hole; never reads the inner region's OUTPUT. `city.consumesSketch` +=
+  park/district; the SCOPED FINGERPRINT gained an "N" bucket (park/district rings)
+  so a contained-region move flips the city fp (else silent stale bytes) —
+  appended only when present ⇒ no churn for park-free cities. Distinct from
+  farmland/forest SUPPRESS (outskirts, unchanged): "ring = land claim" vs
+  "contained region = hole". JUDGMENT: influenceMargin is per-algorithm (city
+  1500), so a park/district within 1500 m regenerates the city — contained ⇒ real
+  hole, non-contained ⇒ byte-identical over-invalidation (the 033 slow-but-correct
+  side; 3 old "district/park never touches city" invalidation tests updated).
 
 ## Plan 036 — global terrain: terrainAt, stamps, river carve, lazy contour leaves (2026-07-15, 36-A/B/D + item 5 COMPLETE; 36-C engine landed — headless-only per Jonah 2026-07-14)
 `terrainAt(x,y) = grade(carve(replace(add(B))))` — the campaign-wide elevation
