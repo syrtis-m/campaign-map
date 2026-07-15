@@ -1,0 +1,683 @@
+/**
+ * Vailmarch — the SHOWCASE demo campaign, native to the plan 031–039 terrain +
+ * coupling pipeline. One deterministic geometry source, two artifacts: headless
+ * Vitest fixtures (imported directly by `vailmarch.test.ts`) and the
+ * `dev-vault/Campaigns/Vailmarch` campaign (emitted by
+ * `scripts/emit-vailmarch-campaign.ts` — regenerate with
+ * `npx tsx scripts/emit-vailmarch-campaign.ts`).
+ *
+ * A river-valley march: coastal lowland + sea in the WEST, a mountain spine
+ * across the NORTH, a raised plateau in the EAST, a lake basin in the SOUTH. The
+ * river Vail rises in the spine, carves a gorge through the ridge, and runs to
+ * the coast gathering two tributaries; cities, walls, roads, farms, forests and
+ * parks pile up along it with heavy overlap — every feature touches at least one
+ * other system so the demo shows everything working together.
+ *
+ * COORDINATE SPACES (the load-bearing convention). Unlike `overlapMap` (which
+ * authors in map units), Vailmarch authors its single geometry source in
+ * GENERATION-SPACE METERS — the space the generators and `terrainAt` actually
+ * consume (region rings, spine corridors, stamp half-widths/heights are all
+ * meters). `buildVailmarchFabric()` divides only the COORDINATES by
+ * `VAILMARCH_SCALE_M_PER_UNIT` to emit map-unit `Fabric.geojson` (procgen
+ * PARAMS — width/height/halfWidth/band/target, all meters — are never scaled).
+ * The generation-proof tests build regions straight from the meter geometry, so
+ * the exact shapes the campaign ships drive the headless generators. The host
+ * closes the loop in-app: map-unit fabric × scale ⇒ the same meters.
+ *
+ * Determinism: every def is literal; seeds derive once from
+ * `hashSeed(VAILMARCH_CAMPAIGN_SEED, featureId)` (the locked region-seed
+ * convention); versions read from each algorithm's registry `currentVersion` so
+ * the fixture never silently pins a stale contract. Pure module: model types +
+ * registry only — no DOM, map, or Obsidian (testkit is headless).
+ */
+import type { FabricCollection, FabricFeature, FabricKind, ProcgenBlock } from "../../model/fabric";
+import { algorithmById } from "../procgen/registry";
+import { hashSeed } from "../rng";
+
+type Pt = [number, number];
+
+/** Campaign seed — mirrored in `Vailmarch.map.md` frontmatter. */
+export const VAILMARCH_CAMPAIGN_SEED = 48157;
+/** 1 map unit = 500 m ⇒ small fake-lng/lat units (low Mercator distortion) over
+ * a ~8 × 6 km valley whose terrain reads at overview zoom. */
+export const VAILMARCH_SCALE_M_PER_UNIT = 500;
+/** Fictional bounded box, MAP UNITS (encloses every feature with margin). */
+export const VAILMARCH_BOUNDS: readonly [number, number, number, number] = [-9, -6, 8, 6];
+/** Campaign id notes reference in `map:` frontmatter. */
+export const VAILMARCH_MAP_ID = "vailmarch";
+/** Non-zero base amplitude the demo WOULD ship with if base params were
+ * persistable (they are not — see the report; the campaign shows terrain ON via
+ * the mountain/relief/landform/carve stamps, which ARE persisted and drive
+ * `terrainAt`). Exported so the terrain tests can exercise a non-flat base. */
+export const VAILMARCH_BASE = { campAmp: 220, seaDatum: 0 } as const;
+
+/** Close an open ring (append the first vertex). */
+function closed(open: Pt[]): Pt[] {
+  return [...open.map((p): Pt => [p[0], p[1]]), [open[0][0], open[0][1]]];
+}
+
+// ─── Geometry definition table (METERS) ──────────────────────────────────────
+// The single source of truth. `poly` coords are an OPEN ring; `line` coords are
+// a polyline. `algorithm` absent ⇒ an inert sketch (roads) with no procgen
+// block. Ids are stable and unique.
+
+interface RegionDef {
+  id: string;
+  kind: FabricKind;
+  name: string;
+  shape: "poly" | "line";
+  /** METERS (generation space). */
+  coords: Pt[];
+  algorithm?: string;
+  params?: Record<string, unknown>;
+  presetId?: string;
+}
+
+// The coordinate anchors that MULTIPLE features share are named so a premise
+// test and every consumer read the same literal (a shared district edge, a
+// river confluence vertex, a mountain ring the forest/farm overlap).
+
+/** Main district ring (Vailmarch capital) — the river crosses it, the wall
+ * traces it, the belt shares its south edge, the park nests inside. */
+const CAPITAL_RING: Pt[] = [
+  [-1950, -150],
+  [-1050, -150],
+  [-1050, 650],
+  [-1950, 650],
+];
+/** Twin district A ring; its EAST edge (x = 2100, y ∈ [-800,-100]) is shared
+ * verbatim with twin B (ε = 0 — hashed shared-edge stubs). */
+const TWIN_A_RING: Pt[] = [
+  [1500, -800],
+  [2100, -800],
+  [2100, -100],
+  [1500, -100],
+];
+const TWIN_B_RING: Pt[] = [
+  [2100, -800],
+  [2700, -800],
+  [2700, -100],
+  [2100, -100],
+];
+/** West massif (mountain) — the spine forest climbs it (timberline) and the
+ * paddy terraces read its contours. */
+const MASSIF_WEST_RING: Pt[] = [
+  [-2000, 1850],
+  [-800, 1850],
+  [-750, 2750],
+  [-1950, 2750],
+];
+/** East massif (mountain) — the mountain-torrent tributary rises in it and the
+ * flank pasture slope-gates on it. */
+const MASSIF_EAST_RING: Pt[] = [
+  [850, 1900],
+  [2050, 1950],
+  [2000, 2800],
+  [800, 2750],
+];
+/** The river Vail (main trunk), source (spine) → mouth (coast). Vertex[2]
+ * (-800,1500) is the north-tributary confluence; vertex[5] (-1900,-200) is the
+ * east-tributary confluence. Crosses the relief ridge (gorge) between [0] and
+ * [2], and the capital between [3] and [5]. */
+const VAIL_SPINE: Pt[] = [
+  [-500, 2500],
+  [-650, 2050],
+  [-800, 1500],
+  [-1150, 850],
+  [-1500, 300],
+  [-1900, -200],
+  [-2300, -500],
+  [-2750, -450],
+];
+
+const DEFS: RegionDef[] = [
+  // ── TERRAIN: relief ridge/valley (add-stamps) ──────────────────────────────
+  {
+    id: "vm-relief-spine",
+    kind: "relief",
+    name: "The Marchspine",
+    shape: "line",
+    coords: [[-3600, 2100], [-2000, 2350], [-500, 2500], [1200, 2400], [3200, 2050]],
+    algorithm: "relief",
+    params: { polarity: "ridge", height: 350, halfWidth: 500 },
+    presetId: "ridge",
+  },
+  {
+    id: "vm-relief-valley",
+    kind: "relief",
+    name: "Vail Valley",
+    shape: "line",
+    coords: [[-800, 1500], [-1500, 300], [-2300, -500]],
+    algorithm: "relief",
+    params: { polarity: "valley", height: 150, halfWidth: 380 },
+    presetId: "valley",
+  },
+  // ── TERRAIN: mountains (elevation field — the ONLY relief generators read) ──
+  {
+    id: "vm-massif-west",
+    kind: "mountain",
+    name: "Cairn Fells",
+    shape: "poly",
+    coords: MASSIF_WEST_RING,
+    algorithm: "mountain",
+    params: { terrain: "alpine", amplitude: 0.85, roughness: 0.6 },
+    presetId: "alpine",
+  },
+  {
+    id: "vm-massif-east",
+    kind: "mountain",
+    name: "Haward Horn",
+    shape: "poly",
+    coords: MASSIF_EAST_RING,
+    algorithm: "mountain",
+    params: { terrain: "alpine", amplitude: 0.8, roughness: 0.55 },
+    presetId: "alpine",
+  },
+  // ── TERRAIN: landform replace-stamps (plateau / basin / sea) ────────────────
+  {
+    id: "vm-landform-plateau",
+    kind: "landform",
+    name: "Eastmarch Tableland",
+    shape: "poly",
+    coords: [[2300, -700], [3800, -700], [3800, 1500], [2300, 1500]],
+    algorithm: "landform",
+    params: { mode: "plateau", target: 400, band: 150, priority: 0 },
+    presetId: "plateau",
+  },
+  {
+    id: "vm-landform-basin",
+    kind: "landform",
+    name: "Merewater Hollow",
+    shape: "poly",
+    coords: [[-900, -2500], [600, -2500], [600, -1200], [-900, -1200]],
+    algorithm: "landform",
+    params: { mode: "basin", target: -60, band: 150, priority: 0 },
+    presetId: "basin",
+  },
+  {
+    id: "vm-landform-sea",
+    kind: "landform",
+    name: "The Cold Reach",
+    shape: "poly",
+    coords: [[-4200, -2600], [-2900, -2600], [-2900, 2600], [-4200, 2600]],
+    algorithm: "landform",
+    params: { mode: "sea", target: -40, band: 80, priority: 1 },
+    presetId: "sea",
+  },
+  // ── RIVERS (one system: Vail + two tributaries; the Marn serves the twins) ──
+  {
+    id: "vm-river-vail",
+    kind: "river",
+    name: "The Vail",
+    shape: "line",
+    coords: VAIL_SPINE,
+    algorithm: "river",
+    params: { windiness: 0.6, braiding: 0.35, width: 30, widthGrowth: 0.9, braidBias: 0.2, slopeSensitivity: 0 },
+    presetId: "lazy-lowland",
+  },
+  {
+    // The ONE river that opts INTO terrain (slopeSensitivity 1) — a torrent off
+    // the east massif; its mouth == VAIL_SPINE[2] (confluence, Strahler step).
+    id: "vm-river-trib-north",
+    kind: "river",
+    name: "Torrent Beck",
+    shape: "line",
+    coords: [[1000, 2600], [400, 2050], [-200, 1700], [-800, 1500]],
+    algorithm: "river",
+    params: { windiness: 0.15, braiding: 0, width: 8, widthGrowth: 0.2, braidBias: 0, slopeSensitivity: 1 },
+    presetId: "mountain-torrent",
+  },
+  {
+    // Mouth == VAIL_SPINE[5] (second confluence → second Strahler step).
+    id: "vm-river-trib-east",
+    kind: "river",
+    name: "Elder Brook",
+    shape: "line",
+    coords: [[-500, -1000], [-1200, -600], [-1900, -200]],
+    algorithm: "river",
+    params: { windiness: 0.5, braiding: 0.2, width: 18, widthGrowth: 0.4, braidBias: 0.2, slopeSensitivity: 0 },
+    presetId: "lazy-lowland",
+  },
+  {
+    id: "vm-river-marn",
+    kind: "river",
+    name: "The Marn",
+    shape: "line",
+    coords: [[3200, 700], [2600, 100], [2000, -450], [1350, -950]],
+    algorithm: "river",
+    params: { windiness: 0.55, braiding: 0.3, width: 14, widthGrowth: 0.6, braidBias: 0.2, slopeSensitivity: 0 },
+    presetId: "lazy-lowland",
+  },
+  // ── CITIES ──────────────────────────────────────────────────────────────────
+  {
+    id: "vm-district-capital",
+    kind: "district",
+    name: "Vailmarch",
+    shape: "poly",
+    coords: CAPITAL_RING,
+    algorithm: "city",
+    params: { profile: "euro-medieval" },
+    presetId: "euro-medieval",
+  },
+  {
+    id: "vm-district-twin-a",
+    kind: "district",
+    name: "Twinbridge",
+    shape: "poly",
+    coords: TWIN_A_RING,
+    algorithm: "city",
+    params: { profile: "euro-continental" },
+    presetId: "euro-continental",
+  },
+  {
+    id: "vm-district-twin-b",
+    kind: "district",
+    name: "Eastwool",
+    shape: "poly",
+    coords: TWIN_B_RING,
+    algorithm: "city",
+    params: { profile: "eixample" },
+    presetId: "eixample",
+  },
+  {
+    id: "vm-district-coast",
+    kind: "district",
+    name: "Saltmere",
+    shape: "poly",
+    coords: [[-2900, -1750], [-2400, -1750], [-2400, -1200], [-2900, -1200]],
+    algorithm: "city",
+    params: { profile: "na-grid" },
+    presetId: "na-grid",
+  },
+  // ── WALLS ────────────────────────────────────────────────────────────────────
+  {
+    // Traces the capital ring; moat becomes the river where the Vail crosses the
+    // ring (water-gate + leat); gates fall at generated arterial exits.
+    id: "vm-wall-capital",
+    kind: "wall",
+    name: "Vailmarch Wall",
+    shape: "line",
+    coords: closed(CAPITAL_RING),
+    algorithm: "wall",
+    params: { style: "curtain-wall", towerSpacing: 70, moat: true, gatehouseScale: 1 },
+    presetId: "curtain-wall",
+  },
+  {
+    id: "vm-wall-twin",
+    kind: "wall",
+    name: "Twinbridge Rampart",
+    shape: "line",
+    coords: closed(TWIN_A_RING),
+    algorithm: "wall",
+    params: { style: "bastioned", towerSpacing: 90, moat: true, gatehouseScale: 1.4 },
+    presetId: "bastioned",
+  },
+  {
+    // Standalone barrier across the gorge, crossing the Vail near VAIL_SPINE[1]
+    // (-650,2050) — a water-gate stands alone here.
+    id: "vm-wall-gorge",
+    kind: "wall",
+    name: "The Throat Gate",
+    shape: "line",
+    coords: [[-1100, 2050], [-650, 2000], [-200, 2050]],
+    algorithm: "wall",
+    params: { style: "curtain-wall", towerSpacing: 60, moat: false, gatehouseScale: 1.2 },
+    presetId: "curtain-wall",
+  },
+  // ── ROADS (inert sketch — no procgen block) ─────────────────────────────────
+  {
+    // Enters + leaves the capital ring (two forced gates) and runs on into
+    // Twinbridge; the great east road.
+    id: "vm-road-highway",
+    kind: "road",
+    name: "The East Road",
+    shape: "line",
+    coords: [[-2400, 350], [-1400, 100], [-200, -100], [1400, -350], [1800, -450]],
+  },
+  {
+    id: "vm-road-valley",
+    kind: "road",
+    name: "Vailside Track",
+    shape: "line",
+    coords: [[-2600, -450], [-1900, -150], [-1150, 800], [-700, 1500]],
+  },
+  {
+    // Over the pass, crossing the relief ridge beside the gorge gate.
+    id: "vm-road-pass",
+    kind: "road",
+    name: "Marchspine Pass",
+    shape: "line",
+    coords: [[-700, 1550], [-650, 2050], [-600, 2600]],
+  },
+  // ── PARKS ────────────────────────────────────────────────────────────────────
+  {
+    // Nested strictly inside the capital (hole-with-frontage); urban-park aligns
+    // its entrances to the generated streets.
+    id: "vm-park-capital",
+    kind: "park",
+    name: "Kingsmoot Green",
+    shape: "poly",
+    coords: [[-1850, 300], [-1500, 300], [-1500, 600], [-1850, 600]],
+    algorithm: "park",
+    params: { variety: "urban-park", pathDensity: 0.5, pond: true },
+    presetId: "urban-park",
+  },
+  {
+    // Adjacent to the hedge wood (shared east edge) + inside the basin lowland.
+    id: "vm-park-rural",
+    kind: "park",
+    name: "Merewood Common",
+    shape: "poly",
+    coords: [[-600, -2100], [-100, -2100], [-100, -1550], [-600, -1550]],
+    algorithm: "park",
+    params: { variety: "wild-common", pathDensity: 0.3, pond: false },
+    presetId: "wild-common",
+  },
+  // ── FORESTS ──────────────────────────────────────────────────────────────────
+  {
+    // Climbs the west massif → timberline thinning + conifer-upslope stands.
+    id: "vm-forest-spine",
+    kind: "forest",
+    name: "Cairnwood",
+    shape: "poly",
+    coords: [[-1950, 1900], [-900, 1900], [-900, 2700], [-1950, 2700]],
+    algorithm: "forest",
+    params: { variety: "conifer", density: 0.8, clearings: 0.08, edgeRaggedness: 0.3 },
+    presetId: "conifer",
+  },
+  {
+    // Over the Vail downstream → channel exclusion + riparian ramp.
+    id: "vm-forest-riparian",
+    kind: "forest",
+    name: "Willowmere Wood",
+    shape: "poly",
+    coords: [[-2600, -800], [-2000, -800], [-2000, -150], [-2600, -150]],
+    algorithm: "forest",
+    params: { variety: "broadleaf", density: 0.7, clearings: 0.14, edgeRaggedness: 0.5 },
+    presetId: "broadleaf",
+  },
+  {
+    // Overlaps the capital NE → its GENERATED canopy attenuates cityness there.
+    id: "vm-forest-cityedge",
+    kind: "forest",
+    name: "Wardholt",
+    shape: "poly",
+    coords: [[-1400, 400], [-1000, 400], [-1000, 1100], [-1400, 1100]],
+    algorithm: "forest",
+    params: { variety: "mixed", density: 0.65, clearings: 0.16, edgeRaggedness: 0.5 },
+    presetId: "mixed",
+  },
+  {
+    // Shares its east edge with the rural park + its north edge with a farm
+    // (hedgerow both sides; canopy continuity with the park).
+    id: "vm-forest-hedge",
+    kind: "forest",
+    name: "Hollowbrake",
+    shape: "poly",
+    coords: [[-1200, -2100], [-600, -2100], [-600, -1550], [-1200, -1550]],
+    algorithm: "forest",
+    params: { variety: "mixed", density: 0.6, clearings: 0.18, edgeRaggedness: 0.5 },
+    presetId: "mixed",
+  },
+  {
+    // Deep wild wood, over the Marn (riparian) in the plateau's shadow.
+    id: "vm-forest-wild",
+    kind: "forest",
+    name: "The Ghostwood",
+    shape: "poly",
+    coords: [[1500, -1250], [2200, -1250], [2200, -450], [1500, -450]],
+    algorithm: "forest",
+    params: { variety: "dead-wood", density: 0.4, clearings: 0.32, edgeRaggedness: 0.7 },
+    presetId: "dead-wood",
+  },
+  // ── FARMLAND ──────────────────────────────────────────────────────────────────
+  {
+    // Peri-urban belt sharing the capital's south edge — gate lanes + gradient.
+    id: "vm-farm-capital-belt",
+    kind: "farmland",
+    name: "Vailmarch Fields",
+    shape: "poly",
+    coords: [[-1950, -750], [-1050, -750], [-1050, -150], [-1950, -150]],
+    algorithm: "farmland",
+    params: { fieldType: "enclosed-patchwork", fieldSize: 0.5, hedging: "hedgerows", laneDensity: 0.45, farmsteads: 0.45 },
+    presetId: "enclosed-patchwork",
+  },
+  {
+    // Peri-urban belt sharing Twinbridge's south edge.
+    id: "vm-farm-twin-belt",
+    kind: "farmland",
+    name: "Twinbridge Holdings",
+    shape: "poly",
+    coords: [[1500, -1450], [2100, -1450], [2100, -800], [1500, -800]],
+    algorithm: "farmland",
+    params: { fieldType: "enclosed-patchwork", fieldSize: 0.5, hedging: "hedgerows", laneDensity: 0.45, farmsteads: 0.45 },
+    presetId: "enclosed-patchwork",
+  },
+  {
+    // Over the Marn → riverine long-lots + water meadows.
+    id: "vm-farm-riverine",
+    kind: "farmland",
+    name: "Marnside Strips",
+    shape: "poly",
+    coords: [[2600, -150], [3300, -150], [3300, 600], [2600, 600]],
+    algorithm: "farmland",
+    params: { fieldType: "open-field-strips", fieldSize: 0.55, hedging: "none", laneDensity: 0.6, farmsteads: 0.3 },
+    presetId: "open-field-strips",
+  },
+  {
+    // Over the east massif's south slope → slope-gated pasture.
+    id: "vm-farm-flank",
+    kind: "farmland",
+    name: "Hoarfell Pasture",
+    shape: "poly",
+    coords: [[850, 1500], [1900, 1500], [1900, 2000], [850, 2000]],
+    algorithm: "farmland",
+    params: { fieldType: "enclosed-patchwork", fieldSize: 0.45, hedging: "fences", laneDensity: 0.35, farmsteads: 0.25 },
+    presetId: "enclosed-patchwork",
+  },
+  {
+    // Over the west massif's south slope → paddy terraces reading the contours.
+    id: "vm-farm-paddy",
+    kind: "farmland",
+    name: "Cairnfoot Terraces",
+    shape: "poly",
+    coords: [[-2000, 1600], [-1300, 1600], [-1300, 2100], [-2000, 2100]],
+    algorithm: "farmland",
+    params: { fieldType: "paddy-terraces", fieldSize: 0.35, hedging: "none", laneDensity: 0.4, farmsteads: 0.25 },
+    presetId: "paddy-terraces",
+  },
+  {
+    // Shares the hedge wood's north edge (hedgerow) + inside the basin.
+    id: "vm-farm-hedge",
+    kind: "farmland",
+    name: "Hollowbrake Crofts",
+    shape: "poly",
+    coords: [[-1200, -1550], [-600, -1550], [-600, -1000], [-1200, -1000]],
+    algorithm: "farmland",
+    params: { fieldType: "open-field-strips", fieldSize: 0.5, hedging: "hedgerows", laneDensity: 0.55, farmsteads: 0.3 },
+    presetId: "open-field-strips",
+  },
+];
+
+/** All region defs, stable order (part of the byte-identity contract). */
+export const VAILMARCH_DEFS: readonly RegionDef[] = DEFS;
+export type VailmarchDef = RegionDef;
+
+const DEF_BY_ID = new Map(DEFS.map((d) => [d.id, d]));
+/** Look up a def by id (throws on a typo — a test that names a stale id fails
+ * loudly, never silently reads undefined). */
+export function defById(id: string): RegionDef {
+  const d = DEF_BY_ID.get(id);
+  if (!d) throw new Error(`vailmarch: unknown def "${id}"`);
+  return d;
+}
+
+/** A region/spine's persisted seed — the locked hashSeed(campaignSeed, id). */
+export function seedFor(id: string): number {
+  return hashSeed(VAILMARCH_CAMPAIGN_SEED, id);
+}
+
+/** The METER geometry of a def (open ring for polygons, polyline for lines). */
+export function metersOf(id: string): Pt[] {
+  return defById(id).coords.map((p): Pt => [p[0], p[1]]);
+}
+
+/** Build the procgen block for a def: seed from the locked convention, version
+ * pinned to the algorithm's CURRENT contract, params validated by the
+ * algorithm's own zod schema (a drifted registry fails the build loudly). */
+function procgenBlock(def: RegionDef): ProcgenBlock {
+  const alg = algorithmById(def.algorithm!);
+  if (!alg) throw new Error(`vailmarch: unknown algorithm "${def.algorithm}"`);
+  const parsed = alg.paramsSchema.parse(def.params ?? {});
+  return {
+    algorithm: def.algorithm!,
+    seed: seedFor(def.id),
+    version: alg.currentVersion,
+    params: parsed,
+    ...(def.presetId !== undefined ? { presetId: def.presetId } : {}),
+  };
+}
+
+/** Convert a meter point to map units (÷ scale). */
+function toUnits(p: Pt): Pt {
+  return [p[0] / VAILMARCH_SCALE_M_PER_UNIT, p[1] / VAILMARCH_SCALE_M_PER_UNIT];
+}
+
+/** One fabric feature (MAP-UNIT coordinates; procgen PARAMS stay meters). */
+function fabricFeatureOf(def: RegionDef): FabricFeature {
+  const geometry: FabricFeature["geometry"] =
+    def.shape === "poly"
+      ? { type: "Polygon", coordinates: [closed(def.coords).map(toUnits)] }
+      : { type: "LineString", coordinates: def.coords.map(toUnits) };
+  return {
+    type: "Feature",
+    id: def.id,
+    geometry,
+    properties: {
+      kind: def.kind,
+      name: def.name,
+      ...(def.algorithm !== undefined ? { procgen: procgenBlock(def) } : {}),
+    },
+  };
+}
+
+/** The full Vailmarch fabric (MAP UNITS), stable order — never reorder without
+ * re-emitting the campaign. */
+export function buildVailmarchFabric(): FabricCollection {
+  return { type: "FeatureCollection", features: DEFS.map(fabricFeatureOf) };
+}
+
+/** The whole fabric as METER-coordinate features — what `terrainAt` and the
+ * generators' `constraints.fabricFeatures` consume in-app (the host scales the
+ * map-unit fabric back to this). The generation-proof tests build their
+ * constraints from THIS. */
+export function buildVailmarchFabricMeters(): FabricFeature[] {
+  return DEFS.map((def) => {
+    const geometry: FabricFeature["geometry"] =
+      def.shape === "poly"
+        ? { type: "Polygon", coordinates: [closed(def.coords)] }
+        : { type: "LineString", coordinates: def.coords.map((p): Pt => [p[0], p[1]]) };
+    return {
+      type: "Feature",
+      id: def.id,
+      geometry,
+      properties: {
+        kind: def.kind,
+        name: def.name,
+        ...(def.algorithm !== undefined ? { procgen: procgenBlock(def) } : {}),
+      },
+    };
+  });
+}
+
+// ─── Location pins (canon notes) ─────────────────────────────────────────────
+
+export interface VailmarchPin {
+  /** Note basename (becomes `Locations/<name>.md`). */
+  name: string;
+  /** `type:` frontmatter — omitted for untyped pins. */
+  type?: string;
+  /** `visibility:` frontmatter — omitted where the default should apply. */
+  visibility?: "wide" | "mid" | "close";
+  /** METERS (generation space); the note stores `geometry:` in map units. */
+  point: Pt;
+  /** Note body (GM flavor). */
+  body: string;
+}
+
+export const VAILMARCH_PINS: readonly VailmarchPin[] = [
+  {
+    name: "Vailmarch Market",
+    type: "market",
+    visibility: "mid",
+    point: [-1500, 250],
+    body: "The great square of Vailmarch, where the East Road fords the Vail. A typed `market` pin — the city plaza + arterial star anchor here (plan 039 §1.1).",
+  },
+  {
+    name: "Vailmarch",
+    type: "city",
+    visibility: "wide",
+    point: [-1500, 500],
+    body: "The walled capital of the march, straddling the Vail. Bridges knit the two banks; the wall's moat becomes the river along the waterfront.",
+  },
+  {
+    name: "Twinbridge",
+    type: "town",
+    visibility: "wide",
+    point: [1800, -450],
+    body: "The elder of the twin quarters below the tableland, its rampart older than Eastwool's grid. The two share a gate on the wall between them.",
+  },
+  {
+    name: "Eastwool",
+    type: "town",
+    visibility: "mid",
+    point: [2400, -450],
+    body: "Eastwool's chamfered blocks were laid out in a single season. Its west gate faces Twinbridge across the shared wall.",
+  },
+  {
+    name: "Saltmere",
+    type: "town",
+    visibility: "mid",
+    point: [-2650, -1480],
+    body: "A grid of net-lofts and salt-pans where the cold reach laps the march. The Vail's mouth silts its harbour a little more each winter.",
+  },
+  {
+    name: "The Throat",
+    visibility: "close",
+    point: [-680, 2020],
+    body: "Where the Vail knifes through the Marchspine — a gorge so narrow the Throat Gate wall bars it bank to bank, a single sluice for the river.",
+  },
+  {
+    name: "Thorncap Shrine",
+    type: "shrine",
+    visibility: "close",
+    point: [-1200, 2400],
+    body: "The last shrine below the treeline of Cairnwood, where the conifers give out to bare fell. Pilgrims leave iron nails in the timber.",
+  },
+  {
+    name: "Millrace Meet",
+    visibility: "mid",
+    point: [-800, 1500],
+    body: "Torrent Beck throws itself into the Vail here in a churn of white water; the millers of the upper valley all keep wheels on the race.",
+  },
+  {
+    name: "Plateau Watch",
+    type: "landmark",
+    visibility: "mid",
+    point: [3000, 400],
+    body: "A lonely tower on the Eastmarch Tableland, four hundred feet above the valley floor. On a clear day the watch can see the sea.",
+  },
+  {
+    name: "Merelight",
+    visibility: "mid",
+    point: [-150, -1850],
+    body: "A hermit's lantern-post on the shore of the Merewater, where the basin floods each spring. Herons stalk the reed-common of Merewood.",
+  },
+  {
+    name: "Saltmere Light",
+    type: "landmark",
+    visibility: "close",
+    point: [-2860, -1450],
+    body: "The harbour beacon of Saltmere, its fire tended against the fogs of the cold reach.",
+  },
+];

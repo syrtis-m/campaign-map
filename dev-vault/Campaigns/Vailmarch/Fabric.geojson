@@ -1,0 +1,1507 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "vm-relief-spine",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -7.2,
+            4.2
+          ],
+          [
+            -4,
+            4.7
+          ],
+          [
+            -1,
+            5
+          ],
+          [
+            2.4,
+            4.8
+          ],
+          [
+            6.4,
+            4.1
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "relief",
+        "name": "The Marchspine",
+        "procgen": {
+          "algorithm": "relief",
+          "seed": 3284156515,
+          "version": 1,
+          "params": {
+            "polarity": "ridge",
+            "height": 350,
+            "halfWidth": 500
+          },
+          "presetId": "ridge"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-relief-valley",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -1.6,
+            3
+          ],
+          [
+            -3,
+            0.6
+          ],
+          [
+            -4.6,
+            -1
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "relief",
+        "name": "Vail Valley",
+        "procgen": {
+          "algorithm": "relief",
+          "seed": 4143308539,
+          "version": 1,
+          "params": {
+            "polarity": "valley",
+            "height": 150,
+            "halfWidth": 380
+          },
+          "presetId": "valley"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-massif-west",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -4,
+              3.7
+            ],
+            [
+              -1.6,
+              3.7
+            ],
+            [
+              -1.5,
+              5.5
+            ],
+            [
+              -3.9,
+              5.5
+            ],
+            [
+              -4,
+              3.7
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "mountain",
+        "name": "Cairn Fells",
+        "procgen": {
+          "algorithm": "mountain",
+          "seed": 1142830869,
+          "version": 1,
+          "params": {
+            "terrain": "alpine",
+            "amplitude": 0.85,
+            "roughness": 0.6
+          },
+          "presetId": "alpine"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-massif-east",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              1.7,
+              3.8
+            ],
+            [
+              4.1,
+              3.9
+            ],
+            [
+              4,
+              5.6
+            ],
+            [
+              1.6,
+              5.5
+            ],
+            [
+              1.7,
+              3.8
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "mountain",
+        "name": "Haward Horn",
+        "procgen": {
+          "algorithm": "mountain",
+          "seed": 3729069055,
+          "version": 1,
+          "params": {
+            "terrain": "alpine",
+            "amplitude": 0.8,
+            "roughness": 0.55
+          },
+          "presetId": "alpine"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-landform-plateau",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              4.6,
+              -1.4
+            ],
+            [
+              7.6,
+              -1.4
+            ],
+            [
+              7.6,
+              3
+            ],
+            [
+              4.6,
+              3
+            ],
+            [
+              4.6,
+              -1.4
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "landform",
+        "name": "Eastmarch Tableland",
+        "procgen": {
+          "algorithm": "landform",
+          "seed": 1987409704,
+          "version": 1,
+          "params": {
+            "mode": "plateau",
+            "target": 400,
+            "band": 150,
+            "priority": 0
+          },
+          "presetId": "plateau"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-landform-basin",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -1.8,
+              -5
+            ],
+            [
+              1.2,
+              -5
+            ],
+            [
+              1.2,
+              -2.4
+            ],
+            [
+              -1.8,
+              -2.4
+            ],
+            [
+              -1.8,
+              -5
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "landform",
+        "name": "Merewater Hollow",
+        "procgen": {
+          "algorithm": "landform",
+          "seed": 3877906227,
+          "version": 1,
+          "params": {
+            "mode": "basin",
+            "target": -60,
+            "band": 150,
+            "priority": 0
+          },
+          "presetId": "basin"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-landform-sea",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -8.4,
+              -5.2
+            ],
+            [
+              -5.8,
+              -5.2
+            ],
+            [
+              -5.8,
+              5.2
+            ],
+            [
+              -8.4,
+              5.2
+            ],
+            [
+              -8.4,
+              -5.2
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "landform",
+        "name": "The Cold Reach",
+        "procgen": {
+          "algorithm": "landform",
+          "seed": 1310238141,
+          "version": 1,
+          "params": {
+            "mode": "sea",
+            "target": -40,
+            "band": 80,
+            "priority": 1
+          },
+          "presetId": "sea"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-river-vail",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -1,
+            5
+          ],
+          [
+            -1.3,
+            4.1
+          ],
+          [
+            -1.6,
+            3
+          ],
+          [
+            -2.3,
+            1.7
+          ],
+          [
+            -3,
+            0.6
+          ],
+          [
+            -3.8,
+            -0.4
+          ],
+          [
+            -4.6,
+            -1
+          ],
+          [
+            -5.5,
+            -0.9
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "river",
+        "name": "The Vail",
+        "procgen": {
+          "algorithm": "river",
+          "seed": 2130110981,
+          "version": 3,
+          "params": {
+            "windiness": 0.6,
+            "braiding": 0.35,
+            "width": 30,
+            "widthGrowth": 0.9,
+            "braidBias": 0.2,
+            "slopeSensitivity": 0
+          },
+          "presetId": "lazy-lowland"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-river-trib-north",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            2,
+            5.2
+          ],
+          [
+            0.8,
+            4.1
+          ],
+          [
+            -0.4,
+            3.4
+          ],
+          [
+            -1.6,
+            3
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "river",
+        "name": "Torrent Beck",
+        "procgen": {
+          "algorithm": "river",
+          "seed": 2521642914,
+          "version": 3,
+          "params": {
+            "windiness": 0.15,
+            "braiding": 0,
+            "width": 8,
+            "widthGrowth": 0.2,
+            "braidBias": 0,
+            "slopeSensitivity": 1
+          },
+          "presetId": "mountain-torrent"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-river-trib-east",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -1,
+            -2
+          ],
+          [
+            -2.4,
+            -1.2
+          ],
+          [
+            -3.8,
+            -0.4
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "river",
+        "name": "Elder Brook",
+        "procgen": {
+          "algorithm": "river",
+          "seed": 3739413918,
+          "version": 3,
+          "params": {
+            "windiness": 0.5,
+            "braiding": 0.2,
+            "width": 18,
+            "widthGrowth": 0.4,
+            "braidBias": 0.2,
+            "slopeSensitivity": 0
+          },
+          "presetId": "lazy-lowland"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-river-marn",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            6.4,
+            1.4
+          ],
+          [
+            5.2,
+            0.2
+          ],
+          [
+            4,
+            -0.9
+          ],
+          [
+            2.7,
+            -1.9
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "river",
+        "name": "The Marn",
+        "procgen": {
+          "algorithm": "river",
+          "seed": 3554098055,
+          "version": 3,
+          "params": {
+            "windiness": 0.55,
+            "braiding": 0.3,
+            "width": 14,
+            "widthGrowth": 0.6,
+            "braidBias": 0.2,
+            "slopeSensitivity": 0
+          },
+          "presetId": "lazy-lowland"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-district-capital",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -3.9,
+              -0.3
+            ],
+            [
+              -2.1,
+              -0.3
+            ],
+            [
+              -2.1,
+              1.3
+            ],
+            [
+              -3.9,
+              1.3
+            ],
+            [
+              -3.9,
+              -0.3
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "district",
+        "name": "Vailmarch",
+        "procgen": {
+          "algorithm": "city",
+          "seed": 1055547923,
+          "version": 3,
+          "params": {
+            "profile": "euro-medieval"
+          },
+          "presetId": "euro-medieval"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-district-twin-a",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              3,
+              -1.6
+            ],
+            [
+              4.2,
+              -1.6
+            ],
+            [
+              4.2,
+              -0.2
+            ],
+            [
+              3,
+              -0.2
+            ],
+            [
+              3,
+              -1.6
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "district",
+        "name": "Twinbridge",
+        "procgen": {
+          "algorithm": "city",
+          "seed": 2773999209,
+          "version": 3,
+          "params": {
+            "profile": "euro-continental"
+          },
+          "presetId": "euro-continental"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-district-twin-b",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              4.2,
+              -1.6
+            ],
+            [
+              5.4,
+              -1.6
+            ],
+            [
+              5.4,
+              -0.2
+            ],
+            [
+              4.2,
+              -0.2
+            ],
+            [
+              4.2,
+              -1.6
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "district",
+        "name": "Eastwool",
+        "procgen": {
+          "algorithm": "city",
+          "seed": 2723666352,
+          "version": 3,
+          "params": {
+            "profile": "eixample"
+          },
+          "presetId": "eixample"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-district-coast",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -5.8,
+              -3.5
+            ],
+            [
+              -4.8,
+              -3.5
+            ],
+            [
+              -4.8,
+              -2.4
+            ],
+            [
+              -5.8,
+              -2.4
+            ],
+            [
+              -5.8,
+              -3.5
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "district",
+        "name": "Saltmere",
+        "procgen": {
+          "algorithm": "city",
+          "seed": 3538628573,
+          "version": 3,
+          "params": {
+            "profile": "na-grid"
+          },
+          "presetId": "na-grid"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-wall-capital",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -3.9,
+            -0.3
+          ],
+          [
+            -2.1,
+            -0.3
+          ],
+          [
+            -2.1,
+            1.3
+          ],
+          [
+            -3.9,
+            1.3
+          ],
+          [
+            -3.9,
+            -0.3
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "wall",
+        "name": "Vailmarch Wall",
+        "procgen": {
+          "algorithm": "wall",
+          "seed": 1430791985,
+          "version": 3,
+          "params": {
+            "style": "curtain-wall",
+            "towerSpacing": 70,
+            "moat": true,
+            "gatehouseScale": 1
+          },
+          "presetId": "curtain-wall"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-wall-twin",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            3,
+            -1.6
+          ],
+          [
+            4.2,
+            -1.6
+          ],
+          [
+            4.2,
+            -0.2
+          ],
+          [
+            3,
+            -0.2
+          ],
+          [
+            3,
+            -1.6
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "wall",
+        "name": "Twinbridge Rampart",
+        "procgen": {
+          "algorithm": "wall",
+          "seed": 1064446841,
+          "version": 3,
+          "params": {
+            "style": "bastioned",
+            "towerSpacing": 90,
+            "moat": true,
+            "gatehouseScale": 1.4
+          },
+          "presetId": "bastioned"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-wall-gorge",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -2.2,
+            4.1
+          ],
+          [
+            -1.3,
+            4
+          ],
+          [
+            -0.4,
+            4.1
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "wall",
+        "name": "The Throat Gate",
+        "procgen": {
+          "algorithm": "wall",
+          "seed": 729752373,
+          "version": 3,
+          "params": {
+            "style": "curtain-wall",
+            "towerSpacing": 60,
+            "moat": false,
+            "gatehouseScale": 1.2
+          },
+          "presetId": "curtain-wall"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-road-highway",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -4.8,
+            0.7
+          ],
+          [
+            -2.8,
+            0.2
+          ],
+          [
+            -0.4,
+            -0.2
+          ],
+          [
+            2.8,
+            -0.7
+          ],
+          [
+            3.6,
+            -0.9
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "road",
+        "name": "The East Road"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-road-valley",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -5.2,
+            -0.9
+          ],
+          [
+            -3.8,
+            -0.3
+          ],
+          [
+            -2.3,
+            1.6
+          ],
+          [
+            -1.4,
+            3
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "road",
+        "name": "Vailside Track"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-road-pass",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -1.4,
+            3.1
+          ],
+          [
+            -1.3,
+            4.1
+          ],
+          [
+            -1.2,
+            5.2
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "road",
+        "name": "Marchspine Pass"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-park-capital",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -3.7,
+              0.6
+            ],
+            [
+              -3,
+              0.6
+            ],
+            [
+              -3,
+              1.2
+            ],
+            [
+              -3.7,
+              1.2
+            ],
+            [
+              -3.7,
+              0.6
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "park",
+        "name": "Kingsmoot Green",
+        "procgen": {
+          "algorithm": "park",
+          "seed": 2316422605,
+          "version": 5,
+          "params": {
+            "variety": "urban-park",
+            "pathDensity": 0.5,
+            "pond": true
+          },
+          "presetId": "urban-park"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-park-rural",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -1.2,
+              -4.2
+            ],
+            [
+              -0.2,
+              -4.2
+            ],
+            [
+              -0.2,
+              -3.1
+            ],
+            [
+              -1.2,
+              -3.1
+            ],
+            [
+              -1.2,
+              -4.2
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "park",
+        "name": "Merewood Common",
+        "procgen": {
+          "algorithm": "park",
+          "seed": 3333682569,
+          "version": 5,
+          "params": {
+            "variety": "wild-common",
+            "pathDensity": 0.3,
+            "pond": false
+          },
+          "presetId": "wild-common"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-forest-spine",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -3.9,
+              3.8
+            ],
+            [
+              -1.8,
+              3.8
+            ],
+            [
+              -1.8,
+              5.4
+            ],
+            [
+              -3.9,
+              5.4
+            ],
+            [
+              -3.9,
+              3.8
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "forest",
+        "name": "Cairnwood",
+        "procgen": {
+          "algorithm": "forest",
+          "seed": 303220307,
+          "version": 4,
+          "params": {
+            "variety": "conifer",
+            "density": 0.8,
+            "clearings": 0.08,
+            "edgeRaggedness": 0.3
+          },
+          "presetId": "conifer"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-forest-riparian",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -5.2,
+              -1.6
+            ],
+            [
+              -4,
+              -1.6
+            ],
+            [
+              -4,
+              -0.3
+            ],
+            [
+              -5.2,
+              -0.3
+            ],
+            [
+              -5.2,
+              -1.6
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "forest",
+        "name": "Willowmere Wood",
+        "procgen": {
+          "algorithm": "forest",
+          "seed": 74093436,
+          "version": 4,
+          "params": {
+            "variety": "broadleaf",
+            "density": 0.7,
+            "clearings": 0.14,
+            "edgeRaggedness": 0.5
+          },
+          "presetId": "broadleaf"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-forest-cityedge",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -2.8,
+              0.8
+            ],
+            [
+              -2,
+              0.8
+            ],
+            [
+              -2,
+              2.2
+            ],
+            [
+              -2.8,
+              2.2
+            ],
+            [
+              -2.8,
+              0.8
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "forest",
+        "name": "Wardholt",
+        "procgen": {
+          "algorithm": "forest",
+          "seed": 4271785238,
+          "version": 4,
+          "params": {
+            "variety": "mixed",
+            "density": 0.65,
+            "clearings": 0.16,
+            "edgeRaggedness": 0.5
+          },
+          "presetId": "mixed"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-forest-hedge",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -2.4,
+              -4.2
+            ],
+            [
+              -1.2,
+              -4.2
+            ],
+            [
+              -1.2,
+              -3.1
+            ],
+            [
+              -2.4,
+              -3.1
+            ],
+            [
+              -2.4,
+              -4.2
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "forest",
+        "name": "Hollowbrake",
+        "procgen": {
+          "algorithm": "forest",
+          "seed": 2291770505,
+          "version": 4,
+          "params": {
+            "variety": "mixed",
+            "density": 0.6,
+            "clearings": 0.18,
+            "edgeRaggedness": 0.5
+          },
+          "presetId": "mixed"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-forest-wild",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              3,
+              -2.5
+            ],
+            [
+              4.4,
+              -2.5
+            ],
+            [
+              4.4,
+              -0.9
+            ],
+            [
+              3,
+              -0.9
+            ],
+            [
+              3,
+              -2.5
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "forest",
+        "name": "The Ghostwood",
+        "procgen": {
+          "algorithm": "forest",
+          "seed": 2350354560,
+          "version": 4,
+          "params": {
+            "variety": "dead-wood",
+            "density": 0.4,
+            "clearings": 0.32,
+            "edgeRaggedness": 0.7
+          },
+          "presetId": "dead-wood"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-farm-capital-belt",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -3.9,
+              -1.5
+            ],
+            [
+              -2.1,
+              -1.5
+            ],
+            [
+              -2.1,
+              -0.3
+            ],
+            [
+              -3.9,
+              -0.3
+            ],
+            [
+              -3.9,
+              -1.5
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "farmland",
+        "name": "Vailmarch Fields",
+        "procgen": {
+          "algorithm": "farmland",
+          "seed": 3132347469,
+          "version": 4,
+          "params": {
+            "fieldType": "enclosed-patchwork",
+            "fieldSize": 0.5,
+            "hedging": "hedgerows",
+            "laneDensity": 0.45,
+            "farmsteads": 0.45
+          },
+          "presetId": "enclosed-patchwork"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-farm-twin-belt",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              3,
+              -2.9
+            ],
+            [
+              4.2,
+              -2.9
+            ],
+            [
+              4.2,
+              -1.6
+            ],
+            [
+              3,
+              -1.6
+            ],
+            [
+              3,
+              -2.9
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "farmland",
+        "name": "Twinbridge Holdings",
+        "procgen": {
+          "algorithm": "farmland",
+          "seed": 2308941765,
+          "version": 4,
+          "params": {
+            "fieldType": "enclosed-patchwork",
+            "fieldSize": 0.5,
+            "hedging": "hedgerows",
+            "laneDensity": 0.45,
+            "farmsteads": 0.45
+          },
+          "presetId": "enclosed-patchwork"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-farm-riverine",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              5.2,
+              -0.3
+            ],
+            [
+              6.6,
+              -0.3
+            ],
+            [
+              6.6,
+              1.2
+            ],
+            [
+              5.2,
+              1.2
+            ],
+            [
+              5.2,
+              -0.3
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "farmland",
+        "name": "Marnside Strips",
+        "procgen": {
+          "algorithm": "farmland",
+          "seed": 907816403,
+          "version": 4,
+          "params": {
+            "fieldType": "open-field-strips",
+            "fieldSize": 0.55,
+            "hedging": "none",
+            "laneDensity": 0.6,
+            "farmsteads": 0.3
+          },
+          "presetId": "open-field-strips"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-farm-flank",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              1.7,
+              3
+            ],
+            [
+              3.8,
+              3
+            ],
+            [
+              3.8,
+              4
+            ],
+            [
+              1.7,
+              4
+            ],
+            [
+              1.7,
+              3
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "farmland",
+        "name": "Hoarfell Pasture",
+        "procgen": {
+          "algorithm": "farmland",
+          "seed": 3093552059,
+          "version": 4,
+          "params": {
+            "fieldType": "enclosed-patchwork",
+            "fieldSize": 0.45,
+            "hedging": "fences",
+            "laneDensity": 0.35,
+            "farmsteads": 0.25
+          },
+          "presetId": "enclosed-patchwork"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-farm-paddy",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -4,
+              3.2
+            ],
+            [
+              -2.6,
+              3.2
+            ],
+            [
+              -2.6,
+              4.2
+            ],
+            [
+              -4,
+              4.2
+            ],
+            [
+              -4,
+              3.2
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "farmland",
+        "name": "Cairnfoot Terraces",
+        "procgen": {
+          "algorithm": "farmland",
+          "seed": 468494651,
+          "version": 4,
+          "params": {
+            "fieldType": "paddy-terraces",
+            "fieldSize": 0.35,
+            "hedging": "none",
+            "laneDensity": 0.4,
+            "farmsteads": 0.25
+          },
+          "presetId": "paddy-terraces"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "vm-farm-hedge",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -2.4,
+              -3.1
+            ],
+            [
+              -1.2,
+              -3.1
+            ],
+            [
+              -1.2,
+              -2
+            ],
+            [
+              -2.4,
+              -2
+            ],
+            [
+              -2.4,
+              -3.1
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "farmland",
+        "name": "Hollowbrake Crofts",
+        "procgen": {
+          "algorithm": "farmland",
+          "seed": 3455007032,
+          "version": 4,
+          "params": {
+            "fieldType": "open-field-strips",
+            "fieldSize": 0.5,
+            "hedging": "hedgerows",
+            "laneDensity": 0.55,
+            "farmsteads": 0.3
+          },
+          "presetId": "open-field-strips"
+        }
+      }
+    }
+  ]
+}
