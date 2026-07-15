@@ -725,6 +725,16 @@ export const FARMLAND_TILE_GENERATOR_IDS: readonly string[] = contractGids(FARML
 const farmlandAlgorithm: ProcgenAlgorithm = {
   id: "farmland",
   label: "Farmland",
+  // Version 5 (make-it-look-real shortlist, items 8 + 9): (item 8) the peri-urban
+  // GATE LANES no longer ray straight across the belt to a distant junction — each
+  // is a short diagonal stub (clipped at the first field-cell boundary, with
+  // deterministic per-lane angle jitter) that then follows the field edges
+  // (axis-aligned gridline legs) to the junction; (item 9) a FAUBOURG transition
+  // band — orchard rows + garden plots tagged `faubourg: true` in the outermost
+  // strip where the belt's ring faces the generated city, between the wall/city
+  // edge and the first fields. Both read ONLY the settlement payload farmland
+  // already consumes (035); a farmland with NO settlement in reach is
+  // byte-identical to v4 (golden unchanged — the bump gates adoption).
   // Version 4 (plan 038): riverine long-lots (item 2) — near a generated river
   // bank the fields become narrow rang holdings PERPENDICULAR to the water, the
   // near end tagged `waterMeadow`; the normal lattice fields in that band are
@@ -738,7 +748,7 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   // Version 2 (plan 035, peri-urban move): farmland reads the generated city
   // street network (`upstream.settlement`) — gate lanes radiate from the
   // arterial exits, a field-size gradient runs toward the wall line.
-  currentVersion: 4,
+  currentVersion: 5,
   appliesTo: ["farmland"],
   // Stage 4 (PERI-URBAN, plan 035): farmland is the city's apron, generated
   // AFTER it. Consumes `settlement` (WIRED: lanes orient to the generated

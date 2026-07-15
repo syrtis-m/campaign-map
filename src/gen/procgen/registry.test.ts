@@ -178,8 +178,8 @@ describe("cycle guard — settlement consumers produce nothing the city consumes
 });
 
 describe("farmland peri-urban (plan 035-C) — stage 4, wired settlement + elevation", () => {
-  it("farmland is at contract version 4 (plan 038 riverine long-lots + terrain slope-gating + sketch adjacency)", () => {
-    expect(algorithmById("farmland")!.currentVersion).toBe(4);
+  it("farmland is at contract version 5 (shortlist items 8 + 9: tamed gate lanes + faubourg band)", () => {
+    expect(algorithmById("farmland")!.currentVersion).toBe(5);
   });
 
   it("farmland sits at stage 4, consumes elevation + settlement + water (plan 037), produces NOTHING", () => {

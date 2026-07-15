@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
-import { generateFarmland, type FarmlandParams } from "./farmland";
+import { generateFarmland, fieldCellM, type FarmlandParams } from "./farmland";
 import { makeRegion, distanceToBoundary, type ProcgenRegion } from "./region";
 import { expectGeneratorInvariants, expectDeterministic } from "./testkit/invariants";
-import { computeFarmlandMetrics, farmlandBandViolations } from "./farmlandMetrics";
+import { computeFarmlandMetrics, farmlandBandViolations, maxDiagonalLaneRunCells } from "./farmlandMetrics";
 import { elevationFieldFromFabric } from "./fields/mountainField";
 import type { FabricFeature } from "../model/fabric";
 import type { GenerationConstraints } from "./types";
@@ -651,5 +651,20 @@ describe("farmland generator — peri-urban settlement coupling (plan 035-C, S4)
   it("coupled output is deterministic and stays inside the ring", () => {
     expect(JSON.stringify(generateFarmland(farmSeed, farmRegion, FARM_PARAMS, withCity))).toBe(JSON.stringify(coupled));
     expectGeneratorInvariants(coupled, farmRegion);
+  });
+
+  it("gate lanes are tamed: no farm-lane crosses more than 2 field cells in a straight diagonal run (shortlist item 8)", () => {
+    // N = 2 cells. Justification: the ONLY diagonal run of a gate lane is the stub
+    // from the ring gate to the first field-cell boundary, capped at
+    // GATE_STUB_MAX_CELLS = 1.5 cells; N = 2 gives quantization headroom. Past the
+    // stub the lane follows axis-aligned field edges (excluded from this metric).
+    const cellM = fieldCellM(0.5); // FARM_PARAMS fieldSize
+    const N = 2;
+    expect(maxDiagonalLaneRunCells(coupled, cellM)).toBeLessThanOrEqual(N);
+    // The gate lanes ARE diagonal stubs (jittered) — the metric is > 0 with a city…
+    expect(maxDiagonalLaneRunCells(coupled, cellM)).toBeGreaterThan(0);
+    // …and there are NO diagonal lanes at all without the city (byte-identity path:
+    // the regular lane web is purely axis-aligned).
+    expect(maxDiagonalLaneRunCells(bare, cellM)).toBe(0);
   });
 });

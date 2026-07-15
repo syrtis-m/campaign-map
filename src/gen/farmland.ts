@@ -138,6 +138,16 @@ const GATE_ENTRY_THRESH_M = 45;
 const GATE_ENTRY_DEDUPE_M = 40;
 /** Lanes fanning from each gate entry to the nearest lane-web junctions. */
 const GATE_LANE_FAN = 2;
+/** Max deterministic per-lane angle jitter (radians, ≈±18°) applied to the gate
+ * stub's inward heading — breaks the razor-straight radial fan (shortlist item 8)
+ * so multiple stubs off nearby gates read as lanes, not rays. */
+const GATE_LANE_JITTER_RAD = 0.32;
+/** The gate stub (the ONLY diagonal run of a gate lane) is clipped at the first
+ * field-cell boundary it meets; if none is within this many cells (a shallow
+ * heading), the march stops here — so a stub never crosses more than ~1.5 cells
+ * in a straight run (the spoke-fan metric). Past the stub the lane FOLLOWS field
+ * edges (axis-aligned legs along the cell gridlines) to the target junction. */
+const GATE_STUB_MAX_CELLS = 1.5;
 /** Field-size gradient reach, meters from the nearest generated street. */
 const NEAR_CITY_M = 240;
 // ── Paddy terraces ───────────────────────────────────────────────────────────
@@ -196,7 +206,9 @@ function paddyInterval(maxV: number): number {
   return PADDY_INTERVAL_LADDER[PADDY_INTERVAL_LADDER.length - 1];
 }
 
-function fieldCellM(fieldSize: number): number {
+/** The coarse world-lattice cell size (meters) for a `fieldSize` — the unit the
+ * gate-lane spoke-fan metric measures straight runs in. Exported for that metric. */
+export function fieldCellM(fieldSize: number): number {
   const f = Math.min(1, Math.max(0, fieldSize));
   return FIELD_MIN_M + f * (FIELD_MAX_M - FIELD_MIN_M);
 }
@@ -762,12 +774,20 @@ export function generateFarmland(
     if (entries.length > 0 && laneXs.length > 0 && laneYs.length > 0) {
       const junctions: Pt[] = [];
       for (const x of laneXs) for (const y of laneYs) junctions.push([x, y]);
+      const stubMax = GATE_STUB_MAX_CELLS * cell;
       for (const e of entries) {
         const ranked = junctions
           .map((j) => ({ j, d: Math.hypot(j[0] - e[0], j[1] - e[1]) }))
           .sort((a, b) => a.d - b.d || a.j[0] - b.j[0] || a.j[1] - b.j[1]);
         for (const { j } of ranked.slice(0, GATE_LANE_FAN)) {
-          for (const run of clipPolylineToRegion(region, [e, j])) emitLaneRun(run);
+          // The gate lane no longer rays straight across the belt to a distant
+          // junction (the spoke fan). Instead: a short DIAGONAL stub from the gate
+          // heading toward `j` (with deterministic per-lane angle jitter) clipped
+          // at the first field-cell boundary it meets, then AXIS-ALIGNED legs that
+          // FOLLOW the field edges (cell gridlines) to `j`. The stub is the only
+          // diagonal run and it is capped at ~1.5 cells (the metric).
+          const path = gateLanePath(seed, e, j, cell, stubMax);
+          for (const run of clipPolylineToRegion(region, path)) emitLaneRun(run);
         }
       }
     }
@@ -866,4 +886,71 @@ function nearLane(x: number, y: number, laneXs: number[], laneYs: number[], tol:
   for (const lx of laneXs) if (Math.abs(x - lx) < tol) return true;
   for (const ly of laneYs) if (Math.abs(y - ly) < tol) return true;
   return false;
+}
+
+/**
+ * A gate lane routed to READ as a lane, not a ray (plan 035 gate-lanes,
+ * shortlist item 8). From gate entry `e` (on the ring) heading toward junction
+ * `j`:
+ *  1. a short DIAGONAL stub along the jittered heading, CLIPPED at the first
+ *     field-cell gridline (multiple of `cell`) it crosses — the only diagonal run
+ *     of the lane, and capped at `stubMax` so it never crosses more than ~1.5
+ *     cells in a straight line (the deterministic per-lane angle jitter breaks the
+ *     razor fan without lengthening the run);
+ *  2. AXIS-ALIGNED legs that FOLLOW the field edges (the cell gridlines) from that
+ *     first boundary point to `j`: first along the gridline the stub landed on,
+ *     then along `j`'s cross-gridline — so past the stub the lane hugs field
+ *     boundaries instead of cutting across cells.
+ * Pure geometry + a position-hashed jitter angle (zero shared rng draws), so a
+ * farmland with no upstream never calls this and stays byte-identical. Returns a
+ * polyline starting at `e`; the caller clips it to the region.
+ */
+function gateLanePath(seed: number, e: Pt, j: Pt, cell: number, stubMax: number): Pt[] {
+  const dx0 = j[0] - e[0];
+  const dy0 = j[1] - e[1];
+  const len0 = Math.hypot(dx0, dy0);
+  if (len0 < 1e-6) return [e];
+  // Deterministic per-lane angle jitter, keyed on the gate entry + target so
+  // every gate stub gets its own heading (breaks the radial alignment).
+  const jr = mulberry32(hashSeed(seed, "farm-gate-jitter", q(e[0]), q(e[1]), q(j[0]), q(j[1])))();
+  const ang = (jr - 0.5) * 2 * GATE_LANE_JITTER_RAD;
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const ux = (dx0 * ca - dy0 * sa) / len0;
+  const uy = (dx0 * sa + dy0 * ca) / len0;
+  // Distance along the jittered heading to the next vertical / horizontal cell
+  // gridline (the first field boundary the stub meets).
+  const nextGrid = (p: number, d: number): number => {
+    if (Math.abs(d) < 1e-9) return Infinity;
+    const k = d > 0 ? Math.floor(p / cell) + 1 : Math.ceil(p / cell) - 1;
+    return (k * cell - p) / d;
+  };
+  const tX = nextGrid(e[0], ux);
+  const tY = nextGrid(e[1], uy);
+  const tGrid = Math.min(tX, tY);
+  // Stub end: the first gridline crossing, but never past the cap (a shallow
+  // heading that would cross many cells stops at the cap instead).
+  const t = Math.min(tGrid, stubMax);
+  const stubEnd: Pt = [e[0] + ux * t, e[1] + uy * t];
+  const path: Pt[] = [e, stubEnd];
+  // If we actually landed ON a gridline (not the cap), follow field edges to j:
+  // snap onto the exact gridline coordinate, then dog-leg along gridlines to j.
+  if (tGrid <= stubMax && Number.isFinite(tGrid)) {
+    const onVertical = tX <= tY; // landed on x = k·cell
+    if (onVertical) {
+      const gx = Math.round(stubEnd[0] / cell) * cell; // exact vertical gridline
+      const corner: Pt = [gx, e[1] + uy * t]; // snap x; keep the stub's y
+      // Leg 1: along the vertical field edge to j's row; Leg 2: along j's row to j.
+      path[1] = corner;
+      path.push([gx, j[1]]);
+      path.push([j[0], j[1]]);
+    } else {
+      const gy = Math.round(stubEnd[1] / cell) * cell; // exact horizontal gridline
+      const corner: Pt = [e[0] + ux * t, gy]; // snap y; keep the stub's x
+      path[1] = corner;
+      path.push([j[0], gy]);
+      path.push([j[0], j[1]]);
+    }
+  }
+  return path;
 }
