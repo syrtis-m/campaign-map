@@ -1297,3 +1297,27 @@ where file surfaces overlapped); worktree isolation for parallel agents
 **Reversibility:** standard — every change is versioned per 029 (pins + adoption);
 `.mapcache` regeneration proven byte-identical at current versions; the Overlap
 campaign is emitter-regenerable.
+
+## 2026-07-15 — Global terrain is THE terrain system (Jonah ruling, same-day implementation)
+
+**Decision:** Jonah, after the Vailmarch 3D inspection: contour lines must render
+everywhere (not just over mountains); region generators must read relief/landform
+stamps AND the campaign base fBm; "no more mountain polygons, only the global
+terrain system." Implemented same-day in two parallel halves (`bfb7a41`
+generator/invalidation: macroTerrainField = base + mountain/relief/landform,
+per-FEATURE variable-support margins incl. apron reach, scoped-fp terrain bucket
+append-when-present; `c41743f`+`2e2bf2f` host/paint/worker: baked mountain-contour
+retired behind mountain v2, TerrainContourLeaves wired as the global
+`terrain-contour` surface, DEM+contour sampling moved into the worker), then the
+full make-it-look-real shortlist (paint: hillshade masked under settlements, wall
+mass/moat/gate reads, sea water fill, mirror-only road smoothing, label anchors,
+exaggeration 6→3; generators: relief `apron` foothills param, lane-fan taming +
+faubourg band behind farmland v5) and the terrain-native Vailmarch re-emit
+(`ce2b250`: zero mountain polygons, base on, endpoint-keyed organic rings).
+**Byte-stability:** no-stamp/no-base campaigns byte-identical everywhere (029
+prefer-param; goldens untouched except mountain v2 = contour-drop only and
+farmland v5 = adoption gates).
+**Alternatives:** variable-support invalidation had been deferred (fixed-margin
+model); the ruling forced the per-feature resolver design, which landed cleanly.
+**Reversibility:** standard versioned-determinism; the mountain KIND survives as
+a stamp + dressing for existing campaigns.
