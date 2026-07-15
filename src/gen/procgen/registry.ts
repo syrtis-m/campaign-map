@@ -360,12 +360,20 @@ export const RIVER_TILE_GENERATOR_IDS: readonly string[] = contractGids(RIVER_ST
 const riverAlgorithm: ProcgenAlgorithm = {
   id: "river",
   label: "River",
-  // Version 2 (plan 035, river v2): slopeSensitivity default flipped 1→0. A
-  // river that omits the param and crosses a sketched mountain now runs its full
-  // meander (uncoupled) instead of straightening — a byte change for that case,
-  // so the bump is mandatory; pinned-v1 rivers keep the old coupled bytes until
-  // explicit adoption (a mountain-crossing river re-meanders once on adopt).
-  currentVersion: 2,
+  // Version 3 (plan 038 item 3): tributary rank — a Strahler-ish channel-width
+  // response to the SKETCHED spine topology (other river sketches within the
+  // existing CONFLUENCE_SNAP_M reach, so `consumesSketch`/`influenceMargin` are
+  // unchanged). The main half-width steps UP below each tributary junction
+  // (discharge adds, W ∝ √Q), CAPPED at maxHalfWidth so the params-only corridor
+  // is never exceeded; a tributary's mouth is clamped to a narrower main's width.
+  // A river with NO topology (no tributaries, not itself a tributary) is
+  // byte-identical to v2 (golden unchanged); topology present changes bytes ⇒ the
+  // bump gates adoption. (Rule 3 — junction-angle nudge — deferred: it would
+  // deform the generated centerline, risking the corridor/weld invariants.)
+  // Version 2 (plan 035, river v2): slopeSensitivity default flipped 1→0 — a
+  // river omitting the param and crossing a sketched mountain runs its full
+  // meander (uncoupled) instead of straightening.
+  currentVersion: 3,
   appliesTo: ["river"],
   // Stage 0 (HYDROLOGY — the canon strokes; plan 035 moved hydrology BELOW
   // terrain). Produces the `water` channel forest/city read. Consumes NOTHING

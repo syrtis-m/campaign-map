@@ -582,6 +582,41 @@ export function generateRiver(
   // byte-identical, no-mountain campaigns return null (the same shortcut).
   const elev = slopeSens > 0 && params.windiness > 0 ? macroTerrainField(constraints.fabricFeatures) : null;
 
+  // ── Tributary rank (plan 038 item 3): a Strahler-ish channel-width response to
+  //    the sketched spine topology (sketch-only, same-stage legal — reads other
+  //    river SKETCHES, never generated output). Two rules:
+  //     - MAIN WIDTH STEP-UP below junctions: discharge adds where a tributary
+  //       joins (hydraulic geometry W ∝ √Q), so the half-width steps UP at each
+  //       junction fraction — CAPPED at `maxHalfWidth(params)` so the params-only
+  //       corridor bound is never exceeded (a monotone-non-decreasing profile ⇒
+  //       junction width monotonicity).
+  //     - TRIBUTARY MOUTH ≤ MAIN: when THIS river's mouth confluences into a
+  //       wider partner, its own width is clamped to the partner's (a tributary is
+  //       never wider than its main).
+  //    With NO topology (no tributaries, not itself a tributary) `widthAt` is the
+  //    smooth `halfWidthAt` verbatim ⇒ byte-identical to the uncoupled river.
+  //    (Rule 3, junction-angle nudge, is deferred — it would deform the generated
+  //    centerline near the mouth, risking the corridor/weld invariants.)
+  const tributaries = collectTributaries(region.id, constraints.fabricFeatures, spine);
+  const outletPartner = partnerRiverAt(region.id, constraints.fabricFeatures, pts[pts.length - 1]);
+  const mouthCapHalf = outletPartner ? outletPartner.width / 2 : Infinity;
+  const hasTopology = tributaries.length > 0 || outletPartner !== null;
+  const Q0 = params.width * params.width;
+  const maxHalf = maxHalfWidth(params);
+  const widthAt: (f: number) => number = !hasTopology
+    ? (f: number): number => halfWidthAt(params, f)
+    : (f: number): number => {
+        let hw = halfWidthAt(params, f);
+        if (tributaries.length > 0) {
+          let Q = Q0;
+          for (const t of tributaries) if (t.f <= f) Q += t.width * t.width;
+          const stepped = Math.min(maxHalf, Math.sqrt(Q) / 2);
+          if (stepped > hw) hw = stepped;
+        }
+        if (mouthCapHalf < hw) hw = mouthCapHalf;
+        return hw;
+      };
+
   // 1. Per-segment meandered samples (identity-keyed per segment), concatenated
   //    into ONE global centerline. The join vertex appears exactly once (as the
   //    tail sample of the previous segment), so banks and quads bridge every
@@ -650,7 +685,7 @@ export function generateRiver(
   for (let i = 0; i < center.length; i++) {
     const n = centerlineNormal(center, i);
     normals.push(n);
-    const hw = halfWidthAt(params, center[i].f);
+    const hw = widthAt(center[i].f);
     leftBank.push([center[i].x + n[0] * hw, center[i].y + n[1] * hw]);
     rightBank.push([center[i].x - n[0] * hw, center[i].y - n[1] * hw]);
   }
@@ -704,7 +739,7 @@ export function generateRiver(
       const env = Math.sin(Math.PI * Math.pow(t, BRAID_TAPER_POW)) ** 2;
       const lens = amp * env; // lateral bulge of the secondary centerline
       const n = normals[i];
-      const hw = halfWidthAt(params, center[i].f);
+      const hw = widthAt(center[i].f); // tributary step-up feeds the braid too (plan 038 item 3; ≤ maxHalfWidth ⇒ corridor-safe)
       const secHw = hw * SECONDARY_WIDTH_FRAC;
       mainSide.push(side > 0 ? leftBank[i] : rightBank[i]);
       secInner.push([center[i].x + n[0] * side * (lens - secHw), center[i].y + n[1] * side * (lens - secHw)]);
@@ -843,6 +878,48 @@ function partnerRiverAt(selfId: string, feats: FabricFeature[] | undefined, p: P
     }
   }
   return best;
+}
+
+/** A tributary junction ON this river's spine (plan 038 item 3): a downstream
+ * fraction `f` where ANOTHER sketched river's ENDPOINT (its mouth, else its
+ * source) lands within CONFLUENCE_SNAP_M of this spine, carrying that river's
+ * base width — the Strahler-ish input for the main-channel width step-up. Pure
+ * geometry over the raw sketch layer (never generated output); sorted by
+ * (fraction, width, id) so the discharge fold is order-free. */
+interface TribJunction {
+  f: number;
+  width: number;
+}
+function collectTributaries(selfId: string, feats: FabricFeature[] | undefined, spine: NonNullable<ProcgenRegion["spine"]>): TribJunction[] {
+  if (!feats) return [];
+  const rivers = feats
+    .filter((f) => f.properties.kind === "river" && f.geometry.type === "LineString" && String(f.id) !== selfId)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const out: TribJunction[] = [];
+  const spts = spine.points;
+  for (const f of rivers) {
+    const line = (f.geometry as GeoJSON.LineString).coordinates as Pt[];
+    if (line.length < 2) continue;
+    // Prefer the tributary's MOUTH (last vertex, source→mouth convention); fall
+    // back to its source so the junction is direction-agnostic.
+    for (const end of [line[line.length - 1], line[0]]) {
+      let bestD = CONFLUENCE_SNAP_M;
+      let bestArc = -1;
+      for (let i = 0; i + 1 < spts.length; i++) {
+        const nr = nearestOnSeg(end, spts[i], spts[i + 1]);
+        if (nr.d < bestD) {
+          bestD = nr.d;
+          bestArc = spine.cumLen[i] + Math.hypot(nr.pt[0] - spts[i][0], nr.pt[1] - spts[i][1]);
+        }
+      }
+      if (bestArc >= 0) {
+        out.push({ f: spine.totalLen > 0 ? bestArc / spine.totalLen : 0, width: readRiverWidth(f) });
+        break; // one junction per tributary (the nearer endpoint wins)
+      }
+    }
+  }
+  out.sort((a, b) => a.f - b.f || a.width - b.width);
+  return out;
 }
 
 /** Is mouth `p` at open water — inside, or within CONFLUENCE_SNAP_M of, a
