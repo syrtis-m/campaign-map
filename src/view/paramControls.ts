@@ -42,6 +42,10 @@ export type ParamFieldSpec =
   /** A tuple point (city `center`) — driven by the on-map ◆ drag handle, not an
    * inline control. Emitted so the contract test counts the key as covered. */
   | { key: string; label: string; kind: "point" }
+  /** An array param driven by ON-MAP handles, not an inline control (river
+   * `depths` — one depth grip per spine vertex). Like `point`: emitted so the
+   * contract test counts the key as covered, but renders nothing in the panel. */
+  | { key: string; label: string; kind: "handle" }
   /** A field whose zod type this introspector does not know how to render.
    * Never produced today; the contract test fails if one ever appears, which is
    * the whole point (a new param type must extend this module, not slip by). */
@@ -153,6 +157,10 @@ function specForField(key: string, field: ZodFieldLike): ParamFieldSpec {
     }
     case "ZodTuple":
       return { key, label, kind: "point" };
+    case "ZodArray":
+      // On-map-handle-driven (river `depths`): edited via the per-vertex depth
+      // grips, never an inline panel control.
+      return { key, label, kind: "handle" };
     default:
       return { key, label, kind: "unsupported", typeName: d.typeName ?? "unknown" };
   }
@@ -192,7 +200,7 @@ export function renderParamControls(
   rowClass = "campaign-map-sketch-selection-row"
 ): void {
   for (const spec of specs) {
-    if (spec.kind === "point" || spec.kind === "unsupported") continue;
+    if (spec.kind === "point" || spec.kind === "handle" || spec.kind === "unsupported") continue;
     const row = document.createElement("div");
     row.className = rowClass;
     const label = document.createElement("span");

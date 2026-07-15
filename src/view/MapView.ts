@@ -49,7 +49,16 @@ import { TERRAIN_CONTOUR_SOURCE_ID } from "../map/themes/terrainContourLayer";
 import { algorithmForKind, matchingPresetId, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import { RegionProcgenModal } from "./RegionProcgenModal";
 import { paramFieldSpecs, renderParamControls } from "./paramControls";
-import { heightHandleDescriptor, heightParamsFromValue, formatHeightReadout } from "./heightHandle";
+import {
+  heightHandleDescriptor,
+  heightParamsFromValue,
+  formatHeightReadout,
+  riverDepthValues,
+  depthParamsFromValues,
+  formatDepthReadout,
+  DEPTH_HANDLE_MIN,
+  DEPTH_HANDLE_MAX,
+} from "./heightHandle";
 import { normalizeTerrainBlock, type TerrainBlock } from "./terrainSettings";
 import { addConnection, removeConnection, setLocationVisibility } from "../vault/locationOps";
 import { importNotes } from "../vault/importOps";
@@ -1617,6 +1626,17 @@ export class MapView extends ItemView {
         const live = feature.properties.procgen?.params ?? {};
         void this.setRegionParams(featureId, { ...live, ...heightParamsFromValue(feature.properties.kind, value) });
       },
+      // River per-vertex depth grips (plan 040): live readout during the drag;
+      // on release, merge the (monotone-clamped) depths array into the live
+      // params and run the normal setRegionParams path (validate/log/cascade).
+      onDepthDrag: (_featureId, _index, value) => this.showDepthReadout(value),
+      onDepthCommit: (featureId, values) => {
+        this.hideHeightReadout();
+        const feature = this.controller.fabricFeature(featureId);
+        if (!feature) return;
+        const live = feature.properties.procgen?.params ?? {};
+        void this.setRegionParams(featureId, { ...live, ...depthParamsFromValues(values) });
+      },
       onGeometryPreview: (featureId, geometry) => {
         // Preview mode (plan 034-D): per debounce PAUSE of the drag, repaint
         // only the ROOT region as ephemeral render state (no cache, no
@@ -1830,12 +1850,18 @@ export class MapView extends ItemView {
     // Height handle: only for a GENERATED terrain stamp (its params exist).
     const params = feature.properties.procgen?.params;
     const desc = params ? heightHandleDescriptor(feature.properties.kind, params) : null;
+    // River depth grips (plan 040): one per spine vertex, seeded from the
+    // persisted per-vertex depths or the uniform width-derived incision.
+    const vertexCount =
+      feature.geometry.type === "LineString" ? feature.geometry.coordinates.length : 0;
+    const depthVals = params ? riverDepthValues(feature.properties.kind, params, vertexCount) : null;
     this.sketchController?.select({
       id: feature.id,
       geometry: feature.geometry,
       kind: feature.properties.kind,
       center,
       height: desc ? { value: desc.value, min: desc.min, max: desc.max } : null,
+      depths: depthVals ? { values: depthVals, min: DEPTH_HANDLE_MIN, max: DEPTH_HANDLE_MAX } : null,
     });
   }
 
@@ -1903,6 +1929,15 @@ export class MapView extends ItemView {
   private hideHeightReadout(): void {
     this.heightReadoutEl?.remove();
     this.heightReadoutEl = null;
+  }
+
+  /** Live drag readout for a river depth grip — reuses the height readout HUD
+   * (only one grip drags at a time). */
+  private showDepthReadout(value: number): void {
+    if (!this.heightReadoutEl) {
+      this.heightReadoutEl = this.contentEl.createDiv({ cls: "campaign-map-height-readout" });
+    }
+    this.heightReadoutEl.setText(formatDepthReadout(value));
   }
 
   /** Arms the debounced constraint/region regen ("sketch a river, streets

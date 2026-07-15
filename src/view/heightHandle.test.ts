@@ -12,7 +12,14 @@ import {
   parseHeightInput,
   clampHeight,
   HEIGHT_HANDLE_LIMIT,
+  riverDepthValues,
+  clampDepthsMonotone,
+  depthFromDrag,
+  depthParamsFromValues,
+  formatDepthReadout,
+  DEPTH_HANDLE_MAX,
 } from "./heightHandle";
+import { riverCarveDepth } from "../gen/fields/terrain";
 
 describe("heightHandleDescriptor", () => {
   it("relief folds polarity into a signed value (ridge +, valley -)", () => {
@@ -79,5 +86,36 @@ describe("clampHeight / limit", () => {
   it("clamps", () => {
     expect(clampHeight(5000, -HEIGHT_HANDLE_LIMIT, HEIGHT_HANDLE_LIMIT)).toBe(4000);
     expect(clampHeight(-5000, -HEIGHT_HANDLE_LIMIT, HEIGHT_HANDLE_LIMIT)).toBe(-4000);
+  });
+});
+
+describe("river depth grips (plan 040)", () => {
+  it("riverDepthValues seeds each vertex from the uniform width-derived incision", () => {
+    const u = riverCarveDepth(20);
+    expect(riverDepthValues("river", { width: 20 }, 3)).toEqual([u, u, u]);
+  });
+  it("riverDepthValues honours a length-matched persisted array (clamped)", () => {
+    expect(riverDepthValues("river", { width: 20, depths: [40, 90, 5000] }, 3)).toEqual([40, 90, DEPTH_HANDLE_MAX]);
+  });
+  it("riverDepthValues ignores a mismatched array (falls back to uniform)", () => {
+    const u = riverCarveDepth(12);
+    expect(riverDepthValues("river", { depths: [10, 20] }, 3)).toEqual([u, u, u]);
+  });
+  it("riverDepthValues is null for a non-river kind", () => {
+    expect(riverDepthValues("relief", { width: 20 }, 3)).toBeNull();
+    expect(riverDepthValues("river", { width: 20 }, 1)).toBeNull(); // needs ≥ 2 vertices
+  });
+  it("clampDepthsMonotone forces non-decreasing depth downstream (no uphill bed)", () => {
+    expect(clampDepthsMonotone([90, 40, 200, 100])).toEqual([90, 90, 200, 200]);
+    expect(clampDepthsMonotone([10, 20, 30])).toEqual([10, 20, 30]); // already OK
+  });
+  it("depthFromDrag deepens on a DOWNWARD drag, clamps to [0, MAX]", () => {
+    expect(depthFromDrag(90, 100, 4)).toBe(490); // 90 + 100*4
+    expect(depthFromDrag(90, -1000, 4)).toBe(0); // can't cut above ground
+    expect(depthFromDrag(0, 100000, 4)).toBe(DEPTH_HANDLE_MAX);
+  });
+  it("depthParamsFromValues / formatDepthReadout", () => {
+    expect(depthParamsFromValues([90, 120])).toEqual({ depths: [90, 120] });
+    expect(formatDepthReadout(90)).toBe("↓ 90 m");
   });
 });

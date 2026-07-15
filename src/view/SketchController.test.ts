@@ -96,15 +96,19 @@ function makeController(over: Partial<SketchControllerHandlers> = {}) {
   const drafts: { geometry: FabricGeometry; kind: FabricKind }[] = [];
   const heightDrags: { id: string; value: number }[] = [];
   const heightCommits: { id: string; value: number }[] = [];
+  const depthDrags: { id: string; index: number; value: number }[] = [];
+  const depthCommits: { id: string; values: number[] }[] = [];
   const handlers: SketchControllerHandlers = {
     onGeometryEdit: (id, geometry) => edits.push({ id, geometry }),
     onDraftCommit: (geometry, kind) => drafts.push({ geometry, kind }),
     onHeightDrag: (id, value) => heightDrags.push({ id, value }),
     onHeightCommit: (id, value) => heightCommits.push({ id, value }),
+    onDepthDrag: (id, index, value) => depthDrags.push({ id, index, value }),
+    onDepthCommit: (id, values) => depthCommits.push({ id, values }),
     ...over,
   };
   const c = new SketchController(map, "#ff0000", handlers);
-  return { map, c, edits, drafts, heightDrags, heightCommits };
+  return { map, c, edits, drafts, heightDrags, heightCommits, depthDrags, depthCommits };
 }
 
 const RELIEF_LINE: FabricGeometry = { type: "LineString", coordinates: [[0, 0], [4, 0]] };
@@ -271,6 +275,73 @@ describe("SketchController — drag-to-extrude height grip (plan 040, screen-spa
     expect(c.heightGripElement).not.toBeNull();
     c.clearSelection();
     expect(c.heightGripElement).toBeNull();
+  });
+});
+
+const RIVER_LINE: FabricGeometry = { type: "LineString", coordinates: [[0, 0], [4, 0], [8, 0]] };
+function selectRiverWithDepths(c: SketchController, values = [90, 90, 90]) {
+  c.setTool("select");
+  c.select({ id: "RV", geometry: RIVER_LINE, kind: "river", center: null, depths: { values: [...values], min: 0, max: 4000 } });
+}
+
+describe("SketchController — river per-vertex depth grips (plan 040 river depths)", () => {
+  it("grows one depth grip per spine vertex", () => {
+    const { c } = makeController();
+    c.activate("river");
+    selectRiverWithDepths(c);
+    expect(c.depthGripElements).toHaveLength(3);
+    expect(c.depthGripElements[0].style.width).toBe("14px"); // the smaller per-vertex grip
+    expect(c.depthValues).toEqual([90, 90, 90]);
+  });
+
+  it("dragging a vertex grip DOWN deepens that vertex and commits the array on release", () => {
+    const { c, depthDrags, depthCommits } = makeController();
+    c.activate("river");
+    selectRiverWithDepths(c);
+    const grip = c.depthGripElements[1] as unknown as { fire(t: string, e: unknown): void };
+    grip.fire("pointerdown", ptr(200));
+    grip.fire("pointermove", ptr(300)); // 100 px DOWN → +400 m at coarse mpp 4
+    expect(c.depthValues?.[1]).toBe(490);
+    expect(depthDrags.at(-1)).toEqual({ id: "RV", index: 1, value: 490 });
+    grip.fire("pointerup", ptr(300));
+    // Vertex 1 deepened to 490; the monotone clamp pulls the (shallower) mouth
+    // vertex 2 down to match (no vertex's bed sits above the one upstream).
+    expect(depthCommits).toEqual([{ id: "RV", values: [90, 490, 490] }]);
+  });
+
+  it("a vertex dragged SHALLOWER than upstream is clamped back on commit (no uphill flow)", () => {
+    const { c, depthCommits } = makeController();
+    c.activate("river");
+    selectRiverWithDepths(c, [90, 90, 90]);
+    const grip = c.depthGripElements[1] as unknown as { fire(t: string, e: unknown): void };
+    grip.fire("pointerdown", ptr(200));
+    grip.fire("pointermove", ptr(60)); // 140 px UP → −560 m → clamped to min 0
+    expect(c.depthValues?.[1]).toBe(0);
+    grip.fire("pointerup", ptr(60));
+    expect(depthCommits).toEqual([{ id: "RV", values: [90, 90, 90] }]); // shallow middle pulled back to upstream
+  });
+
+  it("a sub-deadzone grab does not commit and snaps back", () => {
+    const { c, depthCommits } = makeController();
+    c.activate("river");
+    selectRiverWithDepths(c, [90, 90, 90]);
+    const grip = c.depthGripElements[0] as unknown as { fire(t: string, e: unknown): void };
+    grip.fire("pointerdown", ptr(200));
+    grip.fire("pointerup", ptr(200)); // no movement
+    expect(depthCommits).toHaveLength(0);
+    expect(c.depthValues).toEqual([90, 90, 90]);
+  });
+
+  it("no depth grips for a non-river shape; deselect tears them down (no leaked DOM)", () => {
+    const { c } = makeController();
+    c.activate("landform");
+    c.setTool("select");
+    c.select({ id: "L1", geometry: POLY, kind: "landform", center: null });
+    expect(c.depthGripElements).toHaveLength(0);
+    selectRiverWithDepths(c);
+    expect(c.depthGripElements).toHaveLength(3);
+    c.clearSelection();
+    expect(c.depthGripElements).toHaveLength(0);
   });
 });
 

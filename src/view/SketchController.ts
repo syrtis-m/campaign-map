@@ -4,7 +4,11 @@ import {
   HEIGHT_MPP_COARSE,
   HEIGHT_MPP_FINE,
   HEIGHT_DRAG_DEADZONE_M,
+  DEPTH_MPP_COARSE,
+  DEPTH_MPP_FINE,
   valueFromDrag,
+  depthFromDrag,
+  clampDepthsMonotone,
   clampHeight,
 } from "./heightHandle";
 
@@ -29,6 +33,10 @@ const HEIGHT_REST_CAP_PX = 100;
 const HEIGHT_GRIP_CORE_PX = 22;
 const HEIGHT_GRIP_RING_PX = 4;
 const HEIGHT_GRIP_OUTER_PX = HEIGHT_GRIP_CORE_PX + HEIGHT_GRIP_RING_PX * 2;
+/** River depth grips are smaller than the single terrain-stamp grip — there is
+ * one PER vertex, so they read as a row of small handles, not one big target. */
+const DEPTH_GRIP_CORE_PX = 14;
+const DEPTH_GRIP_OUTER_PX = DEPTH_GRIP_CORE_PX + HEIGHT_GRIP_RING_PX * 2;
 
 type Pt = [number, number];
 
@@ -55,6 +63,14 @@ export interface SketchControllerHandlers {
    * (`heightParamsFromValue`) and runs the normal `setRegionParams` path
    * (validate → log → cascade → undo). Only a past-deadzone drag reports here. */
   onHeightCommit?(featureId: string, value: number): void;
+  /** Live signed value (m) during a per-vertex river DEPTH-grip drag — the host
+   * shows a readout HUD; no regen until release. */
+  onDepthDrag?(featureId: string, index: number, value: number): void;
+  /** Release-commit of a river's per-vertex carve depths: the FULL (monotone-
+   * clamped) depths array. The host merges it into the live params
+   * (`depthParamsFromValues`) and runs the normal `setRegionParams` path. Only a
+   * past-deadzone drag reports here. */
+  onDepthCommit?(featureId: string, values: number[]): void;
   /** Mid-drag geometry (fired on every move of a grabbed handle; the host
    * debounces). Plan 034-D preview mode: the host paints an EPHEMERAL
    * root-only regen per pause — never cached, never fingerprinted; the full
@@ -76,6 +92,10 @@ interface EditState {
    * the signed elevation the grip represents + its UI bounds; null for kinds
    * without a height handle. */
   height: { value: number; min: number; max: number } | null;
+  /** Per-vertex river carve-depth grips (plan 040 river depths) — one depth (m)
+   * per spine vertex, aligned to `vertices`; null for kinds without depth grips
+   * (everything but a river). */
+  depths: { values: number[]; min: number; max: number } | null;
 }
 
 /**
@@ -127,6 +147,26 @@ export class SketchController {
   /** Camera-move reposition hook (terrain-aware `project` reruns), registered
    * only while a grip exists. */
   private gripMoveHook: (() => void) | null = null;
+
+  // ── River per-vertex depth grips (plan 040 river depths) ──────────────────
+  // A river grows ONE depth grip per spine vertex (unlike the terrain stamps'
+  // single centroid grip). Same screen-space DOM-overlay idiom + `depthFromDrag`
+  // math, generalized to N grips: each is anchored under its vertex and dragged
+  // DOWN to deepen the carve THERE.
+  private depthGrips: HTMLElement[] = [];
+  private depthStems: HTMLElement[] = [];
+  /** Per-grip idle pixel offset BELOW its vertex anchor (tracks depth; mid-drag
+   * the dragged grip follows the cursor 1:1). */
+  private depthOffsetsPx: number[] = [];
+  /** Active depth-grip drag: which vertex, the pointer-Y + value + offset
+   * baselines at grab. Null when no depth drag is in flight. */
+  private depthDrag: { index: number; startClientY: number; startValue: number; startOffsetPx: number } | null = null;
+  /** Camera-move reposition hook for the depth grips, registered only while they
+   * exist. */
+  private depthMoveHook: (() => void) | null = null;
+  /** Per-grip pointerdown closures (each captures its vertex index), kept for
+   * teardown. */
+  private depthDownHandlers: ((e: PointerEvent) => void)[] = [];
   /** Set true when a mousedown grabs a handle, so the trailing `click`
    * MapLibre may fire is suppressed (see `consumeInteraction`). Cleared at the
    * start of every mousedown so a stale flag can never silently eat the next
@@ -368,6 +408,7 @@ export class SketchController {
     this.dragVertexIndex = null;
     this.hoverVertexIndex = null;
     this.removeHeightGrip();
+    this.removeDepthGrips();
     this.map.off("mousemove", this.moveHandler);
     this.map.off("mousemove", this.hoverHandler);
     this.map.off("mousedown", this.downHandler);
@@ -431,6 +472,7 @@ export class SketchController {
     kind: FabricKind;
     center?: Pt | null;
     height?: { value: number; min: number; max: number } | null;
+    depths?: { values: number[]; min: number; max: number } | null;
   }): void {
     this.vertices = [];
     this.cursor = null;
@@ -438,13 +480,19 @@ export class SketchController {
     this.hoverVertexIndex = null;
     this.draggingCenter = false;
     this.heightDrag = null;
+    this.depthDrag = null;
+    const vertices = openVertices(feature.geometry);
+    // Depth grips align to the spine vertices; a mismatched persisted array is
+    // ignored upstream (`riverDepthValues`), but guard here too.
+    const depths = feature.depths && feature.depths.values.length === vertices.length ? feature.depths : null;
     this.edit = {
       featureId: feature.id,
       type: feature.geometry.type,
       kind: feature.kind,
-      vertices: openVertices(feature.geometry),
+      vertices,
       center: feature.center ?? null,
       height: feature.height ?? null,
+      depths,
     };
     this.renderDraft();
   }
@@ -468,6 +516,7 @@ export class SketchController {
     this.hoverVertexIndex = null;
     this.draggingCenter = false;
     this.heightDrag = null;
+    this.depthDrag = null;
     this.renderDraft();
   }
 
@@ -695,6 +744,7 @@ export class SketchController {
     const source = this.map.getSource(DRAFT_SOURCE) as GeoJSONSource | undefined;
     source?.setData({ type: "FeatureCollection", features });
     this.syncHeightGrip();
+    this.syncDepthGrips();
   }
 
   // ── Extrude-grip overlay lifecycle ───────────────────────────────────────
@@ -710,17 +760,17 @@ export class SketchController {
     }
   }
 
-  /** Lazily build the grip + dashed stem as absolutely-positioned children of
-   * the map's canvas container (project() space), and start tracking camera
-   * moves. Inline-styled so it needs no stylesheet — the accent core + white
-   * ring reproduce the old circle-radius:11 grip's visual language in 2D. */
-  private ensureHeightGrip(): void {
-    if (this.gripEl) return;
+  /** The shared screen-space grip + dashed-stem DOM pair — the ONE overlay idiom
+   * the terrain-stamp height grip and the river depth grips both use (created as
+   * absolutely-positioned children of the map's canvas container, inline-styled
+   * so no stylesheet is needed; accent core + white ring). `cls` distinguishes
+   * the height grip from a depth grip in the DOM / tests. */
+  private makeGripPair(cls: string): { grip: HTMLElement; stem: HTMLElement } {
     const container = this.map.getCanvasContainer();
     const doc = container.ownerDocument;
 
     const stem = doc.createElement("div");
-    stem.className = "campaign-map-height-stem";
+    stem.className = `campaign-map-${cls}-stem`;
     stem.style.position = "absolute";
     stem.style.width = "0px";
     stem.style.borderLeft = `2px dashed ${this.accent}`;
@@ -728,7 +778,7 @@ export class SketchController {
     stem.style.zIndex = "5";
 
     const grip = doc.createElement("div");
-    grip.className = "campaign-map-height-grip";
+    grip.className = `campaign-map-${cls}-grip`;
     grip.style.position = "absolute";
     grip.style.width = `${HEIGHT_GRIP_CORE_PX}px`;
     grip.style.height = `${HEIGHT_GRIP_CORE_PX}px`;
@@ -736,20 +786,25 @@ export class SketchController {
     grip.style.background = this.accent;
     grip.style.border = `${HEIGHT_GRIP_RING_PX}px solid #ffffff`;
     grip.style.boxSizing = "content-box"; // core stays 22px; ring adds outside
-    grip.style.cursor = "ns-resize"; // the vertical-drag cue, now grip-owned
+    grip.style.cursor = "ns-resize"; // the vertical-drag cue, grip-owned
     grip.style.zIndex = "6";
     grip.style.touchAction = "none"; // pointer capture owns the gesture
-    grip.addEventListener("pointerdown", this.onGripPointerDown);
-    grip.addEventListener("mousedown", this.onGripMouseDown);
 
     container.appendChild(stem);
     container.appendChild(grip);
+    return { grip, stem };
+  }
+
+  /** Lazily build the height grip + dashed stem, and start tracking camera moves
+   * so it stays glued to the stamp (project() is terrain-aware when terrain is
+   * on). */
+  private ensureHeightGrip(): void {
+    if (this.gripEl) return;
+    const { grip, stem } = this.makeGripPair("height");
+    grip.addEventListener("pointerdown", this.onGripPointerDown);
+    grip.addEventListener("mousedown", this.onGripMouseDown);
     this.stemEl = stem;
     this.gripEl = grip;
-
-    // Reproject the anchor on every camera move (pan/zoom/pitch/rotate) and on
-    // render (terrain elevation settling) so the grip stays glued to the stamp
-    // — project() is terrain-aware when terrain is on.
     this.gripMoveHook = () => this.repositionHeightGrip();
     this.map.on("move", this.gripMoveHook);
     this.map.on("render", this.gripMoveHook);
@@ -813,6 +868,176 @@ export class SketchController {
   /** The dashed-stem DOM element (or null) — test seam for the ghost stem. */
   get heightStemElement(): HTMLElement | null {
     return this.stemEl;
+  }
+
+  // ── River depth-grip overlay lifecycle (plan 040 river depths) ────────────
+  // Same idiom as the height grip, one grip PER spine vertex. Dragging a grip
+  // DOWN deepens the carve at that vertex (`depthFromDrag`); release commits the
+  // whole (monotone-clamped) depths array.
+
+  /** Create/position the row of depth grips when a river with depths is
+   * selected; tear them down otherwise. Idempotent — safe every render. */
+  private syncDepthGrips(): void {
+    if (this.active && this.edit?.depths && this.edit.depths.values.length === this.edit.vertices.length) {
+      this.ensureDepthGrips();
+      this.repositionDepthGrips();
+    } else {
+      this.removeDepthGrips();
+    }
+  }
+
+  /** Lazily build one grip + stem per spine vertex and start tracking camera
+   * moves. Each grip's pointerdown captures its vertex index. */
+  private ensureDepthGrips(): void {
+    if (this.depthGrips.length > 0 || !this.edit?.depths) return;
+    const n = this.edit.vertices.length;
+    this.depthOffsetsPx = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      const { grip, stem } = this.makeGripPair("depth");
+      grip.style.width = `${DEPTH_GRIP_CORE_PX}px`;
+      grip.style.height = `${DEPTH_GRIP_CORE_PX}px`;
+      const down = (e: PointerEvent): void => this.onDepthPointerDown(e, i);
+      this.depthDownHandlers[i] = down;
+      grip.addEventListener("pointerdown", down);
+      grip.addEventListener("mousedown", this.onGripMouseDown);
+      this.depthGrips[i] = grip;
+      this.depthStems[i] = stem;
+    }
+    this.depthMoveHook = () => this.repositionDepthGrips();
+    this.map.on("move", this.depthMoveHook);
+    this.map.on("render", this.depthMoveHook);
+  }
+
+  private readonly onDepthPointerDown = (e: PointerEvent, index: number): void => {
+    if (!this.edit?.depths || !this.depthGrips[index]) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const grip = this.depthGrips[index];
+    try {
+      grip.setPointerCapture(e.pointerId);
+    } catch {
+      /* headless mock has no capture — the delta math still runs */
+    }
+    this.depthDrag = {
+      index,
+      startClientY: e.clientY,
+      startValue: this.edit.depths.values[index],
+      startOffsetPx: this.depthOffsetsPx[index] ?? 0,
+    };
+    grip.addEventListener("pointermove", this.onDepthPointerMove);
+    grip.addEventListener("pointerup", this.onDepthPointerUp);
+    grip.addEventListener("pointercancel", this.onDepthPointerUp);
+    this.map.dragPan.disable();
+  };
+
+  private readonly onDepthPointerMove = (e: PointerEvent): void => {
+    if (!this.depthDrag || !this.edit?.depths) return;
+    const { index } = this.depthDrag;
+    const dyDown = e.clientY - this.depthDrag.startClientY; // down = deeper
+    const mpp = e.shiftKey ? DEPTH_MPP_FINE : DEPTH_MPP_COARSE;
+    const v = depthFromDrag(this.depthDrag.startValue, dyDown, mpp);
+    this.edit.depths.values[index] = v;
+    this.depthOffsetsPx[index] = this.depthDrag.startOffsetPx + dyDown; // grip follows cursor 1:1
+    this.repositionDepthGrips();
+    this.handlers.onDepthDrag?.(this.edit.featureId, index, v);
+  };
+
+  private readonly onDepthPointerUp = (e: PointerEvent): void => {
+    if (!this.depthDrag) return;
+    const { index, startValue } = this.depthDrag;
+    this.depthDrag = null;
+    const grip = this.depthGrips[index];
+    if (grip) {
+      try {
+        grip.releasePointerCapture(e.pointerId);
+      } catch {
+        /* headless mock */
+      }
+      grip.removeEventListener("pointermove", this.onDepthPointerMove);
+      grip.removeEventListener("pointerup", this.onDepthPointerUp);
+      grip.removeEventListener("pointercancel", this.onDepthPointerUp);
+    }
+    this.map.dragPan.enable();
+    if (this.edit?.depths) {
+      const v = this.edit.depths.values[index];
+      if (Math.abs(v - startValue) >= HEIGHT_DRAG_DEADZONE_M) {
+        // Monotone-clamp on commit: no vertex's (flat-reference) bed sits higher
+        // than the one upstream — the UI half of the downhill guarantee.
+        const clamped = clampDepthsMonotone(this.edit.depths.values);
+        this.edit.depths.values = clamped;
+        this.handlers.onDepthCommit?.(this.edit.featureId, clamped.slice());
+      } else {
+        this.edit.depths.values[index] = startValue; // deadzone: treat as a click
+      }
+    }
+    this.repositionDepthGrips();
+  };
+
+  /** Place each depth grip BELOW its vertex by its depth (screen px), and
+   * stretch the dashed stem from the vertex down to it. Idle offset tracks the
+   * depth; mid-drag the dragged grip follows the cursor. */
+  private repositionDepthGrips(): void {
+    if (!this.edit?.depths || this.depthGrips.length === 0) return;
+    const values = this.edit.depths.values;
+    for (let i = 0; i < this.depthGrips.length; i++) {
+      const grip = this.depthGrips[i];
+      const stem = this.depthStems[i];
+      const vertex = this.edit.vertices[i];
+      if (!grip || !stem || !vertex) continue;
+      const anchor = this.map.project(vertex);
+      if (!this.depthDrag || this.depthDrag.index !== i) {
+        this.depthOffsetsPx[i] = clampHeight(values[i] / DEPTH_MPP_COARSE, 0, HEIGHT_REST_CAP_PX);
+      }
+      const offset = this.depthOffsetsPx[i] ?? 0;
+      const gripX = anchor.x;
+      const gripY = anchor.y + offset; // +offset = BELOW (a downward cut)
+      const half = DEPTH_GRIP_OUTER_PX / 2;
+      grip.style.left = `${gripX - half}px`;
+      grip.style.top = `${gripY - half}px`;
+      stem.style.left = `${gripX - 1}px`;
+      stem.style.top = `${Math.min(anchor.y, gripY)}px`;
+      stem.style.height = `${Math.abs(gripY - anchor.y)}px`;
+    }
+  }
+
+  /** Remove every depth grip + stem, unwire listeners, re-enable dragPan if a
+   * drag was mid-flight — no leaked DOM/handlers on deselect/teardown. */
+  private removeDepthGrips(): void {
+    if (this.depthMoveHook) {
+      this.map.off("move", this.depthMoveHook);
+      this.map.off("render", this.depthMoveHook);
+      this.depthMoveHook = null;
+    }
+    if (this.depthDrag) {
+      this.map.dragPan.enable();
+      this.depthDrag = null;
+    }
+    for (let i = 0; i < this.depthGrips.length; i++) {
+      const grip = this.depthGrips[i];
+      if (!grip) continue;
+      const down = this.depthDownHandlers[i];
+      if (down) grip.removeEventListener("pointerdown", down);
+      grip.removeEventListener("mousedown", this.onGripMouseDown);
+      grip.removeEventListener("pointermove", this.onDepthPointerMove);
+      grip.removeEventListener("pointerup", this.onDepthPointerUp);
+      grip.removeEventListener("pointercancel", this.onDepthPointerUp);
+      grip.remove();
+      this.depthStems[i]?.remove();
+    }
+    this.depthGrips = [];
+    this.depthStems = [];
+    this.depthOffsetsPx = [];
+    this.depthDownHandlers = [];
+  }
+
+  /** The depth-grip DOM elements — headless-test seam (one per spine vertex). */
+  get depthGripElements(): HTMLElement[] {
+    return this.depthGrips;
+  }
+
+  /** Current per-vertex depth values (or null) — test/readout seam. */
+  get depthValues(): number[] | null {
+    return this.edit?.depths?.values ?? null;
   }
 }
 

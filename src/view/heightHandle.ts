@@ -10,6 +10,7 @@
  * params (relief: magnitude→`height`, sign→`polarity`; landform: →`target`).
  */
 import type { FabricKind } from "../model/fabric";
+import { riverCarveDepth } from "../gen/fields/terrain";
 
 /** UI bound for a handle drag, in metres. relief.height caps at 4000; landform
  * target is unbounded-finite, so we bound the HANDLE (not the param) to a sane
@@ -108,6 +109,74 @@ export function heightParamsFromValue(kind: FabricKind, value: number): Record<s
 export function formatHeightReadout(value: number): string {
   const sign = value > 0 ? "+" : value < 0 ? "−" : "";
   return `${sign}${Math.abs(Math.round(value))} m`;
+}
+
+// ─── River per-vertex carve depths (plan 040 river depths) ───────────────────
+// A river grows ONE depth grip per spine vertex (not the single centroid grip
+// the terrain stamps use): the GM drags each vertex's grip to set how deep the
+// carve incises THERE, and the carve interpolates between vertices. Deeper = a
+// bigger downward cut, so the grip drags DOWN to deepen (the inverse of the
+// terrain-stamp height grip, which drags UP to raise). Depth is a magnitude
+// (≥ 0), bounded like the height handle so a stray drag can't cut to the mantle.
+
+export const DEPTH_HANDLE_MIN = 0;
+export const DEPTH_HANDLE_MAX = 4000;
+/** metres-per-pixel of a depth drag — finer than the height handle (a channel
+ * incision is tens–hundreds of metres, not thousands); Shift halves it. */
+export const DEPTH_MPP_COARSE = 4;
+export const DEPTH_MPP_FINE = 1;
+
+/** Per-vertex starting depths for a river's grips: the persisted `depths` array
+ * when present and length-matched to the spine, else the uniform width-derived
+ * incision (`riverCarveDepth`) at every vertex — the same value the carve falls
+ * back to, so the grips open exactly where the trench already is. Returns null
+ * for a non-river kind (no depth grips). */
+export function riverDepthValues(
+  kind: FabricKind,
+  params: Record<string, unknown>,
+  vertexCount: number
+): number[] | null {
+  if (kind !== "river" || vertexCount < 2) return null;
+  const width = typeof params.width === "number" && Number.isFinite(params.width) ? params.width : 12;
+  const uniform = riverCarveDepth(width);
+  const persisted = params.depths;
+  if (Array.isArray(persisted) && persisted.length === vertexCount && persisted.every((d) => typeof d === "number" && Number.isFinite(d))) {
+    return (persisted as number[]).map((d) => clampHeight(d, DEPTH_HANDLE_MIN, DEPTH_HANDLE_MAX));
+  }
+  return new Array(vertexCount).fill(clampHeight(uniform, DEPTH_HANDLE_MIN, DEPTH_HANDLE_MAX));
+}
+
+/**
+ * Enforce "no vertex's bed sits higher than the one upstream" on commit — the UI
+ * half of the downhill guarantee (the carve's cumulative-min is the hard half).
+ * With no per-vertex surface data the UI reads bed against a FLAT reference
+ * (bed = −depth), so a non-increasing bed downstream ⇒ a NON-DECREASING depth
+ * downstream: a forward running-max clamps any vertex the GM dragged shallower
+ * than its upstream neighbour back up to it. Flow order is source (index 0) →
+ * mouth (last), the spine's own vertex order. Pure; returns a new array.
+ */
+export function clampDepthsMonotone(values: number[]): number[] {
+  const out = values.slice();
+  for (let i = 1; i < out.length; i++) if (out[i] < out[i - 1]) out[i] = out[i - 1];
+  return out;
+}
+
+/** Map a per-vertex depth-grip drag to a new depth. `dyDown` is the DOWNWARD
+ * pixel delta (current screen-Y minus start — down deepens), clamped to the
+ * depth bounds and rounded to whole metres. */
+export function depthFromDrag(startValue: number, dyDown: number, metresPerPixel: number): number {
+  return clampHeight(Math.round(startValue + dyDown * metresPerPixel), DEPTH_HANDLE_MIN, DEPTH_HANDLE_MAX);
+}
+
+/** Turn the committed per-vertex depths into the river's `depths` param
+ * (merged into the live params by the caller before `setRegionParams`). */
+export function depthParamsFromValues(values: number[]): Record<string, unknown> {
+  return { depths: values.slice() };
+}
+
+/** Live readout string for a depth grip ("↓ 90 m" — a downward incision). */
+export function formatDepthReadout(value: number): string {
+  return `↓ ${Math.abs(Math.round(value))} m`;
 }
 
 /**
