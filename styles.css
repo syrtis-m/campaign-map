@@ -465,6 +465,36 @@
   color: var(--text-faint, #888);
 }
 
+/* Schema-driven procgen param controls (RegionProcgenModal + selection panel). */
+.campaign-map-param-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* Param labels are longer than the terse geometry rows ("Slope sensitivity"),
+   so give them room and let the control take the rest. */
+.campaign-map-param-controls .campaign-map-sketch-selection-label {
+  flex: 0 0 118px;
+}
+
+.campaign-map-param-number,
+.campaign-map-param-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border, #3a3a3a);
+  background: var(--background-primary, #1e1e1e);
+  color: var(--text-normal, #ddd);
+}
+
+.campaign-map-param-toggle {
+  margin-right: auto;
+}
+
 .campaign-map-sketch-procgen-actions {
   display: flex;
   flex-wrap: wrap;

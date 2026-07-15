@@ -1,6 +1,7 @@
 import { App, Modal, Setting } from "obsidian";
 import type { ProcgenAlgorithm } from "../gen/procgen/registry";
 import { matchingPresetId, presetById } from "../gen/procgen/registry";
+import { paramFieldSpecs, renderParamControls } from "./paramControls";
 
 export interface RegionProcgenChoice {
   params: Record<string, unknown>;
@@ -42,8 +43,21 @@ export class RegionProcgenModal extends Modal {
       cls: "setting-item-description",
     });
 
-    // Template (preset) dropdown — the primary control. Selecting a template
-    // seeds `params` from the preset. Pre-selected from the theme default.
+    const specs = paramFieldSpecs(this.algorithm.paramsSchema);
+    // The per-param container is filled AFTER the Template dropdown (below), but
+    // `renderParams` is closed over by the dropdown's onChange, so declare it here.
+    let paramsEl: HTMLDivElement | null = null;
+    const renderParams = (): void => {
+      if (!paramsEl) return;
+      paramsEl.empty();
+      renderParamControls(paramsEl, specs, this.params, (key, value) => {
+        this.params = { ...this.params, [key]: value };
+      });
+    };
+
+    // Template (preset) dropdown — the quick-fill. Selecting a template seeds
+    // `params` from the preset bundle, then re-renders the per-param controls so
+    // they reflect the new values. Pre-selected from the theme default.
     if (this.algorithm.presets.length > 0) {
       const selected = matchingPresetId(this.algorithm, this.params) ?? this.algorithm.presets[0].id;
       new Setting(this.contentEl).setName("Template").addDropdown((dd) => {
@@ -51,10 +65,18 @@ export class RegionProcgenModal extends Modal {
         dd.setValue(selected);
         dd.onChange((id) => {
           const preset = presetById(this.algorithm, id);
-          if (preset) this.params = { ...preset.params };
+          if (preset) {
+            this.params = { ...this.params, ...preset.params };
+            renderParams();
+          }
         });
       });
     }
+    // Per-param controls, derived from the algorithm's zod schema (river
+    // windiness, wall towerSpacing, relief height, …) — every knob beyond the
+    // preset discriminator, so nothing is preset-only anymore.
+    paramsEl = this.contentEl.createDiv({ cls: "campaign-map-param-controls" });
+    renderParams();
 
     new Setting(this.contentEl)
       .addButton((btn) =>

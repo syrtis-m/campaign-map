@@ -44,6 +44,8 @@ import type { BBox } from "../gen/spatialHash";
 import { generateRegionTile, generateTile, type GenerationContext } from "../map/generation/generationService";
 import { algorithmForKind, matchingPresetId, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import { RegionProcgenModal } from "./RegionProcgenModal";
+import { paramFieldSpecs, renderParamControls } from "./paramControls";
+import { normalizeTerrainBlock, type TerrainBlock } from "./terrainSettings";
 import { addConnection, removeConnection, setLocationVisibility } from "../vault/locationOps";
 import { importNotes } from "../vault/importOps";
 import { importGeojson } from "../model/importGeojson";
@@ -266,6 +268,11 @@ export class MapView extends ItemView {
     const themeChanged =
       this.campaign?.config.theme !== campaign.config.theme ||
       this.campaign?.config.basemap !== campaign.config.basemap;
+    // A base-terrain edit (036-D campAmp/seaDatum/grade) moves the composed
+    // elevation field ⇒ the DEM digest changes ⇒ tiles must re-derive. setStyle
+    // is skipped for a terrain-only change, so refresh the DEM explicitly below.
+    const terrainBaseChanged =
+      JSON.stringify(this.campaign?.config.terrain ?? null) !== JSON.stringify(campaign.config.terrain ?? null);
     // The controller drops its own per-campaign state (render store, manifest,
     // fabric) on a genuine switch and tells us so we can reset the view-side
     // (selection / session-path / sketch-mode / camera-replay) state to match.
@@ -300,6 +307,9 @@ export class MapView extends ItemView {
       this.updateTerrainButton();
     }
     if (this.map) this.applyCampaign();
+    // Terrain-only edit (no setStyle rebuild): re-derive the DEM against the new
+    // base params if relief is currently showing.
+    if (terrainBaseChanged && !isFirstApply && !themeChanged) this.refreshTerrainIfEnabled();
     // The ONLY generation on open is replaying the GM's own past requests
     // (cache hit or deterministic regenerate) — pan/zoom never dispatches
     // generators.
@@ -316,6 +326,39 @@ export class MapView extends ItemView {
         }
       );
     }).open();
+  }
+
+  /**
+   * Persist the base-terrain block (036-D campAmp/seaDatum/grade) to campaign
+   * frontmatter behind the settings modal's explicit Apply. `undefined` ⇒ the
+   * block is all-default, so the key is deleted (frontmatter stays minimal). The
+   * config rescan pushes the new terrain into setCampaign, which re-derives the
+   * DEM (the digest changes ⇒ tiles re-fetch). Applying is deliberately explicit
+   * (never a live slider): a base-param change re-derives every DEM tile. Shows a
+   * one-line cost Notice. `applyTerrainSettingsForTest` is the modal-free twin.
+   */
+  async applyTerrainSettings(block: TerrainBlock | undefined): Promise<void> {
+    if (!this.campaign) return;
+    const file = this.app.vault.getAbstractFileByPath(this.campaign.path);
+    if (!(file instanceof TFile)) return;
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      if (block) fm.terrain = { campAmp: block.campAmp, seaDatum: block.seaDatum, grade: block.grade };
+      else delete fm.terrain;
+    });
+    new Notice("Campaign Map: base terrain applied — the elevation surface re-derives (DEM tiles refresh).");
+  }
+
+  /** Headless twin of the settings Apply (the modal would hang CLI): normalize
+   * the raw inputs and persist, no Notice/DOM. Returns the persisted block (or
+   * undefined when it collapsed to all-defaults). */
+  async applyTerrainSettingsForTest(input: {
+    campAmp?: number;
+    seaDatum?: number;
+    grade?: boolean;
+  }): Promise<TerrainBlock | undefined> {
+    const block = normalizeTerrainBlock(input);
+    await this.applyTerrainSettings(block);
+    return block;
   }
 
   // ─── Terrain: hillshade relief + 3D ────────────────────────────────────────
@@ -1881,6 +1924,20 @@ export class MapView extends ItemView {
         void this.setRegionPreset(feature.id, dd.value);
       };
     }
+    // Per-param controls, derived from the algorithm's zod schema — every knob
+    // beyond the preset discriminator (river windiness/slopeSensitivity, wall
+    // towerSpacing/moat, relief height/halfWidth, city grade, …). A change reads
+    // the LIVE params (they may have shifted) and runs the full setRegionParams
+    // commit path (validate → log → regen), then rebuilds the panel.
+    const specs = paramFieldSpecs(algorithm.paramsSchema);
+    const paramsEl = section.createDiv({ cls: "campaign-map-param-controls" });
+    renderParamControls(paramsEl, specs, block.params, (key, value) => {
+      const live = this.controller.fabricFeature(feature.id)?.properties.procgen;
+      if (!live) return;
+      void this.setRegionParams(feature.id, { ...live.params, [key]: value }).then(() =>
+        this.refreshSelectionPanel()
+      );
+    });
     // Center hint: drag the diamond handle to place the plaza.
     // Polygon regions only — spine (line) algorithms have no center concept.
     const isPolygonRegion = feature.geometry.type === "Polygon";
@@ -1912,11 +1969,14 @@ export class MapView extends ItemView {
 
   // ─── Region param actions (panel + test API) ──────────────────────────
 
-  /** Change a region's procgen params (v1: profile) — logs a
-   * `sketch-procgen-set` {before: oldBlock, after: newBlock} and force-regens
-   * (the id-keyed cache carries no params). Seed unchanged. */
+  /** Change a region's procgen params — logs a `sketch-procgen-set`
+   * {before: oldBlock, after: newBlock} and force-regens (the id-keyed cache
+   * carries no params). Seed unchanged. A terrain-bearing kind
+   * (mountain/relief/landform) moves the composed elevation field, so refresh
+   * the DEM if relief is showing (mirrors reroll/regenerate). */
   async setRegionParams(featureId: string, params: Record<string, unknown>): Promise<void> {
-    return this.controller.setRegionParams(featureId, params);
+    await this.controller.setRegionParams(featureId, params);
+    this.refreshTerrainIfEnabled();
   }
 
   /** Apply a template (preset) to a region — the headless twin of the panel's
@@ -1925,7 +1985,8 @@ export class MapView extends ItemView {
    * presets carry no `presetId` (params always match a preset), so the
    * persisted block stays the plain `{ profile }` shape. */
   async setRegionPreset(featureId: string, presetId: string): Promise<void> {
-    return this.controller.setRegionPreset(featureId, presetId);
+    await this.controller.setRegionPreset(featureId, presetId);
+    this.refreshTerrainIfEnabled(); // a mountain/relief/landform template shift moves the DEM
   }
 
   /** Re-roll a region: a NEW seed (`hashSeed(seed, "reroll")`) — the city

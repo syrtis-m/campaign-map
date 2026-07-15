@@ -1,0 +1,262 @@
+/**
+ * Schema-driven procgen param controls.
+ *
+ * The registry gives every algorithm a zod `paramsSchema` (river windiness,
+ * forest density, wall towerSpacing, relief height, …). Historically the GUI
+ * (RegionProcgenModal + the selection panel) exposed only the *preset* dropdown,
+ * so every knob beyond the preset discriminator was engine-reachable but had NO
+ * GUI control. This module derives the controls straight from the zod schema so
+ * a new param can never silently go uncontrolled: `paramFieldSpecs` walks the
+ * schema shape into an ordered list of typed control specs, and the contract
+ * test (`paramControls.test.ts`) asserts every registry algorithm's schema keys
+ * map to a supported spec — a param whose type this introspector can't render
+ * becomes a `kind: "unsupported"` spec that fails the test loudly.
+ *
+ * Pure w.r.t. zod (no DOM at import time) so it is unit-testable headlessly; the
+ * `renderParamControls` DOM helper uses only standard `document` APIs (works in
+ * the Obsidian/Electron renderer) and is never exercised by the contract test.
+ */
+import { z } from "zod";
+
+/** A single rendered control derived from one zod schema field. */
+export type ParamFieldSpec =
+  | {
+      key: string;
+      label: string;
+      kind: "number";
+      min?: number;
+      max?: number;
+      step: number | "any";
+      integer: boolean;
+      default?: number;
+    }
+  | { key: string; label: string; kind: "enum"; options: string[]; default?: string }
+  | { key: string; label: string; kind: "boolean"; default?: boolean }
+  | {
+      key: string;
+      label: string;
+      kind: "choice";
+      options: number[];
+      default?: number;
+    }
+  /** A tuple point (city `center`) — driven by the on-map ◆ drag handle, not an
+   * inline control. Emitted so the contract test counts the key as covered. */
+  | { key: string; label: string; kind: "point" }
+  /** A field whose zod type this introspector does not know how to render.
+   * Never produced today; the contract test fails if one ever appears, which is
+   * the whole point (a new param type must extend this module, not slip by). */
+  | { key: string; label: string; kind: "unsupported"; typeName: string };
+
+/** camelCase → "Sentence case" (`slopeSensitivity` → "Slope sensitivity"). */
+export function humanizeKey(key: string): string {
+  const spaced = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
+}
+
+interface ZodDefLike {
+  typeName?: string;
+  innerType?: { _def: ZodDefLike };
+  defaultValue?: () => unknown;
+  checks?: { kind: string; value?: number; inclusive?: boolean }[];
+  values?: string[];
+  options?: { _def: { typeName?: string; value?: unknown } }[];
+  shape?: () => Record<string, { _def: ZodDefLike }>;
+}
+
+type ZodFieldLike = { _def: ZodDefLike };
+
+/** Strip ZodOptional/ZodDefault/ZodNullable wrappers to the core type, tracking
+ * the default value the outermost ZodDefault (if any) supplies. */
+function unwrap(field: ZodFieldLike): { core: ZodFieldLike; def: unknown } {
+  let node = field;
+  let def: unknown = undefined;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const d = node._def;
+    if (d.typeName === "ZodDefault") {
+      if (def === undefined && typeof d.defaultValue === "function") def = d.defaultValue();
+      node = d.innerType as ZodFieldLike;
+    } else if (d.typeName === "ZodOptional" || d.typeName === "ZodNullable") {
+      node = d.innerType as ZodFieldLike;
+    } else {
+      break;
+    }
+  }
+  return { core: node, def };
+}
+
+function numberStep(min: number | undefined, max: number | undefined, integer: boolean): number | "any" {
+  if (integer) return 1;
+  const span = max !== undefined ? Math.abs(max) : undefined;
+  if (span !== undefined && span <= 1) return 0.05;
+  if (span !== undefined && span <= 5) return 0.1;
+  return "any";
+}
+
+function specForField(key: string, field: ZodFieldLike): ParamFieldSpec {
+  const label = humanizeKey(key);
+  const { core, def } = unwrap(field);
+  const d = core._def;
+  switch (d.typeName) {
+    case "ZodNumber": {
+      const checks = d.checks ?? [];
+      const integer = checks.some((c) => c.kind === "int");
+      let min: number | undefined;
+      let max: number | undefined;
+      for (const c of checks) {
+        if (c.kind === "min" && typeof c.value === "number") min = c.inclusive ? c.value : c.value; // treat exclusive≈inclusive for the input floor
+        if (c.kind === "max" && typeof c.value === "number") max = c.value;
+      }
+      return {
+        key,
+        label,
+        kind: "number",
+        min,
+        max,
+        step: numberStep(min, max, integer),
+        integer,
+        default: typeof def === "number" ? def : undefined,
+      };
+    }
+    case "ZodBoolean":
+      return { key, label, kind: "boolean", default: typeof def === "boolean" ? def : undefined };
+    case "ZodEnum":
+      return {
+        key,
+        label,
+        kind: "enum",
+        options: [...(d.values ?? [])],
+        default: typeof def === "string" ? def : undefined,
+      };
+    case "ZodNativeEnum":
+      return {
+        key,
+        label,
+        kind: "enum",
+        options: Object.values(d as unknown as Record<string, string>).filter((v) => typeof v === "string"),
+        default: typeof def === "string" ? def : undefined,
+      };
+    case "ZodUnion": {
+      const opts = d.options ?? [];
+      const allNumericLiterals =
+        opts.length > 0 && opts.every((o) => o._def.typeName === "ZodLiteral" && typeof o._def.value === "number");
+      if (allNumericLiterals) {
+        return {
+          key,
+          label,
+          kind: "choice",
+          options: opts.map((o) => o._def.value as number),
+          default: typeof def === "number" ? def : undefined,
+        };
+      }
+      return { key, label, kind: "unsupported", typeName: "ZodUnion" };
+    }
+    case "ZodTuple":
+      return { key, label, kind: "point" };
+    default:
+      return { key, label, kind: "unsupported", typeName: d.typeName ?? "unknown" };
+  }
+}
+
+/** Ordered keys of a schema's object shape (registry order). Empty when the
+ * schema is not a ZodObject (defensive — the contract test then reports the
+ * mismatch). */
+export function schemaParamKeys(schema: unknown): string[] {
+  const d = (schema as ZodFieldLike)?._def;
+  if (!d || d.typeName !== "ZodObject" || typeof d.shape !== "function") return [];
+  return Object.keys(d.shape());
+}
+
+/** The ordered control specs for an algorithm's params schema. One spec per
+ * schema field, in declaration order. */
+export function paramFieldSpecs(schema: unknown): ParamFieldSpec[] {
+  const d = (schema as ZodFieldLike)?._def;
+  if (!d || d.typeName !== "ZodObject" || typeof d.shape !== "function") return [];
+  const shape = d.shape();
+  return Object.keys(shape).map((key) => specForField(key, shape[key] as ZodFieldLike));
+}
+
+/**
+ * Render editable controls for `specs` into `parent`, seeded from `params`.
+ * `onChange(key, value)` fires on commit (number: change/blur; enum/bool/choice:
+ * change). `point`/`unsupported` specs render nothing here — a `point` (city
+ * center) is placed via the on-map ◆ handle, and an `unsupported` spec is a
+ * contract-test failure, never shipped. Standard DOM only (no obsidian import),
+ * so the module stays headlessly importable.
+ */
+export function renderParamControls(
+  parent: HTMLElement,
+  specs: ParamFieldSpec[],
+  params: Record<string, unknown>,
+  onChange: (key: string, value: unknown) => void,
+  rowClass = "campaign-map-sketch-selection-row"
+): void {
+  for (const spec of specs) {
+    if (spec.kind === "point" || spec.kind === "unsupported") continue;
+    const row = document.createElement("div");
+    row.className = rowClass;
+    const label = document.createElement("span");
+    label.className = "campaign-map-sketch-selection-label";
+    label.textContent = spec.label;
+    row.appendChild(label);
+
+    if (spec.kind === "number") {
+      const input = document.createElement("input");
+      input.type = "number";
+      input.className = "campaign-map-param-number";
+      if (spec.min !== undefined) input.min = String(spec.min);
+      if (spec.max !== undefined) input.max = String(spec.max);
+      input.step = String(spec.step);
+      const current = params[spec.key];
+      input.value = String(typeof current === "number" ? current : spec.default ?? "");
+      const commit = (): void => {
+        const n = Number.parseFloat(input.value);
+        if (!Number.isFinite(n)) return;
+        let v = n;
+        if (spec.integer) v = Math.round(v);
+        if (spec.min !== undefined) v = Math.max(spec.min, v);
+        if (spec.max !== undefined) v = Math.min(spec.max, v);
+        if (v !== n) input.value = String(v);
+        onChange(spec.key, v);
+      };
+      input.addEventListener("change", commit);
+      row.appendChild(input);
+    } else if (spec.kind === "boolean") {
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.className = "campaign-map-param-toggle";
+      const current = params[spec.key];
+      input.checked = typeof current === "boolean" ? current : spec.default ?? false;
+      input.addEventListener("change", () => onChange(spec.key, input.checked));
+      row.appendChild(input);
+    } else if (spec.kind === "enum") {
+      const select = document.createElement("select");
+      select.className = "campaign-map-param-select";
+      const current = params[spec.key];
+      for (const opt of spec.options) {
+        const o = document.createElement("option");
+        o.value = opt;
+        o.textContent = humanizeKey(opt);
+        if (opt === (typeof current === "string" ? current : spec.default)) o.selected = true;
+        select.appendChild(o);
+      }
+      select.addEventListener("change", () => onChange(spec.key, select.value));
+      row.appendChild(select);
+    } else {
+      // choice: numeric literal union (e.g. growthRings 1|2)
+      const select = document.createElement("select");
+      select.className = "campaign-map-param-select";
+      const current = params[spec.key];
+      for (const opt of spec.options) {
+        const o = document.createElement("option");
+        o.value = String(opt);
+        o.textContent = String(opt);
+        if (opt === (typeof current === "number" ? current : spec.default)) o.selected = true;
+        select.appendChild(o);
+      }
+      select.addEventListener("change", () => onChange(spec.key, Number(select.value)));
+      row.appendChild(select);
+    }
+    parent.appendChild(row);
+  }
+}
