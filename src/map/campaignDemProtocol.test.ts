@@ -5,9 +5,11 @@ import {
   unregisterDemProvider,
   resolveDemTileForTest,
   resolveDemPngForTest,
+  DEM_TILE_RES,
   type DemProvider,
 } from "./campaignDemProtocol";
-import { demTileLattice, type ElevationField } from "../gen/fields";
+import { demTileLattice, perTileTerrainDigest, type ElevationField } from "../gen/fields";
+import { appendDemTile, demTileKey } from "../model/demCache";
 import type { SerializableTerrainInputs } from "../gen/worker/generationWorker";
 
 /**
@@ -97,7 +99,7 @@ describe("campaigndem protocol — retryability (reappear bug)", () => {
     // resolveLattice must RESOLVE (never reject) with the correct main-thread
     // lattice despite every persist attempt throwing.
     const heights = await resolveDemTileForTest(id, 6, 24, 36);
-    expect(heights).toEqual(demTileLattice(FIELD, 6, 24, 36, 256, SCALE, K));
+    expect(heights).toEqual(demTileLattice(FIELD, 6, 24, 36, DEM_TILE_RES, SCALE, K));
     // And it stays re-derivable: a second request also serves correctly.
     const again = await resolveDemTileForTest(id, 6, 24, 36);
     expect(again).toEqual(heights);
@@ -120,7 +122,7 @@ describe("campaigndem protocol — retryability (reappear bug)", () => {
       },
     });
     const heights = await resolveDemTileForTest(id, 6, 24, 36);
-    expect(heights).toEqual(demTileLattice(FIELD, 6, 24, 36, 256, SCALE, K));
+    expect(heights).toEqual(demTileLattice(FIELD, 6, 24, 36, DEM_TILE_RES, SCALE, K));
   });
 
   it("concurrent requests for the same tile dedupe to ONE compute", async () => {
@@ -206,5 +208,46 @@ describe("campaigndem protocol — revisit is a pure serve (retention half)", ()
     // Byte-identical bytes on revisit (same memoized buffer).
     const again = await resolveDemPngForTest(id, 6, 24, 36, encode);
     expect(new Uint8Array(again)).toEqual(new Uint8Array(first));
+  });
+});
+
+describe("campaigndem protocol — DEM_TILE_RES flip (128) + res-mismatch handling", () => {
+  const registered: string[] = [];
+  beforeEach(() => {
+    for (const id of registered.splice(0)) unregisterDemProvider(id);
+  });
+
+  it("serves a res² lattice at the current DEM_TILE_RES", async () => {
+    const id = uid();
+    registered.push(id);
+    registerDemProvider(id, makeProvider(fakeApp()));
+    const heights = await resolveDemTileForTest(id, 6, 24, 36);
+    expect(heights.length).toBe(DEM_TILE_RES * DEM_TILE_RES);
+  });
+
+  it("an OLD record at a different res is a stale miss — re-derives at DEM_TILE_RES (never serves 256 at 128)", async () => {
+    const app = fakeApp();
+    const id = uid();
+    registered.push(id);
+    const provider = makeProvider(app);
+    registerDemProvider(id, provider);
+    // Pre-seed a cache record with the CURRENT per-tile digest but the WRONG res
+    // (a leftover from before the flip) — resolveLattice must reject it on res.
+    const digest = perTileTerrainDigest(INPUTS.features, INPUTS.base, INPUTS.campaignSeed, INPUTS.include.grade, 6, 24, 36, SCALE, K);
+    const wrongRes = (DEM_TILE_RES as number) === 256 ? 128 : 256;
+    await appendDemTile(app, provider.campaignFolder, {
+      key: demTileKey(6, 24, 36),
+      z: 6,
+      x: 24,
+      y: 36,
+      res: wrongRes,
+      k: K,
+      digest,
+      heights: new Array(wrongRes * wrongRes).fill(1234),
+      generatedAt: Date.now(),
+    });
+    const heights = await resolveDemTileForTest(id, 6, 24, 36);
+    expect(heights.length).toBe(DEM_TILE_RES * DEM_TILE_RES); // re-derived, not the seeded stale one
+    expect(heights).toEqual(demTileLattice(FIELD, 6, 24, 36, DEM_TILE_RES, SCALE, K));
   });
 });

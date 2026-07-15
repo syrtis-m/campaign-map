@@ -19,10 +19,15 @@ import { appendDemTile, getDemTile, demTileKey, type DemTile } from "../model/de
  * elevation the mountain sketches already define (no new request surface).
  */
 
-/** DEM raster resolution (px per tile edge). 256 = the terrarium convention;
- * the cached lattice is res² ints. Tunable — the field is smooth, so a coarser
- * lattice would cut cache size at some hillshade crispness. */
-export const DEM_TILE_RES = 256;
+/** DEM raster resolution (px per tile edge). The cached lattice is res² ints, so
+ * per-tile sampling cost scales with res²: 128 samples ~3.8× faster than 256 at a
+ * mild hillshade-crispness cost — Jonah's navigation responsiveness (fewer samples
+ * per DEM tile → tiles appear far sooner on a camera move) outweighs the crispness.
+ * ONE-LINE REVERT to 256 if the hillshade reads too soft. A res change re-derives
+ * cleanly: cached records carry their `res`, and resolveLattice treats a
+ * `cached.res !== DEM_TILE_RES` record as a stale miss, so old 256 records never
+ * serve at 128 (and vice-versa). */
+export const DEM_TILE_RES = 128;
 
 /** What the handler needs per campaign, re-read live on every tile request so a
  * terrain edit is reflected once the source is refreshed. `snapshot()` returns
