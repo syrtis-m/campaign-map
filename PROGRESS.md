@@ -2,7 +2,73 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 COMPLETE (2026-07-15). Plans 020–028 complete.
+## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 + 034 COMPLETE (2026-07-15). Plans 020–028 complete. Next: 035 (stage reorder — preview mode, its ratified precondition, shipped in 034-D).
+
+## Plan 034 — runForwardPass unification (2026-07-15, COMPLETE — headless-only per Jonah 2026-07-14)
+The keystone: the four regen drivers (flush / raw channel / cascadeFromRoot+
+cascadeDownstream / replay) collapse into ONE `markDirty(roots) → runForwardPass()`
+— any edit is a single (stage,id) forward pass; an edit at stage s structurally
+cannot touch stage < s, asserted AT RUNTIME; live editing and campaign-open replay
+share the code path verbatim. Verified Vitest + FakeHost counters only (no live
+gates). 974 fast + 13 fuzz green; +19 tests over the 033 baseline.
+- **[x] 034-A — source nodes at stage −1** (`4a1d932`): dag `Stage` gains −1;
+  `DagNode` carries `sketchKind` (sources) / `consumesSketch`+`influenceMargin`
+  (regions); `hasEdge` unifies SOURCE→REGION (033-C's raw reach as a graph edge)
+  with the region→region produces∩consumes rule. Sources sort first, only feed
+  forward — acyclic by construction (fuzz tier re-proven). A raw edit's dirty set
+  now carries TRANSITIVE dependents (mountain sketch → river → city), which the
+  pre-034 raw channel dropped. `affectedRegionIds`/`regenerateAffectedTiles`
+  DELETED. District sketch-add still dirties nothing (explicit-only stands).
+- **[x] 034-B — the pass** (`2239983`): dirty = downstreamClosure(regions+sources);
+  one scoped-fp pass + the persistent cache view threaded; each dirty region runs
+  ONCE (roots unconditionally; non-roots inert-skip on unchanged fp); staged
+  repaint. RUNTIME ASSERTIONS: stage sequence non-decreasing + no write outside
+  the closure — both throw, both proven live via injected violations
+  (`injectForwardPassViolationForTest`). Cost-weighted cap (cheap 1 / medium 2 /
+  expensive 4, budget 24) bills only genuinely fp-stale deferrable regions; NEVER
+  defers a root. Replay-on-load = the SAME pass: fresh/pinned-old hydrate from
+  cache; MISSING records are protected roots (rm-.mapcache stays harmless);
+  fp-stale-with-cache are deferrable roots. Region roots mint their own −1 source
+  (a procgen wall's raw LINE feeds the city — no stage-4→3 edge could) — closed a
+  live-vs-replay divergence (§3 STOP). Adopt-all = raise all pins (durable,
+  (stage,id) order) then ONE pass (P9 O(k²)→O(k)). Counter invariants standing:
+  runs == dirty count, ONE fp pass, ZERO cache re-reads, repaints == touched
+  stages upstream-first.
+- **[x] 034-C — cap + outdated badge** (`d8f0829`): pendingPass holds exactly the
+  DEFERRED ids; "Apply pending cascade" re-enters the pass with them as
+  deferrable roots (no root re-run). `outdatedRegionIds()` badge surface (029
+  needsAdoption pattern) + panel row w/ inline Apply button + MapView twins.
+  Proven: decline ⇒ ZERO downstream writes (byte-identical record) + badge +
+  Notice; reopen after decline re-derives the deferral from fp staleness alone —
+  ZERO generator runs, stale bytes SERVED (painted, badged, not blanked), bill
+  still applies; apply ⇒ same bytes as an undeferred pass (rm-.mapcache replay
+  equivalence); under budget nothing defers.
+- **[x] 034-D — preview mode** (`41e125f`, the ratified plan-035 precondition):
+  `previewRegionGeometry` recomputes ONLY the root against the DRAFT shape and
+  clips straight into the render store — no cache append, no fp stamp, no
+  downstream, no log (byte-identical .mapcache across a 3-pause simulated drag);
+  release = the ordinary commit → ONE full pass; kill-before-release leaves no
+  durable trace (reopen: zero runs); `cancelRegionPreview` restores durable paint
+  by pure re-clip (draft-range orphan tiles cleared first). SketchController
+  dragMove → MapView 250 ms trailing debounce; release cancels the preview timer.
+  Pinned-old regions refuse preview (consent stays at commit). Per-stage debounce
+  tiers / closure truncation NOT added (rejected, research §6.6).
+- **[x] 034-E — adopt-all O(k) proof** (`<this commit>`): pinned
+  mountain→river→city k-chain ⇒ adopt-all runs each region EXACTLY once in
+  (stage,id) order, 3 runs total (pre-034: 3+2+1), ONE fp pass; pins raised;
+  reopen replays with zero runs.
+- **STOP conditions honored**: no live-vs-replay special cases (the one
+  divergence found — region raw geometry as a constraint — was fixed
+  structurally, not papered); the cap never defers the root; explicit-only
+  untouched (a pass only RE-generates; sources never first-time-generate).
+- **Judgment calls for Jonah's eyes**: cost budget 24 + weights 1/2/4 (test
+  override exists; retune freely); deferral Notice wording + panel "Outdated —
+  an upstream edit is waiting to be applied here" + Apply button; on a
+  cost-deferred replay a pinned-old fp-stale region now serves its pinned bytes
+  with the OUTDATED badge instead of blanking (visible-not-silent, only in the
+  storm-suppression path); source→region reach uses the DAG's rectangular
+  expandBBox vs 033's Euclidean bboxGap — a safe over-approximation (corner
+  cases over-invalidate; byte-identical + deterministic, perf-only).
 
 ## Plan 033 — consumption-aware invalidation (2026-07-15, COMPLETE — headless-only per Jonah 2026-07-14)
 Declare per algorithm which raw sketch KINDS it reads and how far they reach, then

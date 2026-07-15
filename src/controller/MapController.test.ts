@@ -447,6 +447,67 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
     expect(fabric.features.find((f) => f.id === b.featureId)!.properties.procgen!.version).toBe(3);
     expect(await host.controller.adoptAllRegions()).toBe(0); // idempotent
   });
+
+  // ─── Plan 034-E — adopt-all as ONE pass (P9: O(k²) → O(k)) ────────────────
+  it("adopt-all over a pinned mountain→river→city chain runs each region EXACTLY once (O(k), not O(k²))", async () => {
+    const host = cityHost();
+    // The k-chain: mountain (stage 0) feeding a river (stage 1, crosses the
+    // mountain) feeding a city (stage 3, the river's mouth is inside the ring).
+    const mtn = await host.controller.createRegionForTest(
+      [
+        [-34, -22],
+        [-14, -22],
+        [-14, -4],
+        [-34, -4],
+      ],
+      "mountain",
+      { terrain: "alpine", amplitude: 0.4, roughness: 0.4 },
+      "__aa_mtn__",
+      "mountain"
+    );
+    const river = await host.controller.createSpineForTest(
+      [
+        [-40, -26],
+        [-24, -13],
+        [6, -14],
+        [24, -14],
+      ],
+      "river",
+      "river",
+      { windiness: 0.6, braiding: 0, width: 18, widthGrowth: 0, braidBias: 0, slopeSensitivity: 1 },
+      "__aa_river__"
+    );
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "__aa_city__");
+    // The chain is real: mountain→river and river→city DAG edges exist.
+    host.controller.overrideCurrentVersionForTest("mountain", 2);
+    host.controller.overrideCurrentVersionForTest("river", 2);
+    host.controller.overrideCurrentVersionForTest("city", 2);
+
+    const runsBefore = host.controller.generatorRunCount;
+    const fpBefore = host.controller.fingerprintPassCount;
+    const count = await host.controller.adoptAllRegions();
+    expect(count).toBe(3);
+
+    // ONE pass over the union closure: each region regenerated EXACTLY once, in
+    // (stage, id) order — 3 runs total, not the pre-034 per-adoption cascade's
+    // 3+2+1. One fingerprint pass for the whole adopt-all.
+    expect(host.controller.generatorRunCount - runsBefore).toBe(3);
+    expect(host.controller.forceRegenOrder).toEqual([mtn.featureId, river.featureId, city.featureId]);
+    expect(host.controller.fingerprintPassCount - fpBefore).toBe(1);
+
+    // All pins raised; the adopted state is fingerprint-fresh (reopen: 0 runs).
+    const fabric = await host.fabric();
+    for (const id of [mtn.featureId, river.featureId, city.featureId]) {
+      expect(fabric.features.find((f) => f.id === id)!.properties.procgen!.version).toBe(2);
+    }
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    reopened.controller.overrideCurrentVersionForTest("mountain", 2);
+    reopened.controller.overrideCurrentVersionForTest("river", 2);
+    reopened.controller.overrideCurrentVersionForTest("city", 2);
+    await reopened.controller.replayGeneratedManifest();
+    expect(reopened.controller.generatorRunCount).toBe(0);
+  });
 });
 
 describe("MapController — clear + undo lifecycle", () => {
