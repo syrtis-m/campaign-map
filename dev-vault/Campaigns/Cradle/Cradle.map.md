@@ -21,9 +21,10 @@ SANCTUARY at the heart, and a lone LIGHTHOUSE on its own rock off the SW tip.
 
 Terrain is GLOBAL: a sea plate at the datum, the island a low ~30 m plateau
 bounded by an organic coast ring on top of it (higher priority ⇒ it wins inside
-the shore), the islet a smaller plateau, and six highland RELIEF ridge stamps
-(the tall North Heights, the Portside and central Spine ridges, the SW
-Ridgeback, the West Hills, and House Hill) lifting the local relief. There are
+the shore), the islet a smaller plateau, and eight highland RELIEF ridge stamps
+(the tall, wide North Heights dominating the NE quarter with its shoulder spur,
+the Portside and central Spine ridges, the North Downs, the SW Ridgeback, the
+West Hills, and House Hill) lifting bold local relief. There are
 NO rivers. Built-up fabric — the two landings, the Apartment Blocks, and the
 Compound — is city procgen driven by the sketched district rings; the dead-wood
 Scrublands fill the wild north-centre.

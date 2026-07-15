@@ -86,9 +86,35 @@ function closed(open: Pt[]): Pt[] {
   return [...open.map((p): Pt => [p[0], p[1]]), [open[0][0], open[0][1]]];
 }
 
+/** Per-boundary jitter strength. `ampFrac`/`ampCap` bound the perpendicular
+ * displacement (meters); `segLen`/`maxSeg` set how many intermediate vertices an
+ * edge gets. Coasts stay gentle (a hand-drawn wobble on an already-curved shore);
+ * DISTRICT rings push much harder (their corners are axis-aligned rectangles, so
+ * a timid wobble still reads as a postage stamp — they need a bold, clearly
+ * organic deviation to shed the rectangle). All values are fixed constants ⇒
+ * deterministic. */
+interface JitterProfile {
+  ampFrac: number;
+  ampCap: number;
+  segLen: number;
+  maxSeg: number;
+}
+/** Coastlines / forest / islet: a light hand-drawn wobble over already-organic
+ * corner chains (delta 4 — a touch more character than the old 0.05/24 pair). */
+const COAST_JITTER: JitterProfile = { ampFrac: 0.06, ampCap: 42, segLen: 240, maxSeg: 6 };
+/** District rings + the walls that trace them (delta 3 — Vailmarch endpoint-keyed
+ * idiom pushed hard so a rectangle reads as an organic settlement ring). */
+const DISTRICT_JITTER: JitterProfile = { ampFrac: 0.09, ampCap: 75, segLen: 220, maxSeg: 5 };
+
+function jitterProfileFor(kind: FabricKind): JitterProfile {
+  return kind === "district" ? DISTRICT_JITTER : COAST_JITTER;
+}
+
 /** Deterministic jitter points along edge a→b (endpoints EXCLUDED), keyed on the
- * canonical (endpoint-sorted) edge so a shared edge yields identical vertices. */
-function jitterEdge(a: Pt, b: Pt): Pt[] {
+ * canonical (endpoint-sorted) edge so a shared edge yields identical vertices.
+ * Strength comes from `profile`; the rng seed keys ONLY on the endpoints (never
+ * the profile) so a shared district/wall edge still matches. */
+function jitterEdge(a: Pt, b: Pt, profile: JitterProfile): Pt[] {
   const forward = a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]);
   const p0 = forward ? a : b;
   const p1 = forward ? b : a;
@@ -96,8 +122,8 @@ function jitterEdge(a: Pt, b: Pt): Pt[] {
   const dy = p1[1] - p0[1];
   const len = Math.hypot(dx, dy);
   if (len < 1) return [];
-  const segments = Math.max(2, Math.min(5, Math.round(len / 280)));
-  const amp = Math.min(len * 0.05, 24); // meters; bounded so premises hold
+  const segments = Math.max(2, Math.min(profile.maxSeg, Math.round(len / profile.segLen)));
+  const amp = Math.min(len * profile.ampFrac, profile.ampCap); // meters; bounded so premises hold
   const ux = -dy / len;
   const uy = dx / len;
   const rng = mulberry32(hashSeed(CRADLE_CAMPAIGN_SEED, "cradle-edge", p0[0], p0[1], p1[0], p1[1]));
@@ -111,15 +137,15 @@ function jitterEdge(a: Pt, b: Pt): Pt[] {
   return forward ? pts : pts.reverse();
 }
 
-/** The irregular OPEN ring of a corner list. */
-function irregularOpenRing(corners: Pt[]): Pt[] {
+/** The irregular OPEN ring of a corner list, jittered at `profile` strength. */
+function irregularOpenRing(corners: Pt[], profile: JitterProfile = COAST_JITTER): Pt[] {
   const out: Pt[] = [];
   const n = corners.length;
   for (let i = 0; i < n; i++) {
     const a = corners[i];
     const b = corners[(i + 1) % n];
     out.push([a[0], a[1]]);
-    for (const p of jitterEdge(a, b)) out.push(p);
+    for (const p of jitterEdge(a, b, profile)) out.push(p);
   }
   return out;
 }
@@ -169,12 +195,14 @@ function oppositeWinding(ring: Pt[], outerSign: number): Pt[] {
 // indented W coast, the NW arm, back to the N point.
 const ISLAND_COAST: NPt[] = [
   [45, 17], // N point (rounded north shore)
+  [48.5, 17], // extra N-shore vertex (hand-drawn density)
   [52, 17.5],
   [59, 19],
   [66, 22],
   [72, 26],
   [77, 31],
   [81, 36],
+  [83.5, 39], // extra E-bulge vertex
   [85, 42], // E bulge — Industrial Port
   [84, 47],
   [81, 51],
@@ -184,9 +212,10 @@ const ISLAND_COAST: NPt[] = [
   [78, 63],
   [81, 69],
   [78, 74],
-  [72, 78], // SE peninsula tip
+  [72, 78], // SE peninsula tip (fat)
   [65, 77],
   [58, 76],
+  [54, 76.5], // extra S-coast vertex
   [51, 77],
   [44, 78],
   [38, 76],
@@ -201,17 +230,29 @@ const ISLAND_COAST: NPt[] = [
   [23, 64],
   [28, 58],
   [30, 55], // peninsula base (upper)
-  [27, 51],
-  [23, 48], // indented W coast (bay)
-  [20, 44],
-  [22, 40],
-  [18, 36],
-  [15, 31], // NW arm tip
-  [19, 29],
+  // ── Gentle DOUBLE-BAY W coast (delta 2: was a sharp spiky wedge). Two shallow
+  //    eastward scallops separated by a soft, blunt headland — smooth, no zigzag.
+  [28, 52],
+  [25.5, 49.5], // headland 1 (juts gently west)
+  [24, 47],
+  [24.5, 44.5], // south bay head — cuts gently EAST
+  [23, 42],
+  [21, 40], // mid headland (blunt, not a spike)
+  [21.5, 37.5], // north bay head — gentle east
+  [20, 35.5],
+  [17.5, 33],
+  // ── Blunt NW arm (delta 2: was a single sharp spike). A tight cluster of near
+  //    vertices rounds the tip so it reads as a stubby arm, not a needle.
+  [15.5, 31],
+  [14.5, 29.5], // arm tip
+  [15, 28],
+  [17, 27.5],
+  [20, 28], // arm shoulder climbing back east
   [24, 29],
-  [29, 31],
-  [33, 28],
-  [38, 23],
+  [28, 30.5],
+  [31.5, 29],
+  [35, 26],
+  [38.5, 22.5],
   [42, 19],
 ];
 /** The separate islet holding the Lighthouse, just SW of the peninsula tip. */
@@ -236,12 +277,18 @@ const SEA_RECT: NPt[] = [
   [-3, 103],
 ];
 
-// Highland relief spines (ridge add-stamps over the island plateau).
-const NE_RIDGE: NPt[] = [[58, 33], [65, 26], [73, 22]]; // NE mass — tallest
+// Highland relief spines (ridge add-stamps over the island plateau). Heights and
+// half-widths are deliberately large: the reference reads as BOLD contour texture
+// across every highland, and the NE mass DOMINATES the island's NE quarter — so
+// each spine gets a wide apron+halfWidth so its contour band spreads visibly at
+// overview, not a tight knot of lines around a short spine.
+const NE_RIDGE: NPt[] = [[55, 35], [61, 29], [67, 25], [73, 22]]; // NE mass — tallest, widest
+const NE_SPUR: NPt[] = [[57, 41], [63, 37], [69, 34]]; // minor shoulder S of the North Heights (texture)
 const E_RIDGE: NPt[] = [[72, 57], [76, 52], [79, 49]]; // E ridge S of the port
 const CENTRAL_S_RIDGE: NPt[] = [[47, 66], [53, 62], [59, 59]];
+const NORTH_DOWNS: NPt[] = [[39, 33], [45, 31], [51, 32]]; // minor N-central spur under the scrub (texture)
 const SW_SPINE: NPt[] = [[29, 57], [22, 65], [14, 74], [10, 78]]; // SW-peninsula spine
-const NW_HILLS: NPt[] = [[22, 33], [28, 29], [34, 27]];
+const NW_HILLS: NPt[] = [[21, 34], [27, 30], [33, 27]];
 const CENTRAL_HILL: NPt[] = [[38, 47], [41, 44], [44, 43]];
 
 // Sparse dead-wood scrub field.
@@ -319,7 +366,19 @@ const DEFS: RegionDef[] = [
     shape: "line",
     coords: NE_RIDGE,
     algorithm: "relief",
-    params: { polarity: "ridge", height: 500, halfWidth: 500, apron: 400 },
+    // Tallest + widest mass; its halfWidth+apron (~1900 m each flank) spreads a
+    // bold contour band across the whole NE quarter.
+    params: { polarity: "ridge", height: 900, halfWidth: 1100, apron: 850 },
+    presetId: "ridge",
+  },
+  {
+    id: "cradle-relief-ne-spur",
+    kind: "relief",
+    name: "Heights Shoulder",
+    shape: "line",
+    coords: NE_SPUR,
+    algorithm: "relief",
+    params: { polarity: "ridge", height: 420, halfWidth: 560, apron: 460 },
     presetId: "ridge",
   },
   {
@@ -329,7 +388,7 @@ const DEFS: RegionDef[] = [
     shape: "line",
     coords: E_RIDGE,
     algorithm: "relief",
-    params: { polarity: "ridge", height: 300, halfWidth: 350, apron: 250 },
+    params: { polarity: "ridge", height: 520, halfWidth: 600, apron: 480 },
     presetId: "ridge",
   },
   {
@@ -339,7 +398,17 @@ const DEFS: RegionDef[] = [
     shape: "line",
     coords: CENTRAL_S_RIDGE,
     algorithm: "relief",
-    params: { polarity: "ridge", height: 350, halfWidth: 400, apron: 300 },
+    params: { polarity: "ridge", height: 620, halfWidth: 700, apron: 560 },
+    presetId: "ridge",
+  },
+  {
+    id: "cradle-relief-downs",
+    kind: "relief",
+    name: "The North Downs",
+    shape: "line",
+    coords: NORTH_DOWNS,
+    algorithm: "relief",
+    params: { polarity: "ridge", height: 340, halfWidth: 540, apron: 440 },
     presetId: "ridge",
   },
   {
@@ -349,7 +418,7 @@ const DEFS: RegionDef[] = [
     shape: "line",
     coords: SW_SPINE,
     algorithm: "relief",
-    params: { polarity: "ridge", height: 250, halfWidth: 220, apron: 180 },
+    params: { polarity: "ridge", height: 430, halfWidth: 420, apron: 360 },
     presetId: "ridge",
   },
   {
@@ -359,7 +428,7 @@ const DEFS: RegionDef[] = [
     shape: "line",
     coords: NW_HILLS,
     algorithm: "relief",
-    params: { polarity: "ridge", height: 250, halfWidth: 350, apron: 250 },
+    params: { polarity: "ridge", height: 440, halfWidth: 620, apron: 500 },
     presetId: "ridge",
   },
   {
@@ -369,7 +438,7 @@ const DEFS: RegionDef[] = [
     shape: "line",
     coords: CENTRAL_HILL,
     algorithm: "relief",
-    params: { polarity: "ridge", height: 150, halfWidth: 250, apron: 180 },
+    params: { polarity: "ridge", height: 300, halfWidth: 440, apron: 360 },
     presetId: "ridge",
   },
   // ── FOREST: the dead-wood scrub field ───────────────────────────────────────
@@ -445,10 +514,14 @@ function metersOf(id: string): Pt[] {
   const def = DEF_BY_ID.get(id);
   if (!def) throw new Error(`cradle: unknown def "${id}"`);
   const corners = def.coords.map(N);
-  if (def.shape === "poly") return def.raw ? corners : irregularOpenRing(corners);
+  if (def.shape === "poly") return def.raw ? corners : irregularOpenRing(corners, jitterProfileFor(def.kind));
   if (def.traces) {
+    // Trace the district's OWN jittered ring (same profile ⇒ the wall follows the
+    // organic settlement boundary), then inset toward the centroid so arterials
+    // cross it transversally at gatehouses.
     const traced = DEF_BY_ID.get(def.traces)!;
-    return closed(scaledTowardCentroid(irregularOpenRing(traced.coords.map(N)), WALL_TRACE_INSET));
+    const ring = irregularOpenRing(traced.coords.map(N), jitterProfileFor(traced.kind));
+    return closed(scaledTowardCentroid(ring, WALL_TRACE_INSET));
   }
   return corners;
 }
@@ -704,9 +777,10 @@ SANCTUARY at the heart, and a lone LIGHTHOUSE on its own rock off the SW tip.
 
 Terrain is GLOBAL: a sea plate at the datum, the island a low ~30 m plateau
 bounded by an organic coast ring on top of it (higher priority ⇒ it wins inside
-the shore), the islet a smaller plateau, and six highland RELIEF ridge stamps
-(the tall North Heights, the Portside and central Spine ridges, the SW
-Ridgeback, the West Hills, and House Hill) lifting the local relief. There are
+the shore), the islet a smaller plateau, and eight highland RELIEF ridge stamps
+(the tall, wide North Heights dominating the NE quarter with its shoulder spur,
+the Portside and central Spine ridges, the North Downs, the SW Ridgeback, the
+West Hills, and House Hill) lifting bold local relief. There are
 NO rivers. Built-up fabric — the two landings, the Apartment Blocks, and the
 Compound — is city procgen driven by the sketched district rings; the dead-wood
 Scrublands fill the wild north-centre.
