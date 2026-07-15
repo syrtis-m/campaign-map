@@ -79,9 +79,10 @@ deleted a persisted shape. Fix: those transitions route through the new
 and only discards genuinely too-short drafts; `Esc` stays the one deliberate discard. Undo semantics
 unchanged. Headless twin: `src/view/SketchController.test.ts` (mock-map idiom; 8 tests).
 
-**Phase 1 — drag-to-extrude height handle (the core).** A selected `relief`/`landform` grows a
-distinct **height handle** on the map (at the geometry midpoint/centroid, drawn UNLIKE a vertex —
-an "extrude" grip). Dragging it vertically changes the magnitude param live:
+**Phase 1 — drag-to-extrude height handle (the core). LANDED, commit `7fe6063`.** A selected
+`relief`/`landform` grows a distinct **height handle** on the map (at the geometry
+midpoint/centroid, drawn UNLIKE a vertex — an "extrude" grip). Dragging it vertically changes the
+magnitude param live:
 - `relief` → `height` (and, past the zero-crossing, flips `polarity` ridge↔valley — the C:S
   raise/lower-with-one-tool feel; **decision to confirm with Jonah**, §4).
 - `landform` → `target` (signed; no polarity).
