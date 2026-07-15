@@ -1,5 +1,27 @@
 # OVERNIGHT RUN — pipeline arc 031→039 (2026-07-14 → 2026-07-15)
 
+## AFTERNOON SESSION (2026-07-15): rendering fixes + land-shaping UX + perf — ALL PUSHED
+- **Ghost-fabric fixes**: `4705e84` (delete/unpaint used static stage vs params-aware paint stage
+  — urban-park survived deletion; preview path had the same hole) + `0579d4c` (stage MIGRATION on
+  variety flip 2↔4 now repaints BOTH stages; failing-first proven both directions).
+- **Perf (Jonah's "slow 3D / slow with no generation")**: measured — river carve = 79% of each
+  961 ms DEM tile; and dem.jsonl was re-parsed WHOLE per tile request (91 ms → 2+ s as it grows —
+  the smoking gun). Fixed the latter (`d1ddd15`: session-persistent view + compact-on-load, 20
+  requests = 1 read). Disproven: field-rebuild-per-job (1%), payload clone (0.1 ms).
+  **Ranked follow-ups needing Jonah's call**: (1) DEM_TILE_RES 256→128 = 3.8×/tile, crispness
+  tradeoff, one line; (2) carve far-field tightening (the 79%) — determinism-bearing, needs
+  byte-proof; (3) worker: DEM tiles ahead of contour leaves / small pool; (4) center-first tiles.
+- **Plan 040 land-shaping UX**: `67a0450` click-out — REAL cause was the draw tool discarding
+  finishable drafts on implicit exits (tool/kind switch, ✕); they now COMMIT (Esc = the one
+  deliberate discard). Select-tool click-out was proven safe all along. `7fe6063` drag-to-extrude:
+  grip + ghost stem on selected relief/landform, vertical drag = height/target live with ±m
+  readout, Shift = fine, one commit on release through setRegionParams (undo/cascade free).
+  Phases 2–3 (band ghost viz, type-during-drag) TODO in the plan; pitched-3D drag + live terrain
+  preview deferred with rationale. **Feel calls for Jonah (plan §4)**: 12/3 m-per-px sensitivities,
+  polarity flip at zero (ridge↔valley via one drag — confirm), readout format, grip glyph,
+  auto-commit-on-kind-switch.
+- Suite 1284/1284; reload the plugin to pick all of this up in your running app.
+
 Autonomous run per Jonah's goal: implement plans 031–039, parallelize with opus subagents,
 build a new overlap-focused test map, commit+push continuously. Everything needing Jonah's
 eyes lands HERE. Newest items at the top of each section.
