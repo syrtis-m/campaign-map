@@ -257,13 +257,18 @@ describe("farmland generator — identity / edit locality", () => {
 });
 
 describe("farmland generator — outskirt suppression is a strict no-op with no farmland (unit)", () => {
-  it("non-paddy farmland never reads its constraints — output is identical with or without busy fabric (incl. a MOUNTAIN, box 23-E)", () => {
+  it("non-paddy farmland ignores non-terrain sketch + a DISJOINT mountain (box 23-E)", () => {
     const region = regionFor(SQUARE);
-    // Constraints carrying arbitrary sketched fabric (incl. a city district,
-    // another farmland, and — the cross-kind identity rule — a procgen MOUNTAIN
-    // overlapping the region) must not perturb the four non-paddy field types:
-    // only paddy-terraces composes the elevation field. Farmland
-    // reading the city would be a stage-3→2 cascade cycle, which is rejected.
+    // A city district + another farmland (cross-kind identity; farmland reading
+    // the city would be a stage-3→2 cascade cycle, rejected) AND a mountain whose
+    // ring is DISJOINT from the region (compact support ⇒ zero slope in-region,
+    // influenceMargin 0) must all be byte-inert for the four non-paddy types.
+    const farMountain = {
+      type: "Feature",
+      id: "mountain-far",
+      geometry: { type: "Polygon", coordinates: [[[-6000, -6000], [-3000, -6000], [-3000, -3000], [-6000, -3000], [-6000, -6000]]] },
+      properties: { kind: "mountain", procgen: { algorithm: "mountain", seed: 777, version: 1, params: { terrain: "alpine", amplitude: 0.8, roughness: 0.5 } } },
+    } as FabricFeature;
     const busy: GenerationConstraints = {
       worldBounds: CONSTRAINTS.worldBounds,
       fabricFeatures: [
@@ -279,14 +284,39 @@ describe("farmland generator — outskirt suppression is a strict no-op with no 
           geometry: { type: "Polygon", coordinates: [[[0, 0], [1000, 0], [1000, 1000], [0, 1000], [0, 0]]] },
           properties: { kind: "farmland" },
         },
-        MOUNTAIN_OVER_SQUARE,
+        farMountain,
       ],
     };
     for (const fieldType of ["open-field-strips", "enclosed-patchwork", "grid-quarters", "orchard"] as const) {
       const bare = generateFarmland(7, region, PARAMS({ fieldType }), CONSTRAINTS);
       const withBusy = generateFarmland(7, region, PARAMS({ fieldType }), busy);
-      expect(JSON.stringify(withBusy), `${fieldType} must ignore constraints`).toBe(JSON.stringify(bare));
+      expect(JSON.stringify(withBusy), `${fieldType} must ignore non-terrain sketch + a disjoint mountain`).toBe(JSON.stringify(bare));
     }
+  });
+
+  it("non-paddy farmland slope-gates steep ground to pasture over an OVERLAPPING mountain (plan 038 item 4)", () => {
+    const region = regionFor(SQUARE);
+    // An alpine mountain overlapping the region now COUPLES the non-paddy types
+    // (plan 038 item 4): fields on steep ground become untilled pasture. The
+    // output changes vs. the uncoupled generator, and pasture-tagged fields carry
+    // the paint hook.
+    let anyCoupled = false;
+    let anyPasture = false;
+    for (const fieldType of ["open-field-strips", "enclosed-patchwork", "grid-quarters", "orchard"] as const) {
+      const bare = generateFarmland(7, region, PARAMS({ fieldType }), CONSTRAINTS);
+      const coupled = generateFarmland(7, region, PARAMS({ fieldType }), MOUNTAIN_CONSTRAINTS);
+      if (JSON.stringify(coupled) !== JSON.stringify(bare)) anyCoupled = true;
+      const pasture = coupled.filter((f) => (f.properties as { pasture?: boolean }).pasture === true);
+      if (pasture.length > 0) {
+        anyPasture = true;
+        expect((pasture[0].properties as { crop?: string }).crop).toBe("pasture");
+      }
+    }
+    expect(anyCoupled, "an overlapping alpine mountain must couple non-paddy farmland").toBe(true);
+    expect(anyPasture, "steep ground must yield pasture-tagged fields").toBe(true);
+    // A flat campaign is byte-identical (no terrain ⇒ no slope-gating).
+    const flat = generateFarmland(7, region, PARAMS({ fieldType: "grid-quarters" }), CONSTRAINTS);
+    expect(flat.every((f) => (f.properties as { pasture?: boolean }).pasture !== true)).toBe(true);
   });
 });
 

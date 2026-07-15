@@ -68,6 +68,7 @@ import {
   type Field,
 } from "./fields";
 import { buildUpstreamWaterField, insideUpstreamChannel } from "./upstream";
+import { macroTerrainField } from "./fields/terrain";
 import type { GenerationConstraints } from "./types";
 
 type Pt = [number, number];
@@ -118,6 +119,26 @@ const TREE_MARGIN_M = 1; // containment slack for a tree point
 // below is skipped ⇒ byte-identical to the uncoupled forest.
 const RIPARIAN_BAND_M = 100; // riparian ramp reach from the bank (≈4–6 widths)
 const RIPARIAN_STRENGTH = 0.22; // canopy-density bump at the bank (fades to 0 at band edge)
+
+// ── Terrain-reading (plan 038 item 4, needs 036) ─────────────────────────────
+// The MACRO terrain field (mountains + base, via `macroTerrainField`) reshapes
+// the wood by RELATIVE elevation within the region:
+//  - TIMBERLINE: above `TIMBERLINE_REL` of the local relief the canopy thins and
+//    trees drop out (nothing grows above the treeline).
+//  - CONIFER-UPSLOPE bias: trees above `CONIFER_REL` carry `standConifer: true`
+//    (a paint hook — evergreens climb higher than broadleaves).
+//  - CONTOUR SAG: the canopy pools a little denser in hollows (below `VALLEY_REL`).
+// All keyed on absolute-world elevation (seam-safe). `macroTerrainField` is null
+// on a flat campaign, and a region with < FOREST_MIN_RELIEF_M of local relief is
+// treated as flat too — both ⇒ every path below is skipped and the wood is
+// byte-identical to the uncoupled generator.
+const FOREST_ELEV_SCAN_M = 30; // coarse lattice for the region relief range
+const FOREST_MIN_RELIEF_M = 12; // below this the region is effectively flat (gate)
+const TIMBERLINE_REL = 0.72; // relative elevation where the treeline starts
+const TIMBERLINE_STRENGTH = 0.55; // canopy-density subtract at the summit
+const CONIFER_REL = 0.5; // relative elevation above which stands lean conifer
+const VALLEY_REL = 0.32; // relative elevation below which the canopy sags denser
+const VALLEY_STRENGTH = 0.08; // gentle hollow-density bump
 
 /** Per-variety Thomas-cluster shape. `clumpThreshold` is the
  * fBm mask cutoff for a parent to exist (higher ⇒ fewer clumps); `clumpsEnabled`
@@ -271,20 +292,25 @@ function treeFeature(
   variety: ForestVariety,
   sizeN: number,
   rank: number,
-  variant: number
+  variant: number,
+  standConifer?: boolean
 ): GeoJSON.Feature {
+  const properties: Record<string, unknown> = {
+    generatorId: "forest-tree",
+    type: "forest-tree",
+    forestType: variety,
+    sizeN: q(sizeN),
+    rank,
+    variant,
+  };
+  // Conifer-upslope bias (plan 038 item 4): a paint hook, only present on the
+  // terrain-coupled path ⇒ omitted (byte-identical) on a flat campaign.
+  if (standConifer) properties.standConifer = true;
   return {
     type: "Feature",
     id: hashSeed(seed, idSalt, ...ids),
     geometry: { type: "Point", coordinates: [q(px), q(py)] },
-    properties: {
-      generatorId: "forest-tree",
-      type: "forest-tree",
-      forestType: variety,
-      sizeN: q(sizeN),
-      rank,
-      variant,
-    },
+    properties,
   };
 }
 
@@ -324,7 +350,8 @@ function buildCanopy(
   region: ProcgenRegion,
   params: ForestParams,
   clumpThreshold: number,
-  channel: Field | null
+  channel: Field | null,
+  elevMod: Field | null
 ): Pt[][][] {
   const { variety, density, clearings, edgeRaggedness } = params;
   const ring = region.ring;
@@ -365,6 +392,10 @@ function buildCanopy(
       if (cd >= 0) return -CANOPY_CONTAIN_M - 1;
     }
     let v = warped(x, y) + meta(x, y);
+    // Terrain modulation (plan 038 item 4): timberline thinning above the
+    // treeline + a gentle contour sag in hollows. `null` (flat campaign / flat
+    // region) ⇒ not added ⇒ byte-identical to the uncoupled canopy.
+    if (elevMod) v += elevMod(x, y);
     // Riparian ramp: within RIPARIAN_BAND of the bank (cd is the NEGATIVE
     // signed distance outside the channel; nearer the bank ⇒ nearer 0), add
     // density ∝ proximity — a lush buffer that fades to 0 at the band edge.
@@ -431,6 +462,43 @@ export function generateForest(
   // a raw sketch (`consumesSketch` stays []).
   const channel = buildUpstreamWaterField(constraints.upstream);
 
+  // Terrain reading (plan 038 item 4): RELATIVE elevation within the region from
+  // the MACRO terrain field (mountains + base, the durable sketch layer — never
+  // another generator's output). `relElevAt` is null on a flat campaign OR a
+  // region with < FOREST_MIN_RELIEF_M of local relief, so every terrain path is
+  // then skipped and the wood is byte-identical to the uncoupled generator.
+  const terrain = macroTerrainField(constraints.fabricFeatures);
+  let relElevAt: ((x: number, y: number) => number) | null = null;
+  if (terrain) {
+    let eMin = Infinity;
+    let eMax = -Infinity;
+    const sx0 = Math.floor(bbox.minX / FOREST_ELEV_SCAN_M) * FOREST_ELEV_SCAN_M;
+    const sy0 = Math.floor(bbox.minY / FOREST_ELEV_SCAN_M) * FOREST_ELEV_SCAN_M;
+    for (let x = sx0; x <= bbox.maxX; x += FOREST_ELEV_SCAN_M) {
+      for (let y = sy0; y <= bbox.maxY; y += FOREST_ELEV_SCAN_M) {
+        if (distanceToBoundary(region, x, y) <= 0) continue;
+        const v = terrain(x, y).v;
+        if (v < eMin) eMin = v;
+        if (v > eMax) eMax = v;
+      }
+    }
+    if (eMax - eMin >= FOREST_MIN_RELIEF_M) {
+      const span = eMax - eMin;
+      relElevAt = (x: number, y: number): number => clamp01((terrain(x, y).v - eMin) / span);
+    }
+  }
+  // Canopy density modulation: timberline thinning above the treeline + a gentle
+  // hollow sag. null ⇒ buildCanopy is byte-identical.
+  const elevMod: Field | null = relElevAt
+    ? (x: number, y: number): number => {
+        const r = relElevAt!(x, y);
+        let m = 0;
+        if (r > TIMBERLINE_REL) m -= TIMBERLINE_STRENGTH * ((r - TIMBERLINE_REL) / (1 - TIMBERLINE_REL));
+        if (r < VALLEY_REL) m += VALLEY_STRENGTH * ((VALLEY_REL - r) / VALLEY_REL);
+        return m;
+      }
+    : null;
+
   const cfg = PLACEMENT[variety];
   const countScale = 0.55 + 0.6 * density; // more offspring in denser forests
   // Denser forests seed more clumps too (the fBm mask cutoff drops with density).
@@ -439,7 +507,7 @@ export function generateForest(
   // ── Canopy: ONE organic MultiPolygon. dead-wood = bare stand, no leaf mass →
   //    no canopy (instant variety differentiation). ──────────────────────────
   if (variety !== "dead-wood") {
-    const coords = buildCanopy(seed, region, params, clumpThreshold, channel);
+    const coords = buildCanopy(seed, region, params, clumpThreshold, channel, elevMod);
     if (coords.length > 0) {
       out.push({
         type: "Feature",
@@ -484,6 +552,18 @@ export function generateForest(
           const { px, py, rNorm } = kids[k];
           if (distanceToBoundary(region, px, py) < TREE_MARGIN_M) continue;
           if (insideUpstreamChannel(channel, px, py)) continue; // no trees in the channel
+          // Timberline (plan 038 item 4): drop trees above the treeline with
+          // rising probability (per-tree hashed roll — order-independent). Null
+          // relElevAt (flat) ⇒ never taken ⇒ byte-identical.
+          let standConifer: boolean | undefined;
+          if (relElevAt) {
+            const r = relElevAt(px, py);
+            if (r > TIMBERLINE_REL) {
+              const dropP = (r - TIMBERLINE_REL) / (1 - TIMBERLINE_REL);
+              if (mulberry32(hashSeed(seed, `forest-timberline-${variety}`, cix, ciy, k))() < dropP) continue;
+            }
+            if (r >= CONIFER_REL) standConifer = true;
+          }
           // Rim bias (swamp): keep interior trees with rising probability toward
           // the boundary. Per-tree hashed roll — independent of emission order.
           if (cfg.edgeBias > 0) {
@@ -494,7 +574,7 @@ export function generateForest(
           const rank = rNorm < 0.55 ? 0 : 1; // 0 core, 1 fringe
           const sizeN = sizeAt(seed, variety, px, py, 0.28 * (1 - rNorm));
           const variant = Math.floor(mulberry32(hashSeed(seed, `forest-var-${variety}`, cix, ciy, k))() * 4);
-          out.push(treeFeature(seed, "forest-tree", [cix, ciy, k], px, py, variety, sizeN, rank, variant));
+          out.push(treeFeature(seed, "forest-tree", [cix, ciy, k], px, py, variety, sizeN, rank, variant, standConifer));
         }
       }
     }
@@ -516,6 +596,17 @@ export function generateForest(
       const py = (liy + 0.5) * LONER_CELL_M + jy;
       if (distanceToBoundary(region, px, py) < TREE_MARGIN_M) continue;
       if (insideUpstreamChannel(channel, px, py)) continue; // no loners in the channel
+      // Timberline + conifer-upslope (plan 038 item 4) — null relElevAt (flat) ⇒
+      // never taken ⇒ byte-identical.
+      let standConifer: boolean | undefined;
+      if (relElevAt) {
+        const r = relElevAt(px, py);
+        if (r > TIMBERLINE_REL) {
+          const dropP = (r - TIMBERLINE_REL) / (1 - TIMBERLINE_REL);
+          if (mulberry32(hashSeed(seed, `forest-timberline-loner-${variety}`, lix, liy))() < dropP) continue;
+        }
+        if (r >= CONIFER_REL) standConifer = true;
+      }
       if (cfg.clumpsEnabled && nearClumpTree(seed, variety, cfg, countScale, clumpThreshold, px, py)) continue;
       if (cfg.edgeBias > 0) {
         const edgeT = clamp01(interiorT(region, px, py));
@@ -524,7 +615,7 @@ export function generateForest(
       }
       const sizeN = sizeAt(seed, variety, px, py, 0);
       const variant = Math.floor(mulberry32(hashSeed(seed, `forest-loner-var-${variety}`, lix, liy))() * 4);
-      out.push(treeFeature(seed, "forest-loner", [lix, liy], px, py, variety, sizeN, 2, variant));
+      out.push(treeFeature(seed, "forest-loner", [lix, liy], px, py, variety, sizeN, 2, variant, standConifer));
     }
   }
 

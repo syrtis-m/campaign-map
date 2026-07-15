@@ -454,12 +454,17 @@ export const FOREST_TILE_GENERATOR_IDS: readonly string[] = contractGids(FOREST_
 const forestAlgorithm: ProcgenAlgorithm = {
   id: "forest",
   label: "Forest",
-  // Version 2 (plan 037, river → forest): the declared `water` consumption is
-  // now WIRED — no canopy/tree inside the generated channel + a riparian density
-  // ramp within ~4–6 channel widths of the bank. A forest with NO upstream water
-  // is byte-identical to v1 (the golden is unchanged); one over a river channel
-  // changes bytes, so the bump gates adoption of the coupled read.
-  currentVersion: 2,
+  // Version 3 (plan 038 item 4): terrain reading — the forest now composes the
+  // MACRO terrain field from the sketched MOUNTAINS (`macroTerrainField`) and
+  // reshapes the wood by relative elevation: a timberline thins the canopy + drops
+  // trees above the treeline, upslope stands carry `standConifer`, and the canopy
+  // sags denser in hollows. A forest over a flat campaign (or a region with < the
+  // relief floor) is byte-identical to v2 (golden unchanged); real relief changes
+  // bytes ⇒ the bump gates adoption. Reading the mountain SKETCH adds it to
+  // `consumesSketch` (compact support ⇒ a disjoint mountain is byte-inert, margin 0).
+  // Version 2 (plan 037, river → forest): the `water` consumption WIRED — no
+  // canopy/tree inside the generated channel + a riparian density ramp.
+  currentVersion: 3,
   appliesTo: ["forest"],
   // Stage 2 (vegetation): no canopy in the river → consumes `water` (WIRED, plan
   // 037). Produces `vegetation` for the city's growth-cost bump. NEVER consumes
@@ -469,12 +474,11 @@ const forestAlgorithm: ProcgenAlgorithm = {
   stage: 2,
   produces: ["vegetation"],
   consumes: ["water"],
-  // generateForest reads no raw sketch constraints — masked noise over its own
-  // ring only. The `consumes: ["water"]` above is a DAG OUTPUT edge
-  // (`constraints.upstream.water`), not a raw-sketch read, so `consumesSketch`
-  // stays [] and the 033-A harness (which injects only SKETCH features) proves
-  // byte-inertness to every sketch kind.
-  consumesSketch: [],
+  // Raw sketch reads: the sketched MOUNTAINS' elevation field (plan 038 item 4
+  // timberline/conifer-upslope/contour-sag). The field is compact-support (0
+  // outside the mountain ring), so a disjoint mountain is byte-inert ⇒ margin 0.
+  // The `consumes: ["water"]` above is a DAG OUTPUT edge, not a raw-sketch read.
+  consumesSketch: ["mountain"],
   influenceMargin: 0,
   costClass: "cheap",
   paramsSchema: forestParamsSchema as unknown as z.ZodType<Record<string, unknown>>,

@@ -177,6 +177,15 @@ const RANG_ARPENT_MIN_M = 12; // narrowest long-lot width (river frontage)
 const RANG_LEN_CAP_M = 180; // deepest a long-lot reaches inland (≈1–2 field depths)
 const RANG_WM_FRAC = 0.42; // near fraction of each lot tagged `waterMeadow`
 const RANG_BASE_OFFSET_M = 2; // start the lot just inland of the bank (field < 0)
+// ── Slope-gating (plan 038 item 4, needs 036) ────────────────────────────────
+// A field whose ground is too steep to plough is left as untilled PASTURE (a
+// `crop: "pasture"` + `pasture: true` tag themes can paint rough grazing). The
+// slope is |∇terrain| from the MACRO terrain field (mountains + base) — 0 on
+// flat ground, so a flat campaign/region never tags a field ⇒ byte-identical to
+// the uncoupled generator with no explicit relief gate. (Contour-ORIENTED strips
+// on moderate slopes are deferred: orienting a field to the local gradient
+// conflicts with farmland's world-aligned edit-locality invariant — deviation #1.)
+const FARM_STEEP_SLOPE = 0.3; // |∇elev| (m/m, ≈17°) above which tillage → pasture
 
 /** Nice-round bank interval for a scanned range `maxV`. Smallest ladder step
  * giving ≤ PADDY_TARGET_BANDS bands; the coarsest as a floor. */
@@ -348,6 +357,10 @@ export function generateFarmland(
     const v = channel(x, y);
     return v < 0 && v > -rangLen;
   };
+  // Slope-gating terrain (plan 038 item 4): the macro terrain field, for the
+  // non-paddy field types (paddy reads it separately, below). null on a flat
+  // campaign ⇒ no field is ever re-tagged (byte-identical).
+  const slopeTerrain = fieldType !== "paddy-terraces" ? macroTerrainField(constraints.fabricFeatures) : null;
   const LANE_STEP_M = 8; // resample step for lane channel-splitting (coupled path only)
   /** Emit a lane run, truncated at the channel when there is upstream water. */
   const emitLaneRun = (run: Pt[]): void => {
@@ -434,8 +447,20 @@ export function generateFarmland(
     // the riparian band is replaced by the perpendicular rang lots emitted below
     // — suppress it here so they don't overlap. Gated on `rangEnabled` ⇒ no-op
     // (byte-identical) with no upstream channel.
-    if (rangEnabled && inRangBand((rect[0][0] + rect[2][0]) / 2, (rect[0][1] + rect[2][1]) / 2)) return;
-    out.push(fieldFeature(seed, rect, { crop: cropAt(seed, ix, iy, sub), fieldType }));
+    const fcx = (rect[0][0] + rect[2][0]) / 2;
+    const fcy = (rect[0][1] + rect[2][1]) / 2;
+    if (rangEnabled && inRangBand(fcx, fcy)) return;
+    const props: Record<string, unknown> = { crop: cropAt(seed, ix, iy, sub), fieldType };
+    // Slope-gating (plan 038 item 4): steep ground is untilled pasture. Slope 0
+    // (flat) ⇒ never tagged ⇒ byte-identical.
+    if (slopeTerrain) {
+      const g = slopeTerrain(fcx, fcy);
+      if (Math.hypot(g.dx, g.dy) > FARM_STEEP_SLOPE) {
+        props.crop = "pasture";
+        props.pasture = true;
+      }
+    }
+    out.push(fieldFeature(seed, rect, props));
     for (let i = 0; i < rect.length; i++) emitHedge(rect[i], rect[(i + 1) % rect.length]);
   };
 
