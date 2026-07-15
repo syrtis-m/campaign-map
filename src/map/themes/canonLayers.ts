@@ -53,9 +53,17 @@ export function focusLabelLayers(opts: {
           "text-field": ["get", "name"],
           "text-font": [opts.fontStack],
           "text-size": ["interpolate", ["linear"], ["get", "importance"], 1, 18, 7, 11],
-          "text-offset": [0, 1.1],
-          "text-anchor": "top",
+          // Placement pass (shortlist 10): variable anchors let a label slide off
+          // a collision (a market pin on the riverbank no longer forces its name
+          // straight over the water) — MapLibre tries these positions in order
+          // and picks the first that fits, radially offset from the dot. Priority
+          // is `importance` ascending (1 = nation, 2 = city, 3 = town, 4 = POI):
+          // lower sort key ⇒ placed first ⇒ wins collisions, so city > town > POI.
+          "text-variable-anchor": ["bottom", "top", "right", "left"],
+          "text-radial-offset": 0.9,
+          "text-justify": "auto",
           "symbol-sort-key": ["get", "importance"],
+          "text-padding": 3,
           "text-optional": true,
         },
         paint: {
