@@ -157,6 +157,17 @@ export interface VaultGateway {
  * forwards to the generation service (keeps `App` out of the controller). */
 export type ControllerGenContext = Omit<GenerationContext, "app">;
 
+/** Euclidean bbox-to-bbox separation in the boxes' own units (0 when they
+ * overlap/touch) — the currency the 033-C consumption-aware invalidation walk
+ * compares against an algorithm's `influenceMargin`. Matches the harness's
+ * `bboxGap` (underInvalidation.ts) so the walk's reach predicate is exactly the
+ * one the fuzz gate proves inert beyond. */
+function bboxGap(a: BBox, b: BBox): number {
+  const dx = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
+  const dy = Math.max(0, Math.max(a.minY - b.maxY, b.minY - a.maxY));
+  return Math.hypot(dx, dy);
+}
+
 /** The two batch-shared views threaded through a flush/cascade so a multi-region
  * pass hashes ONCE and reads the cache ONCE (031-B): the precomputed
  * `(stage,id)`-ordered fingerprint map + the single mutable cache view every
@@ -1869,21 +1880,27 @@ export class MapController {
     });
   }
 
-  /** The procgen-region ids whose bbox (in gen-space meters) comes within
-   * `CONSTRAINT_REACH` of any edited raw-sketch feature — the blanket bbox
-   * reach a sketch edit fans out to (kind-blind for now; consumption-aware
-   * scoping is plan 033). Pure geometry, no regen. */
+  /** The procgen-region ids a raw-sketch edit must force-regen: CONSUMPTION-
+   * AWARE (plan 033-C). A region is affected only when the edited feature's KIND
+   * is in the region algorithm's declared `consumesSketch` AND the feature's
+   * bbox comes within that algorithm's `influenceMargin` (bbox-to-bbox, gen-space
+   * meters). This replaces the pre-033 blanket 200 m kind-blind reach — editing a
+   * road no longer regenerates a mountain (it reads no road: P4 goes from 3
+   * regens to 1), and the margin is per-algorithm (a city's road reach is 1500 m,
+   * a wall's is 0). The declarations are the 033-A harness's verified contract.
+   * Pure geometry, no regen. */
   private affectedRegionIds(edited: FabricFeature[]): string[] {
     if (!this.campaign || edited.length === 0) return [];
     const scale = this.campaign.config.scaleMetersPerUnit;
-    const regions = new Map<string, ProcgenRegion>();
+    const regions: { id: string; bbox: BBox; algorithm: ProcgenAlgorithm }[] = [];
     for (const rf of this.regionFeatures()) {
       const region = this.buildRegionFromFeature(rf);
-      if (region) regions.set(rf.id, region);
+      const algorithm = algorithmById(rf.properties.procgen?.algorithm ?? "");
+      if (region && algorithm) regions.push({ id: rf.id, bbox: region.bbox, algorithm });
     }
     const affected = new Set<string>();
-    const reach = MapController.CONSTRAINT_REACH;
     for (const f of edited) {
+      const kind = f.properties.kind;
       let minX = Infinity;
       let minY = Infinity;
       let maxX = -Infinity;
@@ -1903,10 +1920,10 @@ export class MapController {
       };
       scan(f.geometry.coordinates);
       if (!Number.isFinite(minX)) continue;
-      for (const [id, d] of [...regions].map(([id, r]) => [id, r.bbox] as const)) {
-        const intersects =
-          minX - reach <= d.maxX && maxX + reach >= d.minX && minY - reach <= d.maxY && maxY + reach >= d.minY;
-        if (intersects) affected.add(id);
+      const eb: BBox = { minX, minY, maxX, maxY };
+      for (const { id, bbox, algorithm } of regions) {
+        if (!algorithm.consumesSketch.includes(kind)) continue;
+        if (bboxGap(eb, bbox) <= algorithm.influenceMargin) affected.add(id);
       }
     }
     return [...affected];

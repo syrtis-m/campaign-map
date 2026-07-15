@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   algorithmForKind,
   algorithmById,
+  allAlgorithms,
   CITY_PROFILE_IDS,
   matchingPresetId,
   presetById,
@@ -52,6 +53,43 @@ describe("procgen registry", () => {
     );
     expect(features.length).toBeGreaterThan(100);
     expect(features.every((f) => f.properties?.regionId === "reg-1")).toBe(true);
+  });
+});
+
+describe("consumption declarations (plan 033-C)", () => {
+  // The exact declarations the 033-A under-invalidation harness verifies and
+  // the scoped invalidation walk / fingerprints key on. A change here is a
+  // change to the invalidation contract — it must ride an algorithm version
+  // bump + a re-run of underInvalidation.fuzz.test.ts. Kinds compared as sets.
+  const EXPECTED: Record<
+    string,
+    { kinds: string[]; margin: number; cost: "cheap" | "medium" | "expensive" }
+  > = {
+    city: { kinds: ["water", "river", "road", "wall", "farmland"], margin: 1500, cost: "expensive" },
+    river: { kinds: ["water", "river", "mountain"], margin: 30, cost: "medium" },
+    forest: { kinds: [], margin: 0, cost: "cheap" },
+    park: { kinds: ["road"], margin: 30, cost: "medium" },
+    wall: { kinds: ["road"], margin: 0, cost: "medium" },
+    farmland: { kinds: ["mountain"], margin: 0, cost: "medium" },
+    mountain: { kinds: [], margin: 0, cost: "cheap" },
+  };
+
+  it("every algorithm's consumesSketch / influenceMargin / costClass match the measured table", () => {
+    for (const alg of allAlgorithms()) {
+      const exp = EXPECTED[alg.id];
+      expect(exp, `no expectation for algorithm "${alg.id}"`).toBeDefined();
+      expect([...alg.consumesSketch].sort(), `${alg.id} consumesSketch`).toEqual([...exp.kinds].sort());
+      expect(alg.influenceMargin, `${alg.id} influenceMargin`).toBe(exp.margin);
+      expect(alg.costClass, `${alg.id} costClass`).toBe(exp.cost);
+    }
+  });
+
+  it("a no-consumption algorithm declares an empty set and a 0 margin", () => {
+    for (const id of ["forest", "mountain"]) {
+      const alg = algorithmById(id)!;
+      expect(alg.consumesSketch).toEqual([]);
+      expect(alg.influenceMargin).toBe(0);
+    }
   });
 });
 

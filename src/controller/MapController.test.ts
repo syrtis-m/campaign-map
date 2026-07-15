@@ -493,6 +493,144 @@ describe("MapController — clear + undo lifecycle", () => {
   });
 });
 
+// ─── Plan 033-C — consumption-aware invalidation scope ───────────────────────
+// A raw-sketch edit force-regens a region ONLY when the edit's KIND is in that
+// region algorithm's declared `consumesSketch` AND within its `influenceMargin`
+// (replacing the pre-033 blanket 200 m kind-blind reach). `forceRegenOrder`
+// records exactly which regions the flush regenerated.
+describe("MapController — consumption-aware invalidation (033-C)", () => {
+  it("a road edit regenerates only its declared consumers (P4: 3 kind-blind neighbors → 1)", async () => {
+    const host = cityHost();
+    // Three regions straddling a horizontal road (all gap≈0): a city (reads
+    // road), a mountain and a forest (read NO road). Pre-033 the blanket 200 m
+    // reach regenerated ALL THREE; consumption scoping regenerates only the city.
+    const city = await host.controller.createRegionForTest(
+      [
+        [-6, -6],
+        [6, -6],
+        [6, 6],
+        [-6, 6],
+      ],
+      "city",
+      { profile: "euro-medieval" },
+      "__p4_city__",
+      "district"
+    );
+    const mtn = await host.controller.createRegionForTest(
+      [
+        [10, -6],
+        [22, -6],
+        [22, 6],
+        [10, 6],
+      ],
+      "mountain",
+      { terrain: "alpine", amplitude: 0.3, roughness: 0.4 },
+      "__p4_mtn__",
+      "mountain"
+    );
+    const forest = await host.controller.createRegionForTest(
+      [
+        [-22, -6],
+        [-10, -6],
+        [-10, 6],
+        [-22, 6],
+      ],
+      "forest",
+      { variety: "mixed", density: 0.6, clearings: 0.15, edgeRaggedness: 0.5 },
+      "__p4_forest__",
+      "forest"
+    );
+
+    const runsBefore = host.controller.generatorRunCount;
+    const roadId = await host.controller.createFabricForTest("road", [
+      [-24, 0],
+      [24, 0],
+    ]);
+    const road = (await host.fabric()).features.find((f) => f.id === roadId)!;
+    host.controller.queueConstraintRegen(road);
+    await host.controller.flushSketchRegen();
+
+    // Exactly one region regenerated — the city. The mountain and forest read no
+    // road, so despite gap≈0 (they WOULD have under the blanket reach) they are
+    // untouched.
+    expect(host.controller.forceRegenOrder).toEqual([city.featureId]);
+    expect(host.controller.forceRegenOrder).not.toContain(mtn.featureId);
+    expect(host.controller.forceRegenOrder).not.toContain(forest.featureId);
+    expect(host.controller.generatorRunCount - runsBefore).toBe(1);
+  });
+
+  it("a district sketch-add fans out to ZERO neighbour regens (no algorithm consumes `district`)", async () => {
+    const host = cityHost();
+    const city = await host.controller.createRegionForTest(
+      [
+        [-6, -6],
+        [6, -6],
+        [6, 6],
+        [-6, 6],
+      ],
+      "city",
+      { profile: "euro-medieval" },
+      "__da_city__",
+      "district"
+    );
+    const runsBefore = host.controller.generatorRunCount;
+
+    // A district-kind sketch dropped right on top of the city: `district` is in
+    // no algorithm's consumesSketch, so it invalidates nothing.
+    const dId = await host.controller.createFabricForTest("district", [
+      [-4, -4],
+      [4, -4],
+      [4, 4],
+      [-4, 4],
+    ]);
+    const d = (await host.fabric()).features.find((f) => f.id === dId)!;
+    host.controller.queueConstraintRegen(d);
+    await host.controller.flushSketchRegen();
+
+    expect(host.controller.forceRegenOrder).toEqual([]);
+    expect(host.controller.generatorRunCount).toBe(runsBefore); // city untouched
+    expect(city.featureId).toBeTruthy();
+  });
+
+  it("influenceMargin scopes the fan-out: a road within the city margin regenerates it, beyond does not", async () => {
+    // City bbox ±200 m; city road margin is 1500 m. A road at gap≈1000 m is in
+    // reach; a road at gap≈1600 m is not.
+    const cityRing: [number, number][] = [
+      [-4, -4],
+      [4, -4],
+      [4, 4],
+      [-4, 4],
+    ];
+
+    const near = cityHost();
+    const cityNear = await near.controller.createRegionForTest(cityRing, "city", { profile: "euro-medieval" }, "__m_near__", "district");
+    let runsBefore = near.controller.generatorRunCount;
+    // Vertical road at x=24 units (1200 m); city maxX=200 m ⇒ gap 1000 m ≤ 1500.
+    const rNear = await near.controller.createFabricForTest("road", [
+      [24, -8],
+      [24, 8],
+    ]);
+    near.controller.queueConstraintRegen((await near.fabric()).features.find((f) => f.id === rNear)!);
+    await near.controller.flushSketchRegen();
+    expect(near.controller.forceRegenOrder).toEqual([cityNear.featureId]);
+    expect(near.controller.generatorRunCount - runsBefore).toBe(1);
+
+    const far = cityHost();
+    const cityFar = await far.controller.createRegionForTest(cityRing, "city", { profile: "euro-medieval" }, "__m_far__", "district");
+    runsBefore = far.controller.generatorRunCount;
+    // Vertical road at x=36 units (1800 m); gap 1600 m > 1500 ⇒ out of reach.
+    const rFar = await far.controller.createFabricForTest("road", [
+      [36, -8],
+      [36, 8],
+    ]);
+    far.controller.queueConstraintRegen((await far.fabric()).features.find((f) => f.id === rFar)!);
+    await far.controller.flushSketchRegen();
+    expect(far.controller.forceRegenOrder).toEqual([]);
+    expect(far.controller.generatorRunCount).toBe(runsBefore);
+    expect(cityFar.featureId).toBeTruthy();
+  });
+});
+
 describe("MapController — world tier generate / regen / clear (phase3/phase4)", () => {
   it("records a manifest entry and runs a generator on generateFabricHere", async () => {
     const host = new FakeHost({ zoom: 5 }); // world tier

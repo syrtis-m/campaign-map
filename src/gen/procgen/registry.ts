@@ -52,6 +52,14 @@ export interface ProcgenPreset {
   params: Record<string, unknown>;
 }
 
+/** Rough regeneration cost band for an algorithm's generator — declared here,
+ * CONSUMED by plan 034's cost-weighted cascade cap (a continental river must
+ * not silently redraw 100 expensive cities). Nothing keys on it in plan 033.
+ * cheap: field noise / stipple (mountain, forest); medium: corridor + snap or a
+ * single field pass (river, park, wall, farmland); expensive: the full city
+ * street/block/parcel pipeline. */
+export type CostClass = "cheap" | "medium" | "expensive";
+
 export interface ProcgenAlgorithm {
   id: string; // "city"
   label: string; // "City"
@@ -85,6 +93,31 @@ export interface ProcgenAlgorithm {
    * downstream recompute with unchanged output (perf-only), so declaring intent
    * here never re-touches the DAG. */
   consumes: readonly ConstraintKind[];
+  /** The raw sketch KINDS this algorithm's generator actually reads as
+   * constraints (plan 033-C). Distinct from `consumes` (which is about upstream
+   * GENERATED constraint FIELDS / DAG output coupling): this is the raw
+   * `Fabric.geojson` sketch geometry the generator folds in directly (city reads
+   * water/river/road/wall/farmland; river reads water/river + the sketched
+   * mountains' elevation field; park/wall read road; farmland reads mountain;
+   * forest/mountain read nothing). VERIFIED — not intended — by the 033-A
+   * under-invalidation harness (`underInvalidation.fuzz.test.ts`), which proves
+   * that a sketch of any OTHER kind, or of a declared kind beyond
+   * `influenceMargin`, is byte-inert. The scoped invalidation walk + scoped
+   * fingerprints (033-C/033-D) key on this, so an under-declaration silently
+   * serves stale bytes — hence the permanent fuzz-tier gate. */
+  consumesSketch: readonly FabricKind[];
+  /** How far (meters, bbox-to-bbox) a `consumesSketch` feature can influence
+   * this algorithm's output (plan 033-C). A sketch edit of a consumed kind
+   * invalidates a region only when its bbox comes within this margin; beyond it
+   * the harness proves byte-inertness. MEASURED from the code's own constants
+   * (city 1500: the road tensor blend has no distance cutoff and still steers
+   * streets at ~1 km; river 30: CONFLUENCE_SNAP_M; park 30: ROAD_ENTRANCE_THRESH_M;
+   * wall/farmland 0: exact segment-crossing / compact-support field reads). 0
+   * for the no-consumption algorithms. */
+  influenceMargin: number;
+  /** Regeneration cost band (plan 033-C) — routing data for plan 034's cascade
+   * cap; NEVER a generator input. */
+  costClass: CostClass;
   paramsSchema: z.ZodType<Record<string, unknown>>;
   /** Named templates. Every algorithm has ≥1; the host renders
    * these as a dropdown, seeding the param controls from the chosen preset's
@@ -180,6 +213,12 @@ const cityAlgorithm: ProcgenAlgorithm = {
   stage: 3,
   produces: ["settlement"],
   consumes: ["water", "vegetation"],
+  // Raw sketch reads: water/river (channel banks, bridges), road (street tensor
+  // alignment — no distance cutoff, hence the 1500 m margin), wall (street
+  // truncation, double-wall suppression), farmland (outskirt-field suppression).
+  consumesSketch: ["water", "river", "road", "wall", "farmland"],
+  influenceMargin: 1500,
+  costClass: "expensive",
   paramsSchema: cityParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: CITY_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -261,6 +300,13 @@ const riverAlgorithm: ProcgenAlgorithm = {
   stage: 1,
   produces: ["water"],
   consumes: ["elevation"],
+  // Raw sketch reads: water + a partner river spine (confluence snap,
+  // CONFLUENCE_SNAP_M = 30) and the sketched mountains' elevation field (slope
+  // coupling, on by default). The mountain field has compact support, so any
+  // positive gap is byte-inert; 30 m covers the confluence snap.
+  consumesSketch: ["water", "river", "mountain"],
+  influenceMargin: 30,
+  costClass: "medium",
   paramsSchema: riverParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: RIVER_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -324,6 +370,12 @@ const forestAlgorithm: ProcgenAlgorithm = {
   stage: 2,
   produces: ["vegetation"],
   consumes: ["water"],
+  // generateForest reads no raw sketch constraints — masked noise over its own
+  // ring only. The `consumes: ["water"]` above is a declared-but-inert DAG
+  // OUTPUT edge, not a raw-sketch read.
+  consumesSketch: [],
+  influenceMargin: 0,
+  costClass: "cheap",
   paramsSchema: forestParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: FOREST_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -378,6 +430,11 @@ const parkAlgorithm: ProcgenAlgorithm = {
   stage: 2,
   produces: ["vegetation"],
   consumes: ["water"],
+  // Park reads road only: a path enters where a sketched road meets the ring
+  // (ROAD_ENTRANCE_THRESH_M = 30, an exact `<=` cutoff).
+  consumesSketch: ["road"],
+  influenceMargin: 30,
+  costClass: "medium",
   paramsSchema: parkParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: PARK_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -434,6 +491,12 @@ const wallAlgorithm: ProcgenAlgorithm = {
   stage: 4,
   produces: ["detail"],
   consumes: ["settlement"],
+  // Wall reads road only: gates fall where a road crosses the wall spine (exact
+  // segment intersection). A road strictly outside the corridor bbox cannot
+  // cross the spine, so the margin is 0.
+  consumesSketch: ["road"],
+  influenceMargin: 0,
+  costClass: "medium",
   paramsSchema: wallParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: WALL_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -500,6 +563,14 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   stage: 2,
   produces: [],
   consumes: ["elevation"],
+  // Farmland reads the sketched mountains' elevation field (paddy-terraces
+  // contours). The field is zero outside the mountain ring (compact support)
+  // and gates on in-region relief, so a disjoint mountain is byte-inert: margin
+  // 0. The city reads a raw farmland SKETCH, but that is the CITY's
+  // consumesSketch, not farmland's.
+  consumesSketch: ["mountain"],
+  influenceMargin: 0,
+  costClass: "medium",
   paramsSchema: farmlandParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: FARMLAND_PRESETS,
   defaultPresetId(themeId: string): string {
@@ -555,6 +626,10 @@ const mountainAlgorithm: ProcgenAlgorithm = {
   stage: 0,
   produces: ["elevation"],
   consumes: [],
+  // The base field — generateMountain reads no constraints at all.
+  consumesSketch: [],
+  influenceMargin: 0,
+  costClass: "cheap",
   paramsSchema: mountainParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: MOUNTAIN_PRESETS,
   defaultPresetId(themeId: string): string {
