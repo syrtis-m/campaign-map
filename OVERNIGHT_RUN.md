@@ -1,8 +1,17 @@
-# OVERNIGHT RUN — pipeline arc 031→039 (2026-07-14)
+# OVERNIGHT RUN — pipeline arc 031→039 (2026-07-14 → 2026-07-15)
 
 Autonomous run per Jonah's goal: implement plans 031–039, parallelize with opus subagents,
 build a new overlap-focused test map, commit+push continuously. Everything needing Jonah's
 eyes lands HERE. Newest items at the top of each section.
+
+## ✅ RUN COMPLETE (2026-07-15 ~09:00)
+All nine plans landed and pushed. Suite 895 → **1121/1121 fast + 38/38 fuzz**; tsc + build
+clean; every plan independently re-verified before push. Final algorithm versions:
+city 3 · river 3 · farmland 4 · forest 4 · park 5 · wall 3 · mountain 1. Deferred follow-ups
+(each with rationale below): 036-C live paint-wiring + 36-D Apply UI, 038.5 frontage lots,
+038.3 junction-angle nudge, 038.4 pond-at-low-point + contour-oriented strips,
+variable-support stamp invalidation, 037 towers-outboard. Read NEEDS JONAH'S EYES top-down —
+the top items are the ones that change what you'd do next.
 
 ## Ground rules in force
 - **NO live Obsidian gates** (Jonah 2026-07-14) — all verification headless (Vitest, FakeHost
@@ -19,6 +28,29 @@ eyes lands HERE. Newest items at the top of each section.
    alone". Temple/gate variants stay deferred.
 
 ## NEEDS JONAH'S EYES
+- **038 sub-item deferrals (design questions, not failures):**
+  1. *038.5 frontage/ribbon lots along promoted roads* — implemented then REVERTED: on a dense
+     euro-medieval fill the perpendicular frontage seeds get outcompeted in the global growth
+     queue (measured lots 265→226 = pure noise, no defensible metric band). Needs either a
+     growth-budget carve-out for road frontage or re-emit-as-arterial + bounded ribbons (with
+     a paint call on the sketch/procgen double-draw). Forced gates at road×ring crossings DID
+     land.
+  2. *038.3 junction-angle nudge (45–75°)* — would deform the centerline near the mouth,
+     risking corridor-containment + bank-weld invariants; both width rules landed.
+  3. *038.4 park pond-at-low-point* — the pond is radially entangled with the interiorPole
+     composition (~8 coupled sites); relocating it independently risks containment.
+  4. *038.4 farmland contour-ORIENTED strips* — conflicts with farmland's world-aligned
+     edit-locality invariant; slope-gated pasture tag landed instead.
+- **Parallel-commit hygiene note**: commit `db8d5b4` (city agent) inadvertently included the
+  generator agent's wall registry hunk (wall v2→v3) — the pathspec form commits working-tree
+  state, and the other agent's uncommitted edit was in the file. Zero work lost, attribution
+  only; `git show db8d5b4 -- src/gen/procgen/registry.ts` if you care. Also one reconcile
+  commit (`f12ec53`) was mine: the adoption-lifecycle tests hardcoded pre-038 versions —
+  now drift-proofed (adopt target reads the registry; k-chain overrides at 9).
+- **Eyeball pass, one sitting (playground + Overlap campaign)**: 038 waterfront street
+  alignment, rang long-lots + water-meadows, tributary width steps, timberline/conifer bias,
+  hedgerow shared boundaries, wall water-gates + moat leats; 039 market-pin plaza snap
+  (Coppersquare Market pin in the Overlap campaign is the fixture); plus the 035 items below.
 - **037 margin churn (real design question)**: city's consumesSketch now includes park/district
   (for nested holes) at the city's 1500 m margin — so ANY park/district edit within 1500 m of a
   city regenerates it (byte-identically when not contained; slow-but-correct). Adjacent
@@ -56,6 +88,19 @@ eyes lands HERE. Newest items at the top of each section.
   faubourg reading). Flag if plan-037 gate work wants a cleaner separation fixture instead.
 
 ## Landed
+- **Plans 038 + 039 §1.1 COMPLETE** (two parallel file-disjoint clusters + one reconcile):
+  city cluster `db8d5b4` (039 market-pin plaza snap — precedence params.center > market pin >
+  computed, untyped pins byte-identical), `93c6850` (waterfront: bank-tangent streets 0.85
+  alignment vs 0.57 far, building setback, quays hug the bank), `b08668c` (adjacent districts:
+  ε-edge stubs/gates hashed symmetrically, bit-exact from both sides at different
+  seeds/profiles), `14f8503` (road×ring forced gates; frontage deferred). Generator cluster
+  `390522d` (wall water-gates + moat leat + canal payload fed without touching citynet),
+  `9951351` (rang long-lots ⊥ bank + waterMeadow tag), `286642d` (Strahler-ish width:
+  step-up >1.3× below junctions, mouth clamp, monotone), `65e58b7` (timberline + conifer
+  upslope + contour-sag; farmland pasture slope-gating), `307c8e9` (forest↔farmland/park
+  hedgerow — both sides derive the identical seam line). Reconcile `f12ec53`. One cumulative
+  bump per algorithm; ALL no-upstream/flat-terrain byte-identity proofs green; goldens
+  unchanged (bumps = adoption gates). 1075→1121 tests.
 - **Plan 037 COMPLETE** (`ca75994`, `8e98a42`, `59a13dd`, `0d4c17c`): river→forest/park/farmland
   channel exclusion + riparian ramp (monotone metric band), vegetation→city growth cost (canopy
   attenuation + dense-canopy parcel rejection — canopy never clipped), settlement payload→wall

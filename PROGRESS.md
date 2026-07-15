@@ -2,7 +2,7 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 + 034 + 035 + 037 COMPLETE (2026-07-15). Plan 036 (global terrain) 36-A/B/D + item 5 COMPLETE, 36-C engine landed (live paint-wiring deferred to a Jonah-eyeball session) — 2026-07-15. Plan 038 (coupling edges wave 2: flavor) river/farmland/forest/park/wall cluster (items 2/3/4/7/8) COMPLETE (2026-07-15); city cluster (items 1/5/6) landed in parallel. Plans 020–028 complete. Next: finish 036-C live wiring.
+## Status: PIPELINE ARC 031–039 COMPLETE (2026-07-15, one overnight run — journal: OVERNIGHT_RUN.md). Plans 031/032/033/034/035/037/038 fully done; 036 engine done (36-C live paint-wiring + 36-D Apply UI deferred to a Jonah-eyeball session); 039 §1.1 (market-pin plaza snap) done on Jonah's explicit goal ruling, temple/gate variants still FUTURE. Final suite 1121/1121 fast + 38/38 fuzz; final algorithm versions: city 3, river 3, farmland 4, forest 4, park 5, wall 3, mountain 1. New shared fixture surface: overlap test map (`src/gen/testkit/overlapMap.ts` + `dev-vault/Campaigns/Overlap`, S1–S8; now deliberately a pinned-old adoption surface). Plans 020–030 complete. Next: 036-C live wiring + OVERNIGHT_RUN.md eyeball items.
 
 ## Plan 038 — coupling edges wave 2: flavor & quality couplings (2026-07-15, headless-only per Jonah 2026-07-14)
 Wave 2 buys legibility ("one world, not independent stamps"). Every item: read an

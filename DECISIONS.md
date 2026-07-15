@@ -1262,3 +1262,38 @@
   generator + registry entry (schema/presets/contract) + tests, zero theme
   edits, zero new gates; board 308s; src/ comment volume halved with zero
   behavior change; every doc reconciled (030-E checklist in a3dcbc9).
+
+## 2026-07-15 — Pipeline arc 031–039 closed in one overnight autonomous run
+
+**Decision:** Executed the whole ratified pipeline arc overnight per Jonah's /goal
+(explicitly: opus subagents in parallel, new overlap-focused test map, commit+push
+continuously, no waiting; the goal's "031 through 039" taken as the fresh ruling
+plan 039 required — §1.1 only, per the plan's own sequencing). Headless-only
+verification throughout (the 2026-07-14 no-live-gates rule); every plan
+independently re-verified by the orchestrator (tsc + full suite + build + fuzz)
+before push. Suite grew 895 → 1121 (+38 fuzz).
+**Notable in-flight rulings (all conservative, logged in OVERNIGHT_RUN.md):**
+1. 033-A harness overruled the research-report consumption table twice (river
+   consumes mountain; city margin 1500 m not 200 m) — declarations seeded from
+   the HARNESS, not the report.
+2. 034 fixed a real live-vs-replay divergence structurally (region roots mint
+   their own −1 source) rather than special-casing — plan §3's own rule.
+3. 036 mountain migration achieved BIT-EXACT (incl. signed zeros); its 36-C live
+   paint-wiring + 36-D Apply UI deferred (live/host work is unverifiable
+   headlessly this arc) — engine landed and tested, old baked contours still
+   paint, so no visual regression window.
+4. Deliberate sub-item deferrals with measured rationale: 038.5 frontage lots
+   (no defensible headless metric — growth-queue noise), 038.3 junction-angle
+   nudge, 038.4 pond-at-low-point + contour-oriented strips (each risked a
+   standing invariant).
+5. Shared-checkout parallelism: two 038 clusters ran concurrently with
+   file-ownership contracts + pathspec-only commits; one hygiene incident
+   (`db8d5b4` swept the wall registry hunk early — zero loss, attribution only)
+   and one planned reconcile (adoption-test version fixtures, now drift-proofed
+   against future bumps).
+**Alternatives:** serial single-agent execution (slower, was used for 031–037
+where file surfaces overlapped); worktree isolation for parallel agents
+(rejected — merge cost on registry/goldens outweighed the staging risk).
+**Reversibility:** standard — every change is versioned per 029 (pins + adoption);
+`.mapcache` regeneration proven byte-identical at current versions; the Overlap
+campaign is emitter-regenerable.
