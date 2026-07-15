@@ -2,7 +2,51 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 COMPLETE (2026-07-15). Plans 020–028 complete.
+## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 COMPLETE (2026-07-15). Plans 020–028 complete.
+
+## Plan 033 — consumption-aware invalidation (2026-07-15, COMPLETE — headless-only per Jonah 2026-07-14)
+Declare per algorithm which raw sketch KINDS it reads and how far they reach, then
+scope both the invalidation walk and the staleness fingerprint to that — killing
+the P4 over-invalidation (a road edit regenerating mountains) and the P5 load-storm
+(any sketch edit flipping every region's fingerprint). Verified in Vitest + FakeHost
+counters + the 033-A fuzz gate; NO live gates. 955 fast + 36 fuzz green.
+- **[x] 033-A — under-invalidation property harness** (`d9dacc2`, prior session): the
+  shipping gate. `checkUnderInvalidation` proves per algorithm × sketch-kind that any
+  non-declared kind (overlapping/touching/far) and any declared kind beyond its margin
+  are BYTE-INERT — so an under-declaration fails HERE. Runs in the fuzz tier forever.
+- **[x] 033-B — fast fingerprint hasher** (`790caff`): the FNV-1a BigInt-per-char hasher
+  (~56 MB/s measured) replaced by a pure-TS two-lane 32-bit hash (cyrb-style, two
+  `Math.imul` lanes cross-mixed, same 16-hex width) — **975 MB/s, 17.3x** on a 127 KB
+  ring string. Perf is a BUDGET COUNTER (`hashByteBudget`: bytes/pass), never wall-clock
+  (docs/06). Hash-equivalence not required: `FP_VERSION fp1→fp2` self-heals one recompute.
+- **[x] 033-C — registry consumption declarations** (`58a3622`): each algorithm declares
+  `consumesSketch` (raw kinds it reads), `influenceMargin` (m, bbox-to-bbox), `costClass`
+  (routing data for plan 034's cap — nothing keys on it yet). Values from the 033-A
+  VERIFIED table: city water/river/road/wall/farmland@1500 expensive; river
+  water/river/mountain@30 medium; park road@30; wall road@0; farmland mountain@0;
+  forest/mountain none. The fuzz harness now reads them off the registry (temporary
+  MEASURED_CONSUMPTION fixture deleted; prove-the-net clones kept); a `registry.test.ts`
+  row pins the exact values. `affectedRegionIds` switches from the blanket 200 m
+  kind-blind reach to `kind ∈ consumesSketch ∧ bboxGap ≤ influenceMargin` — **P4: 3
+  regens → 1** (road edit no longer regenerates mountains/forests); district-add ⇒ zero
+  neighbour regens; margin scopes near-vs-far. The DAG output-coupling reach
+  (CONSTRAINT_REACH, buildRegionUpstream/upstreamEdges) is deliberately unchanged.
+- **[x] 033-D — scoped fingerprints** (`<this commit>`): `canonicalConstraints` now hashes
+  ONLY the consumed kinds within the influence bbox (+ upstream DAG fps as before), so a
+  far / non-consumed sketch edit leaves a region's fingerprint intact. `FP_VERSION
+  fp2→fp3` (self-heal). The fp pass THROWS on a missing upstream fp (never silently
+  filters — a dangling DAG edge surfaces). An invalidation-walk force whose recomputed
+  fp equals the cached record's is SKIPPED (`skipInertForce`, flush/cascade opt-in only —
+  a direct GM regenerate/adopt always recomputes, preserving 031-A): declared-but-inert /
+  no-op edits become free (`inertForceSkipCount`). Proof: scoped hash inert to a far/
+  non-consumed edit but flips inside the bbox; P5 load-storm (reopen after a far external
+  road recomputes ZERO out-of-reach regions); a pinned-old region survives an unrelated
+  far edit (no needs-adoption badge, no blank — the global hash would have false-blanked
+  it); an inert re-commit skips the generator run.
+- **STOP conditions honored**: no behavior keys on `consumesSketch` beyond what 033-A
+  verifies; the invalidation walk is never special-cased (a missed read is fixed in the
+  DECLARATION, harness catches it); delete-`.mapcache`+replay stays byte-identical; no
+  plan 034 source-nodes / unified-pass / cost-cap behavior begun.
 
 ## Plan 032 — cache sharding, persistent view, staged repaint (2026-07-15, COMPLETE — headless-only per Jonah 2026-07-14)
 The load-bearing cache/repaint floor for the pipeline arc (research §3, §6.3/6.7/6.8).

@@ -153,6 +153,54 @@ describe("regionFingerprint — upstream artifact fingerprints", () => {
   });
 });
 
+function roadLine(id: string, x: number): FabricFeature {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "LineString", coordinates: [[x, 0], [x, 100]] },
+    properties: { kind: "road" },
+  } as FabricFeature;
+}
+
+describe("regionFingerprint — scoped constraints (plan 033-D)", () => {
+  // base() is `city`; scope it to a consumed kind (water) with a tight margin.
+  function scopedBase(): RegionFingerprintInput {
+    return { ...base(), consumesSketch: ["water"], influenceMargin: 50 };
+  }
+  const ref = regionFingerprint(scopedBase());
+
+  it("a consumed kind INSIDE the influence bbox flips the fingerprint", () => {
+    // Water at (100,100), region ring 0..1000 ⇒ inside ⇒ within margin.
+    expect(regionFingerprint({ ...scopedBase(), fabricFeatures: [waterPolygon("w1", 100)] })).not.toBe(ref);
+  });
+
+  it("a consumed kind BEYOND the influence margin is byte-inert (the P5 far-edit fix)", () => {
+    // Water at (5000,5000): ~4000 m from the region bbox, well beyond 50 m.
+    expect(regionFingerprint({ ...scopedBase(), fabricFeatures: [waterPolygon("wFar", 5000)] })).toBe(ref);
+  });
+
+  it("a NON-consumed kind is byte-inert even overlapping the region", () => {
+    // A road overlapping the region, but this scope consumes only water.
+    expect(regionFingerprint({ ...scopedBase(), fabricFeatures: [roadLine("r1", 100)] })).toBe(ref);
+  });
+
+  it("an empty consumesSketch hashes NO raw sketch (forest/mountain read nothing)", () => {
+    const inert = { ...base(), consumesSketch: [] as const, influenceMargin: 0 };
+    const bare = regionFingerprint(inert);
+    // Neither a water nor a road (nor anything) can move an empty-scope fingerprint.
+    expect(regionFingerprint({ ...inert, fabricFeatures: [waterPolygon("w", 100)] })).toBe(bare);
+    expect(regionFingerprint({ ...inert, fabricFeatures: [roadLine("r", 100)] })).toBe(bare);
+  });
+
+  it("scoping is strictly narrower: a far edit that flips the GLOBAL hash leaves the SCOPED hash intact", () => {
+    const far = [waterPolygon("wFar", 5000)];
+    // Pre-033 global behavior (no consumesSketch): far water flips it.
+    expect(regionFingerprint({ ...base(), fabricFeatures: far })).not.toBe(regionFingerprint(base()));
+    // Scoped: the same far water is inert.
+    expect(regionFingerprint({ ...scopedBase(), fabricFeatures: far })).toBe(ref);
+  });
+});
+
 describe("hasher (plan 033-B) — two-lane 32-bit, budget counter", () => {
   it("emits the same 16-hex width as the old FNV-64 output", () => {
     expect(regionFingerprint(base())).toMatch(/^[0-9a-f]{16}$/);

@@ -631,6 +631,86 @@ describe("MapController — consumption-aware invalidation (033-C)", () => {
   });
 });
 
+// ─── Plan 033-D — scoped fingerprints ────────────────────────────────────────
+// canonicalConstraints hashes only the consumed kinds within the influence
+// bbox, so a far / non-consumed sketch edit leaves a region's fingerprint (and
+// cache freshness) intact: no P5 load-storm, no pinned-old false-blank, and a
+// nominally-dirty-but-inert force skips its generator run.
+describe("MapController — scoped fingerprints (033-D)", () => {
+  it("an inert re-commit (a consumed edit that changes nothing) skips the generator run", async () => {
+    const host = cityHost();
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "__d_city__", "district");
+    // A road within the city's 1500 m margin: the first flush regenerates.
+    const roadId = await host.controller.createFabricForTest("road", [
+      [10, -34],
+      [26, -34],
+    ]);
+    const road = (await host.fabric()).features.find((f) => f.id === roadId)!;
+    host.controller.queueConstraintRegen(road);
+    await host.controller.flushSketchRegen();
+    expect(host.controller.forceRegenOrder).toEqual([city.featureId]);
+
+    // Re-queue the SAME road (no geometry change): the city is nominally dirty
+    // again (road ∈ consumesSketch, within margin) but its scoped fingerprint is
+    // unchanged, so the force is skipped — no generator run.
+    const runsBefore = host.controller.generatorRunCount;
+    const skipBefore = host.controller.inertForceSkipCount;
+    host.controller.queueConstraintRegen(road);
+    await host.controller.flushSketchRegen();
+    expect(host.controller.forceRegenOrder).toEqual([city.featureId]); // still visited
+    expect(host.controller.generatorRunCount).toBe(runsBefore); // but not recomputed
+    expect(host.controller.inertForceSkipCount).toBe(skipBefore + 1);
+  });
+
+  it("campaign-open after a FAR sketch edit recomputes ZERO out-of-reach regions (P5 load-storm)", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    // An EXTERNAL edit: a road persisted to Fabric.geojson with no in-app regen
+    // (a vault sync / another editor). Placed ~2.2 km from the city — far beyond
+    // its 1500 m road margin.
+    await host.controller.createFabricForTest("road", [
+      [10, 34],
+      [26, 34],
+    ]);
+    const renderBefore = host.controller.regionFeatureIds(featureId).slice().sort();
+
+    // Reopen (shares the adapter → same cache + the now-edited fabric) and replay.
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    await reopened.controller.replayGeneratedManifest();
+
+    // Pre-033-D the global constraint hash flipped the city's fingerprint (any
+    // edit anywhere) and it recomputed on open; scoped, the far road is inert.
+    expect(reopened.controller.generatorRunCount).toBe(0);
+    expect(reopened.controller.regionFeatureIds(featureId).slice().sort()).toEqual(renderBefore);
+  });
+
+  it("a pinned-old region survives an unrelated far-away sketch edit (no badge, no blank)", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    host.controller.overrideCurrentVersionForTest("city", 2); // pin the region OLD
+    // External far road, no regen.
+    await host.controller.createFabricForTest("road", [
+      [10, 34],
+      [26, 34],
+    ]);
+
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    reopened.controller.overrideCurrentVersionForTest("city", 2);
+    await reopened.controller.replayGeneratedManifest();
+
+    // A pinned-old region can only be SERVED from cache. With a GLOBAL hash the
+    // far road would flip its fingerprint, mark the cached record stale, and —
+    // unable to recompute — it would blank with a needs-adoption badge. Scoped,
+    // the far road is inert: the record stays fresh and paints.
+    expect(reopened.controller.generatorRunCount).toBe(0);
+    expect(reopened.controller.needsAdoptionIds()).toEqual([]); // no badge
+    expect(reopened.notices.some((n) => n.message.includes("needs adoption"))).toBe(false); // no blank
+    expect(reopened.controller.regionFeatureIds(featureId).length).toBeGreaterThan(0); // painted
+  });
+});
+
 describe("MapController — world tier generate / regen / clear (phase3/phase4)", () => {
   it("records a manifest entry and runs a generator on generateFabricHere", async () => {
     const host = new FakeHost({ zoom: 5 }); // world tier

@@ -172,7 +172,13 @@ function bboxGap(a: BBox, b: BBox): number {
  * pass hashes ONCE and reads the cache ONCE (031-B): the precomputed
  * `(stage,id)`-ordered fingerprint map + the single mutable cache view every
  * region regen reads fresh upstream from and writes its records into. */
-type RegionBatchOpts = { fingerprints?: Map<string, string>; preloadedCache?: Map<string, CachedTile> };
+type RegionBatchOpts = {
+  fingerprints?: Map<string, string>;
+  preloadedCache?: Map<string, CachedTile>;
+  /** 033-D: the raw-sketch invalidation walk + cascade set this so a nominally
+   * dirty region whose fingerprint is unchanged skips its generator run. */
+  skipInertForce?: boolean;
+};
 
 /** The generation service, host-injected so the controller never imports the
  * App-typed `generateTile`/`generateRegionTile` directly. */
@@ -307,6 +313,9 @@ export class MapController {
   /** Gate counter (031-B): how many `computeRegionFingerprints` passes ran —
    * a batch (flush/cascade/replay) must do exactly ONE, threading the result. */
   private fingerprintPassCounter = 0;
+  /** Gate counter (033-D): invalidation-walk forces skipped because the region's
+   * fingerprint proved its inputs unchanged (declared-but-inert / no-op edits). */
+  private inertForceSkipCounter = 0;
   /** Repaint coalescing (031-B) + staging (032-D): while >0, `repaintGenerated`
    * is deferred; on batch exit the pass fires ONE repaint PER TOUCHED STAGE, in
    * ascending (upstream-first) order — a 10-region cascade that only changed the
@@ -370,6 +379,11 @@ export class MapController {
   /** Gate surface (031-B): fingerprint passes this session — one per batch. */
   get fingerprintPassCount(): number {
     return this.fingerprintPassCounter;
+  }
+
+  /** Gate surface (033-D): invalidation-walk forces skipped as fingerprint-inert. */
+  get inertForceSkipCount(): number {
+    return this.inertForceSkipCounter;
   }
 
   /** Repaint the generated layer. Inside a batch, defer — record the touched
@@ -750,7 +764,15 @@ export class MapController {
    */
   private async generateRegion(
     feature: FabricFeature,
-    opts: { force?: boolean; preloadedCache?: Map<string, CachedTile>; fingerprints?: Map<string, string> } = {}
+    opts: {
+      force?: boolean;
+      preloadedCache?: Map<string, CachedTile>;
+      fingerprints?: Map<string, string>;
+      /** 033-D: allow a force to be skipped when the region's fingerprint proves
+       * its inputs are unchanged (the invalidation walk sets this; direct GM
+       * regenerate/adopt does not). */
+      skipInertForce?: boolean;
+    } = {}
   ): Promise<GeoJSON.Feature[]> {
     if (!this.campaign) return [];
     const campaign = this.campaign;
@@ -769,10 +791,49 @@ export class MapController {
     // suppressed too (indirect demands like a constraint-edit flush land here;
     // direct GM edits were already consent-gated upstream).
     const pinnedOld = this.isPinnedOld(block, algorithm);
-    const force = (opts.force ?? false) && !pinnedOld;
     // The working cache is always the persistent session view (032-B) unless a
     // batch threaded one (which IS the session view) — never a fresh disk read.
     const preloaded = opts.preloadedCache ?? (await this.cacheView(folder));
+    // Build the generation context up front so the fingerprint fallback can read
+    // the current fabric constraints. `ctx.upstream` is filled AFTER any
+    // force-drop below (it reads the post-drop cache).
+    const ctx = this.generationContext();
+    // The durable-input fingerprint stamped on every record this run writes,
+    // compared on replay to catch an external edit. DAG-aware — it folds in
+    // this region's strictly-lower-stage upstream fingerprints
+    // (`computeRegionFingerprints`), so an upstream edit (e.g. a mountain a
+    // river's slope reads) invalidates this region on replay too. SCOPED (033-D)
+    // to the algorithm's consumed kinds within its influence bbox. Fallback to a
+    // no-upstream fingerprint if the region isn't in the current collection yet
+    // (a just-built feature mid-attach).
+    const fingerprint =
+      (opts.fingerprints ?? this.computeRegionFingerprints(ctx)).get(feature.id) ??
+      regionFingerprint({
+        algorithm: block.algorithm,
+        seed: block.seed,
+        version: block.version,
+        params: block.params,
+        region,
+        fabricFeatures: ctx.fabricFeatures,
+        consumesSketch: algorithm.consumesSketch,
+        influenceMargin: algorithm.influenceMargin,
+      });
+    let force = (opts.force ?? false) && !pinnedOld;
+    // 033-D: an INVALIDATION-WALK force (raw-sketch flush / cascade) that lands
+    // on a region whose recomputed fingerprint equals its cached network
+    // record's — the durable inputs are UNCHANGED, so the cached bytes are
+    // already correct. Skip the generator run and re-serve from cache
+    // (declared-but-inert / no-op edits become free). Only the invalidation walk
+    // opts in via `skipInertForce`; a direct GM regenerate/adopt/param edit
+    // always recomputes (031-A). A record with no stored fp can't prove
+    // freshness ⇒ regenerate.
+    if (force && opts.skipInertForce) {
+      const net = preloaded.get(regionNetworkKey(region.id));
+      if (net && net.fingerprint !== undefined && net.fingerprint === fingerprint) {
+        force = false;
+        this.inertForceSkipCounter++;
+      }
+    }
     if (force) {
       const keys = [
         regionNetworkKey(region.id),
@@ -787,30 +848,12 @@ export class MapController {
       for (const k of keys) preloaded.delete(k); // covers a caller-supplied map too
     }
     if (this.campaign?.id !== campaign.id) return [];
-    const ctx = this.generationContext();
     // Thread this region's fresh lower-stage upstream (the meandered river
     // channel the city consumes) as DATA. Built from the shared cache when
     // present (replay/flush) or a one-shot vault read (cascade).
     ctx.upstream = await this.buildRegionUpstream(feature, region, algorithm, preloaded, folder);
     const worker = await this.host.gen.getWorker();
     const compute = this.regionCompute(worker, feature);
-    // The durable-input fingerprint stamped on every record this run writes,
-    // compared on replay to catch an external edit. DAG-aware — it folds in
-    // this region's strictly-lower-stage upstream fingerprints
-    // (`computeRegionFingerprints`), so an upstream edit (e.g. a mountain a
-    // river's slope reads) invalidates this region on replay too. Fallback to a
-    // no-upstream fingerprint if the region isn't in the current collection yet
-    // (a just-built feature mid-attach).
-    const fingerprint =
-      (opts.fingerprints ?? this.computeRegionFingerprints(ctx)).get(feature.id) ??
-      regionFingerprint({
-        algorithm: block.algorithm,
-        seed: block.seed,
-        version: block.version,
-        params: block.params,
-        region,
-        fabricFeatures: ctx.fabricFeatures,
-      });
     if (pinnedOld) {
       // Cache-only replay: a fresh network record proves the pinned bytes
       // exist (per-tile misses re-clip from it without a generator run). No
@@ -967,9 +1010,21 @@ export class MapController {
       const region = regionById.get(node.id);
       const block = blockById.get(node.id);
       if (!region || !block) continue;
-      const upFps = (upstream.get(node.id) ?? [])
-        .map((id) => fpMap.get(id))
-        .filter((x): x is string => x !== undefined);
+      // 033-D: THROW on a missing upstream fp rather than silently filtering it.
+      // cascadeOrder guarantees every strictly-lower-stage upstream was hashed
+      // before this node, so a gap means a real inconsistency (a dangling DAG
+      // edge / a dropped node) — surfacing it beats hashing an incomplete input
+      // and serving a wrongly-fresh downstream.
+      const upFps = (upstream.get(node.id) ?? []).map((id) => {
+        const fp = fpMap.get(id);
+        if (fp === undefined) {
+          throw new Error(
+            `computeRegionFingerprints: missing upstream fingerprint for "${id}" (dependency of "${node.id}") — DAG/cascade-order invariant broken`
+          );
+        }
+        return fp;
+      });
+      const algo = algorithmById(block.algorithm);
       fpMap.set(
         node.id,
         regionFingerprint({
@@ -979,6 +1034,8 @@ export class MapController {
           params: block.params,
           region,
           fabricFeatures: ctx.fabricFeatures,
+          consumesSketch: algo?.consumesSketch,
+          influenceMargin: algo?.influenceMargin,
           upstreamFingerprints: upFps,
         })
       );
@@ -1857,6 +1914,10 @@ export class MapController {
       const opts: RegionBatchOpts = {
         fingerprints: this.computeRegionFingerprints(ctx),
         preloadedCache: await this.cacheView(campaignFolderFromConfigPath(campaign.path)),
+        // 033-D: this IS the invalidation walk — a nominally dirty region whose
+        // fingerprint is unchanged (a no-op / declared-but-inert edit) skips its
+        // generator run and re-serves cached bytes.
+        skipInertForce: true,
       };
       const done = new Set<string>();
       // Merge the queued region-edit roots with the raw-sketch bbox reach into

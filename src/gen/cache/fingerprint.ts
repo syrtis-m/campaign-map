@@ -41,16 +41,18 @@
  * Pure/headless (no DOM/map/Obsidian imports) so both the host and the worker
  * can compute an identical fingerprint from the same durable data.
  */
-import type { FabricFeature } from "../../model/fabric";
+import type { FabricFeature, FabricKind } from "../../model/fabric";
 import { indexFabricConstraints } from "../fabricConstraints";
 import type { ProcgenRegion } from "../region";
+import type { BBox } from "../spatialHash";
 
 /** Bumped when the fingerprint composition OR the hash function changes. Old
  * records carry the old tag ⇒ mismatch ⇒ a MISS that recomputes, so the change
  * self-heals (the documented, harmless one-time recompute). fp2 (plan 033-B):
- * the FNV-BigInt hasher was replaced by a two-lane 32-bit hash — hash bytes are
- * NOT equivalent to fp1, so every record recomputes once on the next open. */
-const FP_VERSION = "fp2";
+ * the FNV-BigInt hasher was replaced by a two-lane 32-bit hash. fp3 (plan
+ * 033-D): the raw-constraint hash is now SCOPED to the algorithm's consumed
+ * kinds within its influence bbox — a global-hash record recomputes once. */
+const FP_VERSION = "fp3";
 
 export interface RegionFingerprintInput {
   /** Registry algorithm id (`procgen.algorithm`). */
@@ -64,8 +66,21 @@ export interface RegionFingerprintInput {
   /** The host-built region (mm-quantized ring + optional spine). */
   region: ProcgenRegion;
   /** The whole sketched-fabric collection — the SAME features every generator
-   * run sees as constraints. Only the constraint-bearing kinds contribute. */
+   * run sees as constraints. Only the constraint-bearing kinds contribute, and
+   * (plan 033-D) only those within `consumesSketch` ∩ influence bbox. */
   fabricFeatures?: FabricFeature[];
+  /** The algorithm's declared raw-sketch consumption (registry `consumesSketch`,
+   * plan 033-D). Provided ⇒ the raw-constraint hash is SCOPED: only features of
+   * a consumed kind whose bbox comes within `influenceMargin` of the region bbox
+   * contribute, so a far-away or non-consumed sketch edit leaves this
+   * fingerprint UNCHANGED (the P5 load-storm fix). The 033-A harness proves that
+   * scope is byte-safe (everything excluded is byte-inert). Omitted ⇒ the
+   * pre-033 GLOBAL hash of every constraint kind (retained only for callers
+   * without the registry in hand). */
+  consumesSketch?: readonly FabricKind[];
+  /** Influence reach (meters) paired with `consumesSketch` for the scoped hash;
+   * defaults to 0 when `consumesSketch` is given without it. */
+  influenceMargin?: number;
   /** The fingerprints of this region's strictly-lower-stage DAG dependencies
    * (see `dag.ts`). Sorted by the caller for order-invariance; folded in ONLY
    * when non-empty (a no-upstream region keeps a stable fingerprint — see the
@@ -127,6 +142,57 @@ function canonicalJson(value: unknown): string {
   return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonicalJson(obj[k])).join(",") + "}";
 }
 
+/** Euclidean bbox-to-bbox separation (0 when overlapping/touching) — the same
+ * currency the 033-C invalidation walk uses, so the scoped hash and the walk
+ * agree on "within margin". */
+function bboxGap(a: BBox, b: BBox): number {
+  const dx = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
+  const dy = Math.max(0, Math.max(a.minY - b.maxY, b.minY - a.maxY));
+  return Math.hypot(dx, dy);
+}
+
+/** Feature bbox from its (arbitrarily nested) coordinate arrays. Returns null
+ * for a feature with no numeric coordinates. */
+function featureBbox(f: FabricFeature): BBox | null {
+  const b: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  const scan = (c: unknown): void => {
+    if (!Array.isArray(c)) return;
+    if (typeof c[0] === "number" && typeof c[1] === "number") {
+      const x = c[0] as number;
+      const y = c[1] as number;
+      if (x < b.minX) b.minX = x;
+      if (y < b.minY) b.minY = y;
+      if (x > b.maxX) b.maxX = x;
+      if (y > b.maxY) b.maxY = y;
+      return;
+    }
+    for (const e of c) scan(e);
+  };
+  scan(f.geometry.coordinates);
+  return Number.isFinite(b.minX) ? b : null;
+}
+
+/** Plan 033-D scope: the subset of `fabricFeatures` that could influence this
+ * region's output — a consumed KIND whose bbox is within `margin` of the region
+ * bbox. Undefined `consumesSketch` ⇒ no scoping (pre-033 global hash); an empty
+ * `consumesSketch` ⇒ nothing (the generator reads no raw sketch). Everything
+ * this drops is byte-inert by the 033-A harness's proof. */
+function scopeConstraintFeatures(
+  fabricFeatures: FabricFeature[] | undefined,
+  consumesSketch: readonly FabricKind[] | undefined,
+  margin: number,
+  regionBbox: BBox
+): FabricFeature[] | undefined {
+  if (!fabricFeatures || fabricFeatures.length === 0) return fabricFeatures;
+  if (consumesSketch === undefined) return fabricFeatures;
+  if (consumesSketch.length === 0) return [];
+  return fabricFeatures.filter((f) => {
+    if (!consumesSketch.includes(f.properties.kind)) return false;
+    const fb = featureBbox(f);
+    return fb !== null && bboxGap(fb, regionBbox) <= margin;
+  });
+}
+
 /** Canonical, order-invariant serialization of the raw-sketch constraints the
  * generators consume. Each bucket's entries are sorted by their canonical JSON
  * so reordering features in `Fabric.geojson` never changes the fingerprint. */
@@ -156,6 +222,12 @@ function canonicalConstraints(fabricFeatures: FabricFeature[] | undefined): stri
 export function regionFingerprint(input: RegionFingerprintInput): string {
   const { algorithm, seed, version, params, region, fabricFeatures, upstreamFingerprints } = input;
   const geometry = canonicalJson({ ring: region.ring, spine: region.spine?.points ?? null });
+  const scoped = scopeConstraintFeatures(
+    fabricFeatures,
+    input.consumesSketch,
+    input.influenceMargin ?? 0,
+    region.bbox
+  );
   const fields = [
     FP_VERSION,
     algorithm,
@@ -163,7 +235,7 @@ export function regionFingerprint(input: RegionFingerprintInput): string {
     String(version),
     canonicalJson(params),
     "G:" + geometry,
-    "C:" + canonicalConstraints(fabricFeatures),
+    "C:" + canonicalConstraints(scoped),
   ];
   // Fold in upstream DAG dependencies ONLY when present, so a no-upstream region
   // keeps a stable fingerprint (no version bump, no needless recompute — module
