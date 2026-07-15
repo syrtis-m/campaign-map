@@ -1172,3 +1172,21 @@
   simulated version override (rewriting his Fabric.geojson). The live gate
   verifies command registration only; adopt-all behavior is unit-tested on
   FakeHost (multi-algorithm, count, idempotence).
+
+## 2026-07-14 — plan 029 CLOSE
+- **Park v2 ruling (the first real bump):** the 29-C agent found `blobFeature`
+  emitting un-quantized rings (D5 violation; sub-mm error in park bed/bridge
+  coordinates). Ruled a VERSION BUMP, not an in-version bugfix — policy §1.2
+  has no sub-mm carve-out, and the first post-ratification exception would be
+  the precedent that eats the policy. Shipped as park 1→2 + re-golden in one
+  sitting (`67c9041`); this replaced the planned §9 dummy-river exit test.
+- **migrateParams contract clarified:** optional above v1 — an identity bump
+  omits it (the `migrateParamsForAdoption` fallback IS the adoption path);
+  the versioning contract test asserts adopted v1 preset params validate
+  under the current schema instead of requiring the hook.
+- **Plan-029 board verdict:** 31/35 raw = 35/35 effective. procgen41+43
+  standalone-green immediately after (flake rule); phase0 fixture-hygiene +
+  presetGallery fails were Jonah's OWN live dev-vault edits during the run
+  (new `testing/` campaign + Preset Gallery changes) — Jonah ruled these
+  green with visual confirmation, same day. His content stays untracked and
+  untouched by this session's commits.
