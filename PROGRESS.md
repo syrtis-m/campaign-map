@@ -2,9 +2,9 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: plan 030 IN PROGRESS — A+B DONE, C active, D in flight, E next. Plan 029 COMPLETE (2026-07-14). Plans 020–028 complete.
+## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Next: the pipeline arc (plans 031–038, ratified same day) or plan 039. Plans 020–028 complete.
 
-## Plan 030 — rearchitecture waves (2026-07-14, IN PROGRESS)
+## Plan 030 — rearchitecture waves (2026-07-14, COMPLETE)
 - **030-A DONE** (docs slice `9bb4328` + 4-agent sweep integrated, close `c3f77e6`):
   ~630 comment plan-citations → 0 across 126 src files (19 justified string
   survivors: snapshot-key test names + 1 runtime error string — deviation
@@ -21,8 +21,19 @@
   vertex-edit test, river→city consumption test, styleGolden theme digests).
   Board 2198s → 308s GREEN 9/9.
 - **030-C** standing convention active (CLAUDE.md + ARCHITECTURE §12.19).
-- **030-D** in flight (declarative paint — worktree agent; byte-identity
-  proof = styleGolden digests must not move).
+- **030-D DONE** (worktree agent, integrated `a3f5067`): per-algorithm
+  styleContract (14-role vocabulary) + roleColors per theme + ONE generic
+  builder replaces the 8 map/themes/generated/* files (−972 lines);
+  tileGeneratorIds derives from the contract + emitted-gid ⊆ contract test
+  (silent-drop structurally dead); playground renders the contract; proof:
+  styleGolden BYTE-IDENTICAL (no -u), perceptual 8/8 at 0.000%, ZERO per-theme
+  overrides needed; smokeProcgen hardened with a rendered-pixels assertion
+  after finding the raw-setStyle blank-screenshot artifact.
+- **030-E DONE** (`a3dcbc9`): full doc read-through against as-built code —
+  ARCHITECTURE §5 versioned determinism / §8 style contract / §9 tiers+smoke
+  board / §10 portable renderer contract / §12 contract-enforced invariants;
+  CLAUDE.md + docs/05/06/08 + README reconciled; playground/README.md added;
+  HEARTBEAT retired to review/. PLAN 030 COMPLETE.
 
 ## Plan 029 — versioned determinism (2026-07-14, COMPLETE)
 - **29-A DONE** (`612cfd2`): `ProcgenAlgorithm.currentVersion` (all 7 at 1) +

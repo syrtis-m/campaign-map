@@ -1243,3 +1243,22 @@
   headless successor. Audit-table net misattributions corrected per the
   break-proof agent (fields23a→region.test.ts, hillshade23d→fields/dem.test.ts,
   phase3-world→world.test.ts).
+
+## 2026-07-14 — plan 030 CLOSE (the rearchitecture arc lands)
+- **030-D shipped with the strongest proof available:** styleGolden digests
+  BYTE-IDENTICAL across all 5 themes without re-acceptance — the refactor moved
+  paint definitions (into contract × role-map), not one value. Zero per-theme
+  overrides were needed (the STOP threshold was 3/algorithm): all apparent
+  theme heterogeneity was theme-uniform structure with different colors. 14
+  roles (the plan's 12 + water-body/cultivated/path-casing, − route-minor).
+- **smokeProcgen hardening (integration find):** a raw gate-driven
+  `setStyle` wipes sources without MapView's theme-switch refresh, so the
+  gate's screenshot was a blank viewport and paint could in principle go blank
+  unnoticed — the gate now asserts queryRenderedFeatures>0 over the fixtures
+  and screenshots BEFORE the setStyle step. Not a product bug (in-app theme
+  switches refresh sources).
+- **Arc done-criteria met:** tuning loop = playground → bump → re-golden →
+  bands (029 §9 exercised on a real fix, park v2); new-algorithm checklist =
+  generator + registry entry (schema/presets/contract) + tests, zero theme
+  edits, zero new gates; board 308s; src/ comment volume halved with zero
+  behavior change; every doc reconciled (030-E checklist in a3dcbc9).
