@@ -19,6 +19,13 @@ type Pt = [number, number];
  * mutation-log entry + persist + regen). */
 export interface SketchControllerHandlers {
   onGeometryEdit(featureId: string, geometry: FabricGeometry): void;
+  /** A finishable in-progress draft (≥ min vertices) is being committed
+   * because the GM "clicked out" of the draw context — switched to the Select
+   * tool, switched kind, or left sketch mode — INSTEAD of the old behaviour of
+   * silently discarding it. The host persists it exactly as a double-click /
+   * Enter finish would (same `sketch-add` + optional procgen offer). A
+   * too-short draft is still discarded, never reported here. */
+  onDraftCommit?(geometry: FabricGeometry, kind: FabricKind): void;
   /** Drag-commit of a procgen region's generation center, display units. Only
    * regions pass a center to `select`. */
   onCenterEdit?(featureId: string, center: Pt): void;
@@ -182,21 +189,48 @@ export class SketchController {
     this.applyToolCursor();
   }
 
-  /** Switching kind mid-draw discards the in-progress draft (a road half-
-   * drawn as a river has no coherent meaning); an active selection is kept. */
+  /** Switching kind mid-draw COMMITS a finishable draft under the OLD kind
+   * (you keep the road you drew and start a river), then switches — only a
+   * too-short draft is discarded. An active selection is kept. */
   setKind(kind: FabricKind): void {
-    if (this.kind !== kind && this.isDrawing) this.cancel();
+    if (this.kind !== kind && this.isDrawing) this.commitDraftIfAny();
     this.kind = kind;
   }
 
-  /** Switch between the draw palette and the Select arrow. Leaving Select
-   * clears the edit selection; entering it cancels any in-progress draft. */
+  /** Switch between the draw palette and the Select arrow. Entering Select
+   * COMMITS a finishable draft (never silently deletes it — the click-out bug);
+   * leaving Select clears the edit selection. */
   setTool(tool: "draw" | "select"): void {
     if (this.tool === tool) return;
-    if (tool === "select") this.cancel();
+    if (tool === "select") this.commitDraftIfAny();
     else this.clearSelection();
     this.tool = tool;
     this.applyToolCursor();
+  }
+
+  /**
+   * Commit an in-progress draft the same way a double-click / Enter finish
+   * would (reports it through `onDraftCommit` so the host persists it), OR
+   * discard it if it is too short to be a shape. No-op when not drawing.
+   *
+   * This is the fix for "editing a shape and click out just deletes it": every
+   * transition OUT of the draw context (Select tool, kind switch, exit sketch
+   * mode / the ✕ done button) routes through here instead of `cancel()`, so
+   * work is never thrown away by an implicit gesture. The one deliberate
+   * discard affordance stays `Esc` (host-driven `cancel()`).
+   */
+  commitDraftIfAny(): void {
+    if (!this.isDrawing) return;
+    const kind = this.kind;
+    const geometry = this.finish(); // null (and self-cancels) when too short
+    if (geometry) this.handlers.onDraftCommit?.(geometry, kind);
+  }
+
+  /** True when the in-progress draft has enough vertices to become a shape
+   * (line ≥2 / polygon ≥3) — a `commitDraftIfAny` would commit, not discard. */
+  get isFinishableDraft(): boolean {
+    if (!this.isDrawing) return false;
+    return this.vertices.length >= (isPolygonKind(this.kind) ? 3 : 2);
   }
 
   private applyToolCursor(): void {

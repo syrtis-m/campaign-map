@@ -16,6 +16,7 @@ import {
   isProcgenRegion,
   makeFabricId,
   type FabricFeature,
+  type FabricGeometry,
   type FabricKind,
 } from "../model/fabric";
 import { loadFabric, saveFabric } from "../vault/fabricStore";
@@ -1548,6 +1549,10 @@ export class MapView extends ItemView {
     if (!this.map || !this.campaign) return;
     if (this.sketchMode) {
       this.sketchMode = false;
+      // Click-out safety: hitting ✕ done (or Escape-to-exit) with a finishable
+      // draft in progress COMMITS it rather than silently dropping it — the
+      // same "don't delete my shape" contract as a tool/kind switch.
+      this.sketchController?.commitDraftIfAny();
       // NOTE: a pending constraint-regen debounce is deliberately NOT
       // cancelled here — "sketch a river, hit done" must still adapt the
       // generated tiles. onClose still cancels it on teardown.
@@ -1584,6 +1589,9 @@ export class MapView extends ItemView {
         void this.controller.commitGeometryEdit(featureId, geometry, { debounce: true });
       },
       onCenterEdit: (featureId, center) => void this.controller.setRegionCenter(featureId, center),
+      // Click-out safety: a finishable draft the GM implicitly left (switched
+      // tool/kind, hit ✕ done) is persisted, not discarded.
+      onDraftCommit: (geometry, kind) => this.persistSketchDraft(geometry, kind),
       onGeometryPreview: (featureId, geometry) => {
         // Preview mode (plan 034-D): per debounce PAUSE of the drag, repaint
         // only the ROOT region as ephemeral render state (no cache, no
@@ -1824,6 +1832,13 @@ export class MapView extends ItemView {
       );
       return;
     }
+    this.persistSketchDraft(geometry, kind);
+  }
+
+  /** Persist a finished draft geometry into a FabricFeature (both the explicit
+   * double-click/Enter finish and the auto-commit-on-click-out path funnel
+   * through here so a shape reaches the vault the same way either way). */
+  private persistSketchDraft(geometry: FabricGeometry, kind: FabricKind): void {
     const feature: FabricFeature = {
       type: "Feature",
       id: makeFabricId(),
