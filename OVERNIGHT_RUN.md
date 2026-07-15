@@ -28,6 +28,26 @@ the top items are the ones that change what you'd do next.
    alone". Temple/gate variants stay deferred.
 
 ## NEEDS JONAH'S EYES
+- **Vailmarch (the demo ask) — two composition findings:**
+  1. **Relief/landform stamps are generator-INERT**: forest/farmland/river read terrain via
+     `macroTerrainField` = mountains + base only (the variable-support-margin gap, by design
+     per the 036 deferral). The plateau/basin/sea/ridge stamps shape the VISIBLE surface
+     (DEM/hillshade/3D, carve) but no region generator reacts to them — the demo's
+     timberline/paddy/pasture reads sit over mountain polygons instead. Confirm this matches
+     intent; the fix is the variable-support invalidation design.
+  2. **Base fBm terrain doesn't reach generators either** (`macroTerrainField` is called with
+     no base) — and `campAmp`/`seaDatum` had no persisted home until the DEM wiring added an
+     optional default-inert `terrain` config block. The demo ships with base amp 0 + strong
+     stamps; `VAILMARCH_BASE` in the builder documents what it would use.
+- **DEM/3D perf note**: the DEM wiring caught a real blow-up — river-carve `nearest()` was
+  O(dist²) in the far field ⇒ >120 s per 256² DEM tile with 4 rivers; a provably byte-exact
+  far-field reject brings it to ~300 ms/tile (locked by a carve-on/off byte-identity test).
+  Residual ~300 ms is 5-octave base fBm when campAmp>0 (one-time per tile, dev machine) — if
+  too slow on the Surface Pro, the fix is the 036-C worker-side memoized DEM leaf.
+- **Stray Overlap fabric reorder reverted**: something load-and-resaved
+  `Overlap/Fabric.geojson` during the morning session (pure feature reorder, bytes equal) —
+  writer unknown (neither agent claims it); reverted to the emitter's canonical bytes. If it
+  recurs, the host fabric writer may not preserve feature order — worth a look.
 - **038 sub-item deferrals (design questions, not failures):**
   1. *038.5 frontage/ribbon lots along promoted roads* — implemented then REVERTED: on a dense
      euro-medieval fill the perpendicular frontage seeds get outcompeted in the global growth
@@ -88,6 +108,22 @@ the top items are the ones that change what you'd do next.
   faubourg reading). Flag if plan-037 gate work wants a cleaner separation fixture instead.
 
 ## Landed
+- **Vailmarch showcase campaign** (`3ee2d7c`): terrain-native demo, ~8×6 km — north relief
+  spine w/ two massifs, east plateau, south basin, west sea, one four-river system (gorge
+  carve, two Strahler confluences, mountain-torrent opt-in), walled capital straddling the
+  Vail (water-gate, market plaza snap, nested green, forced road gates), ε=0 twin districts,
+  coastal town, 5 farmland + 5 forests covering every coupling, 11 pinned locations. 34
+  regions, all GENERATION-PROVEN headlessly: 30 premise+proof tests assert the actual coupling
+  signatures (waterGates, bankLot/waterMeadow, standConifer+timberline, plaza-at-pin ≤60 m,
+  bit-equal twin gates, gorge ~40 m below banks, park hole+frontage, lanes→gates). Regenerate:
+  `npx tsx scripts/emit-vailmarch-campaign.ts`. 1121→1156 tests.
+- **DEM/3D wired to composed terrain** (`f215840` — 036 follow-up item 1, DEM half): the
+  in-app hillshade/3D now evaluates full `terrainAt` (base + mountains verbatim + relief +
+  landform + river carve + optional grading), bit-exact vs the old mountain union incl.
+  signed zeros (Object.is lattice test), digest `t2|…` over every durable terrain input
+  (id-sorted, enumeration-proof, old tiles re-derive). Campaign config gains an optional
+  default-inert `terrain` block (campAmp/seaDatum/grade — the 036-D persistence half).
+  Contour re-home + Apply UI still deferred. 1156→1157 tests.
 - **Plans 038 + 039 §1.1 COMPLETE** (two parallel file-disjoint clusters + one reconcile):
   city cluster `db8d5b4` (039 market-pin plaza snap — precedence params.center > market pin >
   computed, untyped pins byte-identical), `93c6850` (waterfront: bank-tangent streets 0.85
