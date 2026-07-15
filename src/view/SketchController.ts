@@ -22,6 +22,11 @@ export interface SketchControllerHandlers {
   /** Drag-commit of a procgen region's generation center, display units. Only
    * regions pass a center to `select`. */
   onCenterEdit?(featureId: string, center: Pt): void;
+  /** Mid-drag geometry (fired on every move of a grabbed handle; the host
+   * debounces). Plan 034-D preview mode: the host paints an EPHEMERAL
+   * root-only regen per pause — never cached, never fingerprinted; the full
+   * forward pass runs once on release via `onGeometryEdit`. */
+  onGeometryPreview?(featureId: string, geometry: FabricGeometry): void;
 }
 
 /** The feature the Select tool is editing (open vertex list = no closing
@@ -121,6 +126,9 @@ export class SketchController {
     if (this.dragVertexIndex === null) return;
     this.edit.vertices[this.dragVertexIndex] = [e.lngLat.lng, e.lngLat.lat];
     this.renderDraft();
+    // Preview mode (plan 034-D): report the in-progress shape; the host
+    // debounces + paints an ephemeral root-only regen per pause.
+    this.handlers.onGeometryPreview?.(this.edit.featureId, this.geometryOf(this.edit));
   };
 
   private readonly dragUp = (): void => {

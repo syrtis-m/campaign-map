@@ -980,6 +980,142 @@ describe("MapController — cost cap + outdated badge (034-C)", () => {
   });
 });
 
+// ─── Plan 034-D — preview mode ────────────────────────────────────────────────
+// Mid-drag pauses regenerate ONLY the root as ephemeral render state — zero
+// cache writes, zero fingerprint stamps, downstream untouched. Release runs the
+// one full pass; an abandoned drag (kill before release) leaves no durable trace.
+describe("MapController — preview mode (034-D)", () => {
+  const RIVER_LINE: [number, number][] = [
+    [6, -30],
+    [18, -18],
+    [24, -14],
+  ];
+
+  function mapcacheBytes(host: FakeHost): string {
+    const dir = `${host.cacheDir()}/`;
+    const parts: string[] = [];
+    for (const [path, text] of [...host.adapter.files.entries()].sort()) {
+      if (path.startsWith(dir) && path.endsWith(".jsonl") && !path.endsWith("log.jsonl")) parts.push(`${path}\n${text}`);
+    }
+    return parts.join("\n---\n");
+  }
+
+  it("a simulated drag: zero cache writes, zero fp stamps, downstream untouched — but the preview PAINTS", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const cacheBefore = mapcacheBytes(host);
+    const cityPaintBefore = host.controller.regionFeatureIds(city.featureId);
+    const riverPaintBefore = host.controller.regionFeatureIds(river.featureId).sort();
+
+    // Three debounce pauses of a drag: the spine's mouth walks north.
+    const runsBefore = host.controller.generatorRunCount;
+    for (const y of [-13, -12, -11]) {
+      const ok = await host.controller.previewRegionGeometry(river.featureId, {
+        type: "LineString",
+        coordinates: [
+          [6, -30],
+          [18, -18],
+          [24, y],
+        ],
+      });
+      expect(ok).toBe(true);
+    }
+    // Root regenerated once per pause — and ONLY the root.
+    expect(host.controller.generatorRunCount - runsBefore).toBe(3);
+    // ZERO durable writes: every cache shard byte-identical (no records, no fp).
+    expect(mapcacheBytes(host)).toBe(cacheBefore);
+    // Downstream untouched: the city's painted features are exactly as before.
+    expect(host.controller.regionFeatureIds(city.featureId)).toEqual(cityPaintBefore);
+    // The preview is VISIBLE: the river's painted ids changed, and flagged.
+    expect(host.controller.regionFeatureIds(river.featureId).sort()).not.toEqual(riverPaintBefore);
+    expect(host.controller.previewedRegionIds()).toEqual([river.featureId]);
+  });
+
+  it("release runs ONE full pass; committed bytes equal a from-scratch replay", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const finalGeom = {
+      type: "LineString" as const,
+      coordinates: [
+        [6, -30],
+        [18, -18],
+        [24, -11],
+      ] as [number, number][],
+    };
+    await host.controller.previewRegionGeometry(river.featureId, finalGeom);
+
+    const fpBefore = host.controller.fingerprintPassCount;
+    // Release: the ordinary commit path (debounced in the app; flushed here).
+    await host.controller.commitGeometryEdit(river.featureId, finalGeom, { debounce: true });
+    await host.controller.flushSketchRegen();
+
+    // ONE pass: one fp pass; root + downstream city in stage order; preview flag gone.
+    expect(host.controller.fingerprintPassCount - fpBefore).toBe(1);
+    expect(host.controller.forceRegenOrder).toEqual([river.featureId, city.featureId]);
+    expect(host.controller.previewedRegionIds()).toEqual([]);
+
+    // Committed bytes are the pure function of the durable data (live == replay).
+    const live = new Map<string, string>();
+    for (const [k, rec] of await host.cache()) if (k.endsWith(":network")) live.set(k, JSON.stringify(rec.features));
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    await reopened.clearCacheOnDisk();
+    await reopened.controller.replayGeneratedManifest();
+    const replayed = await reopened.cache();
+    for (const [k, bytes] of live) expect(JSON.stringify(replayed.get(k)!.features)).toBe(bytes);
+  });
+
+  it("kill before release leaves NO durable trace (reopen shows the pre-drag world)", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const durableBefore = mapcacheBytes(host);
+    const fabricBefore = host.adapter.files.get(fabricPath(host.campaign));
+
+    await host.controller.previewRegionGeometry(river.featureId, {
+      type: "LineString",
+      coordinates: [
+        [6, -30],
+        [18, -18],
+        [24, -10],
+      ],
+    });
+    // "Kill": no commit, no cancel — durable state must already be untouched.
+    expect(mapcacheBytes(host)).toBe(durableBefore);
+    expect(host.adapter.files.get(fabricPath(host.campaign))).toBe(fabricBefore);
+
+    // Reopen (the killed session's memory is gone): pure cache replay, zero runs.
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    await reopened.controller.replayGeneratedManifest();
+    expect(reopened.controller.generatorRunCount).toBe(0);
+    expect(reopened.controller.previewedRegionIds()).toEqual([]);
+    expect(reopened.controller.outdatedRegionIds()).toEqual([]);
+  });
+
+  it("cancelRegionPreview restores the durable paint without a generator run", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const before = host.controller.regionFeatureIds(river.featureId).sort();
+    await host.controller.previewRegionGeometry(river.featureId, {
+      type: "LineString",
+      coordinates: [
+        [6, -30],
+        [18, -18],
+        [24, -10],
+      ],
+    });
+    expect(host.controller.regionFeatureIds(river.featureId).sort()).not.toEqual(before);
+    const runsBefore = host.controller.generatorRunCount;
+    await host.controller.cancelRegionPreview(river.featureId);
+    expect(host.controller.generatorRunCount).toBe(runsBefore); // cache re-clip only
+    expect(host.controller.regionFeatureIds(river.featureId).sort()).toEqual(before);
+    expect(host.controller.previewedRegionIds()).toEqual([]);
+  });
+});
+
 describe("MapController — world tier generate / regen / clear (phase3/phase4)", () => {
   it("records a manifest entry and runs a generator on generateFabricHere", async () => {
     const host = new FakeHost({ zoom: 5 }); // world tier

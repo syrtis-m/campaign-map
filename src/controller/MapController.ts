@@ -50,7 +50,7 @@ import {
 } from "../model/generatedManifest";
 import { generatedManifestPath } from "../vault/generatedManifestStore";
 import type { CachedTile } from "../model/tileCache";
-import type { UpstreamArtifacts } from "../gen/types";
+import type { GenerationConstraints, UpstreamArtifacts } from "../gen/types";
 import { campaignFolderFromConfigPath, type LogEntry } from "../model/mutationLog";
 import { defaultFictionalBounds } from "../map/fictionalCRS";
 import {
@@ -73,11 +73,13 @@ import {
 import {
   anchorCellForPoint,
   citySeedFor,
+  clipNetworkToTile,
   discToRing,
   DISC_TO_RING_SEGMENTS,
   DOMAIN_TILE_GENERATOR_IDS,
   type CityDomain,
 } from "../gen/citynet";
+import { genreForCampaign } from "../gen/naming/cultures";
 import {
   makeRegion,
   makeSpine,
@@ -1329,6 +1331,7 @@ export class MapController {
           preloadedCache: batch.preloadedCache,
         });
         this.outdatedRegions.delete(node.id); // regenerated ⇒ no longer outdated
+        this.previewedRegions.delete(node.id); // durable bytes replace any preview
         out.set(node.id, feats);
         executed.push(node.id);
       }
@@ -2240,6 +2243,111 @@ export class MapController {
     void this.persistFabric("sketch-remove", feature);
     this.host.notices.notify(`Campaign Map: deleted sketched ${feature.properties.kind} (⌘Z / ↶ undo to restore)`);
     this.queueConstraintRegen(feature);
+  }
+
+  // ─── Preview mode (plan 034-D) ───────────────────────────────────────────
+  // During a vertex/handle drag only the ROOT region regenerates per debounce
+  // pause, painted as EPHEMERAL render state: never fingerprint-stamped, never
+  // cached, downstream untouched. The full forward pass runs once on
+  // release/commit (the ordinary commit path). Per-stage debounce tiers and
+  // closure-truncation heuristics are REJECTED (research §6.6) — the fingerprint
+  // is the only truncation rule, and it lives in the real pass.
+
+  /** Region ids currently painted from a preview (ephemeral bytes). */
+  private previewedRegions = new Set<string>();
+  /** Test/gate surface: ids whose painted state is an uncommitted preview. */
+  previewedRegionIds(): string[] {
+    return [...this.previewedRegions].sort();
+  }
+
+  /**
+   * Paint a mid-drag preview of ONE region from an in-progress geometry.
+   * Recomputes the region's network against current constraints + the draft
+   * shape and clips it straight into the render store — no cache append, no
+   * fingerprint, no downstream, no log. Returns false (and paints nothing) for
+   * a non-region feature, a pinned-old region (consent belongs to the commit
+   * path — a preview must never recompute under an old pin), or an invalid
+   * mid-drag shape (that pause is simply skipped).
+   */
+  async previewRegionGeometry(featureId: string, geometry: FabricGeometry): Promise<boolean> {
+    if (!this.campaign) return false;
+    const campaign = this.campaign;
+    await this.loadFabric();
+    if (this.campaign?.id !== campaign.id) return false;
+    const base = this.fabricCollection.features.find((f) => f.id === featureId);
+    const block = base?.properties.procgen;
+    if (!base || !block) return false;
+    const algorithm = algorithmById(block.algorithm);
+    if (!algorithm || this.isPinnedOld(block, algorithm)) return false;
+    const draft: FabricFeature = { ...base, geometry };
+    const region = this.buildRegionFromFeature(draft);
+    if (!region) return false;
+    if (geometry.type === "Polygon") {
+      if (!validateRegionRing(region.ring).ok) return false;
+    } else if (geometry.type === "LineString") {
+      const scale = campaign.config.scaleMetersPerUnit;
+      const line = geometry.coordinates.map(([x, y]) => [unitsToMeters(x, scale), unitsToMeters(y, scale)] as [number, number]);
+      if (!validateSpineLine(line).ok) return false;
+    }
+    // Constraints see the DRAFT geometry (the generator's self-read — e.g. a
+    // river's own spine — must match the shape being previewed).
+    const ctx = this.generationContext();
+    const scale = campaign.config.scaleMetersPerUnit;
+    ctx.fabricFeatures = ctx.fabricFeatures?.map((f) =>
+      f.id === featureId ? (transformFeatureUnits(draft, (n) => unitsToMeters(n, scale)) as FabricFeature) : f
+    );
+    const folder = campaignFolderFromConfigPath(campaign.path);
+    ctx.upstream = await this.buildRegionUpstream(draft, region, algorithm, await this.cacheView(folder), folder);
+    const constraints: GenerationConstraints = {
+      worldBounds: ctx.worldBounds,
+      canonFeatures: ctx.canonFeatures,
+      fabricFeatures: ctx.fabricFeatures,
+      namingGenre: genreForCampaign(campaign.config.crs, campaign.config.theme),
+      namingCultureIds: campaign.config.namingCultures,
+      upstream: ctx.upstream,
+    };
+    const worker = await this.host.gen.getWorker();
+    const compute = this.regionCompute(worker, draft);
+    this.pendingGenerations++;
+    this.host.render.loadingChanged();
+    let network: GeoJSON.Feature[];
+    try {
+      network = await compute(region, constraints);
+    } finally {
+      this.pendingGenerations--;
+      this.host.render.loadingChanged();
+    }
+    if (this.campaign?.id !== campaign.id) return false;
+    // Ephemeral paint: swap this region's render-store tiles for clips of the
+    // draft network. Nothing touches `.mapcache/` or the session cache view.
+    const renderPrefix = `region:${region.id}:`;
+    for (const k of [...this.loadedTiles.keys()]) if (k.startsWith(renderPrefix)) this.loadedTiles.delete(k);
+    for (const t of this.regionTileRange(region)) {
+      const buckets = clipNetworkToTile(network, tileBBox(t.tileX, t.tileY));
+      const feats: GeoJSON.Feature[] = [];
+      for (const gid of algorithm.tileGeneratorIds) feats.push(...(buckets[gid] ?? []));
+      this.loadedTiles.set(
+        this.regionRenderKey(region.id, t.tileX, t.tileY),
+        feats.filter((f) => featureTouchesBBox(f, ctx.worldBounds))
+      );
+    }
+    this.previewedRegions.add(featureId);
+    this.repaintGenerated(algorithm.stage);
+    return true;
+  }
+
+  /** Discard an uncommitted preview: re-serve the region's DURABLE state from
+   * its cache (fresh fp ⇒ pure re-clip, zero generator runs). Used when a drag
+   * is abandoned; a commit clears the preview by overwriting it instead. */
+  async cancelRegionPreview(featureId: string): Promise<void> {
+    if (!this.previewedRegions.delete(featureId)) return;
+    // Drop every preview render tile first — the draft geometry's tile RANGE
+    // can exceed the durable one, and the cache re-serve below only writes the
+    // durable range (an orphaned draft tile would keep painting ghost fabric).
+    const prefix = `region:${featureId}:`;
+    for (const k of [...this.loadedTiles.keys()]) if (k.startsWith(prefix)) this.loadedTiles.delete(k);
+    const feature = this.fabricCollection.features.find((f) => f.id === featureId);
+    if (feature && isProcgenRegion(feature)) await this.generateRegion(feature);
   }
 
   /** Build the after-feature from a geometry replacement and run the full

@@ -157,6 +157,10 @@ export class MapView extends ItemView {
    * TIMER lives here (MapView owns `window`); the queued work + flush logic
    * live on the controller (armed via the render sink's `armRegenFlush`). */
   private sketchAutoBuildTimer: number | null = null;
+  /** Debounce timer for the mid-drag region preview (plan 034-D). Cleared on a
+   * commit (release) and on teardown so a trailing preview can never repaint
+   * over committed bytes. */
+  private sketchPreviewTimer: number | null = null;
 
   /** The host-agnostic lifecycle brain. Owns generation /
    * regen / clear / undo / replay / migration / region-procgen / sketch-commit
@@ -682,6 +686,10 @@ export class MapView extends ItemView {
     if (this.sketchAutoBuildTimer !== null) {
       window.clearTimeout(this.sketchAutoBuildTimer);
       this.sketchAutoBuildTimer = null;
+    }
+    if (this.sketchPreviewTimer !== null) {
+      window.clearTimeout(this.sketchPreviewTimer);
+      this.sketchPreviewTimer = null;
     }
     if (this.sketchKeyHandler) {
       window.removeEventListener("keydown", this.sketchKeyHandler, true);
@@ -1435,8 +1443,26 @@ export class MapView extends ItemView {
     this.placeCardPopup?.remove();
     this.map.doubleClickZoom.disable();
     this.sketchController = new SketchController(this.map, this.sketchAccent(), {
-      onGeometryEdit: (featureId, geometry) => void this.controller.commitGeometryEdit(featureId, geometry, { debounce: true }),
+      onGeometryEdit: (featureId, geometry) => {
+        // Release/commit: cancel any pending mid-drag preview — the full
+        // forward pass (via the debounced flush) supersedes it.
+        if (this.sketchPreviewTimer !== null) {
+          window.clearTimeout(this.sketchPreviewTimer);
+          this.sketchPreviewTimer = null;
+        }
+        void this.controller.commitGeometryEdit(featureId, geometry, { debounce: true });
+      },
       onCenterEdit: (featureId, center) => void this.controller.setRegionCenter(featureId, center),
+      onGeometryPreview: (featureId, geometry) => {
+        // Preview mode (plan 034-D): per debounce PAUSE of the drag, repaint
+        // only the ROOT region as ephemeral render state (no cache, no
+        // fingerprints, no downstream). 250 ms trailing debounce.
+        if (this.sketchPreviewTimer !== null) window.clearTimeout(this.sketchPreviewTimer);
+        this.sketchPreviewTimer = window.setTimeout(() => {
+          this.sketchPreviewTimer = null;
+          void this.controller.previewRegionGeometry(featureId, geometry);
+        }, 250);
+      },
     });
     this.sketchController.activate(this.sketchKind);
     this.buildSketchBar();
