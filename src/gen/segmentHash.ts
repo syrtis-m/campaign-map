@@ -31,6 +31,13 @@ export interface NearestResult {
   dist: number;
   gradX: number;
   gradY: number;
+  /** Index of the nearest segment (0-based; the segment from vertex i to i+1).
+   * −1 for an empty polyline. */
+  segIndex: number;
+  /** Projection parameter along that segment, clamped to [0,1] — so the nearest
+   * point is `lerp(vertex[segIndex], vertex[segIndex+1], t)`. Lets a caller
+   * interpolate a per-vertex profile (the river bed) at the nearest point. */
+  t: number;
 }
 
 export interface SegmentHashOptions {
@@ -45,13 +52,15 @@ interface Seg {
   ay: number;
   bx: number;
   by: number;
+  /** Index of this segment (from vertex `idx` to `idx+1`). */
+  idx: number;
 }
 
 /** Distance² + the raw (unnormalized) offset vector from the nearest point on a
  * segment to (x,y). Byte-identical arithmetic to `sdf.ts#distanceToPolyline`'s
  * per-segment body (projection clamp), so the hash's nearest DISTANCE matches a
  * naive scan to the float. */
-function segNearest(s: Seg, x: number, y: number): { d2: number; ox: number; oy: number } {
+function segNearest(s: Seg, x: number, y: number): { d2: number; ox: number; oy: number; t: number } {
   const dx = s.bx - s.ax;
   const dy = s.by - s.ay;
   const l2 = dx * dx + dy * dy;
@@ -60,7 +69,7 @@ function segNearest(s: Seg, x: number, y: number): { d2: number; ox: number; oy:
   const py = s.ay + t * dy;
   const ox = x - px;
   const oy = y - py;
-  return { d2: ox * ox + oy * oy, ox, oy };
+  return { d2: ox * ox + oy * oy, ox, oy, t };
 }
 
 export class SegmentHash {
@@ -78,7 +87,7 @@ export class SegmentHash {
     let maxX = -Infinity;
     let maxY = -Infinity;
     for (let i = 0; i < line.length - 1; i++) {
-      const seg: Seg = { ax: line[i][0], ay: line[i][1], bx: line[i + 1][0], by: line[i + 1][1] };
+      const seg: Seg = { ax: line[i][0], ay: line[i][1], bx: line[i + 1][0], by: line[i + 1][1], idx: i };
       this.segs.push(seg);
       const c0x = Math.floor(Math.min(seg.ax, seg.bx) / this.cellSize);
       const c1x = Math.floor(Math.max(seg.ax, seg.bx) / this.cellSize);
@@ -113,12 +122,14 @@ export class SegmentHash {
    */
   nearest(x: number, y: number): NearestResult {
     this.segmentTests = 0;
-    if (this.segs.length === 0) return { dist: Infinity, gradX: 0, gradY: 0 };
+    if (this.segs.length === 0) return { dist: Infinity, gradX: 0, gradY: 0, segIndex: -1, t: 0 };
     const cx = Math.floor(x / this.cellSize);
     const cy = Math.floor(y / this.cellSize);
     let bestD2 = Infinity;
     let bestOx = 0;
     let bestOy = 0;
+    let bestIdx = -1;
+    let bestT = 0;
     const tested = new Set<Seg>();
     const consider = (seg: Seg): void => {
       if (tested.has(seg)) return;
@@ -129,6 +140,8 @@ export class SegmentHash {
         bestD2 = r.d2;
         bestOx = r.ox;
         bestOy = r.oy;
+        bestIdx = seg.idx;
+        bestT = r.t;
       }
     };
     // Ring 0 is the query cell; each subsequent ring is the square shell at
@@ -161,12 +174,12 @@ export class SegmentHash {
         }
       }
     }
-    if (bestD2 === Infinity) return { dist: Infinity, gradX: 0, gradY: 0 };
+    if (bestD2 === Infinity) return { dist: Infinity, gradX: 0, gradY: 0, segIndex: -1, t: 0 };
     // Math.hypot (not sqrt(d2)) so the distance is byte-identical to
     // `sdf.ts#distanceToPolyline`'s per-segment `Math.hypot` — the hash prunes
     // which segments are tested, never the arithmetic.
     const dist = Math.hypot(bestOx, bestOy);
-    if (dist === 0) return { dist: 0, gradX: 0, gradY: 0 };
-    return { dist, gradX: bestOx / dist, gradY: bestOy / dist };
+    if (dist === 0) return { dist: 0, gradX: 0, gradY: 0, segIndex: bestIdx, t: bestT };
+    return { dist, gradX: bestOx / dist, gradY: bestOy / dist, segIndex: bestIdx, t: bestT };
   }
 }

@@ -191,6 +191,136 @@ function ringMaskField(ring: Pt[], band: number): (x: number, y: number) => Mask
   };
 }
 
+// ─── River carve (REPLACE-stage successor) — smin toward a channel bed ───────
+
+/** Carve tuning (meters), FIXED absolute-world constants. */
+const CARVE_DEPTH_BASE = 60; // channel-floor incision below the surrounding surface
+const CARVE_DEPTH_PER_WIDTH = 1.5; // wider rivers cut deeper
+const CARVE_BANK_SLOPE = 2.2; // gorge-wall rise (meters up per meter out past the channel)
+const CARVE_SMIN_K = 40; // smooth-min blend radius (soft banks, no hard crease)
+const CARVE_RESAMPLE_M = 40; // densify the spine so the bed follows terrain finely
+
+/** Resample a polyline so no segment exceeds `maxStep` meters — the bed floor is
+ * sampled per vertex, so a coarse GM spine (km between clicks) would let the
+ * incision drift off the terrain between vertices. Deterministic (pure geometry).
+ */
+function densify(line: Pt[], maxStep: number): Pt[] {
+  const out: Pt[] = [line[0]];
+  for (let i = 0; i < line.length - 1; i++) {
+    const [ax, ay] = line[i];
+    const [bx, by] = line[i + 1];
+    const len = Math.hypot(bx - ax, by - ay);
+    const n = Math.max(1, Math.ceil(len / maxStep));
+    for (let k = 1; k <= n; k++) {
+      const t = k / n;
+      out.push([ax + (bx - ax) * t, ay + (by - ay) * t]);
+    }
+  }
+  return out;
+}
+
+interface RiverCarve {
+  id: string;
+  spine: Pt[];
+  halfWidth: number;
+  depth: number;
+}
+
+function riverCarvesFromFabric(features: FabricFeature[]): RiverCarve[] {
+  const out: RiverCarve[] = [];
+  for (const f of features) {
+    if (f.properties.kind !== "river" || f.properties.procgen?.algorithm !== "river") continue;
+    if (f.geometry.type !== "LineString") continue;
+    const spine = f.geometry.coordinates as Pt[];
+    if (!spine || spine.length < 2) continue;
+    const p = f.properties.procgen.params as Record<string, unknown>;
+    const width = Math.max(4, num(p.width, 12));
+    out.push({
+      id: String(f.id),
+      spine,
+      halfWidth: width,
+      depth: CARVE_DEPTH_BASE + width * CARVE_DEPTH_PER_WIDTH,
+    });
+  }
+  // id-sorted before the fold (FP determinism — smin is not order-independent).
+  out.sort((a, b) => a.id.localeCompare(b.id));
+  return out;
+}
+
+/** iq polynomial smooth-min (min-blend over `k`): pulls `a` down toward the
+ * lower `b` with a soft crease. Also returns the blend weight `h` so the caller
+ * composes the gradient (∂smin/∂a and ∂smin/∂b) by chain rule. */
+function polySmin(a: number, b: number, k: number): { v: number; h: number; smooth: boolean } {
+  // iq polynomial smooth-min: h = clamp(0.5 + 0.5·(b−a)/k). h→1 ⇒ smin→a (bed
+  // above the surface, no carve); h→0 ⇒ smin→b (bed well below, full carve).
+  const h = Math.max(0, Math.min(1, 0.5 + (0.5 * (b - a)) / k));
+  const smooth = h > 0 && h < 1;
+  return { v: b + (a - b) * h - k * h * (1 - h), h, smooth };
+}
+
+/**
+ * A river carve as a fold step `smin(pre, bed)`. The BED is a memoized per-region
+ * channel field (plan 023's sanctioned region-scoped exception): the pre-carve
+ * surface is sampled ONCE at each spine vertex and incised by `depth`, so the
+ * gorge FOLLOWS the terrain the river runs through (deeper where the ground is
+ * higher). At query time the nearest spine point (via the segment hash — the
+ * polyline binding) interpolates that per-vertex floor and the gorge wall rises
+ * `CARVE_BANK_SLOPE` past the channel half-width. Compact support: beyond where
+ * the wall clears the surface the bed exceeds `pre`, so `smin` returns `pre`
+ * unchanged (a river far from its channel is inert). Simplification (main channel
+ * only, per plan): the bed tracks local terrain rather than enforcing a global
+ * monotone downstream descent — a hydrological grade correction is deferred (a
+ * single low source point should not carve a canyon the length of the spine).
+ */
+function buildRiverCarve(carve: RiverCarve, pre: ElevationField): (s: HeightSample, x: number, y: number) => HeightSample {
+  const spine = densify(carve.spine, CARVE_RESAMPLE_M);
+  const hash = new SegmentHash(spine, { cellSize: Math.max(64, carve.halfWidth * 4) });
+  // Memoize the bed floor at each (densified) spine vertex — region-scoped
+  // whole-artifact pass: sample the pre-carve surface once per vertex, incise by
+  // `depth`, so the gorge follows the terrain at ~CARVE_RESAMPLE_M resolution.
+  const bedVert = new Float64Array(spine.length);
+  for (let i = 0; i < spine.length; i++) {
+    const [vx, vy] = spine[i];
+    bedVert[i] = pre(vx, vy).v - carve.depth;
+  }
+  const hw = carve.halfWidth;
+  return (s: HeightSample, x: number, y: number): HeightSample => {
+    const near = hash.nearest(x, y);
+    if (near.segIndex < 0) return s;
+    const i = near.segIndex;
+    const j = Math.min(i + 1, bedVert.length - 1);
+    const bedFloor = bedVert[i] + (bedVert[j] - bedVert[i]) * near.t;
+    const wall = CARVE_BANK_SLOPE * Math.max(0, near.dist - hw);
+    const bed = bedFloor + wall;
+    // smin(pre, bed). If the bed already sits above the surface, smin is exactly
+    // `pre` (h === 1) — the compact-support inertness.
+    const sm = polySmin(s.v, bed, CARVE_SMIN_K);
+    if (sm.h >= 1) return s;
+    // Gradient by chain rule. ∇bed ≈ CARVE_BANK_SLOPE·∇dist past the channel
+    // (the per-vertex floor varies slowly along the spine — treated locally
+    // constant, an acceptable approximation for hillshade, which Sobel-derives
+    // slope from the raster anyway). Inside the flat floor ∇bed = 0.
+    let bdx = 0;
+    let bdy = 0;
+    if (near.dist > hw) {
+      bdx = CARVE_BANK_SLOPE * near.gradX;
+      bdy = CARVE_BANK_SLOPE * near.gradY;
+    }
+    if (!sm.smooth) {
+      // h === 0 ⇒ smin === bed.
+      return { v: sm.v, dx: bdx, dy: bdy };
+    }
+    // Smooth region: ∂smin/∂x = b' + (a'−b')·h + (a−b)·h', h' = 0.5·(b'−a')/k
+    // (h = 0.5 + 0.5·(b−a)/k).
+    const dhx = (0.5 * (bdx - s.dx)) / CARVE_SMIN_K;
+    const dhy = (0.5 * (bdy - s.dy)) / CARVE_SMIN_K;
+    const ab = s.v - bed;
+    const dx = bdx + (s.dx - bdx) * sm.h + ab * dhx - CARVE_SMIN_K * dhx * (1 - 2 * sm.h);
+    const dy = bdy + (s.dy - bdy) * sm.h + ab * dhy - CARVE_SMIN_K * dhy * (1 - 2 * sm.h);
+    return { v: sm.v, dx, dy };
+  };
+}
+
 function closeRing(ring: Pt[]): Pt[] {
   if (ring.length >= 2) {
     const a = ring[0];
@@ -318,17 +448,27 @@ export function terrainAt(features: FabricFeature[] | undefined, opts: TerrainOp
     target: landformTarget(s.params, base.seaDatum),
   }));
 
-  // VERBATIM-MIGRATION FAST PATH: a flat datum-0 base with no add-relief and no
-  // replace stamps IS `elevationFieldFromFabric` — return it (or the flat field)
-  // DIRECTLY, never `0 + m.v`. This preserves the mountain field's signed zeros
-  // bit-for-bit (`(+0) + (-0) === +0` would corrupt a −0 gradient outside a
-  // ring), the byte-stability the migration gate asserts to the float.
-  if (reliefs.length === 0 && landforms.length === 0 && base.campAmp === 0 && base.seaDatum === 0) {
+  const carveStamps = riverCarvesFromFabric(feats);
+
+  // VERBATIM-MIGRATION FAST PATH: a flat datum-0 base with no add-relief, no
+  // replace stamp, and no river carve IS `elevationFieldFromFabric` — return it
+  // (or the flat field) DIRECTLY, never `0 + m.v`. This preserves the mountain
+  // field's signed zeros bit-for-bit (`(+0) + (-0) === +0` would corrupt a −0
+  // gradient outside a ring), the byte-stability the migration gate asserts to
+  // the float, AND the "no rivers ⇒ byte-identical" carve gate.
+  if (
+    reliefs.length === 0 &&
+    landforms.length === 0 &&
+    carveStamps.length === 0 &&
+    base.campAmp === 0 &&
+    base.seaDatum === 0
+  ) {
     return mountain ?? (() => ({ v: 0, dx: 0, dy: 0 }));
   }
 
-  return (x, y): HeightSample => {
-    // add
+  // The pre-carve surface: base + mountain-union + relief (add), then landform
+  // lerp (replace). The river carve samples THIS along each spine (memoized).
+  const pre: ElevationField = (x, y): HeightSample => {
     const b = B(x, y);
     let v = b.v;
     let dx = b.dx;
@@ -345,7 +485,6 @@ export function terrainAt(features: FabricFeature[] | undefined, opts: TerrainOp
       dx += s.dx;
       dy += s.dy;
     }
-    // replace
     for (const lf of landforms) {
       const mk = lf.mask(x, y);
       if (mk.m === 0) continue; // exact identity outside the band (compact support)
@@ -356,5 +495,16 @@ export function terrainAt(features: FabricFeature[] | undefined, opts: TerrainOp
       v = v + mk.m * diff;
     }
     return { v, dx, dy };
+  };
+
+  if (carveStamps.length === 0) return pre;
+
+  // CARVE: smin(pre, bed) per river, id-sorted; each bed is a memoized per-region
+  // channel field (built here, once).
+  const carves = carveStamps.map((c) => buildRiverCarve(c, pre));
+  return (x, y): HeightSample => {
+    let s = pre(x, y);
+    for (const carve of carves) s = carve(s, x, y);
+    return s;
   };
 }

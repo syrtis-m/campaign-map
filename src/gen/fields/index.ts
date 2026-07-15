@@ -88,6 +88,13 @@ export {
   LANDFORM_MODES,
   LANDFORM_DEFAULTS,
 } from "./terrain";
+export type { FieldLatticeOptions } from "./fieldLattice";
+export {
+  // Chunked, LRU-bounded lazy field-sample lattice (plan 036-B/-C) — the
+  // substrate the viewport-keyed contour/DEM leaves sample the composed terrain
+  // field through, never eagerly whole-campaign.
+  FieldLattice,
+} from "./fieldLattice";
 export type { Contour, MarchingSquaresOptions } from "./marchingSquares";
 export {
   // Iso-line / iso-band tracing over any scalar field — the reusable machinery
