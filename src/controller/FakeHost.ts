@@ -123,6 +123,11 @@ export class FakeHost {
   readonly selectionInvalidations: string[] = [];
   readonly selectionKeptPanel: string[] = [];
   readonly undoneNotes: LogEntry[] = [];
+  /** Optional observer fired on EVERY repaint (generated or fabric), mirroring
+   * MapView's render-callback wiring — a test sets it to drive the terrain-refresh
+   * chokepoint (`TerrainRefresh.refreshIfElevationChanged`) off the controller's
+   * repaint signals exactly as the live view does. */
+  onAnyRepaint: (() => void) | undefined = undefined;
   repaintGeneratedCount = 0;
   /** The `stage` of each `repaintGenerated` call in order (032-D): a number for
    * a staged repaint, "all" for a full one. A batch fires one entry per touched
@@ -194,9 +199,11 @@ export class FakeHost {
         repaintGenerated: (stage?: number) => {
           this.repaintGeneratedCount++;
           this.repaintGeneratedStages.push(stage ?? "all");
+          this.onAnyRepaint?.();
         },
         repaintFabric: () => {
           this.repaintFabricCount++;
+          this.onAnyRepaint?.();
         },
         loadingChanged: () => {},
         featureChanged: (id, o) => {

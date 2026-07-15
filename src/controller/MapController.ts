@@ -2841,6 +2841,44 @@ export class MapController {
    * bump (e.g. the monotone-downhill carve) re-derives every cached leaf. `null`
    * when no campaign is loaded.
    */
+  /** The gen-space (meters) terrain inputs — the exact conversion generators and
+   * the DEM/contour field composition see. Shared by `campaignElevationSnapshot`
+   * (which additionally composes the field) and `campaignElevationDigest` (which
+   * fingerprints them WITHOUT paying the field construction). `null` when no
+   * campaign is loaded. */
+  private elevationInputs(): {
+    feats: FabricFeature[];
+    base: TerrainBaseParams;
+    gradeEnabled: boolean;
+    campaignSeed: number;
+  } | null {
+    if (!this.campaign) return null;
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const feats = this.regionFeatures().map(
+      (f) => transformFeatureUnits(f, (n) => unitsToMeters(n, scale)) as FabricFeature
+    );
+    return {
+      feats,
+      base: this.terrainBase(),
+      gradeEnabled: this.campaign.config.terrain?.grade ?? false,
+      campaignSeed: this.campaign.config.seed,
+    };
+  }
+
+  /** The composed-terrain digest ALONE — the same string as
+   * `campaignElevationSnapshot().digest` but WITHOUT building the (per-stamp
+   * SegmentHash / carve) field. Cheap enough for the view to poll on every
+   * fabric/generated repaint: the terrain-refresh chokepoint reads it to detect
+   * when a durable terrain-affecting change (stamp create / delete / edit /
+   * re-roll / undo-redo / base-terrain) moved the elevation field, so the DEM +
+   * contour surface refresh converges onto ONE gate for every mutation path.
+   * `null` when no campaign is loaded. */
+  campaignElevationDigest(): string | null {
+    const inp = this.elevationInputs();
+    if (!inp) return null;
+    return this.elevationDigest(inp.feats, inp.base, inp.gradeEnabled, inp.campaignSeed);
+  }
+
   campaignElevationSnapshot(): {
     field: ElevationField;
     digest: string;
@@ -2849,15 +2887,9 @@ export class MapController {
      * off-thread (DEM tile fill + contour leaves — Jonah 2026-07-15). */
     inputs: SerializableTerrainInputs;
   } | null {
-    if (!this.campaign) return null;
-    const scale = this.campaign.config.scaleMetersPerUnit;
-    // Gen-space (meters) region features — the exact conversion generators see.
-    const feats = this.regionFeatures().map(
-      (f) => transformFeatureUnits(f, (n) => unitsToMeters(n, scale)) as FabricFeature
-    );
-    const base = this.terrainBase();
-    const gradeEnabled = this.campaign.config.terrain?.grade ?? false;
-    const campaignSeed = this.campaign.config.seed;
+    const inp = this.elevationInputs();
+    if (!inp) return null;
+    const { feats, base, gradeEnabled, campaignSeed } = inp;
     const include = { relief: true, landform: true, carve: true, grade: gradeEnabled };
     const field = terrainAt(feats, { base, campaignSeed, include });
     const digest = this.elevationDigest(feats, base, gradeEnabled, campaignSeed);

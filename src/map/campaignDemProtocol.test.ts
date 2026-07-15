@@ -211,6 +211,61 @@ describe("campaigndem protocol — revisit is a pure serve (retention half)", ()
   });
 });
 
+describe("campaigndem protocol — PNG LRU is digest-keyed (never serves a stale tile)", () => {
+  const registered: string[] = [];
+  beforeEach(() => {
+    for (const id of registered.splice(0)) unregisterDemProvider(id);
+  });
+
+  it("a field change (new digest) re-encodes and never serves the old-digest PNG", async () => {
+    const app = fakeApp();
+    const id = uid();
+    registered.push(id);
+    let encodes = 0;
+    const encode = async (rgba: Uint8ClampedArray): Promise<ArrayBuffer> => {
+      encodes++;
+      return rgba.buffer.slice(0) as ArrayBuffer;
+    };
+    const fieldA: ElevationField = () => ({ v: 100, dx: 0, dy: 0 });
+    const fieldB: ElevationField = () => ({ v: 900, dx: 0, dy: 0 });
+    const inputsA = INPUTS;
+    // A distinct base ⇒ a distinct per-tile digest (the terrain-refresh signal a
+    // landform edit produces): the PNG key carries the digest, so the new field
+    // MUST re-encode instead of serving the retained old-digest bytes.
+    const inputsB: SerializableTerrainInputs = { ...INPUTS, base: { campAmp: 777, seaDatum: 0 } };
+    const mk = (field: ElevationField, inputs: SerializableTerrainInputs): DemProvider => ({
+      app,
+      campaignFolder: "Campaigns/Test",
+      scaleMetersPerUnit: SCALE,
+      k: K,
+      snapshot: () => ({ field, digest: "unused", inputs }),
+    });
+
+    registerDemProvider(id, mk(fieldA, inputsA));
+    const a1 = new Uint8Array(await resolveDemPngForTest(id, 6, 24, 36, encode));
+    expect(encodes).toBe(1);
+
+    // The elevation surface moved (landform edit) — new digest ⇒ cache MISS, not a
+    // stale serve of A's memo.
+    registerDemProvider(id, mk(fieldB, inputsB));
+    const b1 = new Uint8Array(await resolveDemPngForTest(id, 6, 24, 36, encode));
+    expect(encodes).toBe(2);
+    expect(b1).not.toEqual(a1); // the new field's bytes, never A's
+
+    // Revisit the SAME (new) digest — pure serve, no re-encode.
+    const b2 = new Uint8Array(await resolveDemPngForTest(id, 6, 24, 36, encode));
+    expect(encodes).toBe(2);
+    expect(b2).toEqual(b1);
+
+    // Back to the OLD digest — its memo is intact and served on its own key, never
+    // crossed with B's bytes (no re-encode; the surviving A memo answers).
+    registerDemProvider(id, mk(fieldA, inputsA));
+    const a2 = new Uint8Array(await resolveDemPngForTest(id, 6, 24, 36, encode));
+    expect(a2).toEqual(a1);
+    expect(encodes).toBe(2);
+  });
+});
+
 describe("campaigndem protocol — DEM_TILE_RES flip (128) + res-mismatch handling", () => {
   const registered: string[] = [];
   beforeEach(() => {

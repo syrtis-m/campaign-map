@@ -69,6 +69,7 @@ import {
 } from "./heightHandle";
 import { bandValuesFromParams, formatBandReadout } from "./bandGhost";
 import { normalizeTerrainBlock, type TerrainBlock } from "./terrainSettings";
+import { TerrainRefresh } from "./terrainRefresh";
 import { addConnection, removeConnection, setLocationVisibility } from "../vault/locationOps";
 import { importNotes } from "../vault/importOps";
 import { importGeojson } from "../model/importGeojson";
@@ -201,9 +202,27 @@ export class MapView extends ItemView {
    * gateways below and forwards every gate-facing test-API method here. */
   private controller: MapController;
 
+  /** Terrain-refresh chokepoint (terrainRefresh.ts): converges every
+   * terrain-affecting fabric mutation (stamp delete / create / edit / re-roll /
+   * undo-redo / adopt / base-terrain) onto the SAME DEM + contour refresh a param
+   * edit runs, driven off the composed-elevation digest at the render-signal
+   * chokepoint. Fixes the stale 3D-mesh lag after a landform delete. */
+  private terrainRefresh: TerrainRefresh;
+
   constructor(leaf: WorkspaceLeaf, plugin: CampaignMapPlugin) {
     super(leaf);
     this.plugin = plugin;
+    this.terrainRefresh = new TerrainRefresh({
+      readDigest: () => this.controller.campaignElevationDigest(),
+      terrainEnabled: () => this.terrainEnabled,
+      registerProvider: () => {
+        if (this.campaign) this.registerDemProviderFor(this.campaign);
+      },
+      bustTileCache: () => {
+        if (this.campaign) this.bustDemTileCache(`dem-${this.campaign.id}`);
+      },
+      refreshContours: () => this.refreshTerrainContours(),
+    });
     this.controller = new MapController({
       vault: {
         loadFabric: (c) => loadFabric(this.app, c),
@@ -237,8 +256,19 @@ export class MapView extends ItemView {
         confirm: (message) => this.confirmDialog(message),
       },
       render: {
-        repaintGenerated: (stage?: number) => this.refreshGeneratedSource(stage),
-        repaintFabric: () => this.refreshFabric(),
+        repaintGenerated: (stage?: number) => {
+          this.refreshGeneratedSource(stage);
+          // Terrain-refresh chokepoint: a generated repaint that moved the
+          // elevation field (a terrain stamp created / re-rolled / adopted) busts
+          // the DEM + refreshes contours; a pure city repaint is a cheap no-op.
+          this.terrainRefresh.refreshIfElevationChanged();
+        },
+        repaintFabric: () => {
+          this.refreshFabric();
+          // Same chokepoint on the fabric side — this is the path a landform
+          // DELETE / undo / procgen-clear reaches (the bug: 3D lagged here).
+          this.terrainRefresh.refreshIfElevationChanged();
+        },
         loadingChanged: () => this.updateLoadingIndicator(),
         featureChanged: (id, opts) => this.onControllerFeatureChanged(id, opts),
         selectionInvalidated: (id, opts) => {
@@ -314,6 +344,10 @@ export class MapView extends ItemView {
       if (this.sketchMode) this.toggleSketchMode(); // exit sketch mode on campaign switch
     }
     this.campaign = campaign;
+    // Baseline the terrain-refresh digest to this campaign so the render
+    // chokepoint never compares against the previous campaign's field (loadFabric
+    // then repaints, and the first real terrain mutation is what triggers).
+    this.terrainRefresh.seedBaseline();
     void this.controller.loadFabric();
     this.refreshHeaderTitle();
     // The terrain toggle is crs-dependent (fictional only) and the toolbar may
@@ -482,12 +516,13 @@ export class MapView extends ItemView {
   /** Re-point + refresh the DEM (only if terrain is on) AND the global contour
    * surface (ALWAYS — contour lines render regardless of the hillshade/3D toggle)
    * after a terrain region changed. The contour manager keys its engine on the
-   * field digest, so the edit is picked up on this refresh. */
+   * field digest, so the edit is picked up on this refresh. Delegates to the
+   * terrain-refresh chokepoint's `refreshNow` (always refresh + re-baseline) for
+   * the explicit-edit paths whose repaint doesn't flow through the render
+   * chokepoint (base-terrain apply / campaign re-open); digest-changing region
+   * mutations converge automatically via the render callbacks. */
   private refreshTerrainIfEnabled(): void {
-    this.refreshTerrainContours();
-    if (!this.terrainEnabled || !this.map || !this.campaign) return;
-    this.registerDemProviderFor(this.campaign);
-    this.bustDemTileCache(`dem-${this.campaign.id}`);
+    this.terrainRefresh.refreshNow();
   }
 
   private updateTerrainButton(): void {
@@ -2275,7 +2310,9 @@ export class MapView extends ItemView {
    * the DEM if relief is showing (mirrors reroll/regenerate). */
   async setRegionParams(featureId: string, params: Record<string, unknown>): Promise<void> {
     await this.controller.setRegionParams(featureId, params);
-    this.refreshTerrainIfEnabled();
+    // DEM/contour refresh converges through the render chokepoint (the commit
+    // repaints, moving the elevation digest for a terrain-bearing kind) — no
+    // explicit refresh needed here (would double-fire).
   }
 
   /** Apply a template (preset) to a region — the headless twin of the panel's
@@ -2285,14 +2322,16 @@ export class MapView extends ItemView {
    * persisted block stays the plain `{ profile }` shape. */
   async setRegionPreset(featureId: string, presetId: string): Promise<void> {
     await this.controller.setRegionPreset(featureId, presetId);
-    this.refreshTerrainIfEnabled(); // a mountain/relief/landform template shift moves the DEM
+    // A mountain/relief/landform template shift moves the DEM — refreshed via the
+    // render chokepoint (the commit repaint changes the elevation digest).
   }
 
   /** Re-roll a region: a NEW seed (`hashSeed(seed, "reroll")`) — the city
    * re-rolls rather than adapting. Logged as `sketch-procgen-set`, force-regen. */
   async rerollRegion(featureId: string): Promise<void> {
     await this.controller.rerollRegion(featureId);
-    this.refreshTerrainIfEnabled(); // a re-rolled mountain reshapes the DEM
+    // A re-rolled mountain reshapes the DEM (new seed) — refreshed via the render
+    // chokepoint (the commit repaint changes the elevation digest).
   }
 
   /** Regenerate a region against CURRENT constraints (drop records + recompute,
