@@ -385,6 +385,24 @@
 /* Selected-feature panel (plan 020 §9): a small overlay under the sketch bar
    showing the shape's kind, editable name, and — for a procgen region — the
    city controls. Native-Obsidian tokens so it reads like the sub-bar. */
+/* Drag-to-extrude height readout HUD (plan 040): the exact elevation while you
+   drag the extrude grip — modeling-software convention. */
+.campaign-map-height-readout {
+  position: absolute;
+  top: 92px;
+  left: 260px;
+  z-index: 7;
+  padding: 4px 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-normal, #eee);
+  background: var(--background-secondary, #222);
+  border: 1px solid var(--interactive-accent, #7c6fff);
+  border-radius: 5px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
 .campaign-map-sketch-selection {
   position: absolute;
   top: 92px;

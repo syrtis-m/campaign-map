@@ -49,6 +49,7 @@ import { TERRAIN_CONTOUR_SOURCE_ID } from "../map/themes/terrainContourLayer";
 import { algorithmForKind, matchingPresetId, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import { RegionProcgenModal } from "./RegionProcgenModal";
 import { paramFieldSpecs, renderParamControls } from "./paramControls";
+import { heightHandleDescriptor, heightParamsFromValue, formatHeightReadout } from "./heightHandle";
 import { normalizeTerrainBlock, type TerrainBlock } from "./terrainSettings";
 import { addConnection, removeConnection, setLocationVisibility } from "../vault/locationOps";
 import { importNotes } from "../vault/importOps";
@@ -143,6 +144,8 @@ export class MapView extends ItemView {
   /** Select-tool panel: name field + procgen section for the
    * currently-selected fabric feature. Anchored under the sketch sub-bar. */
   private selectionPanelEl: HTMLDivElement | null = null;
+  /** Floating HUD readout shown while a height handle is being dragged. */
+  private heightReadoutEl: HTMLDivElement | null = null;
   private selectedFabricId: string | null = null;
   /** Which sketch tool is armed: the Select arrow (edit an
    * existing shape) or the draw palette (add a new one). */
@@ -1562,6 +1565,7 @@ export class MapView extends ItemView {
       this.sketchBarEl = null;
       this.selectionPanelEl?.remove();
       this.selectionPanelEl = null;
+      this.hideHeightReadout();
       this.syncSketchToolButtons = null;
       this.selectedFabricId = null;
       this.sketchTool = "draw";
@@ -1592,6 +1596,17 @@ export class MapView extends ItemView {
       // Click-out safety: a finishable draft the GM implicitly left (switched
       // tool/kind, hit ✕ done) is persisted, not discarded.
       onDraftCommit: (geometry, kind) => this.persistSketchDraft(geometry, kind),
+      // Drag-to-extrude height handle (plan 040): live readout during the drag
+      // (no regen); on release, map the signed value back to the algorithm's
+      // params and run the normal setRegionParams path (validate/log/cascade).
+      onHeightDrag: (featureId, value) => this.showHeightReadout(featureId, value),
+      onHeightCommit: (featureId, value) => {
+        this.hideHeightReadout();
+        const feature = this.controller.fabricFeature(featureId);
+        if (!feature) return;
+        const live = feature.properties.procgen?.params ?? {};
+        void this.setRegionParams(featureId, { ...live, ...heightParamsFromValue(feature.properties.kind, value) });
+      },
       onGeometryPreview: (featureId, geometry) => {
         // Preview mode (plan 034-D): per debounce PAUSE of the drag, repaint
         // only the ROOT region as ephemeral render state (no cache, no
@@ -1797,11 +1812,15 @@ export class MapView extends ItemView {
    * for a procgen region. */
   private reselectController(feature: FabricFeature): void {
     const center = isProcgenRegion(feature) ? this.controller.effectiveRegionCenterDisplay(feature) : null;
+    // Height handle: only for a GENERATED terrain stamp (its params exist).
+    const params = feature.properties.procgen?.params;
+    const desc = params ? heightHandleDescriptor(feature.properties.kind, params) : null;
     this.sketchController?.select({
       id: feature.id,
       geometry: feature.geometry,
       kind: feature.properties.kind,
       center,
+      height: desc ? { value: desc.value, min: desc.min, max: desc.max } : null,
     });
   }
 
@@ -1811,6 +1830,7 @@ export class MapView extends ItemView {
     this.sketchController?.clearSelection();
     this.selectionPanelEl?.remove();
     this.selectionPanelEl = null;
+    this.hideHeightReadout();
   }
 
   private handleSketchDblClick(e: MapMouseEvent): void {
@@ -1853,6 +1873,21 @@ export class MapView extends ItemView {
     // A district sketch IS the request for city procgen — offer it (modal);
     // other kinds (or a cancelled modal) stay inert overlay shapes.
     this.maybeOfferProcgen(feature);
+  }
+
+  /** Live drag readout for the height handle (modeling-software convention:
+   * the exact value is visible while you drag). A single lightweight overlay
+   * pinned to the sketch bar — the terrain itself re-composes on release. */
+  private showHeightReadout(_featureId: string, value: number): void {
+    if (!this.heightReadoutEl) {
+      this.heightReadoutEl = this.contentEl.createDiv({ cls: "campaign-map-height-readout" });
+    }
+    this.heightReadoutEl.setText(formatHeightReadout(value));
+  }
+
+  private hideHeightReadout(): void {
+    this.heightReadoutEl?.remove();
+    this.heightReadoutEl = null;
   }
 
   /** Arms the debounced constraint/region regen ("sketch a river, streets

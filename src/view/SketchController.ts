@@ -1,5 +1,12 @@
 import type { Map as MapLibreMap, MapMouseEvent, GeoJSONSource, LayerSpecification } from "maplibre-gl";
 import { isPolygonKind, minVerticesFor, type FabricGeometry, type FabricKind } from "../model/fabric";
+import {
+  HEIGHT_MPP_COARSE,
+  HEIGHT_MPP_FINE,
+  HEIGHT_DRAG_DEADZONE_M,
+  valueFromDrag,
+  clampHeight,
+} from "./heightHandle";
 
 const DRAFT_SOURCE = "fabric-draft";
 const DRAFT_LAYERS = [
@@ -8,9 +15,13 @@ const DRAFT_LAYERS = [
   "fabric-draft-midpoint",
   "fabric-draft-vertex",
   "fabric-draft-center",
+  "fabric-draft-height",
 ] as const;
-/** Handle layers hit-tested during a vertex/midpoint/center grab. */
-const HANDLE_LAYERS = ["fabric-draft-center", "fabric-draft-vertex", "fabric-draft-midpoint"];
+/** Handle layers hit-tested during a vertex/midpoint/center/height grab. */
+const HANDLE_LAYERS = ["fabric-draft-height", "fabric-draft-center", "fabric-draft-vertex", "fabric-draft-midpoint"];
+/** Idle handle offset (px) from the anchor caps here so a tall stamp's grip
+ * stays on screen; during a drag the grip follows the cursor 1:1. */
+const HEIGHT_REST_CAP_PX = 100;
 
 type Pt = [number, number];
 
@@ -29,6 +40,14 @@ export interface SketchControllerHandlers {
   /** Drag-commit of a procgen region's generation center, display units. Only
    * regions pass a center to `select`. */
   onCenterEdit?(featureId: string, center: Pt): void;
+  /** Live signed value (m) during a height-handle drag — the host updates a
+   * readout HUD; no regen (the terrain re-compose waits for release). */
+  onHeightDrag?(featureId: string, value: number): void;
+  /** Release-commit of the drag-to-extrude height handle: the final signed
+   * value (m). The host maps it back to the algorithm's params
+   * (`heightParamsFromValue`) and runs the normal `setRegionParams` path
+   * (validate → log → cascade → undo). Only a past-deadzone drag reports here. */
+  onHeightCommit?(featureId: string, value: number): void;
   /** Mid-drag geometry (fired on every move of a grabbed handle; the host
    * debounces). Plan 034-D preview mode: the host paints an EPHEMERAL
    * root-only regen per pause — never cached, never fingerprinted; the full
@@ -46,6 +65,10 @@ interface EditState {
   /** Effective generation center (display units) for a procgen region — a
    * distinct draggable handle; null for non-region shapes. */
   center: Pt | null;
+  /** Drag-to-extrude height handle state (relief/landform terrain stamps) —
+   * the signed elevation the grip represents + its UI bounds; null for kinds
+   * without a height handle. */
+  height: { value: number; min: number; max: number } | null;
 }
 
 /**
@@ -77,6 +100,10 @@ export class SketchController {
   private hoverVertexIndex: number | null = null;
   /** True while the (single) center handle is being dragged. */
   private draggingCenter = false;
+  /** Height-handle drag bookkeeping: the grab's screen-Y + value baseline, the
+   * live cursor Y (so the grip follows the cursor 1:1 while dragging), or null
+   * when no height drag is active. */
+  private heightDrag: { startScreenY: number; startValue: number; cursorY: number } | null = null;
   /** Set true when a mousedown grabs a handle, so the trailing `click`
    * MapLibre may fire is suppressed (see `consumeInteraction`). Cleared at the
    * start of every mousedown so a stale flag can never silently eat the next
@@ -106,7 +133,10 @@ export class SketchController {
     const hit = this.handleAt(e.point.x, e.point.y);
     if (!hit) return; // empty ground — let the click deselect/select
     e.preventDefault();
-    if (hit.handle === "center") {
+    if (hit.handle === "height") {
+      if (!this.edit.height) return;
+      this.heightDrag = { startScreenY: e.point.y, startValue: this.edit.height.value, cursorY: e.point.y };
+    } else if (hit.handle === "center") {
       this.draggingCenter = true;
       this.edit.center = [e.lngLat.lng, e.lngLat.lat];
     } else if (hit.handle === "midpoint") {
@@ -125,6 +155,17 @@ export class SketchController {
 
   private readonly dragMove = (e: MapMouseEvent): void => {
     if (!this.edit) return;
+    if (this.heightDrag && this.edit.height) {
+      const dyUp = this.heightDrag.startScreenY - e.point.y; // up = raise
+      const fine = (e.originalEvent as MouseEvent | undefined)?.shiftKey ?? false;
+      const mpp = fine ? HEIGHT_MPP_FINE : HEIGHT_MPP_COARSE;
+      const v = valueFromDrag(this.heightDrag.startValue, dyUp, mpp, this.edit.height.min, this.edit.height.max);
+      this.edit.height.value = v;
+      this.heightDrag.cursorY = e.point.y;
+      this.renderDraft();
+      this.handlers.onHeightDrag?.(this.edit.featureId, v);
+      return;
+    }
     if (this.draggingCenter) {
       this.edit.center = [e.lngLat.lng, e.lngLat.lat];
       this.renderDraft();
@@ -142,6 +183,20 @@ export class SketchController {
     this.map.off("mousemove", this.dragMove);
     this.map.off("mouseup", this.dragUp);
     this.map.dragPan.enable();
+    if (this.heightDrag) {
+      const { startValue } = this.heightDrag;
+      this.heightDrag = null;
+      if (this.edit?.height) {
+        const v = this.edit.height.value;
+        if (Math.abs(v - startValue) >= HEIGHT_DRAG_DEADZONE_M) {
+          this.handlers.onHeightCommit?.(this.edit.featureId, v);
+        } else {
+          this.edit.height.value = startValue; // deadzone: treat as a click, snap back
+        }
+      }
+      this.renderDraft();
+      return;
+    }
     if (this.draggingCenter) {
       this.draggingCenter = false;
       if (this.edit && this.edit.center) this.handlers.onCenterEdit?.(this.edit.featureId, this.edit.center);
@@ -245,6 +300,7 @@ export class SketchController {
     this.edit = null;
     this.dragVertexIndex = null;
     this.hoverVertexIndex = null;
+    this.heightDrag = null;
     this.map.off("mousemove", this.moveHandler);
     this.map.off("mousemove", this.hoverHandler);
     this.map.off("mousedown", this.downHandler);
@@ -302,20 +358,41 @@ export class SketchController {
    * open vertex list is the working copy; a committed drag/insert/delete
    * reports the whole new geometry through `onGeometryEdit`. Re-selecting the
    * same feature after a commit resets the baseline to its persisted geometry. */
-  select(feature: { id: string; geometry: FabricGeometry; kind: FabricKind; center?: Pt | null }): void {
+  select(feature: {
+    id: string;
+    geometry: FabricGeometry;
+    kind: FabricKind;
+    center?: Pt | null;
+    height?: { value: number; min: number; max: number } | null;
+  }): void {
     this.vertices = [];
     this.cursor = null;
     this.dragVertexIndex = null;
     this.hoverVertexIndex = null;
     this.draggingCenter = false;
+    this.heightDrag = null;
     this.edit = {
       featureId: feature.id,
       type: feature.geometry.type,
       kind: feature.kind,
       vertices: openVertices(feature.geometry),
       center: feature.center ?? null,
+      height: feature.height ?? null,
     };
     this.renderDraft();
+  }
+
+  /** Set the height handle's value programmatically (type-to-refine, Phase 3;
+   * also the headless-test entry for the readout/commit path). Clamped to the
+   * handle bounds; no commit — the caller decides when to persist. */
+  setHeightValue(value: number): void {
+    if (!this.edit?.height) return;
+    this.edit.height.value = clampHeight(value, this.edit.height.min, this.edit.height.max);
+    this.renderDraft();
+  }
+
+  get heightHandleValue(): number | null {
+    return this.edit?.height?.value ?? null;
   }
 
   clearSelection(): void {
@@ -323,6 +400,7 @@ export class SketchController {
     this.dragVertexIndex = null;
     this.hoverVertexIndex = null;
     this.draggingCenter = false;
+    this.heightDrag = null;
     this.renderDraft();
   }
 
@@ -368,7 +446,10 @@ export class SketchController {
 
   /** Hit-test the handle layers at a screen point; nearest handle wins, with
    * vertices preferred over midpoints on a tie. */
-  private handleAt(x: number, y: number): { handle: "vertex" | "midpoint" | "center"; index: number } | null {
+  private handleAt(
+    x: number,
+    y: number
+  ): { handle: "vertex" | "midpoint" | "center" | "height"; index: number } | null {
     const layers = HANDLE_LAYERS.filter((l) => this.map.getLayer(l));
     if (layers.length === 0) return null;
     const box: [[number, number], [number, number]] = [
@@ -376,17 +457,17 @@ export class SketchController {
       [x + 8, y + 8],
     ];
     const hits = this.map.queryRenderedFeatures(box, { layers });
-    let best: { handle: "vertex" | "midpoint" | "center"; index: number } | null = null;
+    let best: { handle: "vertex" | "midpoint" | "center" | "height"; index: number } | null = null;
     let bestScore = Infinity;
     for (const f of hits) {
-      const handle = f.properties?.handle as "vertex" | "midpoint" | "center" | undefined;
+      const handle = f.properties?.handle as "vertex" | "midpoint" | "center" | "height" | undefined;
       const index = f.properties?.index as number | undefined;
       if (handle === undefined || index === undefined) continue;
       if (f.geometry.type !== "Point") continue;
       const p = this.map.project(f.geometry.coordinates as Pt);
-      // Distance, with a small bias so center wins over vertex wins over
-      // midpoint on a near-tie (center is the big deliberate target).
-      const bias = handle === "center" ? -1 : handle === "vertex" ? 0 : 0.5;
+      // Distance, with a small bias so height/center win over vertex win over
+      // midpoint on a near-tie (the big deliberate targets go first).
+      const bias = handle === "height" ? -1 : handle === "center" ? -1 : handle === "vertex" ? 0 : 0.5;
       const d = Math.hypot(p.x - x, p.y - y) + bias;
       if (d < bestScore) {
         bestScore = d;
@@ -473,6 +554,22 @@ export class SketchController {
           "circle-stroke-color": this.accent,
         },
       } as unknown as LayerSpecification,
+      {
+        // Drag-to-extrude height grip (relief/landform): accent core + thick
+        // white ring, the largest deliberate target. The dashed accent "stem"
+        // from the anchor to the grip (a plain LineString, painted by
+        // fabric-draft-line) is the ghost cross-section. Drawn on top of all.
+        id: "fabric-draft-height",
+        type: "circle",
+        source: DRAFT_SOURCE,
+        filter: ["==", ["get", "handle"], "height"],
+        paint: {
+          "circle-radius": 6,
+          "circle-color": this.accent,
+          "circle-stroke-width": 3,
+          "circle-stroke-color": "#ffffff",
+        },
+      } as unknown as LayerSpecification,
     ];
     for (const layer of layers) {
       if (!this.map.getLayer(layer.id)) this.map.addLayer(layer);
@@ -513,6 +610,30 @@ export class SketchController {
           properties: { handle: "center", index: 0 },
         });
       }
+      if (this.edit.height) {
+        // Anchor = the stamp's centroid (open vertices); the grip sits above/
+        // below it. While dragging it follows the cursor 1:1 (direct
+        // manipulation); idle, it rests at value/coarse-mpp px (capped so a tall
+        // stamp's grip stays on screen). The stem anchor→grip is the ghost
+        // cross-section.
+        const anchor = centroid(open);
+        const anchorPx = this.map.project(anchor);
+        const gripY = this.heightDrag
+          ? this.heightDrag.cursorY
+          : anchorPx.y - clampHeight(this.edit.height.value / HEIGHT_MPP_COARSE, -HEIGHT_REST_CAP_PX, HEIGHT_REST_CAP_PX);
+        const grip = this.map.unproject([anchorPx.x, gripY]);
+        const gripPt: Pt = [grip.lng, grip.lat];
+        features.push({
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: [anchor, gripPt] },
+          properties: { handle: "height-stem" },
+        });
+        features.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: gripPt },
+          properties: { handle: "height", index: 0, value: this.edit.height.value },
+        });
+      }
     }
 
     if (this.isDrawing) {
@@ -545,6 +666,19 @@ export class SketchController {
 /** Open vertex list (no closing duplicate) of a fabric geometry. Mirrors
  * `fabric.editableVertices` but stays local so the controller has no model
  * import cycle beyond the types it already uses. */
+/** Arithmetic mean of a vertex list — the height grip's anchor. Empty ⇒ origin
+ * (never reached: an edit always has ≥ min vertices). */
+function centroid(pts: Pt[]): Pt {
+  if (pts.length === 0) return [0, 0];
+  let sx = 0;
+  let sy = 0;
+  for (const [x, y] of pts) {
+    sx += x;
+    sy += y;
+  }
+  return [sx / pts.length, sy / pts.length];
+}
+
 function openVertices(geom: FabricGeometry): Pt[] {
   if (geom.type === "Polygon") {
     const ring = geom.coordinates[0];

@@ -38,7 +38,8 @@ function mockMap() {
     removeSource: (id: string) => void delete sources[id],
     getCanvas: () => canvas,
     project: ([lng, lat]: [number, number]) => ({ x: lng * 10, y: -lat * 10 }),
-    unproject: (p: { x: number; y: number }) => ({ lng: p.x / 10, lat: -p.y / 10 }),
+    unproject: (p: { x: number; y: number } | [number, number]) =>
+      Array.isArray(p) ? { lng: p[0] / 10, lat: -p[1] / 10 } : { lng: p.x / 10, lat: -p.y / 10 },
     queryRenderedFeatures: () => queryReturn,
     dragPan: { enable() {}, disable() {} },
     fire: (t: string, e: unknown) => (handlers[t] ?? []).forEach((h) => h(e)),
@@ -50,7 +51,12 @@ function mockMap() {
 }
 
 function ev(lng: number, lat: number) {
-  return { point: { x: lng * 10, y: -lat * 10 }, lngLat: { lng, lat }, preventDefault() {} };
+  return { point: { x: lng * 10, y: -lat * 10 }, lngLat: { lng, lat }, preventDefault() {}, originalEvent: { shiftKey: false } };
+}
+
+/** Event at explicit screen pixels (height drag is screen-Y driven). */
+function pxEv(x: number, y: number, shiftKey = false) {
+  return { point: { x, y }, lngLat: { lng: x / 10, lat: -y / 10 }, preventDefault() {}, originalEvent: { shiftKey } };
 }
 
 const POLY: FabricGeometry = {
@@ -62,13 +68,29 @@ function makeController(over: Partial<SketchControllerHandlers> = {}) {
   const map = mockMap();
   const edits: { id: string; geometry: FabricGeometry }[] = [];
   const drafts: { geometry: FabricGeometry; kind: FabricKind }[] = [];
+  const heightDrags: { id: string; value: number }[] = [];
+  const heightCommits: { id: string; value: number }[] = [];
   const handlers: SketchControllerHandlers = {
     onGeometryEdit: (id, geometry) => edits.push({ id, geometry }),
     onDraftCommit: (geometry, kind) => drafts.push({ geometry, kind }),
+    onHeightDrag: (id, value) => heightDrags.push({ id, value }),
+    onHeightCommit: (id, value) => heightCommits.push({ id, value }),
     ...over,
   };
   const c = new SketchController(map, "#ff0000", handlers);
-  return { map, c, edits, drafts };
+  return { map, c, edits, drafts, heightDrags, heightCommits };
+}
+
+const RELIEF_LINE: FabricGeometry = { type: "LineString", coordinates: [[0, 0], [4, 0]] };
+/** The height grip for value 300 on RELIEF_LINE: centroid [2,0]→screen (20,0),
+ * idle offset 300/12≈25px up → grip screen (20,-25) → lngLat [2,2.5]. */
+const GRIP_COORD: [number, number] = [2, 2.5];
+function selectReliefWithHeight(c: SketchController, value = 300) {
+  c.setTool("select");
+  c.select({ id: "R1", geometry: RELIEF_LINE, kind: "relief", center: null, height: { value, min: -4000, max: 4000 } });
+}
+function armGripQuery(map: ReturnType<typeof mockMap>) {
+  map.setQuery([{ properties: { handle: "height", index: 0 }, geometry: { type: "Point", coordinates: GRIP_COORD } }]);
 }
 
 describe("SketchController — click-out contract (plan 040 Phase 0)", () => {
@@ -150,6 +172,77 @@ describe("SketchController — click-out contract (plan 040 Phase 0)", () => {
     c.cancel(); // MapView Escape → cancel()
     expect(c.isDrawing).toBe(false);
     expect(drafts).toHaveLength(0);
+  });
+});
+
+describe("SketchController — drag-to-extrude height handle (plan 040 Phase 1)", () => {
+  it("renders a height grip + ghost stem for a selected relief", () => {
+    const { map, c } = makeController();
+    c.activate("relief");
+    selectReliefWithHeight(c, 300);
+    const feats = map.draftFeatures() as { properties: { handle?: string } }[];
+    expect(feats.some((f) => f.properties.handle === "height")).toBe(true);
+    expect(feats.some((f) => f.properties.handle === "height-stem")).toBe(true);
+  });
+
+  it("dragging the grip up raises the value and commits once on release", () => {
+    const { map, c, heightDrags, heightCommits } = makeController();
+    c.activate("relief");
+    selectReliefWithHeight(c, 300);
+    armGripQuery(map);
+    map.fire("mousedown", pxEv(20, -25)); // grab the grip at its screen pos
+    map.fire("mousemove", pxEv(20, -145)); // 120 px up → +1440 m at coarse mpp
+    expect(heightDrags.at(-1)?.value).toBe(1740);
+    expect(c.heightHandleValue).toBe(1740);
+    map.fire("mouseup", pxEv(20, -145));
+    expect(heightCommits).toEqual([{ id: "R1", value: 1740 }]);
+  });
+
+  it("Shift drags fine (smaller metres/pixel)", () => {
+    const { map, c, heightCommits } = makeController();
+    c.activate("relief");
+    selectReliefWithHeight(c, 300);
+    armGripQuery(map);
+    map.fire("mousedown", pxEv(20, -25));
+    map.fire("mousemove", pxEv(20, -145, true)); // shift → mpp 3 → +360
+    map.fire("mouseup", pxEv(20, -145, true));
+    expect(heightCommits).toEqual([{ id: "R1", value: 660 }]);
+  });
+
+  it("a sub-deadzone grab (no real drag) does NOT commit and snaps back", () => {
+    const { map, c, heightCommits } = makeController();
+    c.activate("relief");
+    selectReliefWithHeight(c, 300);
+    armGripQuery(map);
+    map.fire("mousedown", pxEv(20, -25));
+    map.fire("mouseup", pxEv(20, -25)); // released without moving
+    expect(heightCommits).toHaveLength(0);
+    expect(c.heightHandleValue).toBe(300);
+  });
+
+  it("setHeightValue clamps and does not commit (type-to-refine seam)", () => {
+    const { c, heightCommits } = makeController();
+    c.activate("landform");
+    c.setTool("select");
+    c.select({
+      id: "L9",
+      geometry: POLY,
+      kind: "landform",
+      center: null,
+      height: { value: 0, min: -4000, max: 4000 },
+    });
+    c.setHeightValue(99999);
+    expect(c.heightHandleValue).toBe(4000);
+    expect(heightCommits).toHaveLength(0);
+  });
+
+  it("no height handle for a shape selected without a height descriptor", () => {
+    const { map, c } = makeController();
+    c.activate("district");
+    c.setTool("select");
+    c.select({ id: "D1", geometry: POLY, kind: "district", center: null });
+    const feats = map.draftFeatures() as { properties: { handle?: string } }[];
+    expect(feats.some((f) => f.properties.handle === "height")).toBe(false);
   });
 });
 
