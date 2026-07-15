@@ -30,18 +30,28 @@ export class MemAdapter {
   readonly files = new Map<string, string>();
   private readonly dirs = new Set<string>();
 
+  /** IO tap for batching assertions (031-B): every read/write/append records
+   * its path, so a test can count e.g. how many times the `.mapcache` file was
+   * read across one flush/cascade batch. */
+  readonly reads: string[] = [];
+  readonly writes: string[] = [];
+  readonly appends: string[] = [];
+
   async exists(path: string): Promise<boolean> {
     return this.files.has(path) || this.dirs.has(path);
   }
   async read(path: string): Promise<string> {
+    this.reads.push(path);
     const v = this.files.get(path);
     if (v === undefined) throw new Error(`MemAdapter: no such file ${path}`);
     return v;
   }
   async write(path: string, data: string): Promise<void> {
+    this.writes.push(path);
     this.files.set(path, data);
   }
   async append(path: string, data: string): Promise<void> {
+    this.appends.push(path);
     this.files.set(path, (this.files.get(path) ?? "") + data);
   }
   async mkdir(path: string): Promise<void> {
@@ -98,6 +108,11 @@ export class FakeHost {
   repaintGeneratedCount = 0;
   repaintFabricCount = 0;
   regenArmedCount = 0;
+  /** Gateway-level cache IO counters (031-B): count host.vault.readCached /
+   * removeCached CALLS (not the adapter reads removeCached does internally), so
+   * a test can assert a batch reads the shared cache view exactly once. */
+  readCachedCount = 0;
+  removeCachedCount = 0;
 
   // Live camera the viewport gateway reads.
   zoom: number;
@@ -121,8 +136,14 @@ export class FakeHost {
         saveManifest: (c, m) => saveGeneratedManifest(app, c, m),
         appendLog: (f, e) => appendLogEntry(app, f, e),
         readLog: () => readLog(app, folder),
-        readCached: (f) => readCachedTiles(app, f),
-        removeCached: (f, keys) => removeCachedTiles(app, f, keys),
+        readCached: (f) => {
+          this.readCachedCount++;
+          return readCachedTiles(app, f);
+        },
+        removeCached: (f, keys) => {
+          this.removeCachedCount++;
+          return removeCachedTiles(app, f, keys);
+        },
       },
       gen: {
         getWorker: async () => null, // direct (deterministic) main-thread generation

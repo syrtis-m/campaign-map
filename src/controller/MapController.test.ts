@@ -970,3 +970,69 @@ describe("MapController — network once per forced regen (031-A)", () => {
     for (const [k, bytes] of before) expect(after.get(k)).toBe(bytes);
   });
 });
+
+// ─── Plan 031-B — batching parity (one fp pass, one shared read, one paint) ───
+// A multi-region flush/cascade previously recomputed fingerprints per region
+// (O(R²)), re-read the whole `.mapcache` per upstream lookup, and fired one
+// repaint per region. 031-B threads ONE fingerprint pass + ONE shared cache
+// view and coalesces repaints — all byte-identical (only IO/paint counts move).
+describe("MapController — batching parity (031-B)", () => {
+  // A windy river crossing the future district — the city consumes its
+  // generated channel, so a river regen cascades to the city (a 2-region batch).
+  const RIVER_LINE: [number, number][] = [
+    [6, -30],
+    [18, -18],
+    [30, -6],
+  ];
+
+  async function riverThenCity(host: FakeHost): Promise<{ riverId: string; cityId: string }> {
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    return { riverId: river.featureId, cityId: city.featureId };
+  }
+
+  it("a flush hashes once, reads the shared cache once, and paints once regardless of region count", async () => {
+    const host = cityHost();
+    const { riverId, cityId } = await riverThenCity(host);
+
+    const fpBefore = host.controller.fingerprintPassCount;
+    const readsBefore = host.readCachedCount;
+    const paintsBefore = host.repaintGeneratedCount;
+
+    // Queue a region regen of the river; the flush force-regens the river AND
+    // cascades to the city that consumes its channel — a genuine 2-region batch.
+    host.controller.queueRegionRegen(riverId);
+    await host.controller.flushSketchRegen();
+
+    expect(host.controller.cascadeRegeneratedIds).toContain(cityId); // batch really spanned both
+    expect(host.controller.fingerprintPassCount - fpBefore).toBe(1); // ONE fp pass
+    expect(host.readCachedCount - readsBefore).toBe(1); // ONE shared cache read (upstream served from it)
+    expect(host.repaintGeneratedCount - paintsBefore).toBe(1); // ONE coalesced paint
+  });
+
+  it("batched flush output is byte-identical to a from-scratch replay (parity by construction)", async () => {
+    const host = cityHost();
+    const { riverId, cityId } = await riverThenCity(host);
+    host.controller.queueRegionRegen(riverId);
+    await host.controller.flushSketchRegen();
+
+    const netBytes = async (h: FakeHost): Promise<Map<string, string>> => {
+      const out = new Map<string, string>();
+      for (const [k, rec] of await h.cache())
+        if (k === regionNetworkKey(riverId) || k === regionNetworkKey(cityId)) out.set(k, JSON.stringify(rec.features));
+      return out;
+    };
+    const live = await netBytes(host);
+    expect(live.size).toBe(2);
+
+    // Reopen on the same vault, wipe the cache, and replay from scratch (stage
+    // order). The batched-flush bytes must equal the from-scratch bytes.
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    await reopened.adapter.remove(reopened.cachePath());
+    await reopened.controller.replayGeneratedManifest();
+    const replayed = await netBytes(reopened);
+
+    for (const [k, bytes] of live) expect(replayed.get(k)).toBe(bytes);
+  });
+});

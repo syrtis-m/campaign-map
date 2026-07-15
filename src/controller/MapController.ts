@@ -157,6 +157,12 @@ export interface VaultGateway {
  * forwards to the generation service (keeps `App` out of the controller). */
 export type ControllerGenContext = Omit<GenerationContext, "app">;
 
+/** The two batch-shared views threaded through a flush/cascade so a multi-region
+ * pass hashes ONCE and reads the cache ONCE (031-B): the precomputed
+ * `(stage,id)`-ordered fingerprint map + the single mutable cache view every
+ * region regen reads fresh upstream from and writes its records into. */
+type RegionBatchOpts = { fingerprints?: Map<string, string>; preloadedCache?: Map<string, CachedTile> };
+
 /** The generation service, host-injected so the controller never imports the
  * App-typed `generateTile`/`generateRegionTile` directly. */
 export interface GenGateway {
@@ -268,6 +274,14 @@ export class MapController {
   private pendingGenerations = 0;
   /** Gate counter: actual generator EXECUTIONS. */
   private generatorRunCounter = 0;
+  /** Gate counter (031-B): how many `computeRegionFingerprints` passes ran —
+   * a batch (flush/cascade/replay) must do exactly ONE, threading the result. */
+  private fingerprintPassCounter = 0;
+  /** Repaint coalescing (031-B): while >0, `repaintGenerated` is deferred to a
+   * single paint at the end of the batch — a 10-region cascade fires one
+   * `setData`, not ten (research P7). */
+  private repaintBatchDepth = 0;
+  private repaintPending = false;
   /** Sketch edits accumulated while the regen debounce is pending. */
   private pendingConstraintFeatures: FabricFeature[] = [];
   /** Region ids whose OWN geometry changed and need a force-regen next flush. */
@@ -311,6 +325,37 @@ export class MapController {
   /** Gate surface: actual generator executions this session. */
   get generatorRunCount(): number {
     return this.generatorRunCounter;
+  }
+
+  /** Gate surface (031-B): fingerprint passes this session — one per batch. */
+  get fingerprintPassCount(): number {
+    return this.fingerprintPassCounter;
+  }
+
+  /** Repaint the generated layer, coalescing to ONE paint per open batch
+   * (flush/cascade/replay). Outside a batch it paints immediately, unchanged. */
+  private repaintGenerated(): void {
+    if (this.repaintBatchDepth > 0) {
+      this.repaintPending = true;
+      return;
+    }
+    this.host.render.repaintGenerated();
+  }
+
+  /** Run `fn` as one repaint batch: every `repaintGenerated` inside collapses
+   * into a single paint on exit (only if something asked to paint). Reentrant
+   * (nested batches coalesce into the outermost). */
+  private async withRepaintBatch<T>(fn: () => Promise<T>): Promise<T> {
+    this.repaintBatchDepth++;
+    try {
+      return await fn();
+    } finally {
+      this.repaintBatchDepth--;
+      if (this.repaintBatchDepth === 0 && this.repaintPending) {
+        this.repaintPending = false;
+        this.host.render.repaintGenerated();
+      }
+    }
   }
 
   /** Pending explicit generations (MapView reads this for the loading badge). */
@@ -660,7 +705,7 @@ export class MapController {
             10000
           );
         }
-        this.host.render.repaintGenerated();
+        this.repaintGenerated();
         return [];
       }
       this.needsAdoption.delete(feature.id);
@@ -685,7 +730,7 @@ export class MapController {
       this.pendingGenerations--;
       this.host.render.loadingChanged();
     }
-    this.host.render.repaintGenerated();
+    this.repaintGenerated();
     return all;
   }
 
@@ -781,6 +826,7 @@ export class MapController {
    * O(n²) recompute.
    */
   private computeRegionFingerprints(ctx: ControllerGenContext): Map<string, string> {
+    this.fingerprintPassCounter++;
     const nodes = this.regionDagNodes();
     const regionById = new Map<string, ProcgenRegion>();
     const blockById = new Map<string, ProcgenBlock>();
@@ -848,7 +894,7 @@ export class MapController {
    * (explicit-only stands): it only ever RE-generates regions the GM already
    * requested, never first-time-generates.
    */
-  private async cascadeDownstream(rootIds: string[], done: Set<string>): Promise<string[]> {
+  private async cascadeDownstream(rootIds: string[], done: Set<string>, opts: RegionBatchOpts = {}): Promise<string[]> {
     this.lastCascadeRegenerated = [];
     if (!this.campaign) return [];
     const campaign = this.campaign;
@@ -868,7 +914,7 @@ export class MapController {
       if (this.campaign?.id !== campaign.id) break;
       const feature = this.regionFeatures().find((f) => f.id === node.id);
       if (!feature) continue;
-      await this.generateRegion(feature, { force: true });
+      await this.generateRegion(feature, { force: true, ...opts });
       done.add(node.id);
       regenerated.push(node.id);
     }
@@ -904,12 +950,19 @@ export class MapController {
     this.cascadeAutoConfirm = true;
     try {
       await this.loadFabric();
-      const done = new Set<string>(roots);
-      for (const id of roots) {
-        const feature = this.regionFeatures().find((f) => f.id === id);
-        if (feature) await this.generateRegion(feature, { force: true });
-      }
-      await this.cascadeDownstream(roots, done);
+      await this.withRepaintBatch(async () => {
+        const ctx = this.generationContext();
+        const opts: RegionBatchOpts = {
+          fingerprints: this.computeRegionFingerprints(ctx),
+          preloadedCache: await this.host.vault.readCached(campaignFolderFromConfigPath(this.campaign!.path)),
+        };
+        const done = new Set<string>(roots);
+        for (const id of roots) {
+          const feature = this.regionFeatures().find((f) => f.id === id);
+          if (feature) await this.generateRegion(feature, { force: true, ...opts });
+        }
+        await this.cascadeDownstream(roots, done, opts);
+      });
     } finally {
       this.cascadeAutoConfirm = prev;
     }
@@ -1007,7 +1060,7 @@ export class MapController {
       this.loadedTiles.delete(this.tileKeyFor(e.tier, e.tileX, e.tileY));
     }
     await this.host.vault.saveManifest(campaign, this.manifest);
-    this.host.render.repaintGenerated();
+    this.repaintGenerated();
     await this.host.vault.appendLog(folder, {
       ts: Date.now(),
       type: "clear-area",
@@ -1075,7 +1128,7 @@ export class MapController {
       this.host.render.loadingChanged();
     }
     this.loadedTiles.set(this.tileKeyFor(tier, tileX, tileY), features);
-    this.host.render.repaintGenerated();
+    this.repaintGenerated();
     return features;
   }
 
@@ -1263,7 +1316,15 @@ export class MapController {
   /** Regenerate the transitive downstream DAG closure of one just-regenerated
    * region root (the immediate, non-debounced edit paths). */
   private async cascadeFromRoot(rootId: string): Promise<void> {
-    await this.cascadeDownstream([rootId], new Set([rootId]));
+    if (!this.campaign) return;
+    // One batch: hash once + read the cache once, thread both through the
+    // downstream walk, and coalesce every dependent's repaint into one (031-B).
+    await this.withRepaintBatch(async () => {
+      const ctx = this.generationContext();
+      const fingerprints = this.computeRegionFingerprints(ctx);
+      const preloadedCache = await this.host.vault.readCached(campaignFolderFromConfigPath(this.campaign!.path));
+      await this.cascadeDownstream([rootId], new Set([rootId]), { fingerprints, preloadedCache });
+    });
   }
 
   /** Strip a region's procgen block (drop its cache records + unpaint). */
@@ -1309,7 +1370,7 @@ export class MapController {
     }
     const prefix = `region:${feature.id}:`;
     for (const k of [...this.loadedTiles.keys()]) if (k.startsWith(prefix)) this.loadedTiles.delete(k);
-    this.host.render.repaintGenerated();
+    this.repaintGenerated();
   }
 
   /** "Remove generated city here". */
@@ -1607,7 +1668,7 @@ export class MapController {
       this.pendingGenerations--;
       this.host.render.loadingChanged();
     }
-    this.host.render.repaintGenerated();
+    this.repaintGenerated();
   }
 
   /** Loads `<campaign>/Fabric.geojson` into memory once per campaign. */
@@ -1654,27 +1715,38 @@ export class MapController {
     const campaign = this.campaign;
     await this.loadFabric();
     if (this.campaign?.id !== campaign.id) return;
-    const done = new Set<string>();
-    const roots: string[] = [];
-    for (const id of regionIds) {
-      const feature = this.regionFeatures().find((f) => f.id === id);
-      if (!feature) continue;
-      await this.generateRegion(feature, { force: true });
-      done.add(id);
-      roots.push(id);
-      if (this.campaign?.id !== campaign.id) return;
-    }
-    if (edited.length > 0) await this.regenerateAffectedTiles(edited, done);
-    // Cross-layer cascade: ONE coalesced walk downstream of every region
-    // regenerated by a queued procgen-region edit this flush (a drag
-    // storm coalesced into one cascade). Raw-sketch constraint edits already
-    // fan out to their direct consumers via bbox reach above.
-    if (roots.length > 0 && this.campaign?.id === campaign.id) {
-      await this.cascadeDownstream(roots, done);
-    }
+    // ONE batch for the whole flush: hash once, read the cache once, coalesce
+    // every region's repaint into a single paint (031-B). Both views are
+    // threaded through the roots regen, the raw-sketch reach, and the cascade so
+    // the pass never re-hashes O(R²) or re-reads the `.mapcache` per region.
+    await this.withRepaintBatch(async () => {
+      const ctx = this.generationContext();
+      const opts: RegionBatchOpts = {
+        fingerprints: this.computeRegionFingerprints(ctx),
+        preloadedCache: await this.host.vault.readCached(campaignFolderFromConfigPath(campaign.path)),
+      };
+      const done = new Set<string>();
+      const roots: string[] = [];
+      for (const id of regionIds) {
+        const feature = this.regionFeatures().find((f) => f.id === id);
+        if (!feature) continue;
+        await this.generateRegion(feature, { force: true, ...opts });
+        done.add(id);
+        roots.push(id);
+        if (this.campaign?.id !== campaign.id) return;
+      }
+      if (edited.length > 0) await this.regenerateAffectedTiles(edited, done, opts);
+      // Cross-layer cascade: ONE coalesced walk downstream of every region
+      // regenerated by a queued procgen-region edit this flush (a drag
+      // storm coalesced into one cascade). Raw-sketch constraint edits already
+      // fan out to their direct consumers via bbox reach above.
+      if (roots.length > 0 && this.campaign?.id === campaign.id) {
+        await this.cascadeDownstream(roots, done, opts);
+      }
+    });
   }
 
-  private async regenerateAffectedTiles(edited: FabricFeature[], done: Set<string>): Promise<void> {
+  private async regenerateAffectedTiles(edited: FabricFeature[], done: Set<string>, opts: RegionBatchOpts = {}): Promise<void> {
     if (!this.campaign || edited.length === 0) return;
     const campaign = this.campaign;
     if (this.campaign?.id !== campaign.id) return;
@@ -1718,7 +1790,7 @@ export class MapController {
     for (const feature of affected.values()) {
       if (done.has(feature.id)) continue; // already force-regenerated this flush
       if (this.campaign?.id !== campaign.id) return;
-      await this.generateRegion(feature, { force: true });
+      await this.generateRegion(feature, { force: true, ...opts });
       done.add(feature.id); // let the cross-layer cascade skip what we just did
     }
   }
