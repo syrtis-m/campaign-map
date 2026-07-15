@@ -761,6 +761,11 @@ export class MapController {
        * its inputs are unchanged (the invalidation walk sets this; direct GM
        * regenerate/adopt does not). */
       skipInertForce?: boolean;
+      /** Plan 034 §4: serve this region's CACHED bytes fingerprint-blind — a
+       * deferred (cost-capped) region on replay paints its known-stale records
+       * (the "outdated" badge marks them) instead of recomputing or blanking.
+       * Never combined with `force`. */
+      serveStale?: boolean;
     } = {}
   ): Promise<GeoJSON.Feature[]> {
     if (!this.campaign) return [];
@@ -795,19 +800,23 @@ export class MapController {
     // to the algorithm's consumed kinds within its influence bbox. Fallback to a
     // no-upstream fingerprint if the region isn't in the current collection yet
     // (a just-built feature mid-attach).
-    const fingerprint =
-      (opts.fingerprints ?? this.computeRegionFingerprints(ctx)).get(feature.id) ??
-      regionFingerprint({
-        algorithm: block.algorithm,
-        seed: block.seed,
-        version: block.version,
-        params: block.params,
-        region,
-        fabricFeatures: ctx.fabricFeatures,
-        consumesSketch: algorithm.consumesSketch,
-        influenceMargin: algorithm.influenceMargin,
-      });
-    let force = (opts.force ?? false) && !pinnedOld;
+    // `serveStale` (plan 034 §4): an undefined expected fingerprint grandfathers
+    // every cached record as fresh (`isCacheRecordFresh`), so the region paints
+    // its existing bytes as-is — no recompute, no fp stamp, no drop.
+    const fingerprint = opts.serveStale
+      ? undefined
+      : (opts.fingerprints ?? this.computeRegionFingerprints(ctx)).get(feature.id) ??
+        regionFingerprint({
+          algorithm: block.algorithm,
+          seed: block.seed,
+          version: block.version,
+          params: block.params,
+          region,
+          fabricFeatures: ctx.fabricFeatures,
+          consumesSketch: algorithm.consumesSketch,
+          influenceMargin: algorithm.influenceMargin,
+        });
+    let force = (opts.force ?? false) && !pinnedOld && !opts.serveStale;
     // 033-D: an INVALIDATION-WALK force (raw-sketch flush / cascade) that lands
     // on a region whose recomputed fingerprint equals its cached network
     // record's — the durable inputs are UNCHANGED, so the cached bytes are
@@ -987,14 +996,16 @@ export class MapController {
    * `consumesSketch` includes the source kind and the bboxes come within the
    * region's `influenceMargin` — the 033-C raw-sketch reach, now a graph edge.
    * A source id is namespaced (`source:<featureId>`) so it can never collide
-   * with a region id, and procgen-region features are skipped (their coupling is
-   * the region→region DAG, not a raw source). Pure geometry, no regen. */
+   * with a region id. Procgen-region features mint a source TOO: their raw
+   * geometry is a constraint other generators read directly (a city reads the
+   * raw wall LINE of a procgen wall — a coupling the stage-4→3 region DAG can
+   * never carry), so an edited region is both a region root AND a raw source.
+   * Pure geometry, no regen. */
   private sourceDagNodesFor(edited: FabricFeature[]): DagNode[] {
     if (!this.campaign || edited.length === 0) return [];
     const scale = this.campaign.config.scaleMetersPerUnit;
     const nodes: DagNode[] = [];
     for (const f of edited) {
-      if (isProcgenRegion(f)) continue; // a region couples via the region DAG
       let minX = Infinity;
       let minY = Infinity;
       let maxX = -Infinity;
@@ -1024,19 +1035,6 @@ export class MapController {
       });
     }
     return nodes;
-  }
-
-  /** Plan 034: the region ids a raw-sketch edit set dirties — the downstream
-   * closure of the edited features' SOURCE nodes over the region DAG. This is
-   * the 033-C direct-consumer reach (source→region edges) PLUS every transitive
-   * region→region dependent (an edit to a mountain sketch the river reads now
-   * also re-runs the city the river feeds — the "one forward pass" correctness
-   * that the pre-034 raw channel dropped). Returns region ids only. */
-  private dirtyRegionIdsFromSketchEdits(edited: FabricFeature[]): string[] {
-    const sources = this.sourceDagNodesFor(edited);
-    if (sources.length === 0) return [];
-    const nodes = [...this.regionDagNodes(), ...sources];
-    return downstreamClosure(nodes, MapController.CONSTRAINT_REACH, sources.map((s) => s.id)).map((n) => n.id);
   }
 
   /**
@@ -1100,25 +1098,44 @@ export class MapController {
     return fpMap;
   }
 
-  /** Threshold above which a cascade asks before regenerating (cost control —
-   * a continental river's knob must not silently redraw 100 cities).
-   * Non-modal: a Notice + the `applyPendingCascade` command/test-API (no modal —
-   * they hang CLI automation, docs/05). */
-  private static readonly CASCADE_CONFIRM_THRESHOLD = 10;
-  private pendingCascadeRoots: string[] | null = null;
-  /** The downstream region ids the MOST RECENT cascade regenerated (excludes
-   * the edited root), in cascade order. A DAG-deterministic, seed-INDEPENDENT
-   * signal for gates/tests: "editing an upstream regenerated exactly these
-   * dependents" holds regardless of the (feature-id-derived) region seed, where
-   * an output-byte-diff would be seed-flaky (mm quantization can round a small
-   * meander shift away). Reset at the start of every cascade. */
+  /** Σ registry `costClass` over the deferrable downstream closure above which
+   * the forward pass asks before regenerating (plan 034, replacing the pre-034
+   * region-COUNT threshold — a count is blind to 10-cities-vs-10-farmlands and to
+   * contour storms). Cost-weighted: cheap 1, medium 2, expensive 4. At budget 24
+   * a 40-region continental cascade (~cost 80) or 10 cities (cost 40) defers,
+   * while 10 farmlands (cost 20) or a city ringed by a handful of parks/farmland
+   * (~cost 18) applies inline. Non-modal: a Notice + the `applyPendingCascade`
+   * command/test-API (no modal — they hang CLI automation, docs/05). */
+  private static readonly CASCADE_COST_BUDGET = 24;
+  /** The forward pass a cost cap DEFERRED — its inputs, replayable verbatim by
+   * `applyPendingCascade`. The GM's own edit (regionRoots) always applied; only
+   * the downstream/deferrable work is held here. */
+  private pendingPass: { regionRoots: string[]; sketchEdits: FabricFeature[]; deferrableRoots: string[] } | null = null;
+  /** Regions whose cached bytes are known FP-STALE because a cost-capped pass
+   * deferred them (plan 034 §4) — the "outdated" badge surface, the plan-029
+   * `needsAdoption` pattern reused: a sorted-ids getter the host renders as a
+   * panel badge, plus the deferral Notice. Serving stale bytes WITH this badge
+   * (instead of an uncapped recompute at next open) is the P10 fix. A region
+   * leaves the set the moment any pass actually regenerates it. */
+  private outdatedRegions = new Set<string>();
+  /** Feature ids currently badged "outdated" (deferred by a cost-capped pass;
+   * their rendered bytes are the pre-edit cache until "Apply pending cascade"). */
+  outdatedRegionIds(): string[] {
+    return [...this.outdatedRegions].sort();
+  }
+  /** The downstream region ids the MOST RECENT forward pass regenerated (excludes
+   * the edited region root[s]), in cascade order. A DAG-deterministic, seed-
+   * INDEPENDENT signal for gates/tests: "editing an upstream regenerated exactly
+   * these dependents" holds regardless of the (feature-id-derived) region seed,
+   * where an output-byte-diff would be seed-flaky (mm quantization can round a
+   * small meander shift away). Reset at the start of every pass. */
   private lastCascadeRegenerated: string[] = [];
-  /** Test/gate observability for the last cascade's regenerated dependents. */
+  /** Test/gate observability for the last pass's regenerated dependents. */
   get cascadeRegeneratedIds(): readonly string[] {
     return this.lastCascadeRegenerated;
   }
-  /** The ids the MOST RECENT raw-sketch force-regen walk touched, IN THE ORDER
-   * executed. The walk is `(stage, id)`-sorted (031-C), so an upstream always
+  /** Every region id the MOST RECENT forward pass regenerated, IN THE ORDER
+   * executed. The walk is `(stage, id)`-sorted (031-C/034), so an upstream always
    * regenerates before a downstream that reads its fresh network — this getter
    * is the seed-independent proof of that ordering (P2/P3 regression). */
   private lastForceRegenOrder: string[] = [];
@@ -1129,43 +1146,204 @@ export class MapController {
    * cascades (headless gates run the FULL commit path; modals hang CLI). */
   cascadeAutoConfirm = false;
 
+  /** Test-only injection: force a runtime-assertion violation on the NEXT
+   * forward pass so a gate can prove the guard actually guards. `outOfClosure`
+   * appends a region NOT in the dirty closure (the write-scope assertion fires);
+   * `stageRegression` reverses the walk so a lower stage follows a higher one
+   * (the monotonicity assertion fires). Consumed once. */
+  private passViolationInjection: { outOfClosure?: string; stageRegression?: boolean } | null = null;
+  injectForwardPassViolationForTest(inject: { outOfClosure?: string; stageRegression?: boolean }): void {
+    this.passViolationInjection = inject;
+  }
+
+  /** Registry cost weight for a region's algorithm (plan 034 cap). */
+  private costWeightOf(regionId: string): number {
+    const f = this.regionFeatures().find((x) => x.id === regionId);
+    const algo = f?.properties.procgen ? algorithmById(f.properties.procgen.algorithm) : undefined;
+    switch (algo?.costClass) {
+      case "expensive":
+        return 4;
+      case "medium":
+        return 2;
+      default:
+        return 1; // cheap / unknown
+    }
+  }
+
   /**
-   * The cascade proper: after the edited region(s) `rootIds` are regenerated,
-   * regenerate their transitive DOWNSTREAM closure in
-   * `(stage, regionId)` order — upstream before downstream, each once. `done`
-   * carries the roots (and anything already regenerated this pass) so nothing
-   * runs twice. Returns the ids it regenerated (for the summary Notice). A
-   * cascade is the COMPLETION of an explicit edit — never a new trigger class
-   * (explicit-only stands): it only ever RE-generates regions the GM already
-   * requested, never first-time-generates.
+   * THE forward pass (plan 034) — the single code path every regen trigger
+   * reduces to: `markDirty(roots) → runForwardPass`. It supersedes the pre-034
+   * forceRegenInStageOrder + cascadeDownstream split.
+   *
+   * `regionRoots` are regions whose OWN block/geometry changed (the GM's direct
+   * edit — always applied, never deferred, always recomputed). `sketchEdits` are
+   * raw sketch features that became DAG sources. The dirty set is
+   * `regionRoots ∪ downstreamClosure(regions+sources, regionRoots ∪ sources)` —
+   * every region transitively reachable. The walk runs in `(stage, id)` order so
+   * an upstream's fresh network lands in the shared cache view before a
+   * downstream reads it (zero re-IO). One fingerprint pass + one cache view are
+   * threaded (031-B); roots recompute unconditionally, downstream regions skip
+   * when their fingerprint proves inputs unchanged (033-D). Repaints coalesce
+   * per touched stage (032-D).
+   *
+   * Runtime assertions (defensive — a violation is a determinism bug, surfaced
+   * like `computeRegionFingerprints`'s missing-upstream throw): the executed
+   * stage sequence is non-decreasing, and no region outside the dirty closure is
+   * ever written.
+   *
+   * Cost-weighted cap: Σ costClass over the BILLED set — the deferrable regions
+   * (dirty minus protected roots) whose cached record is genuinely fp-stale (a
+   * fingerprint-fresh dependent will inert-skip anyway and costs nothing). Over
+   * budget (and not auto-confirmed) the pass regenerates the roots, defers the
+   * rest to `pendingPass` + an "outdated" badge + a Notice, and leaves the
+   * deferred records fingerprint-stale (served-with-badge, applied by
+   * `applyPendingCascade`). Returns the meter-space features per regenerated
+   * region id.
    */
-  private async cascadeDownstream(rootIds: string[], done: Set<string>, opts: RegionBatchOpts = {}): Promise<string[]> {
+  private async runForwardPass(input: {
+    /** Regions whose OWN block/geometry changed (the GM's direct edit) — always
+     * applied, never deferred, always recomputed. */
+    regionRoots?: string[];
+    /** Raw sketch features that changed — become stage −1 sources. */
+    sketchEdits?: FabricFeature[];
+    /** Replay-only (plan 034 §7): fp-stale-with-cache regions detected on load.
+     * Dirty roots of the pass, but DEFERRABLE — there is no GM edit behind them,
+     * so the cost cap may hold them (serve stale + badge) instead of storming. */
+    deferrableRoots?: string[];
+    /** Replay-only: paint deferred regions from their (stale) cache records so a
+     * held bill still renders — live passes skip this (already painted). */
+    hydrateDeferred?: boolean;
+    /** Suppress the cascade summary Notice (replay-on-load: an open should not
+     * toast about routine freshness reconciliation). */
+    quiet?: boolean;
+    batch?: RegionBatchOpts;
+  }): Promise<Map<string, GeoJSON.Feature[]>> {
+    const out = new Map<string, GeoJSON.Feature[]>();
+    this.lastForceRegenOrder = [];
     this.lastCascadeRegenerated = [];
-    if (!this.campaign) return [];
+    if (!this.campaign) return out;
     const campaign = this.campaign;
-    const nodes = this.regionDagNodes();
-    const closure = downstreamClosure(nodes, MapController.CONSTRAINT_REACH, rootIds).filter((n) => !done.has(n.id));
-    if (closure.length === 0) return [];
-    if (closure.length > MapController.CASCADE_CONFIRM_THRESHOLD && !this.cascadeAutoConfirm) {
-      this.pendingCascadeRoots = [...rootIds];
-      this.host.notices.notify(
-        `Campaign Map: that edit affects ${closure.length} downstream regions — run "Apply pending cross-layer cascade" to regenerate them`,
-        8000
-      );
-      return [];
-    }
-    const regenerated: string[] = [];
-    for (const node of closure) {
-      if (this.campaign?.id !== campaign.id) break;
-      const feature = this.regionFeatures().find((f) => f.id === node.id);
-      if (!feature) continue;
-      await this.generateRegion(feature, { force: true, ...opts });
-      done.add(node.id);
-      regenerated.push(node.id);
-    }
-    this.lastCascadeRegenerated = regenerated;
-    if (regenerated.length > 0) this.notifyCascade(regenerated);
-    return regenerated;
+    await this.loadFabric();
+    if (this.campaign?.id !== campaign.id) return out;
+
+    const regionNodes = this.regionDagNodes();
+    const liveRegionIds = new Set(regionNodes.map((n) => n.id));
+    const regionRoots = (input.regionRoots ?? []).filter((id) => liveRegionIds.has(id));
+    const deferrableRoots = (input.deferrableRoots ?? []).filter((id) => liveRegionIds.has(id));
+    const sketchEdits = input.sketchEdits ?? [];
+    // Sources: the raw sketch edits PLUS the region roots' own features — a
+    // region's raw geometry is itself a constraint other generators read (a city
+    // reads a procgen wall's raw LINE; no stage-4→3 region edge could carry it).
+    const rootFeatures = regionRoots
+      .map((id) => this.regionFeatures().find((f) => f.id === id))
+      .filter((f): f is FabricFeature => f !== undefined);
+    const sources = this.sourceDagNodesFor([...sketchEdits, ...rootFeatures]);
+    const rootIds = [...regionRoots, ...deferrableRoots, ...sources.map((s) => s.id)];
+    const closureNodes = downstreamClosure([...regionNodes, ...sources], MapController.CONSTRAINT_REACH, rootIds);
+    const dirtyIds = new Set<string>([...regionRoots, ...deferrableRoots, ...closureNodes.map((n) => n.id)]);
+    if (dirtyIds.size === 0) return out;
+
+    const rootSet = new Set(regionRoots);
+    const walk = cascadeOrder(regionNodes.filter((n) => dirtyIds.has(n.id)));
+
+    await this.withRepaintBatch(async () => {
+      // One fingerprint pass + one cache view per pass (031-B), computed up
+      // front so the cost cap can bill only genuinely-stale records.
+      const batch: RegionBatchOpts = input.batch ?? {
+        fingerprints: this.computeRegionFingerprints(this.generationContext()),
+        preloadedCache: await this.cacheView(campaignFolderFromConfigPath(campaign.path)),
+        skipInertForce: true,
+      };
+      const cache = batch.preloadedCache ?? (await this.cacheView(campaignFolderFromConfigPath(campaign.path)));
+      // The BILLED set: deferrable (non-protected) regions whose cached network
+      // record is missing or fp-stale — exactly the ones a full walk would
+      // actually recompute (fresh dependents inert-skip for free).
+      const isStale = (id: string): boolean => {
+        const rec = cache.get(regionNetworkKey(id));
+        const expected = batch.fingerprints?.get(id);
+        return !rec || rec.fingerprint === undefined || rec.fingerprint !== expected;
+      };
+      const billed = walk.filter((n) => !rootSet.has(n.id) && isStale(n.id));
+      const cost = billed.reduce((sum, n) => sum + this.costWeightOf(n.id), 0);
+
+      let effectiveWalk = walk;
+      let deferredIds: string[] = [];
+      if (cost > MapController.CASCADE_COST_BUDGET && !this.cascadeAutoConfirm && billed.length > 0) {
+        // Over budget: regenerate ONLY the protected roots (the cap never defers
+        // the GM's own edit); hold everything else for an explicit apply.
+        effectiveWalk = walk.filter((n) => rootSet.has(n.id));
+        deferredIds = billed.map((n) => n.id);
+        this.pendingPass = { regionRoots: [...regionRoots], sketchEdits, deferrableRoots: [...deferrableRoots] };
+        for (const id of deferredIds) this.outdatedRegions.add(id);
+        this.host.notices.notify(
+          `Campaign Map: that edit affects ${billed.length} downstream region${billed.length === 1 ? "" : "s"} (cost ${cost}) — showing their previous state (outdated badge). Run "Apply pending cascade" to regenerate them.`,
+          8000
+        );
+      }
+
+      // Test-only violation injection (consumed once) — proves the runtime
+      // guards below actually fire.
+      const inject = this.passViolationInjection;
+      this.passViolationInjection = null;
+      let walkToRun: DagNode[] = effectiveWalk;
+      if (inject?.stageRegression) walkToRun = [...effectiveWalk].reverse();
+      if (inject?.outOfClosure) {
+        const bogus = regionNodes.find((n) => n.id === inject.outOfClosure);
+        if (bogus) walkToRun = [...effectiveWalk, bogus];
+      }
+
+      const executed: string[] = [];
+      let lastStage = Number.NEGATIVE_INFINITY;
+      for (const node of walkToRun) {
+        if (this.campaign?.id !== campaign.id) return;
+        // Runtime assertion 1 (plan 034 §2): no write outside the dirty closure.
+        if (!dirtyIds.has(node.id)) {
+          throw new Error(`runForwardPass: write outside closure — "${node.id}" is not in the dirty set`);
+        }
+        // Runtime assertion 2: the executed stage sequence is non-decreasing —
+        // an edit at stage s can never touch stage < s after it.
+        if (node.stage < lastStage) {
+          throw new Error(`runForwardPass: stage regression — stage ${node.stage} ("${node.id}") after stage ${lastStage}`);
+        }
+        lastStage = node.stage;
+        const feature = this.regionFeatures().find((f) => f.id === node.id);
+        if (!feature) continue;
+        const isRoot = rootSet.has(node.id);
+        const feats = await this.generateRegion(feature, {
+          force: true,
+          // Roots recompute unconditionally (031-A direct-edit rule); everything
+          // else skips when its fingerprint proves inputs unchanged (033-D).
+          skipInertForce: isRoot ? false : batch.skipInertForce ?? true,
+          fingerprints: batch.fingerprints,
+          preloadedCache: batch.preloadedCache,
+        });
+        this.outdatedRegions.delete(node.id); // regenerated ⇒ no longer outdated
+        out.set(node.id, feats);
+        executed.push(node.id);
+      }
+
+      // Replay of a still-deferred bill: paint the deferred regions from their
+      // STALE cache records (fingerprint-blind serve) so reopen shows the
+      // pre-edit bytes + badge instead of a blank or a storm (plan 034 §4).
+      if (input.hydrateDeferred) {
+        for (const node of cascadeOrder(walk.filter((n) => deferredIds.includes(n.id)))) {
+          if (this.campaign?.id !== campaign.id) return;
+          const feature = this.regionFeatures().find((f) => f.id === node.id);
+          if (!feature) continue;
+          await this.generateRegion(feature, { preloadedCache: batch.preloadedCache, serveStale: true });
+        }
+      }
+
+      this.lastForceRegenOrder = executed;
+      this.lastCascadeRegenerated = executed.filter((id) => !rootSet.has(id));
+      // A summary Notice only for a genuine cross-layer cascade (a region edit
+      // that regenerated dependents), never for a bare raw-sketch flush — matches
+      // the pre-034 behavior where only region-root edits notified.
+      if (!input.quiet && regionRoots.length > 0 && this.lastCascadeRegenerated.length > 0) {
+        this.notifyCascade(this.lastCascadeRegenerated);
+      }
+    });
+    return out;
   }
 
   /** One summary Notice for a cascade ("River updated — regenerated 1 city,
@@ -1182,31 +1360,31 @@ export class MapController {
     this.host.notices.notify(`Campaign Map: cascade regenerated ${parts.join(", ")}`);
   }
 
-  /** Apply a cascade the confirm cap deferred. Command + test API (the
-   * non-modal "confirm above N" affordance). */
+  /** True when a cost-capped pass deferred downstream work (badge/command
+   * surface: the host shows "Apply pending cascade" while this holds). */
+  get hasPendingCascade(): boolean {
+    return this.pendingPass !== null;
+  }
+
+  /** Apply a forward pass the cost cap deferred. Command + test API (the
+   * non-modal "confirm above budget" affordance). Re-runs the SAME pass (same
+   * roots + sketch edits) uncapped — deterministic, so the result is
+   * byte-identical to what an undeferred pass would have produced. */
   async applyPendingCascade(): Promise<void> {
-    if (!this.pendingCascadeRoots) {
+    if (!this.pendingPass) {
       this.host.notices.notify("Campaign Map: no pending cascade to apply");
       return;
     }
-    const roots = this.pendingCascadeRoots;
-    this.pendingCascadeRoots = null;
+    const pending = this.pendingPass;
+    this.pendingPass = null;
     const prev = this.cascadeAutoConfirm;
     this.cascadeAutoConfirm = true;
     try {
       await this.loadFabric();
-      await this.withRepaintBatch(async () => {
-        const ctx = this.generationContext();
-        const opts: RegionBatchOpts = {
-          fingerprints: this.computeRegionFingerprints(ctx),
-          preloadedCache: await this.cacheView(campaignFolderFromConfigPath(this.campaign!.path)),
-        };
-        const done = new Set<string>(roots);
-        for (const id of roots) {
-          const feature = this.regionFeatures().find((f) => f.id === id);
-          if (feature) await this.generateRegion(feature, { force: true, ...opts });
-        }
-        await this.cascadeDownstream(roots, done, opts);
+      await this.runForwardPass({
+        regionRoots: pending.regionRoots,
+        sketchEdits: pending.sketchEdits,
+        deferrableRoots: pending.deferrableRoots,
       });
     } finally {
       this.cascadeAutoConfirm = prev;
@@ -1236,7 +1414,11 @@ export class MapController {
     }
     const all: GeoJSON.Feature[] = [];
     if (regionFeature) {
-      all.push(...(await this.generateRegion(regionFeature, { force: true })));
+      // Plan 034: explicit regenerate = a forward pass with this region as root
+      // (fresh dependents inert-skip, so an unchanged-constraints regen stays a
+      // single-region recompute).
+      const result = await this.runForwardPass({ regionRoots: [regionFeature.id] });
+      all.push(...(result.get(regionFeature.id) ?? []));
       if (this.campaign?.id !== campaign.id) return [];
     }
     for (const entry of worldEntries) {
@@ -1468,10 +1650,32 @@ export class MapController {
     return this.adoptedBlock(block, algorithm);
   }
 
+  /** Raise ONE region's pin durably (no generation): persist the adopted block
+   * + the `sketch-procgen-set` log entry. The pure durable-write half of
+   * adoption — callers run the forward pass after (one region ⇒ one pass;
+   * adopt-all ⇒ raise ALL pins first, then ONE pass over the union, plan 034 §6). */
+  private async raisePin(feature: FabricFeature, block: ProcgenBlock, algorithm: ProcgenAlgorithm): Promise<void> {
+    if (!this.campaign) return;
+    const campaign = this.campaign;
+    this.needsAdoption.delete(feature.id);
+    const adopted = this.adoptedBlock(block, algorithm);
+    const updated = withProcgen(feature, adopted);
+    this.fabricCollection = withFeature(this.fabricCollection, updated);
+    await this.host.vault.saveFabric(campaign, this.fabricCollection);
+    this.host.render.repaintFabric();
+    await this.host.vault.appendLog(campaignFolderFromConfigPath(campaign.path), {
+      ts: Date.now(),
+      type: "sketch-procgen-set",
+      campaignId: campaign.id,
+      path: fabricPath(campaign),
+      data: { featureId: feature.id, before: block, after: adopted, feature: updated } as unknown as Record<string, unknown>,
+    });
+  }
+
   /** Explicit adoption of one region (panel "Adopt" / adopt-all / test twin):
-   * raises the pin, migrates params, regenerates, cascades, and logs a
-   * `sketch-procgen-set` with before/after. No prompt — calling this IS the
-   * consent. Returns false when the region is already current (no-op). */
+   * raises the pin, migrates params, then ONE forward pass (regenerate +
+   * downstream), logging a `sketch-procgen-set` with before/after. No prompt —
+   * calling this IS the consent. Returns false when already current (no-op). */
   async adoptRegion(featureId: string): Promise<boolean> {
     if (!this.campaign) return false;
     await this.loadFabric();
@@ -1480,15 +1684,16 @@ export class MapController {
     if (!feature || !block) return false;
     const algorithm = algorithmById(block.algorithm);
     if (!algorithm || !this.isPinnedOld(block, algorithm)) return false;
-    this.needsAdoption.delete(featureId);
-    await this.setRegionProcgen(feature, this.adoptedBlock(block, algorithm), block, true, true);
+    await this.raisePin(feature, block, algorithm);
+    await this.runForwardPass({ regionRoots: [featureId] });
     this.host.render.featureChanged(featureId);
     return true;
   }
 
-  /** Campaign-wide adoption ("Update all regions to current generators") —
-   * walks regions in (stage, id) order so upstreams adopt before dependents.
-   * Returns how many regions were adopted. */
+  /** Campaign-wide adoption ("Update all regions to current generators"), plan
+   * 034 §6: raise ALL pins first (durable writes, (stage,id) order), then ONE
+   * forward pass over the union closure — each region regenerates exactly once
+   * (the pre-034 per-adoption cascade was O(k²), P9). Returns the adopted count. */
   async adoptAllRegions(): Promise<number> {
     if (!this.campaign) return 0;
     await this.loadFabric();
@@ -1501,16 +1706,21 @@ export class MapController {
         return b !== undefined && a !== undefined && this.isPinnedOld(b, a);
       })
       .sort((a, b) => (stageOf(a) !== stageOf(b) ? stageOf(a) - stageOf(b) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    let adopted = 0;
+    // Phase 1 — durable writes only, (stage,id) order.
     for (const f of ordered) {
-      if (await this.adoptRegion(f.id)) adopted++;
+      const block = f.properties.procgen!;
+      const algorithm = algorithmById(block.algorithm)!;
+      await this.raisePin(f, block, algorithm);
     }
-    if (adopted > 0) {
+    // Phase 2 — ONE pass over the union closure.
+    if (ordered.length > 0) {
+      await this.runForwardPass({ regionRoots: ordered.map((f) => f.id) });
+      for (const f of ordered) this.host.render.featureChanged(f.id);
       this.host.notices.notify(
-        `Campaign Map: updated ${adopted} region${adopted === 1 ? "" : "s"} to current generators`
+        `Campaign Map: updated ${ordered.length} region${ordered.length === 1 ? "" : "s"} to current generators`
       );
     }
-    return adopted;
+    return ordered.length;
   }
 
   /** Test twins (gates drive these headlessly — modals hang the CLI). */
@@ -1523,13 +1733,15 @@ export class MapController {
 
   // ─── Region procgen lifecycle ──────────────────────────────────────────
 
-  /** Attach a procgen block to a district shape and generate it. */
+  /** Attach a procgen block to a district shape and generate it. Persists the
+   * block, then ONE forward pass with the region as root (plan 034): the root
+   * regenerates and its transitive downstream adapts in the same (stage,id)
+   * walk — param/re-roll/center/attach/undo all reduce to this. */
   private async setRegionProcgen(
     feature: FabricFeature,
     block: ProcgenBlock,
     before: ProcgenBlock | null,
-    log: boolean,
-    force = false
+    log: boolean
   ): Promise<GeoJSON.Feature[]> {
     if (!this.campaign) return [];
     const campaign = this.campaign;
@@ -1547,29 +1759,8 @@ export class MapController {
         data: { featureId: feature.id, before, after: block, feature: updated } as unknown as Record<string, unknown>,
       });
     }
-    const feats = await this.generateRegion(updated, { force });
-    // Cross-layer cascade: a param/re-roll/center/attach edit to an UPSTREAM
-    // region regenerates its downstream dependents. `force` marks a
-    // GM-driven edit (setRegionParams/rerollRegion/setRegionCenter/undo pass
-    // true) vs. a first-attach on create — but creating a new upstream over an
-    // existing downstream should also adapt it, so cascade in both cases (a
-    // no-edge region set makes this a no-op).
-    await this.cascadeFromRoot(updated.id);
-    return feats;
-  }
-
-  /** Regenerate the transitive downstream DAG closure of one just-regenerated
-   * region root (the immediate, non-debounced edit paths). */
-  private async cascadeFromRoot(rootId: string): Promise<void> {
-    if (!this.campaign) return;
-    // One batch: hash once + read the cache once, thread both through the
-    // downstream walk, and coalesce every dependent's repaint into one (031-B).
-    await this.withRepaintBatch(async () => {
-      const ctx = this.generationContext();
-      const fingerprints = this.computeRegionFingerprints(ctx);
-      const preloadedCache = await this.cacheView(campaignFolderFromConfigPath(this.campaign!.path));
-      await this.cascadeDownstream([rootId], new Set([rootId]), { fingerprints, preloadedCache });
-    });
+    const result = await this.runForwardPass({ regionRoots: [updated.id] });
+    return result.get(updated.id) ?? [];
   }
 
   /** Strip a region's procgen block (drop its cache records + unpaint). */
@@ -1895,21 +2086,53 @@ export class MapController {
         const features = perGenerator.flat().filter((f) => featureTouchesBBox(f, ctx.worldBounds));
         this.loadedTiles.set(this.tileKeyFor(entry.tier, entry.tileX, entry.tileY), features);
       }
-      // Region tier: regenerate each region from the sketch layer, sharing the
-      // one cache read (cache-hit per-tile clips, else recompute network once).
-      // Walk in `(stage, regionId)` order — one fixed, data-independent
-      // sequence — so a stage-1 recompute lands before a stage-3 read of its
-      // output. Fingerprints (incl. upstream DAG deps) precomputed ONCE and
-      // threaded, avoiding an O(n²) recompute.
+      // Region tier (plan 034 §7): replay-on-load IS the forward pass — live
+      // and replay share `runForwardPass` verbatim. Classify each region against
+      // its cached network record (ONE fingerprint pass, threaded through):
+      //   fresh / pinned-old  → hydrate from cache (generateRegion no-force —
+      //     cache-hit clip, pinned-old cache-serve-or-badge, ZERO generator runs)
+      //   record MISSING      → a protected root: deleting `.mapcache/` must
+      //     stay harmless, so a missing record always regenerates (never defers)
+      //   fp-STALE with cache → a DEFERRABLE root (an external edit or a
+      //     declined bill): the pass regenerates it under the cost cap, or —
+      //     over budget — serves the stale bytes with an "outdated" badge
+      //     instead of an uncapped recompute storm (§4, the P10 fix).
       const fpMap = this.computeRegionFingerprints(ctx);
       const stageOf = (f: FabricFeature): number =>
         algorithmById(f.properties.procgen?.algorithm ?? "")?.stage ?? 99;
       const orderedRegions = [...regions].sort((a, b) =>
         stageOf(a) !== stageOf(b) ? stageOf(a) - stageOf(b) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0
       );
+      const missingRoots: string[] = [];
+      const staleRoots: string[] = [];
+      const hydrate: FabricFeature[] = [];
       for (const feature of orderedRegions) {
+        const block = feature.properties.procgen;
+        const algo = block ? algorithmById(block.algorithm) : undefined;
+        if (!block || !algo) continue;
+        if (this.isPinnedOld(block, algo)) {
+          // Pinned-old semantics unchanged inside a pass: cache-serve-or-badge,
+          // never recompute (consent only at direct-edit entry points).
+          hydrate.push(feature);
+          continue;
+        }
+        const rec = cached.get(regionNetworkKey(feature.id));
+        if (!rec) missingRoots.push(feature.id);
+        else if (rec.fingerprint !== undefined && rec.fingerprint !== fpMap.get(feature.id)) staleRoots.push(feature.id);
+        else hydrate.push(feature); // fresh (or grandfathered no-fp record)
+      }
+      for (const feature of hydrate) {
         if (this.campaign?.id !== campaign.id) return;
         await this.generateRegion(feature, { preloadedCache: cached, fingerprints: fpMap });
+      }
+      if (missingRoots.length > 0 || staleRoots.length > 0) {
+        await this.runForwardPass({
+          regionRoots: missingRoots,
+          deferrableRoots: staleRoots,
+          hydrateDeferred: true,
+          quiet: true,
+          batch: { fingerprints: fpMap, preloadedCache: cached, skipInertForce: true },
+        });
       }
     } finally {
       this.pendingGenerations--;
@@ -1952,7 +2175,10 @@ export class MapController {
   /** How far (in meters) a sketched feature can influence generated output. */
   private static readonly CONSTRAINT_REACH = 200;
 
-  /** One debounce flush. Called by the host's regen timer. */
+  /** One debounce flush. Called by the host's regen timer. Plan 034: the whole
+   * flush — queued region-edit roots + queued raw-sketch edits — is ONE forward
+   * pass: one closure, one (stage,id) walk, one fingerprint pass, one cache
+   * view, staged repaints. A drag storm coalesces into one pass. */
   async flushSketchRegen(): Promise<void> {
     const regionIds = [...this.pendingRegionRegen];
     this.pendingRegionRegen.clear();
@@ -1962,69 +2188,7 @@ export class MapController {
     const campaign = this.campaign;
     await this.loadFabric();
     if (this.campaign?.id !== campaign.id) return;
-    // ONE batch for the whole flush: hash once, read the cache once, coalesce
-    // every region's repaint into a single paint (031-B). Both views are
-    // threaded through the roots regen, the raw-sketch reach, and the cascade so
-    // the pass never re-hashes O(R²) or re-reads the `.mapcache` per region.
-    await this.withRepaintBatch(async () => {
-      const ctx = this.generationContext();
-      const opts: RegionBatchOpts = {
-        fingerprints: this.computeRegionFingerprints(ctx),
-        preloadedCache: await this.cacheView(campaignFolderFromConfigPath(campaign.path)),
-        // 033-D: this IS the invalidation walk — a nominally dirty region whose
-        // fingerprint is unchanged (a no-op / declared-but-inert edit) skips its
-        // generator run and re-serves cached bytes.
-        skipInertForce: true,
-      };
-      const done = new Set<string>();
-      // Merge the queued region-edit roots with the raw-sketch bbox reach into
-      // ONE `(stage, id)`-sorted worklist and force-regen them in a single walk
-      // (031-C). A downstream (city) can no longer be regenerated before an
-      // upstream (river) it reads just because it sorts earlier in the fabric
-      // file — an upstream's fresh network always lands first (fixes P2/P3).
-      const roots = regionIds.filter((id) => this.regionFeatures().some((f) => f.id === id));
-      const worklist = new Set<string>([...roots, ...this.dirtyRegionIdsFromSketchEdits(edited)]);
-      await this.forceRegenInStageOrder(worklist, done, opts);
-      if (this.campaign?.id !== campaign.id) return;
-      // Cross-layer cascade for the queued procgen-region EDIT roots. The
-      // raw-sketch reach already carries its own transitive downstream (plan 034:
-      // `dirtyRegionIdsFromSketchEdits` closes over source→region→…→region
-      // edges), so this only adds the closure of region-geometry/param edits that
-      // arrived as `queueRegionRegen` roots. `done` de-dupes the overlap.
-      if (roots.length > 0 && this.campaign?.id === campaign.id) {
-        await this.cascadeDownstream(roots, done, opts);
-      }
-    });
-  }
-
-  /**
-   * Force-regenerate a set of regions in ONE `(stage, id)`-sorted walk (031-C):
-   * an upstream (lower stage) always regenerates — and writes its fresh network
-   * to the shared cache view — BEFORE a downstream (higher stage) reads it, so
-   * the raw-sketch channel can never leave a downstream stamped-fresh over
-   * stale-upstream bytes (research P2/P3). Records the executed order (reset per
-   * call) for the regression test. Skips ids already in `done`.
-   */
-  private async forceRegenInStageOrder(ids: Iterable<string>, done: Set<string>, opts: RegionBatchOpts): Promise<void> {
-    this.lastForceRegenOrder = [];
-    if (!this.campaign) return;
-    const campaign = this.campaign;
-    const seen = new Set<string>();
-    const features: FabricFeature[] = [];
-    for (const id of ids) {
-      if (done.has(id) || seen.has(id)) continue;
-      seen.add(id);
-      const f = this.regionFeatures().find((x) => x.id === id);
-      if (f) features.push(f);
-    }
-    const stageOf = (f: FabricFeature): number => algorithmById(f.properties.procgen?.algorithm ?? "")?.stage ?? 99;
-    features.sort((a, b) => (stageOf(a) !== stageOf(b) ? stageOf(a) - stageOf(b) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    for (const feature of features) {
-      if (this.campaign?.id !== campaign.id) return;
-      await this.generateRegion(feature, { force: true, ...opts });
-      done.add(feature.id);
-      this.lastForceRegenOrder.push(feature.id);
-    }
+    await this.runForwardPass({ regionRoots: regionIds, sketchEdits: edited });
   }
 
   // ─── Sketch persistence + edit commit ──────────────────────────────────
@@ -2177,27 +2341,15 @@ export class MapController {
       if (Array.isArray(stored) && region && !regionContains(region, stored[0], stored[1])) {
         this.host.notices.notify("Campaign Map: city center is outside the district — using automatic center", 6000);
       }
+      // Plan 034: geometry edit → ONE forward pass with the region as root
+      // (root + transitive downstream in a single (stage,id) walk).
       if (opts.debounce) this.queueRegionRegen(after.id);
-      else {
-        await this.generateRegion(after, { force: true });
-        await this.cascadeFromRoot(after.id); // geometry edit → cascade
-      }
+      else await this.runForwardPass({ regionRoots: [after.id] });
     } else {
+      // Plan 034: a raw-sketch edit becomes a stage −1 source; its pass covers
+      // the direct consumers AND their transitive downstream.
       if (opts.debounce) this.queueConstraintRegen(after);
-      else {
-        // Plan 034: a non-region raw-sketch edit dirties its source→region
-        // closure (direct consumers + their transitive downstream) — one
-        // (stage,id)-ordered forward walk, batched so the pass hashes/reads once.
-        await this.withRepaintBatch(async () => {
-          const ctx = this.generationContext();
-          const rbOpts: RegionBatchOpts = {
-            fingerprints: this.computeRegionFingerprints(ctx),
-            preloadedCache: await this.cacheView(campaignFolderFromConfigPath(campaign.path)),
-            skipInertForce: true,
-          };
-          await this.forceRegenInStageOrder(this.dirtyRegionIdsFromSketchEdits([after]), new Set(), rbOpts);
-        });
-      }
+      else await this.runForwardPass({ sketchEdits: [after] });
     }
     return true;
   }
@@ -2224,7 +2376,7 @@ export class MapController {
     if (!base) return; // GM declined adoption — the edit is cancelled
     const parsedParams = algorithm.paramsSchema.parse(params);
     const newBlock: ProcgenBlock = { ...base, params: parsedParams };
-    await this.setRegionProcgen(feature, newBlock, block, true, true);
+    await this.setRegionProcgen(feature, newBlock, block, true);
     this.host.render.featureChanged(featureId);
   }
 
@@ -2257,7 +2409,7 @@ export class MapController {
     const base = await this.consentToRegenerate(feature, block, algorithm);
     if (!base) return; // GM declined adoption — the re-roll is cancelled
     const newBlock: ProcgenBlock = { ...base, seed: hashSeed(block.seed, "reroll") };
-    await this.setRegionProcgen(feature, newBlock, block, true, true);
+    await this.setRegionProcgen(feature, newBlock, block, true);
     this.host.render.featureChanged(featureId);
   }
 
@@ -2267,7 +2419,10 @@ export class MapController {
     await this.loadFabric();
     const feature = this.fabricCollection.features.find((f) => f.id === featureId);
     if (!feature || !isProcgenRegion(feature)) return [];
-    return this.generateRegion(feature, { force: true });
+    // Plan 034: one forward pass, region as root (dependents inert-skip when
+    // this recompute lands byte-identical).
+    const result = await this.runForwardPass({ regionRoots: [featureId] });
+    return result.get(featureId) ?? [];
   }
 
   /** Remove a region's generated city (strip the block; shape stays inert). */
@@ -2483,7 +2638,7 @@ export class MapController {
     }
     const parsedParams = algorithm.paramsSchema.parse(nextParams);
     const newBlock: ProcgenBlock = { ...base, params: parsedParams };
-    await this.setRegionProcgen(feature, newBlock, block, true, true);
+    await this.setRegionProcgen(feature, newBlock, block, true);
     this.host.render.featureChanged(featureId, { reselect: true });
     return true;
   }
@@ -2526,9 +2681,14 @@ export class MapController {
           : `Campaign Map: restored deleted ${parsed.data.properties.kind}`
       );
       if (last.type === "sketch-remove" && isProcgenRegion(parsed.data)) {
-        await this.generateRegion(parsed.data);
+        // Restore-of-a-deleted-region: ONE forward pass (plan 034 §5 — undo
+        // routes through the pending-roots path; the pass also carries the
+        // restored raw geometry as a source, so consumers adapt in the same
+        // walk instead of a second debounce flush).
+        await this.runForwardPass({ regionRoots: [parsed.data.id] });
+      } else {
+        this.queueConstraintRegen(parsed.data);
       }
-      this.queueConstraintRegen(parsed.data);
     } else if (last.type === "sketch-procgen-set") {
       const parsed = ProcgenLogDataSchema.safeParse(last.data);
       if (!parsed.success) {
@@ -2541,7 +2701,7 @@ export class MapController {
         await this.stripRegionProcgen(feature, true);
         this.host.notices.notify("Campaign Map: removed the generated city");
       } else {
-        await this.setRegionProcgen(withoutProcgen(feature), parsed.data.before, null, false, true);
+        await this.setRegionProcgen(withoutProcgen(feature), parsed.data.before, null, false);
         this.host.notices.notify("Campaign Map: reverted the city settings");
       }
       this.host.render.featureChanged(parsed.data.featureId);
@@ -2553,7 +2713,7 @@ export class MapController {
       }
       await this.loadFabric();
       const base = this.fabricCollection.features.find((f) => f.id === parsed.data.featureId) ?? parsed.data.feature;
-      await this.setRegionProcgen(withoutProcgen(base), parsed.data.before, null, false, true);
+      await this.setRegionProcgen(withoutProcgen(base), parsed.data.before, null, false);
       this.host.render.featureChanged(parsed.data.featureId);
       this.host.notices.notify("Campaign Map: restored the generated city");
     } else if (last.type === "sketch-edit") {
@@ -2569,10 +2729,10 @@ export class MapController {
       this.host.render.repaintFabric();
       this.host.render.featureChanged(before.id, { reselect: true });
       if (isProcgenRegion(before)) {
-        // Undo re-runs the SAME cascade with the restored inputs:
-        // deterministic → the downstream output is restored byte-identically.
-        await this.generateRegion(before, { force: true });
-        await this.cascadeFromRoot(before.id);
+        // Undo re-runs the SAME forward pass with the restored inputs:
+        // deterministic → the downstream output is restored byte-identically
+        // (plan 034 §5 — undo routes through the pending-roots path).
+        await this.runForwardPass({ regionRoots: [before.id] });
       } else this.queueConstraintRegen(before);
       this.host.notices.notify(`Campaign Map: undid ${before.properties.kind} edit`);
     } else if (last.type === "generate-area") {

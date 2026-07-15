@@ -778,6 +778,102 @@ describe("MapController — source-node forward closure (034-A)", () => {
   });
 });
 
+// ─── Plan 034-B — the forward pass: counter invariants + runtime guards ──────
+// Every trigger reduces to runForwardPass. Standing invariants: one generator
+// run per dirty region, ONE fingerprint pass per pass, zero cache re-reads
+// (persistent view), repaints ≤ stages touched. The runtime assertions (stage
+// monotonicity, closure-bound writes) are proven live by injected violations.
+describe("MapController — the forward pass (034-B)", () => {
+  const RIVER_LINE: [number, number][] = [
+    [6, -30],
+    [18, -18],
+    [24, -14],
+  ];
+
+  it("counter invariants: a river param edit runs river+city exactly once each, one fp pass, zero cache re-reads", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+
+    const runsBefore = host.controller.generatorRunCount;
+    const fpBefore = host.controller.fingerprintPassCount;
+    const readsBefore = host.readCachedCount;
+    host.repaintGeneratedStages.length = 0;
+
+    await host.controller.setRegionParams(river.featureId, { windiness: 0.95 });
+
+    // Dirty set = {river (root), city (downstream water consumer)} — exactly one
+    // generator EXECUTION each (the 34-B generatorRunCount === dirtyRegionCount
+    // invariant; the city genuinely recomputes because the channel changed).
+    expect(host.controller.forceRegenOrder).toEqual([river.featureId, city.featureId]);
+    expect(host.controller.generatorRunCount - runsBefore).toBe(2);
+    // ONE fingerprint pass threaded through the whole pass (031-B invariant).
+    expect(host.controller.fingerprintPassCount - fpBefore).toBe(1);
+    // ZERO gateway cache re-reads: the persistent session view serves the batch.
+    expect(host.readCachedCount - readsBefore).toBe(0);
+    // Repaints ≤ stages touched: river stage (1) then city stage (3), upstream
+    // first — never a per-region or whole-map storm.
+    const stages = host.repaintGeneratedStages.filter((s) => s !== "all");
+    expect(stages).toEqual([1, 3]);
+  });
+
+  it("stage-monotonicity assertion FIRES on an injected regression (the guard guards)", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    host.controller.injectForwardPassViolationForTest({ stageRegression: true });
+    host.controller.queueRegionRegen(river.featureId);
+    await expect(host.controller.flushSketchRegen()).rejects.toThrow(/stage regression/);
+  });
+
+  it("closure-bound assertion FIRES on an injected out-of-closure write (the guard guards)", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    // A far mountain: never in a river edit's downstream closure (stage 0 sits
+    // UPSTREAM of the river; no source→mountain edge from a river line either).
+    const mtn = await host.controller.createRegionForTest(
+      [
+        [-40, 20],
+        [-28, 20],
+        [-28, 32],
+        [-40, 32],
+      ],
+      "mountain",
+      { terrain: "alpine", amplitude: 0.4, roughness: 0.4 },
+      "__fp_mtn__",
+      "mountain"
+    );
+    host.controller.injectForwardPassViolationForTest({ outOfClosure: mtn.featureId });
+    host.controller.queueRegionRegen(river.featureId);
+    await expect(host.controller.flushSketchRegen()).rejects.toThrow(/outside closure/);
+  });
+
+  it("rm-.mapcache + reopen replays byte-identically through the SAME pass entry point", async () => {
+    const host = cityHost();
+    await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const before = new Map<string, string>();
+    for (const [k, rec] of await host.cache()) if (k.endsWith(":network")) before.set(k, JSON.stringify(rec.features));
+    expect(before.size).toBe(2);
+
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    await reopened.clearCacheOnDisk();
+    await reopened.controller.replayGeneratedManifest();
+
+    // Every region regenerated exactly once (missing records are protected
+    // roots — deleting .mapcache/ is harmless, never deferred, never a storm).
+    expect(reopened.controller.generatorRunCount).toBe(2);
+    const reopenedCache = await reopened.cache();
+    for (const [k, bytes] of before) {
+      expect(JSON.stringify(reopenedCache.get(k)!.features)).toBe(bytes);
+    }
+    // No badges, no pending bill — a clean deterministic rebuild.
+    expect(reopened.controller.outdatedRegionIds()).toEqual([]);
+    expect(reopened.controller.hasPendingCascade).toBe(false);
+  });
+});
+
 describe("MapController — world tier generate / regen / clear (phase3/phase4)", () => {
   it("records a manifest entry and runs a generator on generateFabricHere", async () => {
     const host = new FakeHost({ zoom: 5 }); // world tier
