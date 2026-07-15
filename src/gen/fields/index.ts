@@ -88,6 +88,16 @@ export {
   LANDFORM_MODES,
   LANDFORM_DEFAULTS,
 } from "./terrain";
+export type { TerrainContourOptions } from "./terrainContours";
+export {
+  // Viewport-keyed, lazily-computed, LRU-bounded contour leaves of the composed
+  // terrain field (plan 036-C). Seam-safe (world-aligned marching squares),
+  // keyed on the durable terrain inputs intersecting each tile. The RE-HOME
+  // ENGINE; wiring it into the live render path (and retiring the mountain
+  // generator's baked `mountain-contour`) is the remaining paint-side
+  // integration — judged in-app, per the plan (no scripted live check).
+  TerrainContourLeaves,
+} from "./terrainContours";
 export type { FieldLatticeOptions } from "./fieldLattice";
 export {
   // Chunked, LRU-bounded lazy field-sample lattice (plan 036-B/-C) — the
