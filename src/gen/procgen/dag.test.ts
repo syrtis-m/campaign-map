@@ -130,6 +130,72 @@ describe("dag — downstreamClosure (the cascade worklist)", () => {
   });
 });
 
+// ─── Plan 034 — source nodes (stage −1) ──────────────────────────────────────
+// A raw sketch feature is a SOURCE node producing its FabricKind; a source→region
+// edge fires iff the region declares that kind in `consumesSketch` and the
+// bboxes come within the region's own `influenceMargin`. Sources sort first and
+// only feed forward, so they never create a cycle.
+describe("dag — source nodes (plan 034)", () => {
+  // A city (stage 3) consuming `road` within 1500 m; a mountain (stage 0)
+  // consuming NO sketch. A road source overlapping both.
+  const city: DagNode = {
+    id: "city",
+    stage: 3,
+    produces: ["settlement"],
+    consumes: ["water"],
+    bbox: box(0, 0, 200, 200),
+    consumesSketch: ["road"],
+    influenceMargin: 1500,
+  };
+  const mtn: DagNode = {
+    id: "mtn",
+    stage: 0,
+    produces: ["elevation"],
+    consumes: [],
+    bbox: box(0, 0, 200, 200),
+    consumesSketch: [],
+    influenceMargin: 0,
+  };
+  const roadSrc: DagNode = { id: "source:road1", stage: -1, produces: [], consumes: [], bbox: box(100, 100, 120, 120), sketchKind: "road" };
+
+  it("a source → region edge fires only for a declared, in-margin sketch kind", () => {
+    expect(hasEdge(roadSrc, city, 200)).toBe(true); // city consumesSketch road, overlapping
+    expect(hasEdge(roadSrc, mtn, 200)).toBe(false); // mountain reads no road
+  });
+
+  it("influenceMargin scopes the source reach (city 1500, beyond it no edge)", () => {
+    const near: DagNode = { id: "source:near", stage: -1, produces: [], consumes: [], bbox: box(1000, 0, 1010, 200), sketchKind: "road" };
+    const far: DagNode = { id: "source:far", stage: -1, produces: [], consumes: [], bbox: box(2000, 0, 2010, 200), sketchKind: "road" };
+    expect(hasEdge(near, city, 200)).toBe(true); // gap 800 ≤ 1500
+    expect(hasEdge(far, city, 200)).toBe(false); // gap 1800 > 1500
+  });
+
+  it("a source never feeds another source (source → source impossible)", () => {
+    const other: DagNode = { id: "source:water1", stage: -1, produces: [], consumes: [], bbox: box(100, 100, 120, 120), sketchKind: "water" };
+    expect(hasEdge(roadSrc, other, 200)).toBe(false);
+  });
+
+  it("a source closure reaches the region's transitive downstream, DAG stays acyclic", () => {
+    // road source → city (stage 3); city → wall (stage 4, consumes settlement).
+    const wall: DagNode = {
+      id: "wall",
+      stage: 4,
+      produces: ["detail"],
+      consumes: ["settlement"],
+      bbox: box(0, 0, 200, 200),
+      consumesSketch: ["road"],
+      influenceMargin: 0,
+    };
+    const nodes = [city, mtn, wall, roadSrc];
+    const closure = downstreamClosure(nodes, 200, ["source:road1"]).map((n) => n.id);
+    // The road source directly reaches city + wall (both consumesSketch road);
+    // city→wall is a transitive region edge too. Neither the mountain (no road)
+    // nor the source itself appears.
+    expect(closure).toEqual(["city", "wall"]);
+    expect(() => assertAcyclic(downstreamEdges(nodes, 200))).not.toThrow();
+  });
+});
+
 describe("dag — cycle prevention + detection", () => {
   it("computeEdges never yields a cycle for any node set (prevention by construction)", () => {
     const nodes = world();

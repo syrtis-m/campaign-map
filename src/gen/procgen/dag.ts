@@ -19,8 +19,9 @@
  * OUTPUT (only each other's sketch), so there is no ordering ambiguity and no
  * cycle, ever.
  *
- * PURE / headless (imports only `BBox` from spatialHash) — no registry, no
- * generators, no DOM/map/Obsidian. The controller builds `DagNode`s by reading
+ * PURE / headless (imports only `BBox` from spatialHash + the `FabricKind` type)
+ * — no registry, no generators, no DOM/map/Obsidian. The controller builds
+ * `DagNode`s by reading
  * each region's algorithm (stage/produces/consumes) from the registry and its
  * bbox from `region.ts`; this module is graph math over those nodes only, so it
  * stays a leaf both the host and (via serialized nodes) a worker can run.
@@ -45,23 +46,43 @@
  */
 import type { BBox } from "../spatialHash";
 import { expandBBox } from "../spatialHash";
+import type { FabricKind } from "../../model/fabric";
 
-/** The stage bands (§2). A fixed, small, ordered set. */
-export type Stage = 0 | 1 | 2 | 3 | 4;
+/** The stage bands (§2). A fixed, small, ordered set. Plan 034 adds `-1` for
+ * SOURCE nodes — raw sketch features + canon pins that produce a constraint the
+ * generators read but are not themselves generated. A source at stage −1 sorts
+ * first under `(stage,id)` and only ever has OUTGOING edges (source → region),
+ * so it can never introduce a cycle. */
+export type Stage = -1 | 0 | 1 | 2 | 3 | 4;
 
 /** The FIELD a stage produces / a downstream stage consumes (§3). Not a feature
  * kind — a constraint currency. `elevation` (stage 0) → `water` (stage 1) →
  * `vegetation` (stage 2) → `settlement` (stage 3) → `detail` (stage 4). */
 export type ConstraintKind = "elevation" | "water" | "vegetation" | "settlement" | "detail";
 
-/** One procgen region as a graph node. `id` is the fabric feature id (the
- * region id); `bbox` is the region/spine bbox in gen-space meters. */
+/** One node in the invalidation graph. A REGION node (`id` = fabric feature id,
+ * `stage` ≥ 0) carries its produces/consumes constraint kinds plus, for
+ * source→region edges (plan 034), its raw-sketch consumption declaration
+ * (`consumesSketch` / `influenceMargin` from the registry). A SOURCE node
+ * (`stage` = −1) carries the single raw sketch `sketchKind` it produces; it has
+ * no `consumes`/`produces` currencies and only ever feeds regions. `bbox` is the
+ * region/spine/feature bbox in gen-space meters. */
 export interface DagNode {
   id: string;
   stage: Stage;
   produces: readonly ConstraintKind[];
   consumes: readonly ConstraintKind[];
   bbox: BBox;
+  /** SOURCE nodes only (plan 034): the raw `FabricKind` this source produces —
+   * the currency a region's `consumesSketch` reads. */
+  sketchKind?: FabricKind;
+  /** REGION nodes only (plan 034): the raw sketch kinds this region's generator
+   * consumes (registry `consumesSketch`) — the source→region edge test keys on
+   * it. */
+  consumesSketch?: readonly FabricKind[];
+  /** REGION nodes only (plan 034): how far (meters, bbox-to-bbox) a consumed
+   * sketch source can influence this region (registry `influenceMargin`). */
+  influenceMargin?: number;
 }
 
 /**
@@ -84,10 +105,27 @@ function bboxOverlap(a: BBox, b: BBox): boolean {
   return !(a.maxX < b.minX || b.maxX < a.minX || a.maxY < b.minY || b.maxY < a.minY);
 }
 
-/** True iff `A → B` (A is an upstream input of B) under the §3-refined rule. */
+/** True iff `A → B` (A is an upstream input of B) under the §3-refined rule.
+ *
+ * Two edge kinds share this predicate (plan 034):
+ *   - SOURCE → REGION: A is a raw sketch source (`a.sketchKind` set). The edge
+ *     holds iff B's generator declares `a.sketchKind ∈ consumesSketch(B)` and
+ *     A's bbox comes within B's own `influenceMargin` — exactly the 033-C
+ *     raw-sketch reach, now expressed as a DAG edge. B must be a region (a
+ *     source never consumes), so source→source is impossible.
+ *   - REGION → REGION: the §3-refined `produces ∩ consumes` + bbox(margin) rule.
+ */
 export function hasEdge(a: DagNode, b: DagNode, margin: number): boolean {
   if (a.id === b.id) return false;
   if (a.stage >= b.stage) return false;
+  if (a.sketchKind !== undefined) {
+    // Source → region: B must be a region declaring this sketch kind, reached
+    // within B's own influence margin. A source never feeds another source.
+    if (b.sketchKind !== undefined) return false;
+    if (!b.consumesSketch?.includes(a.sketchKind)) return false;
+    return bboxOverlap(expandBBox(a.bbox, b.influenceMargin ?? 0), b.bbox);
+  }
+  // Region → region.
   if (!couples(a, b)) return false;
   return bboxOverlap(expandBBox(a.bbox, margin), b.bbox);
 }

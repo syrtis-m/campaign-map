@@ -157,17 +157,6 @@ export interface VaultGateway {
  * forwards to the generation service (keeps `App` out of the controller). */
 export type ControllerGenContext = Omit<GenerationContext, "app">;
 
-/** Euclidean bbox-to-bbox separation in the boxes' own units (0 when they
- * overlap/touch) — the currency the 033-C consumption-aware invalidation walk
- * compares against an algorithm's `influenceMargin`. Matches the harness's
- * `bboxGap` (underInvalidation.ts) so the walk's reach predicate is exactly the
- * one the fuzz gate proves inert beyond. */
-function bboxGap(a: BBox, b: BBox): number {
-  const dx = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
-  const dy = Math.max(0, Math.max(a.minY - b.maxY, b.minY - a.maxY));
-  return Math.hypot(dx, dy);
-}
-
 /** The two batch-shared views threaded through a flush/cascade so a multi-region
  * pass hashes ONCE and reads the cache ONCE (031-B): the precomputed
  * `(stage,id)`-ordered fingerprint map + the single mutable cache view every
@@ -977,9 +966,77 @@ export class MapController {
       const algo = block ? algorithmById(block.algorithm) : undefined;
       const region = this.buildRegionFromFeature(f);
       if (!block || !algo || !region) continue;
-      nodes.push({ id: f.id, stage: algo.stage, produces: algo.produces, consumes: algo.consumes, bbox: region.bbox });
+      nodes.push({
+        id: f.id,
+        stage: algo.stage,
+        produces: algo.produces,
+        consumes: algo.consumes,
+        bbox: region.bbox,
+        // Plan 034: carry the raw-sketch consumption so a source→region edge can
+        // reproduce the 033-C reach inside the unified closure.
+        consumesSketch: algo.consumesSketch,
+        influenceMargin: algo.influenceMargin,
+      });
     }
     return nodes;
+  }
+
+  /** Plan 034: build SOURCE DAG nodes (stage −1) for a set of edited raw sketch
+   * features — one per feature, producing its `kind`, with its gen-space bbox.
+   * A source→region edge (dag `hasEdge`) then fires exactly when the region's
+   * `consumesSketch` includes the source kind and the bboxes come within the
+   * region's `influenceMargin` — the 033-C raw-sketch reach, now a graph edge.
+   * A source id is namespaced (`source:<featureId>`) so it can never collide
+   * with a region id, and procgen-region features are skipped (their coupling is
+   * the region→region DAG, not a raw source). Pure geometry, no regen. */
+  private sourceDagNodesFor(edited: FabricFeature[]): DagNode[] {
+    if (!this.campaign || edited.length === 0) return [];
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const nodes: DagNode[] = [];
+    for (const f of edited) {
+      if (isProcgenRegion(f)) continue; // a region couples via the region DAG
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      const scan = (coords: unknown): void => {
+        if (!Array.isArray(coords)) return;
+        if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+          const x = unitsToMeters(coords[0] as number, scale);
+          const y = unitsToMeters(coords[1] as number, scale);
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+          return;
+        }
+        for (const c of coords) scan(c);
+      };
+      scan(f.geometry.coordinates);
+      if (!Number.isFinite(minX)) continue;
+      nodes.push({
+        id: `source:${f.id}`,
+        stage: -1,
+        produces: [],
+        consumes: [],
+        bbox: { minX, minY, maxX, maxY },
+        sketchKind: f.properties.kind,
+      });
+    }
+    return nodes;
+  }
+
+  /** Plan 034: the region ids a raw-sketch edit set dirties — the downstream
+   * closure of the edited features' SOURCE nodes over the region DAG. This is
+   * the 033-C direct-consumer reach (source→region edges) PLUS every transitive
+   * region→region dependent (an edit to a mountain sketch the river reads now
+   * also re-runs the city the river feeds — the "one forward pass" correctness
+   * that the pre-034 raw channel dropped). Returns region ids only. */
+  private dirtyRegionIdsFromSketchEdits(edited: FabricFeature[]): string[] {
+    const sources = this.sourceDagNodesFor(edited);
+    if (sources.length === 0) return [];
+    const nodes = [...this.regionDagNodes(), ...sources];
+    return downstreamClosure(nodes, MapController.CONSTRAINT_REACH, sources.map((s) => s.id)).map((n) => n.id);
   }
 
   /**
@@ -1926,68 +1983,18 @@ export class MapController {
       // upstream (river) it reads just because it sorts earlier in the fabric
       // file — an upstream's fresh network always lands first (fixes P2/P3).
       const roots = regionIds.filter((id) => this.regionFeatures().some((f) => f.id === id));
-      const worklist = new Set<string>([...roots, ...this.affectedRegionIds(edited)]);
+      const worklist = new Set<string>([...roots, ...this.dirtyRegionIdsFromSketchEdits(edited)]);
       await this.forceRegenInStageOrder(worklist, done, opts);
       if (this.campaign?.id !== campaign.id) return;
-      // Cross-layer cascade: ONE coalesced walk downstream of every region
-      // regenerated by a queued procgen-region edit this flush (a drag storm
-      // coalesced into one cascade). Scope is unchanged from before 031-C —
-      // only the region-edit roots seed the DAG closure; the raw-sketch reach
-      // already regenerated its direct consumers in the stage-ordered walk
-      // above (consumption-aware fan-out downstream of a raw edit is plan 033).
+      // Cross-layer cascade for the queued procgen-region EDIT roots. The
+      // raw-sketch reach already carries its own transitive downstream (plan 034:
+      // `dirtyRegionIdsFromSketchEdits` closes over source→region→…→region
+      // edges), so this only adds the closure of region-geometry/param edits that
+      // arrived as `queueRegionRegen` roots. `done` de-dupes the overlap.
       if (roots.length > 0 && this.campaign?.id === campaign.id) {
         await this.cascadeDownstream(roots, done, opts);
       }
     });
-  }
-
-  /** The procgen-region ids a raw-sketch edit must force-regen: CONSUMPTION-
-   * AWARE (plan 033-C). A region is affected only when the edited feature's KIND
-   * is in the region algorithm's declared `consumesSketch` AND the feature's
-   * bbox comes within that algorithm's `influenceMargin` (bbox-to-bbox, gen-space
-   * meters). This replaces the pre-033 blanket 200 m kind-blind reach — editing a
-   * road no longer regenerates a mountain (it reads no road: P4 goes from 3
-   * regens to 1), and the margin is per-algorithm (a city's road reach is 1500 m,
-   * a wall's is 0). The declarations are the 033-A harness's verified contract.
-   * Pure geometry, no regen. */
-  private affectedRegionIds(edited: FabricFeature[]): string[] {
-    if (!this.campaign || edited.length === 0) return [];
-    const scale = this.campaign.config.scaleMetersPerUnit;
-    const regions: { id: string; bbox: BBox; algorithm: ProcgenAlgorithm }[] = [];
-    for (const rf of this.regionFeatures()) {
-      const region = this.buildRegionFromFeature(rf);
-      const algorithm = algorithmById(rf.properties.procgen?.algorithm ?? "");
-      if (region && algorithm) regions.push({ id: rf.id, bbox: region.bbox, algorithm });
-    }
-    const affected = new Set<string>();
-    for (const f of edited) {
-      const kind = f.properties.kind;
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      const scan = (coords: unknown): void => {
-        if (!Array.isArray(coords)) return;
-        if (typeof coords[0] === "number" && typeof coords[1] === "number") {
-          const x = unitsToMeters(coords[0] as number, scale);
-          const y = unitsToMeters(coords[1] as number, scale);
-          minX = Math.min(minX, x);
-          minY = Math.min(minY, y);
-          maxX = Math.max(maxX, x);
-          maxY = Math.max(maxY, y);
-          return;
-        }
-        for (const c of coords) scan(c);
-      };
-      scan(f.geometry.coordinates);
-      if (!Number.isFinite(minX)) continue;
-      const eb: BBox = { minX, minY, maxX, maxY };
-      for (const { id, bbox, algorithm } of regions) {
-        if (!algorithm.consumesSketch.includes(kind)) continue;
-        if (bboxGap(eb, bbox) <= algorithm.influenceMargin) affected.add(id);
-      }
-    }
-    return [...affected];
   }
 
   /**
@@ -2018,11 +2025,6 @@ export class MapController {
       done.add(feature.id);
       this.lastForceRegenOrder.push(feature.id);
     }
-  }
-
-  private async regenerateAffectedTiles(edited: FabricFeature[], done: Set<string>, opts: RegionBatchOpts = {}): Promise<void> {
-    if (!this.campaign || edited.length === 0) return;
-    await this.forceRegenInStageOrder(this.affectedRegionIds(edited), done, opts);
   }
 
   // ─── Sketch persistence + edit commit ──────────────────────────────────
@@ -2182,7 +2184,20 @@ export class MapController {
       }
     } else {
       if (opts.debounce) this.queueConstraintRegen(after);
-      else await this.regenerateAffectedTiles([after], new Set());
+      else {
+        // Plan 034: a non-region raw-sketch edit dirties its source→region
+        // closure (direct consumers + their transitive downstream) — one
+        // (stage,id)-ordered forward walk, batched so the pass hashes/reads once.
+        await this.withRepaintBatch(async () => {
+          const ctx = this.generationContext();
+          const rbOpts: RegionBatchOpts = {
+            fingerprints: this.computeRegionFingerprints(ctx),
+            preloadedCache: await this.cacheView(campaignFolderFromConfigPath(campaign.path)),
+            skipInertForce: true,
+          };
+          await this.forceRegenInStageOrder(this.dirtyRegionIdsFromSketchEdits([after]), new Set(), rbOpts);
+        });
+      }
     }
     return true;
   }

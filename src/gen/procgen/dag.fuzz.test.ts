@@ -22,7 +22,9 @@ import type { BBox } from "../spatialHash";
 
 const KINDS: ConstraintKind[] = ["elevation", "water", "vegetation", "settlement", "detail"];
 // The registry's real stage→field wiring, so fuzz nodes resemble real worlds.
-const STAGE_PRODUCES: Record<Stage, ConstraintKind[]> = {
+// Region stages only (0–4); stage −1 is the source band (plan 034), which these
+// fuzz worlds don't model.
+const STAGE_PRODUCES: Record<Exclude<Stage, -1>, ConstraintKind[]> = {
   0: ["elevation"],
   1: ["water"],
   2: ["vegetation"],
@@ -44,7 +46,7 @@ function randomWorld(seed: number): DagNode[] {
   const n = 2 + Math.floor(rnd() * 12);
   const nodes: DagNode[] = [];
   for (let i = 0; i < n; i++) {
-    const stage = Math.floor(rnd() * 5) as Stage;
+    const stage = Math.floor(rnd() * 5) as Exclude<Stage, -1>;
     // A node consumes 0–2 random field kinds (may include ones nothing at a
     // lower stage produces — a harmless no-edge).
     const consumeCount = Math.floor(rnd() * 3);

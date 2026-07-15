@@ -711,6 +711,73 @@ describe("MapController — scoped fingerprints (033-D)", () => {
   });
 });
 
+// ─── Plan 034-A — source nodes + transitive closure ──────────────────────────
+// A raw sketch feature is a DAG source (stage −1); its downstream closure now
+// carries transitive region→region dependents, not just the direct consumers the
+// pre-034 raw channel stopped at. So a raw sketch edit that reaches an UPSTREAM
+// region also re-runs that region's downstream — the "one forward pass" the
+// pipeline arc collapses to.
+describe("MapController — source-node forward closure (034-A)", () => {
+  // River flowing into the city (mouth [24,-14] inside RING); a raw MOUNTAIN
+  // sketch overlapping the river's upstream reach (river reads mountain elevation
+  // within its 30 m margin).
+  const RIVER_LINE: [number, number][] = [
+    [6, -30],
+    [18, -18],
+    [24, -14],
+  ];
+  const RAW_MTN_RING: [number, number][] = [
+    [4, -32],
+    [8, -32],
+    [8, -28],
+    [4, -28],
+  ];
+
+  it("a raw mountain-sketch edit dirties the river it feeds AND the transitive downstream city", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(
+      RIVER_LINE,
+      "river",
+      "river",
+      { windiness: 0.85, braiding: 0, width: 20, widthGrowth: 0, braidBias: 0, slopeSensitivity: 1 },
+      "R"
+    );
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    // A raw (non-procgen) mountain sketch over the river's upstream.
+    const mtnId = await host.controller.createFabricForTest("mountain", RAW_MTN_RING, "M");
+
+    // Move a mountain-sketch vertex (non-region, non-debounced commit path).
+    await host.controller.moveVertex(mtnId, 0, [3.8, -32.2]);
+
+    const order = host.controller.forceRegenOrder;
+    // The raw edit reached the river directly (consumesSketch mountain) AND the
+    // city transitively (river → water → city) — the pre-034 raw channel would
+    // have stopped at the river.
+    expect(order).toContain(river.featureId);
+    expect(order).toContain(city.featureId);
+    // Upstream before downstream (the (stage,id) walk).
+    expect(order.indexOf(river.featureId)).toBeLessThan(order.indexOf(city.featureId));
+  });
+
+  it("a district sketch-add dirties nothing (explicit-only: no algorithm consumes `district`)", async () => {
+    // Parity with the 033-C fan-out gate, now expressed through source nodes: a
+    // source of a kind NO region declares has no outgoing edge, so the closure is
+    // empty — a first-time district sketch never triggers generation.
+    const host = cityHost();
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const runsBefore = host.controller.generatorRunCount;
+    const dId = await host.controller.createFabricForTest("district", [
+      [12, -24],
+      [24, -24],
+      [24, -12],
+      [12, -12],
+    ]);
+    await host.controller.moveVertex(dId, 0, [11.5, -24.5]);
+    expect(host.controller.forceRegenOrder).toEqual([]);
+    expect(host.controller.generatorRunCount).toBe(runsBefore);
+  });
+});
+
 describe("MapController — world tier generate / regen / clear (phase3/phase4)", () => {
   it("records a manifest entry and runs a generator on generateFabricHere", async () => {
     const host = new FakeHost({ zoom: 5 }); // world tier
