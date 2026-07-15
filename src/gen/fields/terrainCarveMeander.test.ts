@@ -59,7 +59,7 @@ describe("carve follows the MEANDERED centerline, not the straight spine", () =>
     // Pick the strongest bend apex (largest |y|) in the interior.
     let apex = cl[0];
     for (const c of cl) if (Math.abs(c.y) > Math.abs(apex.y)) apex = c;
-    const carved = terrainAt([river("r", STRAIGHT, WINDY)]);
+    const carved = terrainAt([river("r", STRAIGHT, { ...WINDY })]);
     // Scan a perpendicular cross-section at the apex's x. The trench has a wide
     // FLAT floor (all at the same min), so the argmin ties across its whole
     // width — take the CENTROID of the floor, which sits at the channel center.

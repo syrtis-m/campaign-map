@@ -1666,6 +1666,174 @@ describe("MapController — spine (river) line-kind procgen", () => {
   });
 });
 
+// ─── Param-edit repaint (Jonah 2026-07-15: "a repaint of this river didn't
+// occur after I tweak params") ──────────────────────────────────────────────
+// The panel param-edit path (setRegionParams → setRegionProcgen → runForwardPass)
+// must, for EVERY algorithm, (a) regenerate, (b) update the render store, (c) fire
+// a repaint at the region's params-aware stage, and (d) actually change the
+// PAINTED output — the drawn geometry for fabric-emitting algorithms, the composed
+// elevation DIGEST for the terrain trio (relief/landform emit no fabric; their
+// visible form is the contour/DEM surface, refreshed on a digest change).
+//
+// The investigation found NO controller bug: every algorithm repaints correctly.
+// Jonah's observed "no repaint" is the BY-DESIGN slopeSensitivity no-op (a river
+// not crossing a sketched mountain is byte-identical for any value — locked below
+// so a future change can't silently turn it into a spurious repaint). These lock
+// the correct behavior against a regression in the unified-pass machinery.
+describe("MapController — param-edit repaint (Jonah 2026-07-15)", () => {
+  const RIVER: [number, number][] = [
+    [6, -30],
+    [12, -22],
+    [6, -14],
+    [12, -6],
+  ];
+
+  /** A GEOMETRY-faithful mirror of MapView's `generated` source. MapLibre keeps a
+   * `Map<id, feature>` (`_dataUpdateable`); a staged repaint applies
+   * `updateData({ remove: paintedStageIds[stage], add: displayGeneratedForStage(stage) })`,
+   * remove-then-add (applySourceDiff order) so a same-id add wins with the new
+   * geometry. Unlike `repaintMirror` (id membership only), this tracks the painted
+   * GEOMETRY per id — so it catches a same-id geometry swap, which is exactly the
+   * "did the drawn river actually change" question. `drive()` replays every
+   * recorded `host.repaintGeneratedStages` entry; `geomFor(ids)` snapshots the
+   * painted geometry of a region's feature ids. */
+  function geometryPaintMirror(host: FakeHost) {
+    const dataUpdateable = new Map<string, GeoJSON.Feature>();
+    const paintedStageIds = new Map<number, Set<string>>();
+    const full = (): void => {
+      dataUpdateable.clear();
+      paintedStageIds.clear();
+      for (const [s, feats] of host.controller.displayGeneratedByStage()) {
+        const ids = new Set<string>();
+        for (const f of feats) {
+          const id = String(f.id);
+          dataUpdateable.set(id, f);
+          ids.add(id);
+        }
+        paintedStageIds.set(s, ids);
+      }
+    };
+    const staged = (stage: number): void => {
+      for (const id of paintedStageIds.get(stage) ?? []) dataUpdateable.delete(id);
+      const feats = host.controller.displayGeneratedForStage(stage);
+      const ids = new Set<string>();
+      for (const f of feats) {
+        const id = String(f.id);
+        dataUpdateable.set(id, f);
+        ids.add(id);
+      }
+      paintedStageIds.set(stage, ids);
+    };
+    const drive = (): void => {
+      for (const s of host.repaintGeneratedStages) (s === "all" ? full() : staged(s));
+    };
+    const geomFor = (ids: Iterable<string>): string => {
+      const parts: string[] = [];
+      for (const id of ids) {
+        const f = dataUpdateable.get(id);
+        parts.push(`${id}=${f ? JSON.stringify(f.geometry) : "ABSENT"}`);
+      }
+      parts.sort();
+      return parts.join("|");
+    };
+    return { drive, geomFor };
+  }
+
+  it("a windiness edit repaints stage 0 AND changes the drawn river geometry (repro)", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createSpineForTest(
+      RIVER,
+      "river",
+      "river",
+      { windiness: 0.85 },
+      "__repaint_river__"
+    );
+    const mirror = geometryPaintMirror(host);
+    mirror.drive(); // paint everything generated so far (the river is stage 0)
+    const idsBefore = new Set(host.controller.regionFeatureIds(featureId));
+    expect(idsBefore.size).toBeGreaterThan(0);
+    const paintedBefore = mirror.geomFor(idsBefore);
+
+    host.repaintGeneratedStages.length = 0;
+    const runsBefore = host.controller.generatorRunCount;
+    await host.controller.setRegionParams(featureId, { windiness: 0.1 });
+
+    // (a) regenerated, (c) a river (plan 035 stage 0) repaint fired.
+    expect(host.controller.generatorRunCount).toBeGreaterThan(runsBefore);
+    expect(host.repaintGeneratedStages).toContain(0);
+    // (d) the DRAWN river geometry changed once the staged updateData diff applies
+    // — not merely the render store. Snapshot the SAME id set post-edit: a changed
+    // river means differing stable-id geometries or now-ABSENT ids.
+    mirror.drive();
+    expect(mirror.geomFor(idsBefore)).not.toBe(paintedBefore);
+  });
+
+  it("slopeSensitivity with NO sketched mountain is a BY-DESIGN no-op (byte-identical)", async () => {
+    // The river reads the sketch-derived elevation field only where it crosses a
+    // sketched mountain; with none present the output is identical for any
+    // slopeSensitivity. The repaint still fires (harmless), but the bytes must NOT
+    // move — this is the likely source of Jonah's "nothing happened", and locking
+    // it prevents a well-meaning "fix" that would make the knob spuriously churn.
+    const host = cityHost();
+    const { featureId } = await host.controller.createSpineForTest(
+      RIVER,
+      "river",
+      "river",
+      { windiness: 0.3, slopeSensitivity: 0 },
+      "__slope_noop__"
+    );
+    const bytesFor = (): string => {
+      const parts: string[] = [];
+      for (const id of host.controller.regionFeatureIds(featureId)) parts.push(id);
+      return JSON.stringify(host.controller.displayGeneratedForStage(0).map((f) => f.geometry)) + parts.sort().join(",");
+    };
+    const before = bytesFor();
+    await host.controller.setRegionParams(featureId, { windiness: 0.3, slopeSensitivity: 1 });
+    expect(bytesFor()).toBe(before); // no mountain ⇒ terrain coupling is inert
+  });
+
+  it("a relief edit emits no fabric but BUSTS the elevation digest (contours/DEM refresh)", async () => {
+    // relief (and landform) generate zero per-region fabric — their only visible
+    // form is the composed-terrain contour/DEM surface, which MapView refreshes on
+    // a digest change (refreshTerrainIfEnabled → refreshTerrainContours, always).
+    // So the digest IS the repaint signal for the terrain trio; if a param edit
+    // doesn't move it, the stamp looks frozen. No prior test covers this path.
+    const host = cityHost();
+    const { featureId, count } = await host.controller.createSpineForTest(
+      RIVER,
+      "relief",
+      "relief",
+      { polarity: "ridge", height: 300, halfWidth: 180, apron: 220 },
+      "__repaint_relief__"
+    );
+    expect(count).toBe(0); // relief emits no fabric
+    const digestBefore = host.controller.campaignElevationSnapshot()?.digest;
+    await host.controller.setRegionParams(featureId, { polarity: "valley", height: 100, halfWidth: 180, apron: 220 });
+    expect(host.controller.campaignElevationSnapshot()?.digest).not.toBe(digestBefore);
+  });
+
+  it("a landform edit emits no fabric but BUSTS the elevation digest", async () => {
+    const host = cityHost();
+    const LANDFORM_RING: [number, number][] = [
+      [10, -26],
+      [26, -26],
+      [26, -10],
+      [10, -10],
+    ];
+    const { featureId, count } = await host.controller.createRegionForTest(
+      LANDFORM_RING,
+      "landform",
+      { mode: "plateau", band: 120, priority: 0, target: 500 },
+      "__repaint_landform__",
+      "landform"
+    );
+    expect(count).toBe(0); // landform emits no fabric
+    const digestBefore = host.controller.campaignElevationSnapshot()?.digest;
+    await host.controller.setRegionParams(featureId, { mode: "basin", band: 400, priority: 0, target: -200 });
+    expect(host.controller.campaignElevationSnapshot()?.digest).not.toBe(digestBefore);
+  });
+});
+
 describe("MapController — forest polygon-kind procgen", () => {
   // An 800 m square forest region in display units (1 unit = 50 m).
   const FOREST_RING: [number, number][] = [
