@@ -33,6 +33,47 @@ function cityHost(): FakeHost {
   return host;
 }
 
+/** Headless mirror of MapView.refreshGeneratedSource (032-D): a painted source
+ * keyed by feature id + a per-stage id index. A staged repaint drops that
+ * stage's previous ids and adds its current ones (a full "all" repaint reseeds
+ * from every stage). `replay()` drives every recorded `host.repaintGeneratedStages`
+ * entry through the mirror. Used to prove the staged `updateData` diff removes
+ * migrated-away ids from the OLD stage. */
+function repaintMirror(host: FakeHost) {
+  const paintedStageIds = new Map<number, Set<string>>();
+  const painted = new Set<string>();
+  const applyRepaint = (stage: number | "all"): void => {
+    if (stage === "all") {
+      painted.clear();
+      paintedStageIds.clear();
+      for (const [s, feats] of host.controller.displayGeneratedByStage()) {
+        const ids = feats.map((f) => String(f.id));
+        paintedStageIds.set(s, new Set(ids));
+        for (const id of ids) painted.add(id);
+      }
+      return;
+    }
+    const feats = host.controller.displayGeneratedForStage(stage);
+    for (const id of paintedStageIds.get(stage) ?? []) painted.delete(id);
+    const ids = feats.map((f) => String(f.id));
+    paintedStageIds.set(stage, new Set(ids));
+    for (const id of ids) painted.add(id);
+  };
+  const replay = (): void => {
+    for (const s of host.repaintGeneratedStages) applyRepaint(s);
+  };
+  return { paintedStageIds, painted, applyRepaint, replay };
+}
+
+/** The park fixture used by the stage-migration tests: strictly inside `RING`
+ * so an `urban-park` variety finds the city's generated `settlement` upstream. */
+const PARK_RING: [number, number][] = [
+  [14, -22],
+  [21, -22],
+  [21, -15],
+  [14, -15],
+];
+
 describe("MapController — sketch-driven city procgen (procgen40)", () => {
   it("generates a city strictly inside the sketched district", async () => {
     const host = cityHost();
@@ -324,6 +365,111 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
     expect(host.repaintGeneratedStages).toContain(4);
     // The render store dropped it too (controller-level view).
     expect(host.controller.regionFeatureIds(park.featureId)).toEqual([]);
+  });
+
+  it("a city-park→urban-park param edit (stage 2→4 migration) unpaints the stale stage-2 fabric", async () => {
+    // Same family as the delete-unpaint bug (4705e84) but a DISTINCT mechanism —
+    // a params-aware stage MIGRATION. A park generated as `city-park` paints at
+    // DAG stage 2 (`dagRoleFor`), so MapView's paintedStageIds[2] holds its ids.
+    // Editing variety→`urban-park` re-homes the region to stage 4: generation
+    // force-drops the render keys and repaints ONLY the new stage 4. If stage 2
+    // is never repainted, its staged `updateData` diff (032-D) never removes the
+    // old ids and the city-park fabric ghosts. 4705e84 only aligned the unpaint
+    // stage with CURRENT params; a migration means old ≠ new and BOTH must
+    // repaint. The fix dirties both stages on a migrating repaint.
+    const host = cityHost();
+    // Upstream city supplies the `settlement` the urban-park consumes post-edit.
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const park = await host.controller.createRegionForTest(
+      PARK_RING,
+      "park",
+      { variety: "city-park", pathDensity: 0.5, pond: true },
+      "__mig_park__",
+      "park"
+    );
+    expect(park.count).toBeGreaterThan(0);
+    // city-park paints at its static stage 2 (city is stage 3 — no incidental
+    // stage-2 repaint can mask the bug).
+    expect(host.repaintGeneratedStages).toContain(2);
+    const cityParkIds = new Set(host.controller.regionFeatureIds(park.featureId));
+    expect(cityParkIds.size).toBeGreaterThan(0);
+
+    const mirror = repaintMirror(host);
+    mirror.replay();
+    // The city-park is drawn, its ids live in the stage-2 bucket.
+    expect([...cityParkIds].every((id) => mirror.paintedStageIds.get(2)?.has(id))).toBe(true);
+
+    // Migrate variety city-park→urban-park (stage 2→4).
+    host.repaintGeneratedStages.length = 0;
+    await host.controller.setRegionParams(park.featureId, { variety: "urban-park", pathDensity: 0.5, pond: true });
+    mirror.replay();
+
+    // The migration repaints BOTH the old (2) and new (4) stages…
+    expect(host.repaintGeneratedStages).toContain(2);
+    expect(host.repaintGeneratedStages).toContain(4);
+    // …so the stale city-park ids are GONE from the stage-2 bucket (the ghost)…
+    expect([...cityParkIds].some((id) => mirror.paintedStageIds.get(2)?.has(id))).toBe(false);
+    // …and the region now paints at stage 4.
+    const urbanIds = new Set(host.controller.regionFeatureIds(park.featureId));
+    expect(urbanIds.size).toBeGreaterThan(0);
+    expect([...urbanIds].every((id) => mirror.paintedStageIds.get(4)?.has(id))).toBe(true);
+  });
+
+  it("the REVERSE migration urban-park→city-park (stage 4→2) unpaints the stale stage-4 fabric", async () => {
+    // The mirror-image case: a region painted at stage 4 whose edit re-homes it
+    // to stage 2 must repaint stage 4 so its diff drops the now-absent ids.
+    const host = cityHost();
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const park = await host.controller.createRegionForTest(
+      PARK_RING,
+      "park",
+      { variety: "urban-park", pathDensity: 0.5, pond: true },
+      "__rev_park__",
+      "park"
+    );
+    expect(park.count).toBeGreaterThan(0);
+    expect(host.repaintGeneratedStages).toContain(4);
+    const urbanIds = new Set(host.controller.regionFeatureIds(park.featureId));
+    expect(urbanIds.size).toBeGreaterThan(0);
+
+    const mirror = repaintMirror(host);
+    mirror.replay();
+    expect([...urbanIds].every((id) => mirror.paintedStageIds.get(4)?.has(id))).toBe(true);
+
+    // Migrate urban-park→city-park (stage 4→2).
+    host.repaintGeneratedStages.length = 0;
+    await host.controller.setRegionParams(park.featureId, { variety: "city-park", pathDensity: 0.5, pond: true });
+    mirror.replay();
+
+    expect(host.repaintGeneratedStages).toContain(4);
+    expect(host.repaintGeneratedStages).toContain(2);
+    // The stale urban-park ids are gone from the stage-4 bucket…
+    expect([...urbanIds].some((id) => mirror.paintedStageIds.get(4)?.has(id))).toBe(false);
+    // …and the region now paints at stage 2.
+    const cityParkIds = new Set(host.controller.regionFeatureIds(park.featureId));
+    expect(cityParkIds.size).toBeGreaterThan(0);
+    expect([...cityParkIds].every((id) => mirror.paintedStageIds.get(2)?.has(id))).toBe(true);
+  });
+
+  it("a NON-migrating park param edit repaints exactly its one stage (no over-repaint)", async () => {
+    // A standalone rural city-park (no city → no cascade to muddy the stage set).
+    // A same-variety param tweak keeps the region at stage 2, so the repaint must
+    // touch that ONE stage exactly once — the migration fix must not dirty a
+    // phantom second stage when nothing migrated.
+    const host = cityHost();
+    const park = await host.controller.createRegionForTest(
+      PARK_RING,
+      "park",
+      { variety: "city-park", pathDensity: 0.5, pond: true },
+      "__noover_park__",
+      "park"
+    );
+    expect(park.count).toBeGreaterThan(0);
+
+    host.repaintGeneratedStages.length = 0;
+    await host.controller.setRegionParams(park.featureId, { variety: "city-park", pathDensity: 0.9, pond: true });
+    // Exactly one repaint, at the region's single (unchanged) stage 2.
+    expect(host.repaintGeneratedStages).toEqual([2]);
   });
 });
 

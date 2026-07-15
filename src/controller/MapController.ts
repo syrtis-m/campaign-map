@@ -316,6 +316,15 @@ export class MapController {
   private repaintBatchDepth = 0;
   /** Stages touched this batch (032-D); flushed upstream-first on batch exit. */
   private dirtyStages = new Set<number>();
+  /** Per-region last-painted DAG stage. A params edit can MIGRATE a region's
+   * params-aware stage (`dagRoleFor`) — park `city-park`↔`urban-park` re-homes
+   * 2↔4. Generation force-drops the region's render keys and repaints only the
+   * NEW stage; the OLD stage's staged `updateData` diff (032-D) never re-runs, so
+   * its `paintedStageIds` keeps the pre-migration ids and the drawn fabric ghosts.
+   * Tracking the prior stage lets a migrating repaint dirty BOTH stages so the old
+   * stage diffs its now-absent ids out (4705e84 only aligned the unpaint stage
+   * with CURRENT params — a migration means old ≠ new and BOTH must repaint). */
+  private regionPaintedStage = new Map<string, number>();
   /** A stage-less (full) repaint was requested this batch — supersedes the
    * per-stage flush (initial paint / replay path). */
   private pendingFullRepaint = false;
@@ -350,6 +359,7 @@ export class MapController {
       this.manifestReplayedFor = null;
       this.fabricCollection = emptyFabric();
       this.fabricLoadedFor = null;
+      this.regionPaintedStage.clear();
       this.sessionCache = null; // drop the previous campaign's cache view
     }
     this.campaign = campaign;
@@ -388,6 +398,21 @@ export class MapController {
       return;
     }
     this.host.render.repaintGenerated(stage);
+  }
+
+  /** Repaint a region at `newStage`, and — when its params-aware stage MIGRATED
+   * since the last paint (a park's `city-park`→`urban-park` re-homes it 2→4, or
+   * the reverse) — ALSO repaint the stage it was previously painted at, so that
+   * stage's `updateData` diff (032-D) drops the now-migrated feature ids instead
+   * of ghosting them. Inside a forward-pass batch both stages coalesce into the
+   * per-stage flush; a same-stage repaint (the common, non-migrating case) fires
+   * exactly once. `dagRoleFor` is the one sanctioned stage read (registry
+   * §dagRole) — callers pass its result, never `algorithm.stage`. */
+  private repaintRegionStage(regionId: string, newStage: number): void {
+    const prev = this.regionPaintedStage.get(regionId);
+    if (prev !== undefined && prev !== newStage) this.repaintGenerated(prev);
+    this.regionPaintedStage.set(regionId, newStage);
+    this.repaintGenerated(newStage);
   }
 
   /** Run `fn` as one repaint batch: `repaintGenerated` calls inside collapse to
@@ -887,7 +912,7 @@ export class MapController {
             10000
           );
         }
-        this.repaintGenerated(dagRoleFor(algorithm, block.params).stage);
+        this.repaintRegionStage(region.id, dagRoleFor(algorithm, block.params).stage);
         return [];
       }
       this.needsAdoption.delete(feature.id);
@@ -912,7 +937,7 @@ export class MapController {
       this.pendingGenerations--;
       this.host.render.loadingChanged();
     }
-    this.repaintGenerated(dagRoleFor(algorithm, block.params).stage);
+    this.repaintRegionStage(region.id, dagRoleFor(algorithm, block.params).stage);
     return all;
   }
 
@@ -1901,7 +1926,9 @@ export class MapController {
     // delete (the one sanctioned stage read is `dagRoleFor`, registry §dagRole).
     // Full repaint when the algorithm/block is unknown — a defensive fallback;
     // drops only ever run on procgen regions.
-    this.repaintGenerated(algorithm && block ? dagRoleFor(algorithm, block.params).stage : undefined);
+    if (algorithm && block) this.repaintRegionStage(feature.id, dagRoleFor(algorithm, block.params).stage);
+    else this.repaintGenerated();
+    this.regionPaintedStage.delete(feature.id);
   }
 
   /** "Remove generated city here". */
@@ -2419,7 +2446,7 @@ export class MapController {
     // and the drop's unpaint — a static `algorithm.stage` here would preview a
     // params-shifted region (urban-park: stage 4, static 2) at the wrong stage,
     // leaving ghost draft fabric the commit's stage-4 repaint never clears.
-    this.repaintGenerated(dagRoleFor(algorithm, block.params).stage);
+    this.repaintRegionStage(region.id, dagRoleFor(algorithm, block.params).stage);
     return true;
   }
 
