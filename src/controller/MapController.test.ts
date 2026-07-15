@@ -874,6 +874,112 @@ describe("MapController — the forward pass (034-B)", () => {
   });
 });
 
+// ─── Plan 034-C — cost-weighted cap + outdated badge (declined bills never storm)
+// The cap bills Σ costClass over the genuinely-stale deferrable set. Over budget
+// it applies the ROOT only (the GM's edit always lands), badges the deferred
+// downstream "outdated" (stale bytes stay painted), and holds the pass for the
+// non-modal "Apply pending cascade" command. Reopen after a decline re-derives
+// the deferral from fingerprints — badge again, ZERO generator runs, no storm.
+describe("MapController — cost cap + outdated badge (034-C)", () => {
+  const RIVER_LINE: [number, number][] = [
+    [6, -30],
+    [18, -18],
+    [24, -14],
+  ];
+
+  async function networkBytes(host: FakeHost, id: string): Promise<string> {
+    const rec = (await host.cache()).get(regionNetworkKey(id));
+    return rec ? JSON.stringify(rec.features) : "";
+  }
+
+  it("over budget: the root applies, the downstream defers with ZERO writes + an outdated badge", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const riverBefore = await networkBytes(host, river.featureId);
+    const cityBefore = await networkBytes(host, city.featureId);
+
+    host.controller.overrideCascadeCostBudgetForTest(3); // city (expensive) = 4 > 3
+    await host.controller.setRegionParams(river.featureId, { windiness: 0.95 });
+
+    // The ROOT applied (the cap never defers the GM's own edit)…
+    expect(host.controller.forceRegenOrder).toEqual([river.featureId]);
+    expect(await networkBytes(host, river.featureId)).not.toBe(riverBefore);
+    // …the downstream city did NOT regenerate: zero writes, byte-identical record.
+    expect(await networkBytes(host, city.featureId)).toBe(cityBefore);
+    // Badge + pending bill + a non-modal Notice.
+    expect(host.controller.outdatedRegionIds()).toEqual([city.featureId]);
+    expect(host.controller.hasPendingCascade).toBe(true);
+    expect(host.notices.some((n) => n.message.includes("Apply pending cascade"))).toBe(true);
+  });
+
+  it("apply-pending regenerates the deferred set to the SAME bytes as an undeferred pass", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+
+    host.controller.overrideCascadeCostBudgetForTest(3);
+    await host.controller.setRegionParams(river.featureId, { windiness: 0.95 });
+    expect(host.controller.hasPendingCascade).toBe(true);
+
+    await host.controller.applyPendingCascade();
+    expect(host.controller.forceRegenOrder).toEqual([city.featureId]); // the held bill, exactly
+    expect(host.controller.outdatedRegionIds()).toEqual([]); // badge cleared
+    expect(host.controller.hasPendingCascade).toBe(false);
+    const appliedCity = await networkBytes(host, city.featureId);
+    const appliedRiver = await networkBytes(host, river.featureId);
+
+    // Undeferred-pass equivalence: a from-scratch replay of the same durable
+    // data (rm .mapcache + reopen) reproduces the applied bytes exactly — the
+    // applied state IS the pure function an undeferred pass computes.
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    await reopened.clearCacheOnDisk();
+    await reopened.controller.replayGeneratedManifest();
+    expect(await networkBytes(reopened, city.featureId)).toBe(appliedCity);
+    expect(await networkBytes(reopened, river.featureId)).toBe(appliedRiver);
+  });
+
+  it("reopen after a decline: badge-not-storm — zero generator runs, stale bytes served, apply still works", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    host.controller.overrideCascadeCostBudgetForTest(3);
+    await host.controller.setRegionParams(river.featureId, { windiness: 0.95 });
+    const staleCityBytes = await networkBytes(host, city.featureId); // pre-edit bytes, fp-stale
+
+    // Reopen WITHOUT applying — the declined-bill state is durable only as
+    // fingerprint staleness; the replay pass re-derives the deferral.
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.controller.overrideCascadeCostBudgetForTest(3);
+    reopened.begin();
+    await reopened.controller.replayGeneratedManifest();
+
+    // ZERO generator runs: the river replays from its fresh cache, the deferred
+    // city SERVES its stale bytes (badge) instead of storming a recompute.
+    expect(reopened.controller.generatorRunCount).toBe(0);
+    expect(reopened.controller.outdatedRegionIds()).toEqual([city.featureId]);
+    expect(await networkBytes(reopened, city.featureId)).toBe(staleCityBytes);
+    // The stale city is PAINTED (served, not blanked).
+    expect(reopened.controller.regionFeatureIds(city.featureId).length).toBeGreaterThan(0);
+    // The re-derived pending bill applies explicitly, clearing the badge.
+    expect(reopened.controller.hasPendingCascade).toBe(true);
+    await reopened.controller.applyPendingCascade();
+    expect(reopened.controller.outdatedRegionIds()).toEqual([]);
+    expect(await networkBytes(reopened, city.featureId)).not.toBe(staleCityBytes);
+  });
+
+  it("under budget nothing defers (the default budget absorbs a small cascade)", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    await host.controller.setRegionParams(river.featureId, { windiness: 0.95 });
+    expect(host.controller.forceRegenOrder).toEqual([river.featureId, city.featureId]);
+    expect(host.controller.hasPendingCascade).toBe(false);
+    expect(host.controller.outdatedRegionIds()).toEqual([]);
+  });
+});
+
 describe("MapController — world tier generate / regen / clear (phase3/phase4)", () => {
   it("records a manifest entry and runs a generator on generateFabricHere", async () => {
     const host = new FakeHost({ zoom: 5 }); // world tier

@@ -1107,10 +1107,12 @@ export class MapController {
    * (~cost 18) applies inline. Non-modal: a Notice + the `applyPendingCascade`
    * command/test-API (no modal — they hang CLI automation, docs/05). */
   private static readonly CASCADE_COST_BUDGET = 24;
-  /** The forward pass a cost cap DEFERRED — its inputs, replayable verbatim by
-   * `applyPendingCascade`. The GM's own edit (regionRoots) always applied; only
-   * the downstream/deferrable work is held here. */
-  private pendingPass: { regionRoots: string[]; sketchEdits: FabricFeature[]; deferrableRoots: string[] } | null = null;
+  /** The region ids a cost-capped pass DEFERRED (the billed set), held for
+   * `applyPendingCascade`. The GM's own edit (the roots) already applied when
+   * this was set — only the downstream/deferrable work is here. Apply re-enters
+   * the pass with these as deferrable roots: fp-stale ⇒ recompute, and their
+   * closure follows — no re-run of the already-fresh root. */
+  private pendingPass: { deferredIds: string[] } | null = null;
   /** Regions whose cached bytes are known FP-STALE because a cost-capped pass
    * deferred them (plan 034 §4) — the "outdated" badge surface, the plan-029
    * `needsAdoption` pattern reused: a sorted-ids getter the host renders as a
@@ -1145,6 +1147,15 @@ export class MapController {
   /** Test/command bypass for the confirm cap — set true to auto-apply large
    * cascades (headless gates run the FULL commit path; modals hang CLI). */
   cascadeAutoConfirm = false;
+  /** Test-only cap override so gates can exercise the deferral lifecycle with a
+   * two-region fixture instead of a 13-region storm. Null ⇒ the real budget. */
+  private cascadeCostBudgetOverride: number | null = null;
+  overrideCascadeCostBudgetForTest(budget: number | null): void {
+    this.cascadeCostBudgetOverride = budget;
+  }
+  private get cascadeCostBudget(): number {
+    return this.cascadeCostBudgetOverride ?? MapController.CASCADE_COST_BUDGET;
+  }
 
   /** Test-only injection: force a runtime-assertion violation on the NEXT
    * forward pass so a gate can prove the guard actually guards. `outOfClosure`
@@ -1268,12 +1279,12 @@ export class MapController {
 
       let effectiveWalk = walk;
       let deferredIds: string[] = [];
-      if (cost > MapController.CASCADE_COST_BUDGET && !this.cascadeAutoConfirm && billed.length > 0) {
+      if (cost > this.cascadeCostBudget && !this.cascadeAutoConfirm && billed.length > 0) {
         // Over budget: regenerate ONLY the protected roots (the cap never defers
         // the GM's own edit); hold everything else for an explicit apply.
         effectiveWalk = walk.filter((n) => rootSet.has(n.id));
         deferredIds = billed.map((n) => n.id);
-        this.pendingPass = { regionRoots: [...regionRoots], sketchEdits, deferrableRoots: [...deferrableRoots] };
+        this.pendingPass = { deferredIds };
         for (const id of deferredIds) this.outdatedRegions.add(id);
         this.host.notices.notify(
           `Campaign Map: that edit affects ${billed.length} downstream region${billed.length === 1 ? "" : "s"} (cost ${cost}) — showing their previous state (outdated badge). Run "Apply pending cascade" to regenerate them.`,
@@ -1381,11 +1392,7 @@ export class MapController {
     this.cascadeAutoConfirm = true;
     try {
       await this.loadFabric();
-      await this.runForwardPass({
-        regionRoots: pending.regionRoots,
-        sketchEdits: pending.sketchEdits,
-        deferrableRoots: pending.deferrableRoots,
-      });
+      await this.runForwardPass({ deferrableRoots: pending.deferredIds });
     } finally {
       this.cascadeAutoConfirm = prev;
     }

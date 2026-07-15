@@ -938,6 +938,18 @@ export class MapView extends ItemView {
     return [...this.controller.cascadeRegeneratedIds];
   }
 
+  /** Regions a cost-capped forward pass deferred — their painted bytes are the
+   * pre-edit cache until "Apply pending cascade" runs (plan 034 "outdated"
+   * badge, the plan-029 needsAdoption pattern). */
+  outdatedRegionIds(): string[] {
+    return this.controller.outdatedRegionIds();
+  }
+
+  /** True while a cost-capped pass holds deferred downstream work. */
+  hasPendingCascade(): boolean {
+    return this.controller.hasPendingCascade;
+  }
+
   /** Note-file undo (create / move) — Obsidian TFile ops the controller can't
    * do (it's host-agnostic). Called back through the controller's `notes`
    * gateway from `undoLastEdit`. */
@@ -1804,6 +1816,19 @@ export class MapView extends ItemView {
       const adopt = row.createEl("button", { cls: "campaign-map-sketch-procgen-btn mod-cta", text: "Adopt" });
       adopt.onclick = () =>
         void this.controller.adoptRegion(feature.id).then(() => this.refreshSelectionPanel());
+    }
+    // Outdated state (plan 034): a cost-capped forward pass deferred this
+    // region — its painted bytes are the pre-edit cache. Offer the explicit
+    // apply action (the same non-modal affordance as the command).
+    if (this.controller.outdatedRegionIds().includes(feature.id)) {
+      const row = section.createDiv({ cls: "campaign-map-sketch-selection-row" });
+      row.createSpan({
+        cls: "campaign-map-sketch-procgen-label",
+        text: "Outdated — an upstream edit is waiting to be applied here",
+      });
+      const apply = row.createEl("button", { cls: "campaign-map-sketch-procgen-btn mod-cta", text: "Apply pending cascade" });
+      apply.onclick = () =>
+        void this.controller.applyPendingCascade().then(() => this.refreshSelectionPanel());
     }
     // Template (preset) dropdown — the primary control. For city the four
     // profiles ARE the presets: picking a template re-seeds params from that
