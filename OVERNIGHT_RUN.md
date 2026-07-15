@@ -19,6 +19,14 @@ eyes lands HERE. Newest items at the top of each section.
    alone". Temple/gate variants stay deferred.
 
 ## NEEDS JONAH'S EYES
+- **037 margin churn (real design question)**: city's consumesSketch now includes park/district
+  (for nested holes) at the city's 1500 m margin — so ANY park/district edit within 1500 m of a
+  city regenerates it (byte-identically when not contained; slow-but-correct). Adjacent
+  districts regenerate each other. If this churns too much in play, the fix is a per-KIND
+  margin (park/district could be containment-only ≈ 0 m), a small follow-up.
+- **037 towers-outboard deferred**: offsetting tower centers outboard risks exceeding the
+  params-only wallMaxOffset corridor; gates/bearings/gatehouse-axis/moat-side/water-gaps all
+  landed. Add later behind a widened corridor if wanted.
 - **036 follow-ups (deliberate deferrals — live/host-side, unverifiable headlessly this arc):**
   1. Finish 36-C: retire the baked `mountain-contour` (mountain version bump + re-golden) and
      wire `TerrainContourLeaves` into the live worker/paint path — needs a session that can
@@ -48,6 +56,17 @@ eyes lands HERE. Newest items at the top of each section.
   faubourg reading). Flag if plan-037 gate work wants a cleaner separation fixture instead.
 
 ## Landed
+- **Plan 037 COMPLETE** (`ca75994`, `8e98a42`, `59a13dd`, `0d4c17c`): river→forest/park/farmland
+  channel exclusion + riparian ramp (monotone metric band), vegetation→city growth cost (canopy
+  attenuation + dense-canopy parcel rejection — canopy never clipped), settlement payload→wall
+  (gates at generated arterial crossings w/ class-ranked min-spacing merge, gatehouse on the
+  crossing axis, moat side away from interior, water gaps incl. river-is-the-moat),
+  nested-region hole-with-frontage (park-in-city + district-in-district, hashed entrances,
+  outskirts suppression preserved). Bumps: forest v2, park v4, farmland v3, city v2, wall v2 —
+  ALL goldens byte-identical (bumps are adoption gates; no-upstream identity paths proven per
+  consumer). Also FIXED a latent under-invalidation: contained park/district rings weren't
+  hashed into the city fingerprint (added as an appended-only-when-present bucket — park-free
+  cities see zero fp churn). 1050→1075 tests. Canal-as-moat deferred to 038 item 8.
 - **Plan 036 COMPLETE (engine)** (`0a5afa4`, `77b41ca`, `7f69968`, `e32b8a8`, `d26c3f1`):
   `terrainAt(x,y)` = grade(carve(replace(add(B)))), base default-flat ⇒ every campaign
   byte-stable until opted in. **Mountain migration BIT-EXACT to the float incl. signed zeros**
