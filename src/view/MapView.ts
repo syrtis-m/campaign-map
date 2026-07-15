@@ -1630,6 +1630,11 @@ export class MapView extends ItemView {
     });
     this.sketchController.activate(this.sketchKind);
     this.buildSketchBar();
+    // Default tool is the SELECTOR, not a draw kind (Jonah 2026-07-15): entering
+    // sketch mode should let a click edit an existing shape, not immediately arm
+    // the road pen. `sketchKind` is left untouched — it is the kind that draws
+    // once the GM picks a draw tool.
+    this.setSketchTool("select");
     // Capture phase so Escape / Cmd-Z reach us before MapLibre's canvas
     // handlers or Obsidian's global shortcuts can swallow them — Escape must
     // reliably leave sketch mode.
