@@ -913,10 +913,10 @@ export class MapController {
    * polygons) the city bridges/quays track (`indexConstraints` folds it in) —
    * and `settlement` — the generated `city-street` network the stage-4
    * peri-urban consumers read (urban-park entrances, farmland lane
-   * orientation). Vegetation stays declared-but-inert (a forest edit still
-   * recomputes the city byte-identically — an accepted over-invalidation);
-   * the wall's declared `settlement` consumption receives data its generator
-   * ignores until plan 037 wires it (byte-inert by construction).
+   * orientation). Plan 037 wired the remaining edges: `vegetation` — forest/park
+   * canopy MultiPolygons feeding the city's growth-cost attenuation + deep-canopy
+   * parcel rejection — and `water` for the wall (moat/masonry gap over the
+   * generated channel), alongside its `settlement` payload.
    *
    * Roles are params-aware (`dagRoleFor`, plan 035): an urban-park is a stage-4
    * settlement consumer while its rural siblings consume nothing wired.
@@ -944,7 +944,8 @@ export class MapController {
     const role = block ? dagRoleFor(algorithm, block.params) : algorithm;
     const wantWater = role.consumes.includes("water");
     const wantSettlement = role.consumes.includes("settlement");
-    if (!wantWater && !wantSettlement) return undefined;
+    const wantVegetation = role.consumes.includes("vegetation");
+    if (!wantWater && !wantSettlement && !wantVegetation) return undefined;
     const reach = MapController.CONSTRAINT_REACH;
     const rb = region.bbox;
     // Lower-stage producers of a wanted currency overlapping this region
@@ -958,7 +959,14 @@ export class MapController {
         const pRole = dagRoleFor(a, b.params);
         if (pRole.stage >= role.stage) return false;
         const produced = pRole.produces;
-        if (!((wantWater && produced.includes("water")) || (wantSettlement && produced.includes("settlement")))) return false;
+        if (
+          !(
+            (wantWater && produced.includes("water")) ||
+            (wantSettlement && produced.includes("settlement")) ||
+            (wantVegetation && produced.includes("vegetation"))
+          )
+        )
+          return false;
         const r = this.buildRegionFromFeature(f);
         if (!r) return false;
         const e = r.bbox;
@@ -969,6 +977,7 @@ export class MapController {
     let full: Map<string, CachedTile> | null = null;
     const water: GeoJSON.Feature[] = [];
     const settlement: GeoJSON.Feature[] = [];
+    const vegetation: GeoJSON.Feature[] = [];
     for (const up of upstreamFeatures) {
       const key = regionNetworkKey(up.id);
       let rec = cache?.get(key);
@@ -981,12 +990,16 @@ export class MapController {
         const gid = (f.properties as { generatorId?: string } | null)?.generatorId;
         if (wantWater && gid === "river-channel") water.push(f);
         else if (wantSettlement && gid === "city-street") settlement.push(f);
+        // Vegetation canopy (plan 037): forest + park canopy MultiPolygons feed
+        // the city's growth-cost attenuation + deep-canopy parcel rejection.
+        else if (wantVegetation && (gid === "forest-canopy" || gid === "park-canopy")) vegetation.push(f);
       }
     }
-    if (water.length === 0 && settlement.length === 0) return undefined;
+    if (water.length === 0 && settlement.length === 0 && vegetation.length === 0) return undefined;
     return {
       ...(water.length > 0 ? { water } : {}),
       ...(settlement.length > 0 ? { settlement } : {}),
+      ...(vegetation.length > 0 ? { vegetation } : {}),
     };
   }
 

@@ -278,9 +278,13 @@ describe("MapController — version pinning", () => {
 });
 
 describe("MapController — adoption lifecycle (pinned-old regions)", () => {
-  /** A pinned-old fixture: create at v1, then simulate a city bump to v2. */
+  /** A pinned-old fixture: stamp the block at v1 (override the current version
+   * DOWN before creation — city's real currentVersion is 2 as of plan 037), then
+   * simulate the bump to v2 so the region sits one version behind and the
+   * adoption flow engages. Keeps the v1→v2 literals below stable across bumps. */
   async function pinnedOldHost(): Promise<{ host: FakeHost; featureId: string }> {
     const host = cityHost();
+    host.controller.overrideCurrentVersionForTest("city", 1);
     const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
     host.controller.overrideCurrentVersionForTest("city", 2);
     return { host, featureId };
@@ -471,6 +475,7 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
 
   it("adoptAllRegions adopts every pinned-old region and reports the count", async () => {
     const host = cityHost();
+    host.controller.overrideCurrentVersionForTest("city", 1); // stamp the city block at v1 (real current is 2)
     const a = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "A");
     const FOREST_RING: [number, number][] = [
       [-30, 10],

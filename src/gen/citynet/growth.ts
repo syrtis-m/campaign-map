@@ -45,7 +45,8 @@ import { buildTensorField, sampleFieldAngle } from "../city/tensorField";
 import { chaikinSmooth } from "../city/corridor";
 import type { CityProfile } from "./profiles";
 import { CANON_RADIUS_M } from "./costField";
-import { makeCityness, type CitynessFn } from "./cityness";
+import { makeCityness, attenuateCitynessByCanopy, type CitynessFn } from "./cityness";
+import type { Field } from "../fields/sdf";
 import type { SkeletonOutput } from "./skeleton";
 import { StreetGraph, toLattice, toMeters, type GraphNode } from "./graph";
 
@@ -306,13 +307,19 @@ export function growNetwork(
   region: ProcgenRegion,
   profile: CityProfile,
   constraints: GenerationConstraints,
-  skeleton: SkeletonOutput
+  skeleton: SkeletonOutput,
+  canopy: Field | null = null
 ): { graph: StreetGraph; stats: GrowthStats } {
   const graph = new StreetGraph();
   const idx = indexConstraints(constraints);
   // Canon-bumped cityness: the GM's settlement pins pull density toward
-  // themselves.
-  const cityness = makeCityness(citySeed, region, constraints.canonFeatures ?? []);
+  // themselves; then ATTENUATED inside the generated canopy (plan 037) — streets
+  // thin in the woods. `canopy === null` (no upstream vegetation) is the
+  // identity wrap ⇒ byte-identical to the uncoupled city.
+  const cityness = attenuateCitynessByCanopy(
+    makeCityness(citySeed, region, constraints.canonFeatures ?? []),
+    canopy
+  );
   const heap = new CandidateHeap();
   const spacing = profile.segmentLen * SEED_SPACING_FACTOR;
 

@@ -21,6 +21,22 @@
 import { hashSeed, mulberry32 } from "../rng";
 import { valueNoise2D } from "../world/noise";
 import { interiorT, regionContains, type ProcgenRegion } from "../region";
+import type { Field } from "../fields/sdf";
+
+// ── Vegetation growth-cost coupling (plan 037, forest/park → city) ────────────
+// The generated canopy (`constraints.upstream.vegetation`, an SDF positive
+// inside) ATTENUATES cityness — streets thin and blocks coarsen in the woods (a
+// growth-cost multiplier), the town reading as a clearing. Attenuation ramps
+// with canopy depth to a floor; canopy is NEVER clipped (standing rejection —
+// the clearing is a paint-order read, not a hole in the forest).
+/** Canopy depth (m) at which the attenuation reaches its floor. */
+export const CANOPY_ATTEN_FULL_M = 60;
+/** Cityness multiplier floor deep inside canopy (streets never vanish entirely). */
+export const CANOPY_ATTEN_FLOOR = 0.25;
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
 
 /** Noise cell size (meters) — coarse enough to read as neighborhoods. */
 export const CITYNESS_NOISE_CELL_M = 260;
@@ -85,5 +101,24 @@ export function makeCityness(
       c += b.magnitude * s * s;
     }
     return c;
+  };
+}
+
+/**
+ * Wrap a cityness field so it is ATTENUATED inside the generated canopy (plan
+ * 037): `cityness'(p) = cityness(p) × canopyFactor(depth(p))`, where the factor
+ * is 1 outside the canopy and ramps to `CANOPY_ATTEN_FLOOR` at
+ * `CANOPY_ATTEN_FULL_M` of depth. `canopy === null` (no upstream vegetation)
+ * returns the base field UNCHANGED — the city stays byte-identical to the
+ * uncoupled generator (23-E). Pure; the factor is a closed form of the field.
+ */
+export function attenuateCitynessByCanopy(base: CitynessFn, canopy: Field | null): CitynessFn {
+  if (canopy === null) return base;
+  return (x, y) => {
+    const c = base(x, y);
+    const d = canopy(x, y); // > 0 inside the canopy
+    if (d <= 0) return c;
+    const factor = 1 - (1 - CANOPY_ATTEN_FLOOR) * clamp01(d / CANOPY_ATTEN_FULL_M);
+    return c * factor;
   };
 }

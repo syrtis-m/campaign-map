@@ -106,6 +106,28 @@ export function buildUpstreamWaterField(upstream: UpstreamArtifacts | undefined)
 }
 
 /**
+ * The upstream VEGETATION field (plan 037, forest/park canopy → city): POSITIVE
+ * inside the generated canopy, negative outside (`sdfPolygon`), unioned by MAX
+ * over every canopy ring. `null` when there is no upstream vegetation, so the
+ * city keeps its uncoupled bytes (the growth-cost attenuation + parcel rejection
+ * are no-ops). Same rebuild discipline as `buildUpstreamWaterField` — a `Field`
+ * reconstructed from the serialized rings alone, host and worker agree.
+ */
+export function buildUpstreamVegetationField(upstream: UpstreamArtifacts | undefined): Field | null {
+  const rings = buildUpstreamConstraints(upstream).vegetationRings;
+  if (rings.length === 0) return null;
+  const fields = rings.map((r) => sdfPolygon(r));
+  return (x, y): number => {
+    let max = -Infinity;
+    for (const f of fields) {
+      const d = f(x, y);
+      if (d > max) max = d;
+    }
+    return max;
+  };
+}
+
+/**
  * Plan 037 channel-exclusion helper: (x,y) is inside the generated river
  * channel iff the upstream water field is POSITIVE there (the `sdfPolygon`
  * convention, unioned by MAX in `buildUpstreamWaterField`). `field === null`

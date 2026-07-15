@@ -241,7 +241,15 @@ const CITY_PRESETS: readonly ProcgenPreset[] = [
 const cityAlgorithm: ProcgenAlgorithm = {
   id: "city",
   label: "City",
-  currentVersion: 1,
+  // Version 2 (plan 037): the declared `vegetation` consumption is WIRED — the
+  // generated canopy attenuates cityness (streets thin in the woods) and rejects
+  // parcels/footprints deep in the canopy (item 3); the outer city treats any
+  // strictly-CONTAINED park/district sketch ring as a hole with a perimeter
+  // frontage street + hashed entrances (item 5, `consumesSketch` park/district
+  // added there). A city with NO upstream vegetation AND no contained region is
+  // byte-identical to v1 (golden unchanged); either coupling present changes
+  // bytes ⇒ the bump gates adoption.
+  currentVersion: 2,
   appliesTo: ["district"],
   // Stage 3 (settlement): bridges over the meandered channel + a growth-cost
   // bump from canopy → consumes water + vegetation. Produces `settlement` for
@@ -252,6 +260,7 @@ const cityAlgorithm: ProcgenAlgorithm = {
   // Raw sketch reads: water/river (channel banks, bridges), road (street tensor
   // alignment — no distance cutoff, hence the 1500 m margin), wall (street
   // truncation, double-wall suppression), farmland (outskirt-field suppression).
+  // park/district join in plan 037 item 5 (contained-region holes).
   consumesSketch: ["water", "river", "road", "wall", "farmland"],
   influenceMargin: 1500,
   costClass: "expensive",

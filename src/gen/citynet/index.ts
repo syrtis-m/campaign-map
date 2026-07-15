@@ -43,7 +43,9 @@ import { extractBlocks, chamferRing } from "./faces";
 import { subdivideBlocks } from "./parcels";
 import { buildWards } from "./wards";
 import { buildOutskirts } from "./outskirts";
-import { makeCityness } from "./cityness";
+import { makeCityness, attenuateCitynessByCanopy } from "./cityness";
+import { buildUpstreamVegetationField } from "../upstream";
+import type { Field } from "../fields/sdf";
 
 // Package barrel: the host (MapView, generationService, worker, modal) imports
 // domain + profile helpers and types from `../citynet` directly.
@@ -61,6 +63,11 @@ type Pt = [number, number];
  * a paint binding, nor bound without a cache key.
  */
 export const DOMAIN_TILE_GENERATOR_IDS: readonly string[] = contractGids(CITY_STYLE_CONTRACT);
+
+/** Canopy depth (m) past which a parcel/footprint centroid is "deep in the
+ * wood" and rejected (plan 037, vegetation → city). Beyond the attenuation
+ * band so only genuinely enclosed lots drop — the town keeps its wooded fringe. */
+export const CANOPY_DENSE_M = 30;
 
 /** Form-based street width: the metre width emitted on a
  * `city-street` feature for its `roadClass`, read straight off the profile's
@@ -207,6 +214,13 @@ export function generateCityNetwork(
     }
   }
 
+  // Generated canopy (plan 037, forest/park → city): an SDF positive inside the
+  // upstream vegetation. null with no upstream ⇒ every coupled path below is an
+  // identity no-op (byte-identical uncoupled city). Streets thin in the woods
+  // (attenuated cityness) and parcels/footprints are rejected where the canopy
+  // is DENSE — the canopy itself is NEVER clipped (the town reads as a clearing
+  // through paint order, the standing rejection of "city clips canopy").
+  const canopy = buildUpstreamVegetationField(constraints.upstream);
   const cost = makeCostField(citySeed, region, effConstraints);
   const skel = buildSkeleton(citySeed, region, profile, effConstraints, cost, centerOverride);
   const features: GeoJSON.Feature[] = [];
@@ -352,7 +366,7 @@ export function generateCityNetwork(
   // Stage B: grow the street web off the skeleton, emit merged chains
   // (roadClass "street" or "alley" — chains never mix classes). Chain
   // keys are position-derived (endpoint node keys), never order-derived.
-  const { graph } = growNetwork(citySeed, region, profile, effConstraints, skel);
+  const { graph } = growNetwork(citySeed, region, profile, effConstraints, skel, canopy);
   // Axial breakthrough: profiles that opt in (haussmann, baroque-axial, and
   // na-grid+seamBoulevard) cut wide boulevards THROUGH the grown fabric here —
   // spliced planar into the graph as `boulevard`-class grown edges BEFORE
@@ -455,9 +469,28 @@ export function generateCityNetwork(
     });
   }
 
-  const cityness = makeCityness(citySeed, region, constraints.canonFeatures ?? []);
+  // Parcels read the SAME canopy-attenuated cityness as growth (coarser lots in
+  // the woods), and a parcel/footprint whose centroid sits in DENSE canopy is
+  // rejected outright (`deepInCanopy`) — buildings don't grow under a closed
+  // canopy. No upstream ⇒ identity wrap + `deepInCanopy` always false ⇒
+  // byte-identical.
+  const cityness = attenuateCitynessByCanopy(
+    makeCityness(citySeed, region, constraints.canonFeatures ?? []),
+    canopy
+  );
+  const deepInCanopy = (ring: Pt[]): boolean => {
+    if (canopy === null) return false;
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0; i < ring.length; i++) {
+      cx += ring[i][0];
+      cy += ring[i][1];
+    }
+    return canopy(cx / ring.length, cy / ring.length) >= CANOPY_DENSE_M;
+  };
   const { parcels, footprints } = subdivideBlocks(citySeed, shapedBlocks, profile, cityness);
   for (const p of parcels) {
+    if (deepInCanopy(p.ring)) continue; // no parcel deep in the wood (plan 037)
     const ring = [...p.ring, p.ring[0]];
     features.push({
       type: "Feature",
@@ -483,6 +516,7 @@ export function generateCityNetwork(
       cy += fp.ring[i][1];
     }
     if (blockedByWater(fabricIdx, cx / fp.ring.length, cy / fp.ring.length)) continue;
+    if (deepInCanopy(fp.ring)) continue; // buildings don't grow under a closed canopy (plan 037)
     const ring = [...fp.ring, fp.ring[0]];
     features.push({
       type: "Feature",
