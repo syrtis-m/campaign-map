@@ -83,22 +83,42 @@ function ringsOverlap(a: Pt[], b: Pt[]): boolean {
   return !ringsDisjoint(a, b);
 }
 
-/** The (closed) ring edge from `p` to `q` exists in `ring` (either direction),
- * endpoints matching within `eps`. */
-function ringHasEdge(ring: Pt[], p: Pt, q: Pt, eps: number): boolean {
-  const near = (a: Pt, b: Pt): boolean => Math.abs(a[0] - b[0]) <= eps && Math.abs(a[1] - b[1]) <= eps;
-  for (let i = 0; i < ring.length - 1; i++) {
-    const a = ring[i];
-    const b = ring[i + 1];
-    if ((near(a, p) && near(b, q)) || (near(a, q) && near(b, p))) return true;
-  }
-  return false;
-}
-
 /** Closed meter ring of a polygon def. */
 function ringM(id: string): Pt[] {
   const open = metersOf(id);
   return [...open, open[0]];
+}
+
+/** Index of an EXACT vertex (corner anchor) in an open ring, else −1. */
+function vertexIndex(openRing: Pt[], p: Pt): number {
+  for (let i = 0; i < openRing.length; i++) if (openRing[i][0] === p[0] && openRing[i][1] === p[1]) return i;
+  return -1;
+}
+
+/**
+ * The vertex run of the DIRECT (shorter-arc) edge between two corner anchors `a`
+ * and `b` of a closed ring, normalized to a→b order (so the SAME shared edge read
+ * from two rings that traverse it in opposite directions compares deep-equal).
+ * This is how the organic-boundary premises assert a shared edge is bit-identical
+ * on both rings — the endpoint-keyed jitter guarantees identical inserted vertices.
+ */
+function edgeRun(ringClosed: Pt[], a: Pt, b: Pt): Pt[] {
+  const open = ringClosed.slice(0, -1); // drop the closing duplicate
+  const n = open.length;
+  const ia = vertexIndex(open, a);
+  const ib = vertexIndex(open, b);
+  if (ia < 0 || ib < 0) throw new Error(`edgeRun: corner not found (${a} / ${b})`);
+  const fwd: Pt[] = [];
+  for (let k = ia; ; k = (k + 1) % n) {
+    fwd.push(open[k]);
+    if (k === ib) break;
+  }
+  const bwd: Pt[] = [];
+  for (let k = ia; ; k = (k - 1 + n) % n) {
+    bwd.push(open[k]);
+    if (k === ib) break;
+  }
+  return fwd.length <= bwd.length ? fwd : bwd;
 }
 
 /** A polygon region built from a def's meter ring (as the host would). */
@@ -193,9 +213,10 @@ describe("vailmarch — validity", () => {
     expect(count("river")).toBeGreaterThanOrEqual(4);
     expect(count("wall")).toBeGreaterThanOrEqual(3);
     expect(count("road")).toBeGreaterThanOrEqual(3);
-    expect(count("relief")).toBeGreaterThanOrEqual(1);
+    // Terrain is RELIEF/LANDFORM stamps only — the ruling retired mountain polygons.
+    expect(count("relief")).toBeGreaterThanOrEqual(4); // Marchspine + Cairn/Haward arms + Vail valley
     expect(count("landform")).toBeGreaterThanOrEqual(1);
-    expect(count("mountain")).toBeGreaterThanOrEqual(1);
+    expect(count("mountain")).toBe(0);
     expect(count("park")).toBeGreaterThanOrEqual(2);
   });
 });
@@ -229,13 +250,15 @@ describe("vailmarch — premises (meters)", () => {
     expect(pointInRingClosed(CAPITAL, market.point[0], market.point[1])).toBe(true);
   });
 
-  it("Twinbridge + Eastwool share their full common edge exactly (ε = 0), interiors disjoint", () => {
+  it("Twinbridge + Eastwool share their organic common edge exactly (ε = 0), interiors disjoint", () => {
     const a = ringM("vm-district-twin-a");
     const b = ringM("vm-district-twin-b");
     const p: Pt = [2100, -800];
     const q: Pt = [2100, -100];
-    expect(ringHasEdge(a, p, q, 0)).toBe(true);
-    expect(ringHasEdge(b, p, q, 0)).toBe(true);
+    // The shared edge is an IRREGULAR polyline (corners + seeded jitter), yet it is
+    // bit-identical on both rings — the endpoint-keyed jitter is the 038 stub demo.
+    expect(edgeRun(a, p, q)).toEqual(edgeRun(b, p, q));
+    expect(edgeRun(a, p, q).length).toBeGreaterThan(2); // truly irregular, not a bare segment
     expect(polylineRingCrossings(a, b)).toBe(0);
     // No twin-b vertex strictly inside twin-a (adjacency, never overlap).
     for (const [x, y] of b.slice(0, -1)) expect(signedDistancePolygon(a, x, y)).toBeLessThanOrEqual(1e-9);
@@ -248,35 +271,45 @@ describe("vailmarch — premises (meters)", () => {
     const dE = distanceToPolyline(VAIL, east[east.length - 1][0], east[east.length - 1][1]);
     expect(dN).toBeLessThanOrEqual(30);
     expect(dE).toBeLessThanOrEqual(30);
-    // Torrent Beck rises inside the east massif (so it reads terrain).
-    expect(pointInRingClosed(ringM("vm-massif-east"), north[0][0], north[0][1])).toBe(true);
+    // Torrent Beck rises in the raised head of the valley — its source sits within
+    // the Marchspine ridge's half-width (600 m), so it reads real relief.
+    expect(distanceToPolyline(metersOf("vm-relief-spine"), north[0][0], north[0][1])).toBeLessThanOrEqual(600);
   });
 
-  it("forests/farms overlap the mountains and rivers the demo pairs them with", () => {
-    expect(ringsOverlap(ringM("vm-forest-spine"), ringM("vm-massif-west"))).toBe(true);
-    expect(ringsOverlap(ringM("vm-farm-paddy"), ringM("vm-massif-west"))).toBe(true);
-    expect(ringsOverlap(ringM("vm-farm-flank"), ringM("vm-massif-east"))).toBe(true);
+  it("the relief spurs thread the wood/paddy/pasture, and rivers cross the farms/forests they pair with", () => {
+    const westSpur = metersOf("vm-relief-west-spur");
+    const eastSpur = metersOf("vm-relief-east-spur");
+    // The Cairn Arm runs through Cairnwood AND the Cairnfoot paddy (a spine vertex
+    // inside each) — the relief that drives the timberline + the paddy contours.
+    expect(westSpur.some(([x, y]) => pointInRingClosed(ringM("vm-forest-spine"), x, y))).toBe(true);
+    expect(westSpur.some(([x, y]) => pointInRingClosed(ringM("vm-farm-paddy"), x, y))).toBe(true);
+    // The Haward Arm runs through the Hoarfell pasture (its slope-gate driver).
+    expect(eastSpur.some(([x, y]) => pointInRingClosed(ringM("vm-farm-flank"), x, y))).toBe(true);
     // Riparian forest + riverine farm sit over their rivers (spine crosses ring).
     expect(polylineRingCrossings(VAIL, ringM("vm-forest-riparian"))).toBeGreaterThanOrEqual(1);
     expect(polylineRingCrossings(metersOf("vm-river-marn"), ringM("vm-farm-riverine"))).toBeGreaterThanOrEqual(1);
   });
 
-  it("hedgerow adjacencies: Hollowbrake shares edges with Merewood Common and the crofts", () => {
+  it("hedgerow adjacencies: Hollowbrake shares organic edges with Merewood Common and the crofts (bit-identical, within HEDGE_ADJ_EPS)", () => {
     const forest = ringM("vm-forest-hedge");
     const park = ringM("vm-park-rural");
     const croft = ringM("vm-farm-hedge");
-    // Forest east edge x=-600, y∈[-2100,-1550] == park west edge; forest north
-    // edge y=-1550 == croft south edge.
-    expect(ringHasEdge(forest, [-600, -2100], [-600, -1550], 0)).toBe(true);
-    expect(ringHasEdge(park, [-600, -2100], [-600, -1550], 0)).toBe(true);
-    expect(ringHasEdge(forest, [-1200, -1550], [-600, -1550], 0)).toBe(true);
-    expect(ringHasEdge(croft, [-1200, -1550], [-600, -1550], 0)).toBe(true);
+    // Forest east edge (−600, −2100)→(−600, −1550) == park west edge; forest north
+    // edge (−1200, −1550)→(−600, −1550) == croft south edge. Each shared edge is an
+    // irregular polyline, IDENTICAL on both rings (ε = 0 ≤ HEDGE_ADJ_EPS), so the
+    // symmetric hedgerow operator fires from either side.
+    expect(edgeRun(forest, [-600, -2100], [-600, -1550])).toEqual(edgeRun(park, [-600, -2100], [-600, -1550]));
+    expect(edgeRun(forest, [-1200, -1550], [-600, -1550])).toEqual(edgeRun(croft, [-1200, -1550], [-600, -1550]));
   });
 
-  it("peri-urban belts share their city's edge; the East Road pierces the capital and reaches Twinbridge", () => {
-    expect(ringHasEdge(CAPITAL, [-1950, -150], [-1050, -150], 0)).toBe(true);
-    expect(ringHasEdge(ringM("vm-farm-capital-belt"), [-1950, -150], [-1050, -150], 0)).toBe(true);
-    expect(ringHasEdge(ringM("vm-farm-twin-belt"), [1500, -800], [2100, -800], 0)).toBe(true);
+  it("peri-urban belts share their city's organic edge; the East Road pierces the capital and reaches Twinbridge", () => {
+    // The belt's north edge is the capital's south edge, bit-identical (organic).
+    expect(edgeRun(CAPITAL, [-1950, -150], [-1050, -150])).toEqual(
+      edgeRun(ringM("vm-farm-capital-belt"), [-1950, -150], [-1050, -150])
+    );
+    expect(edgeRun(ringM("vm-district-twin-a"), [1500, -800], [2100, -800])).toEqual(
+      edgeRun(ringM("vm-farm-twin-belt"), [1500, -800], [2100, -800])
+    );
     const road = metersOf("vm-road-highway");
     expect(polylineRingCrossings(road, CAPITAL)).toBe(2); // enters + leaves ⇒ forced gates
     expect(road.some(([x, y]) => pointInRingClosed(ringM("vm-district-twin-a"), x, y))).toBe(true);
@@ -291,8 +324,9 @@ describe("vailmarch — premises (meters)", () => {
       for (let j = 0; j < VAIL.length - 1; j++)
         if (segmentsIntersect(wall[i], wall[i + 1], VAIL[j], VAIL[j + 1])) crosses = true;
     expect(crosses).toBe(true);
-    expect(ringHasEdge(ringM("vm-district-coast"), [-2900, -1750], [-2900, -1200], 0)).toBe(true);
-    expect(ringHasEdge(ringM("vm-landform-sea"), [-2900, -2600], [-2900, 2600], 0)).toBe(true);
+    // Saltmere's west fringe reaches into the Cold Reach sea landform (overlap —
+    // robust to both rings' organic jitter, no fragile shared-edge premise).
+    expect(ringsOverlap(ringM("vm-district-coast"), ringM("vm-landform-sea"))).toBe(true);
   });
 
   it("every location pin sits inside the campaign bounds", () => {
@@ -353,9 +387,10 @@ describe("gen-proof · riverine farmland long-lots + water meadows (Marnside Str
   });
 });
 
-describe("gen-proof · forest terrain reading (Cairnwood over the Cairn Fells)", () => {
-  const massif = sketchM("vm-massif-west");
-  const coupled = generate("vm-forest-spine", { fabricFeatures: [massif] });
+describe("gen-proof · forest terrain reading (Cairnwood over the Cairn Arm ridge)", () => {
+  // No mountain polygon — the timberline reads a RELIEF ridge spur (the ruling).
+  const spur = sketchM("vm-relief-west-spur");
+  const coupled = generate("vm-forest-spine", { fabricFeatures: [spur] });
   const uncoupled = generate("vm-forest-spine");
 
   const trees = (feats: GeoJSON.Feature[]): Pt[] =>
@@ -365,8 +400,8 @@ describe("gen-proof · forest terrain reading (Cairnwood over the Cairn Fells)",
       .filter((f) => (f.properties as { standConifer?: boolean }).standConifer === true)
       .map((f) => (f.geometry as GeoJSON.Point).coordinates as Pt);
 
-  // Region-relative elevation, the way the generator reads it.
-  const terrain = macroTerrainField([massif])!;
+  // Region-relative elevation, the way the generator reads it (macro field, relief).
+  const terrain = macroTerrainField([spur])!;
   const ring = metersOf("vm-forest-spine");
   let eMin = Infinity;
   let eMax = -Infinity;
@@ -380,11 +415,11 @@ describe("gen-proof · forest terrain reading (Cairnwood over the Cairn Fells)",
     }
   const rel = (p: Pt): number => (terrain(p[0], p[1]).v - eMin) / (eMax - eMin);
 
-  it("the massif yields real relief inside the wood", () => {
+  it("the relief spur yields real relief inside the wood", () => {
     expect(eMax - eMin).toBeGreaterThan(50);
   });
 
-  it("an overlapping mountain couples the wood (coupled ≠ uncoupled)", () => {
+  it("the overlapping relief ridge couples the wood (coupled ≠ uncoupled)", () => {
     expect(JSON.stringify(coupled)).not.toBe(JSON.stringify(uncoupled));
   });
 
@@ -399,6 +434,41 @@ describe("gen-proof · forest terrain reading (Cairnwood over the Cairn Fells)",
     const c = conifers(coupled);
     expect(c.length).toBeGreaterThan(0);
     for (const p of c) expect(rel(p)).toBeGreaterThanOrEqual(0.5 - 1e-6);
+  });
+});
+
+describe("gen-proof · relief slope leaves pasture (Hoarfell on the Haward Arm, no mountain)", () => {
+  // The flank farmland slope-gates on the Haward Arm ridge: steep relief ground is
+  // left as untilled pasture. Pattern from terrainStampCoupling.test.ts.
+  const spur = sketchM("vm-relief-east-spur");
+  const pastureCount = (feats: GeoJSON.Feature[]): number =>
+    feats.filter((f) => (f.properties as { pasture?: boolean }).pasture === true).length;
+
+  it("steep relief ground is untilled pasture; the flat control has none", () => {
+    const coupled = generate("vm-farm-flank", { fabricFeatures: [spur] });
+    const flat = generate("vm-farm-flank");
+    expect(pastureCount(flat)).toBe(0);
+    expect(pastureCount(coupled)).toBeGreaterThan(0);
+  });
+
+  it("a disjoint relief ridge is byte-identical (variable support: past halfWidth ⇒ inert)", () => {
+    const bare = JSON.stringify(generate("vm-farm-flank"));
+    // The far Cairn Arm is > 2 km from the flank, well past its 500 m half-width.
+    expect(JSON.stringify(generate("vm-farm-flank", { fabricFeatures: [sketchM("vm-relief-west-spur")] }))).toBe(bare);
+  });
+});
+
+describe("gen-proof · paddy terraces read relief contours (Cairnfoot on the Cairn Arm, no mountain)", () => {
+  // The paddy terraces trace contour banks over the composed relief field — driven
+  // by the Cairn Arm ridge, not a mountain polygon.
+  const spur = sketchM("vm-relief-west-spur");
+  const banks = (feats: GeoJSON.Feature[]): number => ofGid(feats, "farm-bank").length;
+
+  it("the relief spur mints contour-following terrace banks; coupled ≠ the flat control", () => {
+    const coupled = generate("vm-farm-paddy", { fabricFeatures: [spur] });
+    const flat = generate("vm-farm-paddy");
+    expect(banks(coupled)).toBeGreaterThan(0);
+    expect(JSON.stringify(coupled)).not.toBe(JSON.stringify(flat));
   });
 });
 
@@ -435,7 +505,10 @@ describe("gen-proof · market pin anchors the plaza (Vailmarch Market)", () => {
 });
 
 describe("gen-proof · adjacent districts derive bit-matching shared-edge gates (Twinbridge/Eastwool)", () => {
-  const onSharedEdge = (p: Pt): boolean => Math.abs(p[0] - 2100) < 1 && p[1] >= -800 - 1 && p[1] <= -100 + 1;
+  // The shared edge is now an ORGANIC polyline (identical on both rings); a gate is
+  // "on it" when it sits within a couple of meters of that polyline.
+  const sharedEdge = edgeRun(ringM("vm-district-twin-a"), [2100, -800], [2100, -100]);
+  const onSharedEdge = (p: Pt): boolean => distanceToPolyline(sharedEdge, p[0], p[1]) < 2;
   const sharedGates = (net: GeoJSON.Feature[]): Pt[] =>
     net
       .filter((f) => f.geometry.type === "Point" && (f.properties as { type?: string })?.type === "gate")

@@ -6,12 +6,16 @@
  * `scripts/emit-vailmarch-campaign.ts` — regenerate with
  * `npx tsx scripts/emit-vailmarch-campaign.ts`).
  *
- * A river-valley march: coastal lowland + sea in the WEST, a mountain spine
- * across the NORTH, a raised plateau in the EAST, a lake basin in the SOUTH. The
- * river Vail rises in the spine, carves a gorge through the ridge, and runs to
- * the coast gathering two tributaries; cities, walls, roads, farms, forests and
- * parks pile up along it with heavy overlap — every feature touches at least one
- * other system so the demo shows everything working together.
+ * A river-valley march: coastal lowland + sea in the WEST, a relief SPINE (ridge
+ * add-stamps, NO mountain polygons — ruling 2026-07-15: a mountain is just one
+ * stamp kind of the global terrain field) across the NORTH with two arms reaching
+ * south, a raised plateau in the EAST, a lake basin in the SOUTH. The river Vail
+ * rises in the spine, carves a gorge through the ridge, and runs to the coast
+ * gathering two tributaries; cities, walls, roads, farms, forests and parks pile
+ * up along it with heavy overlap — every feature touches at least one other
+ * system so the demo shows everything working together. Terrain is GLOBAL: base
+ * fBm (persisted `terrain` block) + relief/landform stamps drive the forest
+ * timberline, the flank pasture, and the paddy terraces — no polygon massifs.
  *
  * COORDINATE SPACES (the load-bearing convention). Unlike `overlapMap` (which
  * authors in map units), Vailmarch authors its single geometry source in
@@ -32,7 +36,8 @@
  */
 import type { FabricCollection, FabricFeature, FabricKind, ProcgenBlock } from "../../model/fabric";
 import { algorithmById } from "../procgen/registry";
-import { hashSeed } from "../rng";
+import { hashSeed, mulberry32 } from "../rng";
+import { q } from "../waterEmit";
 
 type Pt = [number, number];
 
@@ -45,16 +50,95 @@ export const VAILMARCH_SCALE_M_PER_UNIT = 500;
 export const VAILMARCH_BOUNDS: readonly [number, number, number, number] = [-9, -6, 8, 6];
 /** Campaign id notes reference in `map:` frontmatter. */
 export const VAILMARCH_MAP_ID = "vailmarch";
-/** Non-zero base amplitude the demo WOULD ship with if base params were
- * persistable (they are not — see the report; the campaign shows terrain ON via
- * the mountain/relief/landform/carve stamps, which ARE persisted and drive
- * `terrainAt`). Exported so the terrain tests can exercise a non-flat base. */
+/** The campaign base-terrain params the demo ships with — persisted into
+ * `Vailmarch.map.md`'s `terrain:` frontmatter block (plan 036-D), so the host
+ * threads them to every terrain consumer and the DEM. `campAmp > 0` ⇒ the base
+ * fBm is ON: continental relief EVERYWHERE, on top of which the relief/landform
+ * stamps (and the Vail's carve) add the dramatic local terrain. Exported so the
+ * emitter writes the same numbers the terrain tests exercise. */
 export const VAILMARCH_BASE = { campAmp: 220, seaDatum: 0 } as const;
 
 /** Close an open ring (append the first vertex). */
 function closed(open: Pt[]): Pt[] {
   return [...open.map((p): Pt => [p[0], p[1]]), [open[0][0], open[0][1]]];
 }
+
+// ─── Organic boundaries (shortlist item 4) ───────────────────────────────────
+// Every polygon ring ships as an IRREGULAR polyline, never an axis-aligned box:
+// corners are kept EXACT (stable anchors a premise test can find), and each edge
+// gets a handful of intermediate vertices displaced perpendicular by deterministic
+// seeded noise (mm-quantized). The jitter is keyed PURELY on the edge's two
+// endpoints (canonicalized so orientation doesn't matter) + the campaign seed, so
+// a boundary SHARED by two rings (the twins' common edge, a belt/city edge, a
+// forest/farm hedgerow edge) is bit-identical from either side WITHOUT any manual
+// "irregularize once" bookkeeping — same endpoints ⇒ same key ⇒ same points. The
+// perpendicular offset tapers to 0 at both endpoints (sin bump), so corners stay
+// exact and adjacent edges join cleanly.
+
+/** Deterministic jitter points inserted along the edge a→b (endpoints EXCLUDED),
+ * in a→b traversal order. Keyed on the canonical (endpoint-sorted) edge so a
+ * shared edge yields the identical vertices from either ring. */
+function jitterEdge(a: Pt, b: Pt): Pt[] {
+  // Canonical endpoint order (orientation-independent): a shared edge hashes the
+  // same key and generates the same sequence regardless of traversal direction.
+  const forward = a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]);
+  const p0 = forward ? a : b;
+  const p1 = forward ? b : a;
+  const dx = p1[0] - p0[0];
+  const dy = p1[1] - p0[1];
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return [];
+  const segments = Math.max(2, Math.min(5, Math.round(len / 280)));
+  const amp = Math.min(len * 0.05, 24); // meters; bounded so premises hold (park margin, ring crossings)
+  const ux = -dy / len; // unit perpendicular
+  const uy = dx / len;
+  const rng = mulberry32(hashSeed(VAILMARCH_CAMPAIGN_SEED, "vm-edge", p0[0], p0[1], p1[0], p1[1]));
+  const pts: Pt[] = [];
+  for (let i = 1; i < segments; i++) {
+    const t = i / segments;
+    const taper = Math.sin(Math.PI * t); // 0 at both ends, 1 at the midpoint
+    const off = (rng() * 2 - 1) * amp * taper;
+    pts.push([q(p0[0] + dx * t + ux * off), q(p0[1] + dy * t + uy * off)]);
+  }
+  return forward ? pts : pts.reverse();
+}
+
+/** The irregular OPEN ring of a corner list: each exact corner, followed by that
+ * edge's jittered intermediate vertices. Deterministic; shared edges match by
+ * construction (endpoint-keyed jitter). */
+function irregularOpenRing(corners: Pt[]): Pt[] {
+  const out: Pt[] = [];
+  const n = corners.length;
+  for (let i = 0; i < n; i++) {
+    const a = corners[i];
+    const b = corners[(i + 1) % n];
+    out.push([a[0], a[1]]);
+    for (const p of jitterEdge(a, b)) out.push(p);
+  }
+  return out;
+}
+
+/** A ring scaled toward its centroid by `factor` (< 1 shrinks it inward). Traced
+ * walls use this to sit JUST INSIDE the district boundary — a real city wall runs
+ * inside its ring, and (load-bearing) the inset makes generated arterials, which
+ * terminate ON the district ring, CROSS the wall transversally so the wall opens
+ * a bearing'd gatehouse where each exits (a coincident wall only endpoint-grazes,
+ * which floating-point jitter defeats). The wall still traces the ring's organic
+ * SHAPE point-for-point, only offset inward. */
+function scaledTowardCentroid(open: Pt[], factor: number): Pt[] {
+  let cx = 0;
+  let cy = 0;
+  for (const [x, y] of open) {
+    cx += x;
+    cy += y;
+  }
+  cx /= open.length;
+  cy /= open.length;
+  return open.map((p): Pt => [q(cx + (p[0] - cx) * factor), q(cy + (p[1] - cy) * factor)]);
+}
+
+/** Inward inset applied to a wall that traces a district ring (see above). */
+const WALL_TRACE_INSET = 0.94;
 
 // ─── Geometry definition table (METERS) ──────────────────────────────────────
 // The single source of truth. `poly` coords are an OPEN ring; `line` coords are
@@ -66,8 +150,14 @@ interface RegionDef {
   kind: FabricKind;
   name: string;
   shape: "poly" | "line";
-  /** METERS (generation space). */
+  /** METERS (generation space). For a `poly` these are the EXACT ring CORNERS
+   * (the emitted ring is `irregularOpenRing(coords)`); for a `line` these are the
+   * polyline vertices verbatim (rivers/relief spines/roads never irregularize). */
   coords: Pt[];
+  /** A wall that TRACES another region's ring: its emitted polyline is the traced
+   * region's IRREGULAR closed ring, so the wall follows the organic district
+   * boundary point-for-point (`coords` is then just a fallback, unused). */
+  traces?: string;
   algorithm?: string;
   params?: Record<string, unknown>;
   presetId?: string;
@@ -99,22 +189,6 @@ const TWIN_B_RING: Pt[] = [
   [2700, -100],
   [2100, -100],
 ];
-/** West massif (mountain) — the spine forest climbs it (timberline) and the
- * paddy terraces read its contours. */
-const MASSIF_WEST_RING: Pt[] = [
-  [-2000, 1850],
-  [-800, 1850],
-  [-750, 2750],
-  [-1950, 2750],
-];
-/** East massif (mountain) — the mountain-torrent tributary rises in it and the
- * flank pasture slope-gates on it. */
-const MASSIF_EAST_RING: Pt[] = [
-  [850, 1900],
-  [2050, 1950],
-  [2000, 2800],
-  [800, 2750],
-];
 /** The river Vail (main trunk), source (spine) → mouth (coast). Vertex[2]
  * (-800,1500) is the north-tributary confluence; vertex[5] (-1900,-200) is the
  * east-tributary confluence. Crosses the relief ridge (gorge) between [0] and
@@ -131,15 +205,46 @@ const VAIL_SPINE: Pt[] = [
 ];
 
 const DEFS: RegionDef[] = [
-  // ── TERRAIN: relief ridge/valley (add-stamps) ──────────────────────────────
+  // ── TERRAIN: relief ridge/valley (add-stamps) — the ONLY elevation now; no
+  //    mountain polygons (ruling 2026-07-15). The main Marchspine ridge runs E–W
+  //    across the north (~900 m); two arms reach south (~800/750 m): the Cairn Arm
+  //    through Cairnwood + the paddy terraces, the Haward Arm through the flank
+  //    pasture — so the forest timberline, the paddy contours, and the pasture
+  //    slope-gate all read RELIEF, plus the Torrent's source sits in raised ground.
   {
     id: "vm-relief-spine",
     kind: "relief",
     name: "The Marchspine",
     shape: "line",
-    coords: [[-3600, 2100], [-2000, 2350], [-500, 2500], [1200, 2400], [3200, 2050]],
+    coords: [[-3600, 2400], [-2000, 2550], [-500, 2650], [1200, 2500], [3200, 2250]],
+    // `apron` (parallel agent's foothill param): the grand range's peaks rise out
+    // of a wide foothill skirt rather than a mesa wall (make-it-look-real item 2).
     algorithm: "relief",
-    params: { polarity: "ridge", height: 350, halfWidth: 500 },
+    params: { polarity: "ridge", height: 1000, halfWidth: 600, apron: 500 },
+    presetId: "ridge",
+  },
+  {
+    // Cairn Arm — a ridge spur reaching south off the Marchspine, running through
+    // Cairnwood (timberline gradient) and down into the Cairnfoot paddy (contours).
+    id: "vm-relief-west-spur",
+    kind: "relief",
+    name: "Cairn Arm",
+    shape: "line",
+    coords: [[-1550, 2650], [-1500, 2150], [-1500, 1650]],
+    algorithm: "relief",
+    params: { polarity: "ridge", height: 800, halfWidth: 500, apron: 300 },
+    presetId: "ridge",
+  },
+  {
+    // Haward Arm — the eastern spur; its south slope drives the Hoarfell pasture
+    // slope-gate and lifts the Torrent Beck source.
+    id: "vm-relief-east-spur",
+    kind: "relief",
+    name: "Haward Arm",
+    shape: "line",
+    coords: [[1400, 2500], [1400, 2000], [1400, 1550]],
+    algorithm: "relief",
+    params: { polarity: "ridge", height: 750, halfWidth: 500, apron: 300 },
     presetId: "ridge",
   },
   {
@@ -151,27 +256,6 @@ const DEFS: RegionDef[] = [
     algorithm: "relief",
     params: { polarity: "valley", height: 150, halfWidth: 380 },
     presetId: "valley",
-  },
-  // ── TERRAIN: mountains (elevation field — the ONLY relief generators read) ──
-  {
-    id: "vm-massif-west",
-    kind: "mountain",
-    name: "Cairn Fells",
-    shape: "poly",
-    coords: MASSIF_WEST_RING,
-    algorithm: "mountain",
-    params: { terrain: "alpine", amplitude: 0.85, roughness: 0.6 },
-    presetId: "alpine",
-  },
-  {
-    id: "vm-massif-east",
-    kind: "mountain",
-    name: "Haward Horn",
-    shape: "poly",
-    coords: MASSIF_EAST_RING,
-    algorithm: "mountain",
-    params: { terrain: "alpine", amplitude: 0.8, roughness: 0.55 },
-    presetId: "alpine",
   },
   // ── TERRAIN: landform replace-stamps (plateau / basin / sea) ────────────────
   {
@@ -284,7 +368,10 @@ const DEFS: RegionDef[] = [
     kind: "district",
     name: "Saltmere",
     shape: "poly",
-    coords: [[-2900, -1750], [-2400, -1750], [-2400, -1200], [-2900, -1200]],
+    // Its west fringe reaches INTO the Cold Reach sea landform (the harbour laps
+    // the water) — an overlap the "coastal town touches the sea" premise asserts,
+    // robust to both rings' organic jitter.
+    coords: [[-2950, -1750], [-2400, -1750], [-2400, -1200], [-2950, -1200]],
     algorithm: "city",
     params: { profile: "na-grid" },
     presetId: "na-grid",
@@ -298,6 +385,7 @@ const DEFS: RegionDef[] = [
     name: "Vailmarch Wall",
     shape: "line",
     coords: closed(CAPITAL_RING),
+    traces: "vm-district-capital",
     algorithm: "wall",
     params: { style: "curtain-wall", towerSpacing: 70, moat: true, gatehouseScale: 1 },
     presetId: "curtain-wall",
@@ -308,6 +396,7 @@ const DEFS: RegionDef[] = [
     name: "Twinbridge Rampart",
     shape: "line",
     coords: closed(TWIN_A_RING),
+    traces: "vm-district-twin-a",
     algorithm: "wall",
     params: { style: "bastioned", towerSpacing: 90, moat: true, gatehouseScale: 1.4 },
     presetId: "bastioned",
@@ -357,7 +446,9 @@ const DEFS: RegionDef[] = [
     kind: "park",
     name: "Kingsmoot Green",
     shape: "poly",
-    coords: [[-1850, 300], [-1500, 300], [-1500, 600], [-1850, 600]],
+    // Kept well clear of the capital ring (≥100 m base gap on every side) so that
+    // both rings' organic jitter can never push the nested-park margin under 30 m.
+    coords: [[-1850, 300], [-1520, 300], [-1520, 540], [-1850, 540]],
     algorithm: "park",
     params: { variety: "urban-park", pathDensity: 0.5, pond: true },
     presetId: "urban-park",
@@ -375,7 +466,7 @@ const DEFS: RegionDef[] = [
   },
   // ── FORESTS ──────────────────────────────────────────────────────────────────
   {
-    // Climbs the west massif → timberline thinning + conifer-upslope stands.
+    // Climbs the Cairn Arm ridge → timberline thinning + conifer-upslope stands.
     id: "vm-forest-spine",
     kind: "forest",
     name: "Cairnwood",
@@ -465,7 +556,7 @@ const DEFS: RegionDef[] = [
     presetId: "open-field-strips",
   },
   {
-    // Over the east massif's south slope → slope-gated pasture.
+    // On the Haward Arm's south slope → relief slope-gated pasture.
     id: "vm-farm-flank",
     kind: "farmland",
     name: "Hoarfell Pasture",
@@ -476,7 +567,7 @@ const DEFS: RegionDef[] = [
     presetId: "enclosed-patchwork",
   },
   {
-    // Over the west massif's south slope → paddy terraces reading the contours.
+    // On the Cairn Arm's south slope → paddy terraces reading the relief contours.
     id: "vm-farm-paddy",
     kind: "farmland",
     name: "Cairnfoot Terraces",
@@ -517,9 +608,15 @@ export function seedFor(id: string): number {
   return hashSeed(VAILMARCH_CAMPAIGN_SEED, id);
 }
 
-/** The METER geometry of a def (open ring for polygons, polyline for lines). */
+/** The emitted METER geometry of a def: for a `poly`, the IRREGULAR open ring
+ * (corners + seeded edge jitter); for a `line`, the polyline verbatim, except a
+ * wall with `traces`, which returns the traced region's irregular CLOSED ring so
+ * the wall follows the organic district boundary point-for-point. */
 export function metersOf(id: string): Pt[] {
-  return defById(id).coords.map((p): Pt => [p[0], p[1]]);
+  const def = defById(id);
+  if (def.shape === "poly") return irregularOpenRing(def.coords);
+  if (def.traces) return closed(scaledTowardCentroid(irregularOpenRing(defById(def.traces).coords), WALL_TRACE_INSET));
+  return def.coords.map((p): Pt => [p[0], p[1]]);
 }
 
 /** Build the procgen block for a def: seed from the locked convention, version
@@ -543,12 +640,15 @@ function toUnits(p: Pt): Pt {
   return [p[0] / VAILMARCH_SCALE_M_PER_UNIT, p[1] / VAILMARCH_SCALE_M_PER_UNIT];
 }
 
-/** One fabric feature (MAP-UNIT coordinates; procgen PARAMS stay meters). */
+/** One fabric feature (MAP-UNIT coordinates; procgen PARAMS stay meters). The
+ * geometry is the def's EMITTED meter geometry (`metersOf` — irregular ring for a
+ * poly, traced ring for a wall) scaled to units. */
 function fabricFeatureOf(def: RegionDef): FabricFeature {
+  const meters = metersOf(def.id);
   const geometry: FabricFeature["geometry"] =
     def.shape === "poly"
-      ? { type: "Polygon", coordinates: [closed(def.coords).map(toUnits)] }
-      : { type: "LineString", coordinates: def.coords.map(toUnits) };
+      ? { type: "Polygon", coordinates: [closed(meters).map(toUnits)] }
+      : { type: "LineString", coordinates: meters.map(toUnits) };
   return {
     type: "Feature",
     id: def.id,
@@ -573,10 +673,11 @@ export function buildVailmarchFabric(): FabricCollection {
  * constraints from THIS. */
 export function buildVailmarchFabricMeters(): FabricFeature[] {
   return DEFS.map((def) => {
+    const meters = metersOf(def.id);
     const geometry: FabricFeature["geometry"] =
       def.shape === "poly"
-        ? { type: "Polygon", coordinates: [closed(def.coords)] }
-        : { type: "LineString", coordinates: def.coords.map((p): Pt => [p[0], p[1]]) };
+        ? { type: "Polygon", coordinates: [closed(meters)] }
+        : { type: "LineString", coordinates: meters };
     return {
       type: "Feature",
       id: def.id,
