@@ -469,7 +469,7 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
     const adopted = await reopened.controller.adoptRegion(river.featureId);
     expect(adopted).toBe(true);
     const block = (await reopened.fabric()).features.find((f) => f.id === river.featureId)!.properties.procgen!;
-    expect(block.version).toBe(2);
+    expect(block.version).toBe(algorithmById("river")!.currentVersion);
     expect(reopened.controller.generatorRunCount).toBeGreaterThan(0);
   });
 
@@ -483,6 +483,7 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
       [-14, 26],
       [-30, 26],
     ];
+    host.controller.overrideCurrentVersionForTest("forest", 1); // stamp the forest block at v1 too
     const b = await host.controller.createRegionForTest(
       FOREST_RING,
       "forest",
@@ -533,12 +534,13 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
       "__aa_river__"
     );
     const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "__aa_city__");
-    // Each region is created at its algorithm's current pin (river's is already 2
-    // post-035); bump every current version to 3 so all three read as pinned-old
-    // and adopt to the same target.
-    host.controller.overrideCurrentVersionForTest("mountain", 3);
-    host.controller.overrideCurrentVersionForTest("river", 3);
-    host.controller.overrideCurrentVersionForTest("city", 3);
+    // Each region is created at its algorithm's REAL current pin; bump every
+    // current version to 9 (above any real currentVersion, so this fixture
+    // never drifts on future bumps) so all three read as pinned-old and adopt
+    // to the same target.
+    host.controller.overrideCurrentVersionForTest("mountain", 9);
+    host.controller.overrideCurrentVersionForTest("river", 9);
+    host.controller.overrideCurrentVersionForTest("city", 9);
 
     const runsBefore = host.controller.generatorRunCount;
     const fpBefore = host.controller.fingerprintPassCount;
@@ -557,13 +559,13 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
     // All pins raised; the adopted state is fingerprint-fresh (reopen: 0 runs).
     const fabric = await host.fabric();
     for (const id of [mtn.featureId, river.featureId, city.featureId]) {
-      expect(fabric.features.find((f) => f.id === id)!.properties.procgen!.version).toBe(3);
+      expect(fabric.features.find((f) => f.id === id)!.properties.procgen!.version).toBe(9);
     }
     const reopened = host.reopen({ zoom: 10 });
     reopened.begin();
-    reopened.controller.overrideCurrentVersionForTest("mountain", 3);
-    reopened.controller.overrideCurrentVersionForTest("river", 3);
-    reopened.controller.overrideCurrentVersionForTest("city", 3);
+    reopened.controller.overrideCurrentVersionForTest("mountain", 9);
+    reopened.controller.overrideCurrentVersionForTest("river", 9);
+    reopened.controller.overrideCurrentVersionForTest("city", 9);
     await reopened.controller.replayGeneratedManifest();
     expect(reopened.controller.generatorRunCount).toBe(0);
   });
