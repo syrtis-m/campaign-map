@@ -204,7 +204,7 @@ describe("campaign config coverage contract", () => {
   // Settable in CreateCampaignModal / createCampaignForTest.
   const CREATION_SETTABLE = new Set(["crs", "theme", "seed", "scaleMetersPerUnit", "bounds", "terrain"]);
   // Settable later in CampaignControlModal.
-  const LATER_SETTABLE = new Set(["theme", "namingCultures", "basemap", "terrain"]);
+  const LATER_SETTABLE = new Set(["theme", "namingCultures", "basemap", "terrain", "underlay"]);
   // Derived / internal — written by the system, never a GM knob.
   const DERIVED_INTERNAL = new Set(["map-campaign"]);
 
