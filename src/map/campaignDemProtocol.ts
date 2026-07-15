@@ -202,7 +202,7 @@ async function resolveLattice(
   z: number,
   x: number,
   y: number
-): Promise<number[]> {
+): Promise<{ heights: number[]; digest: string }> {
   const { field, inputs } = provider.snapshot();
   // Per-tile digest (not the campaign-wide `snapshot().digest`): a cached tile is
   // stale only when a stamp that actually reaches THIS tile changed, so an edit
@@ -220,7 +220,7 @@ async function resolveLattice(
   );
   const cached = await getDemTile(provider.app, provider.campaignFolder, z, x, y);
   if (cached && cached.digest === digest && cached.res === DEM_TILE_RES && cached.k === provider.k) {
-    return cached.heights;
+    return { heights: cached.heights, digest };
   }
   const flightKey = `${campaignId}:${demTileKey(z, x, y)}:${digest}`;
   let pending = inFlightLattice.get(flightKey);
@@ -230,7 +230,55 @@ async function resolveLattice(
     });
     inFlightLattice.set(flightKey, pending);
   }
-  return pending;
+  return { heights: await pending, digest };
+}
+
+/**
+ * Bounded LRU of ENCODED PNG bytes, keyed `campaign:key:digest`. After the
+ * d1ddd15 in-memory lattice view, a revisited tile is an O(1) lattice lookup —
+ * but it STILL had to re-encode the terrarium PNG through a canvas every time
+ * MapLibre re-requested it (off-screen eviction + look-back). Memoizing the
+ * encoded bytes makes a revisit a pure serve: no lattice recompute, no re-encode.
+ * PNG bytes are re-derived and never determinism-compared (the module header), so
+ * caching them is legal. Digest is in the key, so a stale tile re-encodes; the LRU
+ * bound keeps the memory small (a few hundred 256²/128² PNGs). */
+const PNG_CACHE_MAX = 512;
+const pngCache = new Map<string, ArrayBuffer>();
+
+function pngCacheGet(key: string): ArrayBuffer | undefined {
+  const hit = pngCache.get(key);
+  if (hit === undefined) return undefined;
+  pngCache.delete(key); // LRU touch: move to most-recent
+  pngCache.set(key, hit);
+  return hit;
+}
+function pngCacheSet(key: string, bytes: ArrayBuffer): void {
+  pngCache.set(key, bytes);
+  while (pngCache.size > PNG_CACHE_MAX) {
+    const oldest = pngCache.keys().next().value;
+    if (oldest === undefined) break;
+    pngCache.delete(oldest);
+  }
+}
+
+/** Resolve a tile to its PNG bytes: deduped lattice resolve → encoded-PNG memo
+ * (revisits are pure serve). `encode` is injectable so a headless test can drive
+ * the memo without a canvas. */
+async function resolveTilePng(
+  provider: DemProvider,
+  campaignId: string,
+  z: number,
+  x: number,
+  y: number,
+  encode: (rgba: Uint8ClampedArray, res: number) => Promise<ArrayBuffer>
+): Promise<ArrayBuffer> {
+  const { heights, digest } = await resolveLattice(provider, campaignId, z, x, y);
+  const pngKey = `${campaignId}:${demTileKey(z, x, y)}:${digest}`;
+  const hit = pngCacheGet(pngKey);
+  if (hit) return hit;
+  const bytes = await encode(latticeToRGBA(heights, DEM_TILE_RES), DEM_TILE_RES);
+  pngCacheSet(pngKey, bytes);
+  return bytes;
 }
 
 /** Register the shared `campaigndem` protocol once (idempotent). */
@@ -244,17 +292,14 @@ export function ensureCampaignDemProtocol(): void {
       return { data: await encodePng(flatRGBA(), DEM_TILE_RES) };
     }
     if (abortController?.signal.aborted) throw abortError();
-    // Race the (shared, deduped) lattice resolve against the abort signal so a
+    // Race the (shared, deduped) resolve+encode against the abort signal so a
     // camera move releases this request immediately — the shared compute lives on
     // to warm the cache for whoever draws the tile next. An abort throws
     // AbortError; MapLibre has already flagged its own tile aborted, so it unloads
     // (retryable) rather than marking it errored.
-    const latticeP = resolveLattice(provider, parsed.campaignId, parsed.z, parsed.x, parsed.y);
-    const heights = abortController
-      ? await Promise.race([latticeP, abortSignalPromise(abortController)])
-      : await latticeP;
-    const rgba = latticeToRGBA(heights, DEM_TILE_RES);
-    return { data: await encodePng(rgba, DEM_TILE_RES) };
+    const pngP = resolveTilePng(provider, parsed.campaignId, parsed.z, parsed.x, parsed.y, encodePng);
+    const data = abortController ? await Promise.race([pngP, abortSignalPromise(abortController)]) : await pngP;
+    return { data };
   });
 }
 
@@ -273,7 +318,25 @@ export async function resolveDemTileForTest(
 ): Promise<number[]> {
   const provider = providers.get(campaignId);
   if (!provider) throw new Error(`no DEM provider registered for campaign ${campaignId}`);
-  return resolveLattice(provider, campaignId, z, x, y);
+  return (await resolveLattice(provider, campaignId, z, x, y)).heights;
+}
+
+/**
+ * Headless twin of the PNG serve path with an INJECTABLE encoder (a canvas is a
+ * host API). Drives the encoded-PNG memo exactly as the handler does — the encoder
+ * runs only on a true miss, so a revisit is a pure serve. Gates assert zero
+ * lattice recomputes AND zero re-encodes on a re-request.
+ */
+export async function resolveDemPngForTest(
+  campaignId: string,
+  z: number,
+  x: number,
+  y: number,
+  encode: (rgba: Uint8ClampedArray, res: number) => Promise<ArrayBuffer>
+): Promise<ArrayBuffer> {
+  const provider = providers.get(campaignId);
+  if (!provider) throw new Error(`no DEM provider registered for campaign ${campaignId}`);
+  return resolveTilePng(provider, campaignId, z, x, y, encode);
 }
 
 /** Point the protocol at a campaign's live field. Called when terrain is enabled

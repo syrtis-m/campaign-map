@@ -4,6 +4,7 @@ import {
   registerDemProvider,
   unregisterDemProvider,
   resolveDemTileForTest,
+  resolveDemPngForTest,
   type DemProvider,
 } from "./campaignDemProtocol";
 import { demTileLattice, type ElevationField } from "../gen/fields";
@@ -161,5 +162,49 @@ describe("campaigndem protocol — retryability (reappear bug)", () => {
     });
     await resolveDemTileForTest(idB, 6, 24, 36);
     expect(computes).toBe(2);
+  });
+});
+
+describe("campaigndem protocol — revisit is a pure serve (retention half)", () => {
+  const registered: string[] = [];
+  beforeEach(() => {
+    for (const id of registered.splice(0)) unregisterDemProvider(id);
+  });
+
+  it("a re-request re-encodes ZERO times and recomputes ZERO lattices (the encoded-PNG memo)", async () => {
+    let computes = 0;
+    let encodes = 0;
+    const id = uid();
+    registered.push(id);
+    registerDemProvider(
+      id,
+      makeProvider(fakeApp(), {
+        offThread: async (inputs, z, x, y, res, scale, k) => {
+          computes++;
+          return demTileLattice(FIELD, z, x, y, res, scale, k);
+        },
+      })
+    );
+    const encode = async (rgba: Uint8ClampedArray): Promise<ArrayBuffer> => {
+      encodes++;
+      return rgba.buffer.slice(0) as ArrayBuffer;
+    };
+    // Derive a few distinct tiles.
+    const tiles: [number, number, number][] = [
+      [6, 24, 36],
+      [6, 25, 36],
+      [6, 24, 37],
+    ];
+    for (const [z, x, y] of tiles) await resolveDemPngForTest(id, z, x, y, encode);
+    expect(computes).toBe(3);
+    expect(encodes).toBe(3);
+    // Simulate MapLibre evicting + re-requesting every tile (pan away and back).
+    const first = await resolveDemPngForTest(id, 6, 24, 36, encode);
+    for (const [z, x, y] of tiles) await resolveDemPngForTest(id, z, x, y, encode);
+    expect(computes).toBe(3); // lattice served from the in-memory view / cache
+    expect(encodes).toBe(3); // PNG served from the memo — no re-encode
+    // Byte-identical bytes on revisit (same memoized buffer).
+    const again = await resolveDemPngForTest(id, 6, 24, 36, encode);
+    expect(new Uint8Array(again)).toEqual(new Uint8Array(first));
   });
 });

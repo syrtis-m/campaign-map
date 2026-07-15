@@ -626,6 +626,16 @@ export class MapView extends ItemView {
       zoom: 3,
       attributionControl: false,
       renderWorldCopies: false,
+      // DEM-tile RETENTION (Jonah: "areas stop being 3D when i stop looking and
+      // take a while to reappear"). MapLibre's default tile cache is sized to the
+      // current viewport, so panning away evicts off-screen raster-dem tiles and a
+      // revisit re-requests them. A fixed, generous cap keeps a session's worth of
+      // already-derived DEM (and vector) tiles resident so revisited areas stay 3D.
+      // ~512 decoded 128²/256² DEM tiles is a few tens of MB; tunable down if the
+      // Surface Pro budget feels it. The encoded-PNG memo (campaignDemProtocol)
+      // backstops any eviction — a re-request is still a pure serve (no recompute,
+      // no re-encode).
+      maxTileCacheSize: 512,
     });
 
     // Tree glyph SDF images — `installTreeGlyphProvider` wires a
