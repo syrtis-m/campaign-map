@@ -17,6 +17,7 @@
     "goldens:accept": "node scripts/goldens-accept.mjs",
     "gates:changed": "tsx scripts/changed-gates.ts",
     "board": "tsx scripts/board.ts",
+    "perceptual": "tsx scripts/perceptual.ts",
     "soak": "tsx scripts/rendererSoak.ts",
     "playground": "node playground/serve.mjs"
   },
