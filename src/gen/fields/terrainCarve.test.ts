@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { terrainAt } from "./terrain";
+import { terrainAt, macroTerrainField } from "./terrain";
 import { SegmentHash } from "../segmentHash";
 import type { FabricFeature } from "../../model/fabric";
 
@@ -75,6 +75,58 @@ describe("terrainAt carve — a river incises a gorge across a mountain", () => 
     for (let x = 200; x <= 1300; x += 100) {
       const drop = uncarved(x, 700).v - carved(x, 700).v; // exactly on the spine
       expect(drop, `x=${x}`).toBeGreaterThan(40); // ~depth incision the whole length
+    }
+  });
+});
+
+describe("terrainAt carve — water flows downhill (monotone bed, item 7)", () => {
+  // A long spine over a BUMPY base (fBm relief): the pre-carve surface climbs and
+  // dips along the flow, so a raw `pre − depth` bed would too — the "river goes up
+  // and down" bug. The monotone-min bed must NOT climb toward the mouth.
+  const bumpy = { base: { campAmp: 300, seaDatum: 0 }, campaignSeed: 11 } as const;
+  const longSpine: Pt[] = [];
+  for (let i = 0; i <= 40; i++) longSpine.push([i * 120, Math.sin(i / 3) * 60]);
+
+  it("the carved channel core is non-increasing from source to mouth", () => {
+    const carved = terrainAt([river("flow", longSpine, { width: 24 })], bumpy);
+    // Sample ON the spine (channel core) marching downstream (spine[0] → mouth).
+    let prev = Infinity;
+    let sawDrop = false;
+    for (let i = 0; i <= 40; i++) {
+      const [x, y] = longSpine[i];
+      const v = carved(x, y).v;
+      expect(v, `vertex ${i} climbs (${v} > ${prev})`).toBeLessThanOrEqual(prev + 1e-6);
+      if (v < prev - 1) sawDrop = true;
+      prev = v;
+    }
+    expect(sawDrop).toBe(true); // it genuinely descends (not a flat trivial pass)
+  });
+
+  it("a raw (bump-tracking) bed WOULD have climbed here — the fix is load-bearing", () => {
+    // The pre-carve surface itself is non-monotone along the spine (proof the
+    // fixture exercises the bug: an un-graded `pre − depth` bed would inherit these
+    // rises).
+    const surface = terrainAt([], bumpy);
+    let climbs = 0;
+    let prev = Infinity;
+    for (let i = 0; i <= 40; i++) {
+      const v = surface(longSpine[i][0], longSpine[i][1]).v;
+      if (v > prev + 1) climbs++;
+      prev = v;
+    }
+    expect(climbs).toBeGreaterThan(0);
+  });
+});
+
+describe("terrainAt carve — generator inputs untouched (macroTerrainField excludes carve)", () => {
+  it("adding a procgen river does not move the macro terrain field a generator reads", () => {
+    const feats = [mountain("m", RING)];
+    const withRiver = [...feats, river("r", CROSS_SPINE)];
+    // A mountain is present ⇒ macroTerrainField is non-null (not the flat shortcut).
+    const macroBare = macroTerrainField(feats, { campAmp: 200, seaDatum: 0 }, 5)!;
+    const macroRiver = macroTerrainField(withRiver, { campAmp: 200, seaDatum: 0 }, 5)!;
+    for (const [x, y] of [[600, 748], [750, 750], [900, 755], [200, 700], [1300, 700]] as Pt[]) {
+      expect(macroRiver(x, y)).toEqual(macroBare(x, y)); // carve never enters the generator field
     }
   });
 });

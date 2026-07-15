@@ -104,7 +104,7 @@ import {
 import { cascadeOrder, downstreamClosure, upstreamEdges, type DagNode } from "../gen/procgen/dag";
 import { isCacheRecordFresh, regionFingerprint } from "../gen/cache/fingerprint";
 import { mountainHeightField, type MountainTerrain } from "../gen/mountain";
-import { terrainAt, demVerticalScale, terrainStampSupport, type ElevationField, type TerrainBaseParams } from "../gen/fields";
+import { terrainAt, demVerticalScale, terrainStampSupport, TERRAIN_FIELD_VERSION, type ElevationField, type TerrainBaseParams } from "../gen/fields";
 import type { GeneratorId, SerializableTerrainInputs } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
 import { hashSeed } from "../gen/rng";
@@ -2833,11 +2833,13 @@ export class MapController {
    * `digest` fingerprints EVERY input that can move the field (each terrain stamp's
    * id/kind/algorithm/seed/params/geometry, river spines+params feeding carves,
    * the base params, campaign seed, grade-enable, and the vertical scale K): the
-   * DEM cache treats a record with a different digest as a stale miss, so any
-   * edit/re-roll/base-param change is picked up without reactive tile
-   * invalidation. The `t2|` prefix salts the format change so pre-036 mountain-only
-   * cached tiles (old digest shape) always re-derive. `null` when no campaign is
-   * loaded.
+   * contour manager treats a record with a different digest as a stale engine, so
+   * any edit/re-roll/base-param change is picked up without reactive invalidation.
+   * (The DEM cache no longer uses this campaign-wide digest — it keys on the
+   * per-tile `perTileTerrainDigest` so an edit re-derives only the tiles it
+   * touches.) The `t${TERRAIN_FIELD_VERSION}|` prefix salts field-math changes so a
+   * bump (e.g. the monotone-downhill carve) re-derives every cached leaf. `null`
+   * when no campaign is loaded.
    */
   campaignElevationSnapshot(): {
     field: ElevationField;
@@ -2899,7 +2901,7 @@ export class MapController {
         geometry: f.geometry.coordinates,
       });
     });
-    return `t2|k${this.demVerticalScale()}|b${base.campAmp}:${base.seaDatum}|s${campaignSeed}|g${gradeEnabled ? 1 : 0}|${parts.join("|")}`;
+    return `t${TERRAIN_FIELD_VERSION}|k${this.demVerticalScale()}|b${base.campAmp}:${base.seaDatum}|s${campaignSeed}|g${gradeEnabled ? 1 : 0}|${parts.join("|")}`;
   }
 
   /** Set (or clear, with `null`) a region's persisted generation center. */

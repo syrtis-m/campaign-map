@@ -481,24 +481,39 @@ function polySmin(a: number, b: number, k: number): { v: number; h: number; smoo
  * polyline binding) interpolates that per-vertex floor and the gorge wall rises
  * `CARVE_BANK_SLOPE` past the channel half-width. Compact support: beyond where
  * the wall clears the surface the bed exceeds `pre`, so `smin` returns `pre`
- * unchanged (a river far from its channel is inert). Simplification (main channel
- * only, per plan): the bed tracks local terrain rather than enforcing a global
- * monotone downstream descent — a hydrological grade correction is deferred (a
- * single low source point should not carve a canyon the length of the spine).
+ * unchanged (a river far from its channel is inert).
+ *
+ * WATER FLOWS DOWNHILL (Jonah 2026-07-15 — the deferred 036-B grade correction,
+ * now asked for): a raw `pre(v_i) − depth` bed inherits every base-fBm/valley bump
+ * along the spine, so the draped river ribbon visibly climbs and dips. The bed is
+ * therefore MONOTONE NON-INCREASING in flow order — the cumulative min of
+ * `pre − depth` walked downstream. FLOW DIRECTION is the spine's own vertex order:
+ * river.ts grows channel width with global arc-length from `spine[0]`, so
+ * `spine[0]` is the (narrow) source and the last vertex the (wide) mouth; walking
+ * 0→last and holding the running minimum means the bed never rises toward the
+ * mouth. Confluences fall out for free — overlapping carves `smin` toward the
+ * lower bed. Trade-off (accepted): a spine sketched to run uphill holds its source
+ * floor as a flat canyon rather than climbing — downhill flow wins over following
+ * a mis-sketched grade.
  */
 function buildRiverCarve(carve: RiverCarve, pre: ElevationField): (s: HeightSample, x: number, y: number) => HeightSample {
   const spine = densify(carve.spine, CARVE_RESAMPLE_M);
   const hash = new SegmentHash(spine, { cellSize: Math.max(64, carve.halfWidth * 4) });
   // Memoize the bed floor at each (densified) spine vertex — region-scoped
   // whole-artifact pass: sample the pre-carve surface once per vertex, incise by
-  // `depth`, so the gorge follows the terrain at ~CARVE_RESAMPLE_M resolution.
+  // `depth`, then take the cumulative min DOWNSTREAM (spine[0] = source) so the bed
+  // is monotone non-increasing toward the mouth (water flows downhill, no bumps).
   const bedVert = new Float64Array(spine.length);
-  let bedMin = Infinity; // lowest per-vertex floor — a lower bound on the bed floor anywhere
+  let running = Infinity; // running min of (pre − depth) from the source downstream
   for (let i = 0; i < spine.length; i++) {
     const [vx, vy] = spine[i];
-    bedVert[i] = pre(vx, vy).v - carve.depth;
-    if (bedVert[i] < bedMin) bedMin = bedVert[i];
+    const local = pre(vx, vy).v - carve.depth;
+    if (local < running) running = local;
+    bedVert[i] = running;
   }
+  // The bed is monotone non-increasing, so its global floor is the mouth vertex.
+  // `bedMin` is the far-field reject's lower bound on the bed floor anywhere.
+  const bedMin = spine.length > 0 ? bedVert[spine.length - 1] : Infinity;
   const hw = carve.halfWidth;
   const bnd = hash.bounds;
   return (s: HeightSample, x: number, y: number): HeightSample => {

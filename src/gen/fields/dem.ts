@@ -63,8 +63,11 @@ export function demVerticalScale(scaleMetersPerUnit: number): number {
  * mismatch and re-derive (self-healing, no migration). NOT a persisted
  * determinism surface — a compared cache key, re-derivable per machine.
  *   3: per-tile DEM digest (was a single campaign-wide digest) + t2→t3 salt.
+ *   4: monotone-downhill river bed (buildRiverCarve cumulative-min) — the carve
+ *      field moved for the same river inputs, so every DEM tile + contour leaf
+ *      must re-derive or a stale bumpy lattice serves forever.
  */
-export const TERRAIN_FIELD_VERSION = 3;
+export const TERRAIN_FIELD_VERSION = 4;
 
 /** Longitude/latitude bounds of a slippy tile (z/x/y, XYZ scheme). Standard
  * web-mercator inverse — the tile grid MapLibre requests DEM tiles on. */
