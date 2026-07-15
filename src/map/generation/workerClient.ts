@@ -18,33 +18,92 @@ import type {
   SerializableTerrainInputs,
 } from "../../gen/worker/generationWorker";
 
+/**
+ * Job PRIORITY (lower = sooner). All jobs share the ONE generation worker, which
+ * is single-threaded, so a naive post-everything-immediately let the cheap contour
+ * leaves a camera move enqueues run AHEAD of the DEM tiles the 3D view actually
+ * needs (Jonah: "new 3D geography takes a long while to appear"). The client now
+ * holds jobs in a priority queue and only feeds the worker its highest-priority
+ * pending job when it frees up, so DEM tiles + GM region edits jump the contour
+ * backlog. Region generation stays TOP (a GM edit must never lag); DEM + world
+ * tiles match it; contour leaves (a background overlay) are last. */
+const JOB_PRIORITY: Record<string, number> = {
+  "procgen-region": 0, // a GM edit — interactive, must not lag
+  "dem-tile": 0, // 3D terrain — interactive
+  default: 0, // world-tier tile generation (TileJob has no `kind`)
+  "contour-leaf": 2, // background contour overlay — yields to the above
+};
+
+interface QueuedJob {
+  request: GenerationRequest;
+  priority: number;
+  seq: number; // FIFO tiebreak within a priority
+  resolve: (r: GenerationResponse) => void;
+  reject: (e: Error) => void;
+}
+
 export class GenerationWorkerClient {
   private worker: Worker | null;
   private nextRequestId = 1;
   private pending = new Map<number, { resolve: (r: GenerationResponse) => void; reject: (e: Error) => void }>();
+  private queue: QueuedJob[] = [];
+  private inFlight = 0;
+  private seqCounter = 0;
+  /** The worker is single-threaded, so 1-in-flight gives STRICT priority order at
+   * a negligible inter-job postMessage round-trip (sub-ms vs 50–450 ms jobs) and
+   * never leaves a lower-priority job blocking a higher one that arrives mid-burst. */
+  private readonly maxInFlight = 1;
 
   private constructor(worker: Worker) {
     this.worker = worker;
     worker.onmessage = (event: MessageEvent<GenerationResponse>) => {
       const entry = this.pending.get(event.data.requestId);
-      if (!entry) return;
-      this.pending.delete(event.data.requestId);
-      if (event.data.error) entry.reject(new Error(event.data.error));
-      else entry.resolve(event.data);
+      if (entry) {
+        this.pending.delete(event.data.requestId);
+        this.inFlight--;
+        if (event.data.error) entry.reject(new Error(event.data.error));
+        else entry.resolve(event.data);
+      }
+      this.pump();
     };
     worker.onerror = (event: ErrorEvent) => {
-      for (const { reject } of this.pending.values()) reject(new Error(event.message));
+      const err = new Error(event.message);
+      for (const { reject } of this.pending.values()) reject(err);
       this.pending.clear();
+      for (const job of this.queue.splice(0)) job.reject(err);
+      this.inFlight = 0;
     };
   }
 
-  /** Dispatch a request and resolve with the raw response (the caller unwraps
-   * `features`/`heights`). */
+  /** Feed the worker its highest-priority pending job(s) up to the in-flight
+   * window. Called on enqueue and on every response, so a job that arrives while
+   * the worker is busy is reordered against the rest of the backlog before the
+   * worker picks next. */
+  private pump(): void {
+    if (!this.worker) return;
+    while (this.inFlight < this.maxInFlight && this.queue.length > 0) {
+      let best = 0;
+      for (let i = 1; i < this.queue.length; i++) {
+        const q = this.queue[i];
+        const b = this.queue[best];
+        if (q.priority < b.priority || (q.priority === b.priority && q.seq < b.seq)) best = i;
+      }
+      const job = this.queue.splice(best, 1)[0];
+      this.pending.set(job.request.requestId, { resolve: job.resolve, reject: job.reject });
+      this.inFlight++;
+      this.worker.postMessage(job.request);
+    }
+  }
+
+  /** Enqueue a request at its kind's priority and resolve with the raw response
+   * (the caller unwraps `features`/`heights`). */
   private dispatch(request: GenerationRequest): Promise<GenerationResponse> {
     if (!this.worker) return Promise.reject(new Error("worker terminated"));
+    const kind = (request as { kind?: string }).kind ?? "default";
+    const priority = JOB_PRIORITY[kind] ?? JOB_PRIORITY.default;
     return new Promise((resolve, reject) => {
-      this.pending.set(request.requestId, { resolve, reject });
-      this.worker!.postMessage(request);
+      this.queue.push({ request, priority, seq: this.seqCounter++, resolve, reject });
+      this.pump();
     });
   }
 
@@ -58,6 +117,12 @@ export class GenerationWorkerClient {
     } finally {
       URL.revokeObjectURL(url);
     }
+  }
+
+  /** TEST SEAM: build a client over a fake worker to exercise the priority queue
+   * without a live Web Worker. */
+  static __forTest(worker: Worker): GenerationWorkerClient {
+    return new GenerationWorkerClient(worker);
   }
 
   generate(
@@ -131,7 +196,10 @@ export class GenerationWorkerClient {
   terminate(): void {
     this.worker?.terminate();
     this.worker = null;
-    for (const { reject } of this.pending.values()) reject(new Error("worker terminated"));
+    const err = new Error("worker terminated");
+    for (const { reject } of this.pending.values()) reject(err);
     this.pending.clear();
+    for (const job of this.queue.splice(0)) job.reject(err);
+    this.inFlight = 0;
   }
 }
