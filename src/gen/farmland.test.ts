@@ -9,6 +9,14 @@ import type { FabricFeature } from "../model/fabric";
 import type { GenerationConstraints } from "./types";
 import { clipNetworkToTile } from "./citynet";
 import { tileBBox, tileXYForPoint } from "./cache/tileGrid";
+import { algorithmById } from "./procgen/registry";
+import {
+  buildMainDistrict,
+  buildFarmlandEast,
+  MAIN_DISTRICT_RING,
+  FARMLAND_EAST_RING,
+  OVERLAP_SCALE_M_PER_UNIT,
+} from "./testkit/overlapMap";
 
 type Pt = [number, number];
 
@@ -469,5 +477,149 @@ describe("farmland generator — metric bands (regression net)", () => {
     const small = computeFarmlandMetrics(generateFarmland(3, region, PARAMS({ fieldSize: 0.15 }), CONSTRAINTS), region);
     const big = computeFarmlandMetrics(generateFarmland(3, region, PARAMS({ fieldSize: 0.9 }), CONSTRAINTS), region);
     expect(small.fieldCount).toBeGreaterThan(big.fieldCount);
+  });
+});
+
+// ─── Plan 035-C: farmland is the stage-4 PERI-URBAN band ─────────────────────
+// Fixture: overlapMap S4 — the east farmland shares the main district's east
+// edge exactly; the city is generated for real (its S4 procgen block) and its
+// `city-street` LineStrings arrive as `constraints.upstream.settlement`, the
+// data the host threads to a stage-4 consumer. Coupling under test: gate lanes
+// radiate from the arterial exits; a field-size gradient runs toward the wall
+// line; no upstream ⇒ byte-identical to the uncoupled generator.
+describe("farmland generator — peri-urban settlement coupling (plan 035-C, S4)", () => {
+  const M = OVERLAP_SCALE_M_PER_UNIT;
+  const scaleRing = (ring: readonly Pt[]): Pt[] => {
+    const open = ring.map(([x, y]): Pt => [x * M, y * M]);
+    return [...open, [open[0][0], open[0][1]]];
+  };
+
+  const cityFeat = buildMainDistrict();
+  const cityBlock = cityFeat.properties.procgen!;
+  const cityRegion = makeRegion(String(cityFeat.id), scaleRing(MAIN_DISTRICT_RING));
+  const cityNet = algorithmById("city")!.generate(cityBlock.seed, cityRegion, cityBlock.params, CONSTRAINTS);
+  const streets = cityNet.filter((f) => (f.properties as { generatorId?: string } | null)?.generatorId === "city-street");
+  const arterialLines: Pt[][] = streets
+    .filter((f) => (f.properties as { roadClass?: string }).roadClass === "arterial")
+    .map((f) => (f.geometry as GeoJSON.LineString).coordinates as Pt[]);
+
+  const farmFeat = buildFarmlandEast();
+  const farmSeed = farmFeat.properties.procgen!.seed;
+  const farmRegion = makeRegion(String(farmFeat.id), scaleRing(FARMLAND_EAST_RING));
+  const FARM_PARAMS = PARAMS({ fieldType: "enclosed-patchwork", fieldSize: 0.5, hedging: "hedgerows", laneDensity: 0.4, farmsteads: 0.45 });
+  const withCity: GenerationConstraints = { ...CONSTRAINTS, upstream: { settlement: streets } };
+
+  const coupled = generateFarmland(farmSeed, farmRegion, FARM_PARAMS, withCity);
+  const bare = generateFarmland(farmSeed, farmRegion, FARM_PARAMS, CONSTRAINTS);
+
+  const ofGid = (feats: GeoJSON.Feature[], gid: string): GeoJSON.Feature[] =>
+    feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === gid);
+
+  /** Distance from a point to the nearest vertex of any arterial polyline. */
+  function distToArterial(x: number, y: number): number {
+    let best = Infinity;
+    for (const line of arterialLines) {
+      for (const [ax, ay] of line) best = Math.min(best, Math.hypot(x - ax, y - ay));
+    }
+    return best;
+  }
+
+  it("S4 premise: generated arterials exit the district against the shared edge (within the 45 m gate threshold)", () => {
+    expect(arterialLines.length).toBeGreaterThan(0);
+    let nearRing = 0;
+    for (const line of arterialLines) {
+      const d = Math.min(...line.map(([x, y]) => Math.abs(distanceToBoundary(farmRegion, x, y))));
+      if (d <= 45) nearRing++;
+    }
+    expect(nearRing).toBeGreaterThan(0);
+  });
+
+  it("gate lanes radiate: new farm-lanes appear WITH the city, each starting at a gate entry on the ring", () => {
+    const lanesBare = ofGid(bare, "farm-lane");
+    const lanesCoupled = ofGid(coupled, "farm-lane");
+    expect(lanesCoupled.length).toBeGreaterThan(lanesBare.length);
+    // The added lanes hang off the ring where an arterial exits: each new lane
+    // has an endpoint on the boundary near an arterial.
+    const bareIds = new Set(lanesBare.map((f) => Number(f.id)));
+    const added = lanesCoupled.filter((f) => !bareIds.has(Number(f.id)));
+    expect(added.length).toBeGreaterThan(0);
+    for (const lane of added) {
+      const coords = (lane.geometry as GeoJSON.LineString).coordinates as Pt[];
+      const ends = [coords[0], coords[coords.length - 1]];
+      const onRingNearGate = ends.some(
+        ([x, y]) => Math.abs(distanceToBoundary(farmRegion, x, y)) < 2 && distToArterial(x, y) <= 60
+      );
+      expect(onRingNearGate, `gate lane ${String(lane.id)} does not start at a gate entry`).toBe(true);
+    }
+  });
+
+  it("field-size gradient: near the city fields are smaller AND more numerous; far fields are byte-identical", () => {
+    const areaOf = (f: GeoJSON.Feature): number => {
+      const ring = (f.geometry as GeoJSON.Polygon).coordinates[0] as Pt[];
+      let a = 0;
+      for (let i = 0; i + 1 < ring.length; i++) a += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+      return Math.abs(a) / 2;
+    };
+    const centroidOf = (f: GeoJSON.Feature): Pt => {
+      const ring = (f.geometry as GeoJSON.Polygon).coordinates[0] as Pt[];
+      let cx = 0;
+      let cy = 0;
+      for (const [x, y] of ring) {
+        cx += x;
+        cy += y;
+      }
+      return [cx / ring.length, cy / ring.length];
+    };
+    const distToStreets = (p: Pt): number => {
+      let best = Infinity;
+      for (const f of streets) {
+        for (const [sx, sy] of (f.geometry as GeoJSON.LineString).coordinates as Pt[]) {
+          best = Math.min(best, Math.hypot(p[0] - sx, p[1] - sy));
+        }
+      }
+      return best;
+    };
+    const NEAR = 240; // the generator's NEAR_CITY_M
+    const nearOf = (feats: GeoJSON.Feature[]): GeoJSON.Feature[] =>
+      ofGid(feats, "farm-field").filter((f) => distToStreets(centroidOf(f)) <= NEAR);
+    const nearCoupled = nearOf(coupled);
+    const nearBare = nearOf(bare);
+    expect(nearCoupled.length).toBeGreaterThan(nearBare.length); // finer split near the wall
+    const mean = (fs: GeoJSON.Feature[]): number => fs.reduce((s, f) => s + areaOf(f), 0) / fs.length;
+    expect(mean(nearCoupled)).toBeLessThan(mean(nearBare)); // smaller closes near the wall
+    // Cells beyond the gradient reach are untouched: every far field in the
+    // coupled run exists byte-identically in the bare run (locality).
+    const farBare = new Set(
+      ofGid(bare, "farm-field")
+        .filter((f) => distToStreets(centroidOf(f)) > NEAR + 160)
+        .map((f) => JSON.stringify(f))
+    );
+    const farCoupled = ofGid(coupled, "farm-field").filter((f) => distToStreets(centroidOf(f)) > NEAR + 160);
+    expect(farCoupled.length).toBeGreaterThan(0);
+    for (const f of farCoupled) {
+      expect(farBare.has(JSON.stringify(f)), `far field ${String(f.id)} changed under coupling`).toBe(true);
+    }
+  });
+
+  it("the coupling applies to every rectangle-lattice fieldType (strips halve, sections quarter)", () => {
+    for (const fieldType of ["open-field-strips", "grid-quarters", "orchard"] as const) {
+      const p = PARAMS({ fieldType, hedging: "none" });
+      const c = generateFarmland(farmSeed, farmRegion, p, withCity);
+      const b = generateFarmland(farmSeed, farmRegion, p, CONSTRAINTS);
+      expect(ofGid(c, "farm-field").length, fieldType).toBeGreaterThan(ofGid(b, "farm-field").length);
+    }
+  });
+
+  it("no upstream ⇒ byte-identical (absent, empty object, empty settlement all no-op)", () => {
+    const base = JSON.stringify(bare);
+    expect(JSON.stringify(generateFarmland(farmSeed, farmRegion, FARM_PARAMS, { ...CONSTRAINTS, upstream: {} }))).toBe(base);
+    expect(
+      JSON.stringify(generateFarmland(farmSeed, farmRegion, FARM_PARAMS, { ...CONSTRAINTS, upstream: { settlement: [] } }))
+    ).toBe(base);
+  });
+
+  it("coupled output is deterministic and stays inside the ring", () => {
+    expect(JSON.stringify(generateFarmland(farmSeed, farmRegion, FARM_PARAMS, withCity))).toBe(JSON.stringify(coupled));
+    expectGeneratorInvariants(coupled, farmRegion);
   });
 });

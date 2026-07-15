@@ -52,11 +52,17 @@
  *  - Feature ids hash positions (never emission order), integers so
  *    `clipNetworkToTile`'s `Number(id)` sort stays stable.
  *
- * The CITY sees farmland (its outskirt fields are suppressed inside a raw
- * farmland sketch — see `citynet/outskirts.ts`); farmland NEVER sees the city
- * (the only constraint it reads is the raw mountain SKETCH, for paddy
- * elevation). Farmland-vs-city overlap is legal (overlap keys on the algorithm
- * id — MapController.overlappingRegion).
+ * The CITY sees the farmland SKETCH (its outskirt fields are suppressed inside
+ * a raw farmland ring — see `citynet/outskirts.ts`: "ring = land claim, output
+ * = interior dressing", unchanged by plan 035); farmland — a STAGE-4 PERI-URBAN
+ * consumer since plan 035 — sees the city's GENERATED street network
+ * (`constraints.upstream.settlement`): gate lanes radiate from the arterial
+ * exits and a field-size gradient runs toward the wall line (both pure
+ * functions of the upstream data + absolute position, zero rng draws — no
+ * upstream ⇒ byte-identical to the uncoupled generator). It also reads the raw
+ * mountain SKETCH for paddy elevation. There is NO farmland → city output edge
+ * (the cycle guard). Farmland-vs-city overlap is legal (overlap keys on the
+ * algorithm id — MapController.overlappingRegion).
  */
 import { hashSeed, mulberry32 } from "./rng";
 import {
@@ -110,6 +116,28 @@ const FARMSTEAD_M = 9; // farm building footprint size
 const ORCHARD_ROW_M = 13; // orchard tree row/column spacing (regular rows, kept light)
 const STRIP_COUNT = 4; // strips per coarse cell (open-field-strips)
 const PATCHWORK_MAX_DEPTH = 3; // recursive split cap (D3 budget, not convergence)
+// ── Peri-urban coupling (plan 035) ───────────────────────────────────────────
+// Farmland is a STAGE-4 consumer of the generated city street network
+// (`constraints.upstream.settlement` — stage-3 output as DATA). Two reads, both
+// pure functions of that data + absolute world position (ZERO rng draws), so a
+// farmland with NO upstream is byte-identical to the uncoupled generator
+// through the same arithmetic:
+//  1. GATE LANES — where a generated ARTERIAL ends against this region's ring
+//     (city output is clipped to ITS district, so an arterial exits by ENDING
+//     at the shared boundary rather than crossing into ours), a fan of lanes
+//     runs from that gate into the lane web: field access radiates from the
+//     city gates.
+//  2. FIELD-SIZE GRADIENT — coarse cells whose center is within NEAR_CITY_M of
+//     the city fabric subdivide one step finer (market gardens against the
+//     wall line, full sections further out — the von Thünen ring).
+/** An arterial vertex this near the farmland ring (projected) is a gate entry. */
+const GATE_ENTRY_THRESH_M = 45;
+/** Entries closer than this collapse to one (first in feature order wins). */
+const GATE_ENTRY_DEDUPE_M = 40;
+/** Lanes fanning from each gate entry to the nearest lane-web junctions. */
+const GATE_LANE_FAN = 2;
+/** Field-size gradient reach, meters from the nearest generated street. */
+const NEAR_CITY_M = 240;
 // ── Paddy terraces ───────────────────────────────────────────────────────────
 // World-aligned marching-squares lattice for the terrace banks. Finer than the
 // mountain's 20 m contour lattice — banks are field-scale features and the run
@@ -196,12 +224,13 @@ function patchworkSplit(
   y1: number,
   minM: number,
   path: string,
-  out: Pt[][]
+  out: Pt[][],
+  maxDepth: number = PATCHWORK_MAX_DEPTH
 ): void {
   const w = x1 - x0;
   const h = y1 - y0;
   const rng = mulberry32(hashSeed(seed, "farm-split", ix, iy, path.length, path.charCodeAt(path.length - 1) || 0));
-  const canSplit = path.length < PATCHWORK_MAX_DEPTH && Math.max(w, h) > minM * 1.6;
+  const canSplit = path.length < maxDepth && Math.max(w, h) > minM * 1.6;
   // A hashed chance to stop early even when splittable — the varied field sizes.
   if (!canSplit || rng() < 0.28) {
     out.push(rectOf(x0, y0, x1, y1));
@@ -211,12 +240,12 @@ function patchworkSplit(
   const frac = 0.38 + rng() * 0.24; // 38–62% cut
   if (cutAlongX) {
     const cx = x0 + w * frac;
-    patchworkSplit(seed, ix, iy, x0, y0, cx, y1, minM, path + "0", out);
-    patchworkSplit(seed, ix, iy, cx, y0, x1, y1, minM, path + "1", out);
+    patchworkSplit(seed, ix, iy, x0, y0, cx, y1, minM, path + "0", out, maxDepth);
+    patchworkSplit(seed, ix, iy, cx, y0, x1, y1, minM, path + "1", out, maxDepth);
   } else {
     const cy = y0 + h * frac;
-    patchworkSplit(seed, ix, iy, x0, y0, x1, cy, minM, path + "0", out);
-    patchworkSplit(seed, ix, iy, x0, cy, x1, y1, minM, path + "1", out);
+    patchworkSplit(seed, ix, iy, x0, y0, x1, cy, minM, path + "0", out, maxDepth);
+    patchworkSplit(seed, ix, iy, x0, cy, x1, y1, minM, path + "1", out, maxDepth);
   }
 }
 
@@ -248,6 +277,39 @@ export function generateFarmland(
   const out: GeoJSON.Feature[] = [];
   const bbox = region.bbox;
   const cell = fieldCellM(fieldSize);
+
+  // ── Peri-urban read (plan 035): the generated city street network as DATA.
+  //    `streetSegs` drive the field-size gradient; `arterials` mint the gate
+  //    entries. Empty when there is no upstream — every coupled step below is
+  //    then a no-op through the same arithmetic (byte-identity). Feature order
+  //    is the host's `(stage, id)`-deterministic collection order.
+  const streetSegs: [Pt, Pt][] = [];
+  const arterials: Pt[][] = [];
+  for (const f of constraints.upstream?.settlement ?? []) {
+    const g = f.geometry;
+    if (!g || g.type !== "LineString") continue;
+    const line = g.coordinates as Pt[];
+    if (line.length < 2) continue;
+    for (let i = 0; i + 1 < line.length; i++) streetSegs.push([line[i], line[i + 1]]);
+    if ((f.properties as { roadClass?: string } | null)?.roadClass === "arterial") arterials.push(line);
+  }
+  const distToCity = (x: number, y: number): number => {
+    let best = Infinity;
+    for (const [a, b] of streetSegs) {
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const l2 = dx * dx + dy * dy;
+      let t = l2 === 0 ? 0 : ((x - a[0]) * dx + (y - a[1]) * dy) / l2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const d = Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy));
+      if (d < best) best = d;
+    }
+    return best;
+  };
+  /** Field-size gradient predicate, evaluated ONCE per coarse cell center —
+   * pure f(upstream data, absolute position), zero rng draws. */
+  const cellNearCity = (cx: number, cy: number): boolean =>
+    streetSegs.length > 0 && distToCity(cx, cy) <= NEAR_CITY_M;
 
   const ix0 = Math.floor(bbox.minX / cell) - 1;
   const ix1 = Math.ceil(bbox.maxX / cell) + 1;
@@ -300,9 +362,21 @@ export function generateFarmland(
       const y0 = iy * cell;
       const x1 = x0 + cell;
       const y1 = y0 + cell;
+      // Field-size gradient (plan 035): a cell against the city fabric splits
+      // one step finer. `near` is a pure function of the cell center + the
+      // upstream data — ALWAYS false with no upstream, so the uncoupled paths
+      // below are bit-unchanged.
+      const near = cellNearCity(x0 + cell / 2, y0 + cell / 2);
       if (fieldType === "enclosed-patchwork") {
         const pieces: Pt[][] = [];
-        patchworkSplit(seed, ix, iy, x0, y0, x1, y1, cell * 0.42, "r", pieces);
+        // Near the city: a finer min size + one more split level — smaller,
+        // denser closes. Same hashes (node rngs key on ix/iy/path), so the
+        // shared split-tree PREFIX is identical; only depth extends.
+        patchworkSplit(
+          seed, ix, iy, x0, y0, x1, y1,
+          cell * (near ? 0.24 : 0.42), "r", pieces,
+          near ? PATCHWORK_MAX_DEPTH + 1 : PATCHWORK_MAX_DEPTH
+        );
         pieces.forEach((rect, si) => emitField(ix, iy, si, rect));
       } else if (fieldType === "open-field-strips") {
         // Long thin strips along the longer world axis (one furlong per cell).
@@ -310,13 +384,36 @@ export function generateFarmland(
           const rect = stripAlongX
             ? rectOf(x0, y0 + (cell * k) / STRIP_COUNT, x1, y0 + (cell * (k + 1)) / STRIP_COUNT)
             : rectOf(x0 + (cell * k) / STRIP_COUNT, y0, x0 + (cell * (k + 1)) / STRIP_COUNT, y1);
-          emitField(ix, iy, k, rect);
+          if (near) {
+            // Half-length furlongs against the wall line. Sub indices offset
+            // past the uncoupled 0..STRIP_COUNT-1 range (distinct crop rolls).
+            const [mx, my] = [(x0 + x1) / 2, (y0 + y1) / 2];
+            const halves = stripAlongX
+              ? [rectOf(rect[0][0], rect[0][1], mx, rect[2][1]), rectOf(mx, rect[0][1], rect[2][0], rect[2][1])]
+              : [rectOf(rect[0][0], rect[0][1], rect[2][0], my), rectOf(rect[0][0], my, rect[2][0], rect[2][1])];
+            halves.forEach((h, hi) => emitField(ix, iy, 100 + k * 2 + hi, h));
+          } else {
+            emitField(ix, iy, k, rect);
+          }
         }
       } else if (fieldType === "grid-quarters" || fieldType === "orchard") {
-        // grid-quarters / orchard: one rectilinear section per cell.
+        // grid-quarters / orchard: one rectilinear section per cell — quartered
+        // against the city fabric (the market-garden scale).
         // (paddy-terraces skips the rectangle lattice entirely — its fields
         // are the wash + contour banks below.)
-        emitField(ix, iy, 0, rectOf(x0, y0, x1, y1));
+        if (near) {
+          const mx = x0 + cell / 2;
+          const my = y0 + cell / 2;
+          const quarters = [
+            rectOf(x0, y0, mx, my),
+            rectOf(mx, y0, x1, my),
+            rectOf(x0, my, mx, y1),
+            rectOf(mx, my, x1, y1),
+          ];
+          quarters.forEach((qr, qi) => emitField(ix, iy, 100 + qi, qr));
+        } else {
+          emitField(ix, iy, 0, rectOf(x0, y0, x1, y1));
+        }
       }
     }
   }
@@ -410,6 +507,60 @@ export function generateFarmland(
     laneYs.push(y);
     for (const run of clipPolylineToRegion(region, [[bbox.minX - cell, y], [bbox.maxX + cell, y]])) {
       if (run.length >= 2) out.push(laneLine(seed, run, fieldType));
+    }
+  }
+
+  // ── Gate lanes (plan 035): where a generated ARTERIAL ends against this
+  //    ring, a fan of lanes runs from that gate into the lane web — field
+  //    access radiates from the city gates. The entry is the ring-projection of
+  //    the arterial's nearest vertex (within GATE_ENTRY_THRESH_M); junction
+  //    ranking is distance with a coordinate tiebreak (deterministic); every
+  //    lane clips to the region; ids are `laneLine`'s position hashes. Empty
+  //    arterials ⇒ nothing (the no-upstream byte-identity). ───────────────────
+  if (arterials.length > 0) {
+    const ring = region.ring; // closed (first === last)
+    const projectToRing = (p: Pt): { pt: Pt; d: number } => {
+      let best: { pt: Pt; d: number } = { pt: p, d: Infinity };
+      for (let j = 0; j + 1 < ring.length; j++) {
+        const a = ring[j];
+        const b = ring[j + 1];
+        const dx = b[0] - a[0];
+        const dy = b[1] - a[1];
+        const l2 = dx * dx + dy * dy;
+        let t = l2 === 0 ? 0 : ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const px = a[0] + t * dx;
+        const py = a[1] + t * dy;
+        const d = Math.hypot(p[0] - px, p[1] - py);
+        if (d < best.d) best = { pt: [px, py], d };
+      }
+      return best;
+    };
+    const entries: Pt[] = [];
+    for (const line of arterials) {
+      let best: { pt: Pt; d: number } | null = null;
+      for (const v of line) {
+        const pr = projectToRing(v);
+        if (!best || pr.d < best.d) best = pr;
+      }
+      if (!best || best.d > GATE_ENTRY_THRESH_M) continue;
+      const e = best.pt;
+      if (entries.some(([ex, ey]) => Math.hypot(ex - e[0], ey - e[1]) < GATE_ENTRY_DEDUPE_M)) continue;
+      entries.push(e);
+    }
+    if (entries.length > 0 && laneXs.length > 0 && laneYs.length > 0) {
+      const junctions: Pt[] = [];
+      for (const x of laneXs) for (const y of laneYs) junctions.push([x, y]);
+      for (const e of entries) {
+        const ranked = junctions
+          .map((j) => ({ j, d: Math.hypot(j[0] - e[0], j[1] - e[1]) }))
+          .sort((a, b) => a.d - b.d || a.j[0] - b.j[0] || a.j[1] - b.j[1]);
+        for (const { j } of ranked.slice(0, GATE_LANE_FAN)) {
+          for (const run of clipPolylineToRegion(region, [e, j])) {
+            if (run.length >= 2) out.push(laneLine(seed, run, fieldType));
+          }
+        }
+      }
     }
   }
 

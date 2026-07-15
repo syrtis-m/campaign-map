@@ -2,7 +2,68 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 + 034 COMPLETE (2026-07-15). Plans 020–028 complete. Next: 035 (stage reorder — preview mode, its ratified precondition, shipped in 034-D).
+## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 + 034 + 035 COMPLETE (2026-07-15). Plans 020–028 complete. Next: 036 (terrain conforms to rivers — the carve).
+
+## Plan 035 — stage reorder, river v2, park split, farmland peri-urban (2026-07-15, COMPLETE — headless-only per Jonah 2026-07-14)
+The stage numbers become the product's semantic order: −1 sources · 0 HYDROLOGY
+(river) · 1 TERRAIN (mountain) · 2 VEGETATION (forest, rural park) · 3 SETTLEMENT
+(city) · 4 PERI-URBAN (farmland, urban-park) · 5 DETAIL (wall). Rivers are canon
+strokes terrain conforms to; Jonah's litmus (a terrain edit reaches farmland,
+never a river) is host-test-proven both ways. Stage numbers live in the registry
+ONLY (grepped: nothing serializes one). Verified Vitest + FakeHost counters only
+(no live gates). 1004 fast + 36 fuzz green (+24 tests over the 034 baseline);
+`npm run build` clean per phase.
+- **[x] 035-A — renumber + river v2** (`ed259c1`): dag `Stage` gains 5 (machinery
+  verified stage-agnostic — only the union grew); river → stage 0, drops
+  `consumes: ["elevation"]` (stage 0 has no lower stage; the opt-in
+  slopeSensitivity>0 path reads `elevationFieldFromFabric` — macro-terrain-from-
+  SKETCH, durable-input, legal at any stage); slopeSensitivity default 1→0
+  (ratified Q1) ⇒ river `currentVersion` 1→2; goldens:accept run — snap
+  byte-identical (fixture has no mountain). consumesSketch KEEPS `mountain`
+  truthfully (the 033 harness probes the most-consuming params — slopeSensitivity
+  1 — and the opt-in path still reads the field; margin stays 30). Presets:
+  mountain-torrent is the one coupling opt-in; lazy-lowland/delta flipped to 0.
+  Litmus test: far-mountain edit ⇒ ZERO river regens even on an opted-in river;
+  pinned-v1 river byte-stable across replay until explicit adoptRegion under the
+  REAL bump.
+- **[x] 035-B — park split + THE CYCLE-GUARD INVARIANT** (`00d2c71`): one park
+  algorithm id, two roles via the registry's new optional `dagRole(params)` +
+  `dagRoleFor` (the ONLY sanctioned host read of stage/currencies): rural
+  varieties stay stage 2 / produce vegetation; `urban-park` resolves to stage 4 /
+  consumes settlement / produces NOTHING. buildRegionUpstream generalizes water →
+  {water, settlement}: stage-4 consumers receive the generated `city-street`
+  network as `UpstreamArtifacts.settlement`. Urban-park entrances align to
+  generated street crossings on the ring (S5 test: every walk-diagonal boundary
+  endpoint ≤30 m of an exact street×ring crossing); rural varieties proven
+  upstream-inert (4-variety byte-identity); park v2→3, golden byte-identical.
+  Cycle guard (standing registry contract test, guards 037/038): nothing may
+  consume `settlement` while producing a currency the city consumes — asserted
+  over every resolvable role of every algorithm + stage-above-city.
+- **[x] 035-C — farmland peri-urban** (`<this commit>`): farmland → stage 4,
+  `consumes: ["elevation", "settlement"]`, BOTH wired in-phase: gate lanes
+  radiate from the generated arterial exits (entry = ring-projection of the
+  arterial's nearest vertex ≤45 m — city output is clipped to its own ring, so
+  arterials END at the shared boundary), field-size gradient toward the wall
+  line (cells ≤240 m of the city fabric split one step finer: patchwork depth+1
+  + finer min, strips halve, sections/orchards quarter — all position-derived,
+  ZERO rng draws). No upstream ⇒ byte-identical through the same arithmetic
+  (golden unchanged); farmland v1→2. City keeps reading only the farmland
+  SKETCH for outskirt suppression (untouched). Host tests: city edit cascades
+  the adjacent farmland city-first (executed-order assertion); farmland edit
+  never changes city bytes (inert-force skip); S7 mountain→paddy litmus. S4
+  generator tests: gate lanes hang off ring entries near arterials; near-city
+  fields smaller+more numerous; far fields byte-identical (locality);
+  determinism + containment with upstream.
+- NOTE (river v2 side effect, sanctioned degraded state): a v1-pinned river
+  whose old fingerprint folded a mountain upstream (the pre-035 elevation edge)
+  now computes a different expected fingerprint ⇒ its cache reads stale ⇒ it
+  renders NOTHING + a needs-adoption badge instead of stale-serving — never
+  silently different bytes (plan 029 §5 carve-out; the signed-off "re-meanders
+  once on adopt" path). Rivers with explicit slopeSensitivity params (all
+  preset-created ones) adopt byte-identically apart from the meander default.
+- NOTE (fixture): `dev-vault/Campaigns/Overlap` still pins river v1 / park v2 /
+  farmland v1 — after this plan it is a REALISTIC pinned-old adoption surface
+  (per the arc ground rules it was deliberately NOT re-emitted).
 
 ## Plan 034 — runForwardPass unification (2026-07-15, COMPLETE — headless-only per Jonah 2026-07-14)
 The keystone: the four regen drivers (flush / raw channel / cascadeFromRoot+

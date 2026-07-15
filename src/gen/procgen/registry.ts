@@ -626,16 +626,25 @@ export const FARMLAND_TILE_GENERATOR_IDS: readonly string[] = contractGids(FARML
 const farmlandAlgorithm: ProcgenAlgorithm = {
   id: "farmland",
   label: "Farmland",
-  currentVersion: 1,
+  // Version 2 (plan 035, peri-urban move): farmland reads the generated city
+  // street network (`upstream.settlement`) — gate lanes radiate from the
+  // arterial exits, a field-size gradient runs toward the wall line. A farmland
+  // beside a city changes bytes; one with NO upstream is byte-identical to v1
+  // through the same arithmetic (the golden is unchanged).
+  currentVersion: 2,
   appliesTo: ["farmland"],
-  // Stage 2 (grouped with vegetation): paddy-terraces follow the sketched
-  // mountains' `elevation` contours → consumes `elevation`. Produces NOTHING
-  // downstream — the city reads a raw farmland SKETCH
-  // (`fabricConstraints.farmlandRings`) to suppress its outskirts, not
-  // farmland's generated OUTPUT, so there is no farmland → city output edge.
-  stage: 2,
+  // Stage 4 (PERI-URBAN, plan 035): farmland is the city's apron, generated
+  // AFTER it. Consumes `settlement` (WIRED: lanes orient to the generated
+  // gates/arterials, field size grades toward the wall line) and `elevation`
+  // (paddy-terraces follow the mountain contours — Jonah's litmus: a terrain
+  // edit reaches farmland, never a river). Produces NOTHING downstream — the
+  // city reads a raw farmland SKETCH (`fabricConstraints.farmlandRings`) to
+  // suppress its outskirts ("ring = land claim, output = interior dressing"),
+  // not farmland's generated OUTPUT, so there is no farmland → city edge and
+  // the cycle guard holds.
+  stage: 4,
   produces: [],
-  consumes: ["elevation"],
+  consumes: ["elevation", "settlement"],
   // Farmland reads the sketched mountains' elevation field (paddy-terraces
   // contours). The field is zero outside the mountain ring (compact support)
   // and gates on in-region relief, so a disjoint mountain is byte-inert: margin

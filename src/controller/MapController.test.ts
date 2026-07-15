@@ -1554,6 +1554,101 @@ describe("MapController — cross-layer cascade", () => {
     expect(bytes2).not.toBe(bytes1);
   });
 
+  it("S7 litmus: a mountain param edit reaches the overlapping paddy farmland (terrain → farmland, stage 1 → 4)", async () => {
+    const host = cityHost();
+    const mtn = await host.controller.createRegionForTest(
+      [
+        [-34, -22],
+        [-14, -22],
+        [-14, -4],
+        [-34, -4],
+      ],
+      "mountain",
+      { terrain: "alpine", amplitude: 0.6, roughness: 0.5 },
+      "__s7_mtn__",
+      "mountain"
+    );
+    // Paddy farmland overlapping the mountain's south slope (the S7 shape).
+    const farm = await host.controller.createRegionForTest(
+      [
+        [-30, -14],
+        [-18, -14],
+        [-18, -2],
+        [-30, -2],
+      ],
+      "farmland",
+      { fieldType: "paddy-terraces", fieldSize: 0.35, hedging: "none", laneDensity: 0.4, farmsteads: 0.25 },
+      "__s7_farm__",
+      "farmland"
+    );
+    expect(farm.count).toBeGreaterThan(0);
+    const farmKey = regionNetworkKey(farm.featureId);
+    const farmBytes1 = JSON.stringify((await host.cache()).get(farmKey)!.features);
+
+    // Terrain edit: the elevation currency + the raw mountain-sketch read both
+    // reach the farmland — it regenerates and its terrace banks move.
+    await host.controller.setRegionParams(mtn.featureId, { terrain: "alpine", amplitude: 0.95, roughness: 0.6 });
+    expect(host.controller.cascadeRegeneratedIds).toContain(farm.featureId);
+    expect(JSON.stringify((await host.cache()).get(farmKey)!.features)).not.toBe(farmBytes1);
+  });
+
+  it("a city edit cascades to the ADJACENT farmland, city executed first; the farmland edit never touches the city (plan 035-C)", async () => {
+    const host = cityHost();
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    // Farmland sharing the district's east edge (the S4 shape, host-scale).
+    const farm = await host.controller.createRegionForTest(
+      [
+        [26, -26],
+        [40, -24],
+        [40, -12],
+        [26, -10],
+      ],
+      "farmland",
+      { fieldType: "enclosed-patchwork", fieldSize: 0.5, hedging: "hedgerows", laneDensity: 0.4, farmsteads: 0.45 },
+      "__pu_farm__",
+      "farmland"
+    );
+    expect(farm.count).toBeGreaterThan(0);
+    const farmKey = regionNetworkKey(farm.featureId);
+    const cityKey = regionNetworkKey(city.featureId);
+    const farmBytes1 = JSON.stringify((await host.cache()).get(farmKey)!.features);
+
+    // City edit → the farmland is a stage-4 settlement dependent: it
+    // regenerates AFTER the city (the pass's executed order — plan 035-C's
+    // order test) and its bytes track the new street network.
+    await host.controller.setRegionParams(city.featureId, { profile: "euro-continental" });
+    expect(host.controller.cascadeRegeneratedIds).toContain(farm.featureId);
+    const order = host.controller.forceRegenOrder;
+    const ci = order.lastIndexOf(city.featureId);
+    const fi = order.lastIndexOf(farm.featureId);
+    expect(ci).toBeGreaterThanOrEqual(0);
+    expect(fi).toBeGreaterThan(ci); // upstream city before its peri-urban apron
+    const farmBytes2 = JSON.stringify((await host.cache()).get(farmKey)!.features);
+    expect(farmBytes2).not.toBe(farmBytes1);
+
+    // Farmland edit → the city never changes. (The WALK may conservatively
+    // visit the city — an edited region also mints a raw `farmland` source and
+    // the city declares `consumesSketch: farmland` — but the params-only edit
+    // leaves the raw sketch geometry untouched, so the city's scoped
+    // fingerprint is unchanged and the inert-force skip re-serves its cached
+    // bytes without a generator run. Farmland's OUTPUT reaches nothing: it
+    // produces no currency — the cycle guard.)
+    const cityBytesBefore = JSON.stringify((await host.cache()).get(cityKey)!.features);
+    const skipsBefore = host.controller.inertForceSkipCount;
+    await host.controller.setRegionParams(farm.featureId, {
+      fieldType: "grid-quarters",
+      fieldSize: 0.7,
+      hedging: "fences",
+      laneDensity: 0.66,
+      farmsteads: 0.35,
+    });
+    expect(JSON.stringify((await host.cache()).get(cityKey)!.features)).toBe(cityBytesBefore);
+    // The city was inert-skipped, not recomputed (zero city generator runs).
+    if (host.controller.cascadeRegeneratedIds.includes(city.featureId)) {
+      expect(host.controller.inertForceSkipCount).toBeGreaterThan(skipsBefore);
+    }
+  });
+
   it("a city edit cascades to a nested urban-park (stage 4); the park edit never touches the city (plan 035-B)", async () => {
     const host = cityHost();
     const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");

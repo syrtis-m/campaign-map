@@ -166,6 +166,33 @@ describe("cycle guard — settlement consumers produce nothing the city consumes
   });
 });
 
+describe("farmland peri-urban (plan 035-C) — stage 4, wired settlement + elevation", () => {
+  it("farmland is at contract version 2 (the settlement coupling is byte-visible beside a city)", () => {
+    expect(algorithmById("farmland")!.currentVersion).toBe(2);
+  });
+
+  it("farmland sits at stage 4, consumes elevation (terrain litmus) AND settlement (wired), produces NOTHING", () => {
+    const farmland = algorithmById("farmland")!;
+    expect(farmland.stage).toBe(4);
+    expect([...farmland.consumes].sort()).toEqual(["elevation", "settlement"]);
+    expect(farmland.produces).toEqual([]);
+  });
+
+  it("the semantic stage order holds across the registry (plan 035 §0 table)", () => {
+    // river 0 (hydrology) · mountain 1 (terrain) · forest/rural-park 2
+    // (vegetation) · city 3 (settlement) · farmland/urban-park 4 (peri-urban) ·
+    // wall 5 (detail). Stages live HERE only — never in persisted data.
+    expect(algorithmById("river")!.stage).toBe(0);
+    expect(algorithmById("mountain")!.stage).toBe(1);
+    expect(algorithmById("forest")!.stage).toBe(2);
+    expect(algorithmById("park")!.stage).toBe(2); // rural static role
+    expect(algorithmById("city")!.stage).toBe(3);
+    expect(algorithmById("farmland")!.stage).toBe(4);
+    expect(dagRoleFor(algorithmById("park")!, { variety: "urban-park" }).stage).toBe(4);
+    expect(algorithmById("wall")!.stage).toBe(5);
+  });
+});
+
 describe("park split (plan 035) — variety drives the stage", () => {
   it("park is at contract version 3 (urban-park joined the schema/varieties)", () => {
     expect(algorithmById("park")!.currentVersion).toBe(3);
