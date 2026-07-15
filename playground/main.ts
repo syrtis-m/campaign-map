@@ -1,8 +1,8 @@
 /**
  * Standalone procgen playground (rearchitecture wave 1, DECISIONS 2026-07-14).
  * Dev tooling only: never bundled into the plugin, never a determinism
- * surface. The per-gid paint table below is a SHIM — plan 030-D's declarative
- * paint contract replaces it.
+ * surface. Paint is a flat interpreter of the style contract (a dev role→color
+ * palette, not theme truth): a new bucket renders from its contract entry alone.
  */
 import { z } from "zod";
 import { FABRIC_KINDS, isPolygonKind, type FabricKind } from "../src/model/fabric";
@@ -12,6 +12,7 @@ import {
   presetById,
   type ProcgenAlgorithm,
 } from "../src/gen/procgen/registry";
+import { ALL_STYLE_CONTRACTS, type SemanticRole } from "../src/gen/procgen/styleContract";
 import {
   makeRegion,
   makeSpine,
@@ -172,7 +173,13 @@ function knobsFor(schema: z.ZodTypeAny): Knob[] {
   return knobs;
 }
 
-// ─── Paint shim (per-gid; plan 030-D replaces this with the style contract) ──
+// ─── Paint interpreter (contract-driven) ─────────────────────────────────────
+// The style contract (src/gen/procgen/styleContract.ts) binds every gid to a
+// role + mark + z; here a flat role→color palette turns that into a 2D canvas
+// paint. This is a DEV palette, not theme truth (themes own the real color, via
+// map/themes/roleColors.ts) — the point is that a new bucket paints here from
+// its contract entry alone, no per-gid edit. Unknown/unpainted gids fall to a
+// stable hash hue below.
 
 interface Paint {
   z: number;
@@ -184,60 +191,55 @@ interface Paint {
   point?: { r: number; color: string };
 }
 
-const PAINT: Record<string, Paint> = {
-  // ground fills
-  "city-district":    { z: 10, fill: "rgba(160,148,120,0.12)" },
-  "mountain-massif":  { z: 10, fill: "#d9cfc0" },
-  "farm-field":       { z: 12, fill: "#e6dcb4", stroke: "#cfc296", width: 0.8 },
-  "forest-canopy":    { z: 14, fill: "#9cba8e" },
-  "forest-clearing":  { z: 16, fill: "#e9e4d2" },
-  "park-lawn":        { z: 14, fill: "#b7d0a0" },
-  "park-canopy":      { z: 16, fill: "#93b57e" },
-  "park-bed":         { z: 18, fill: "#c9a6b8" },
-  "park-court":       { z: 18, fill: "#ded3b4" },
-  // water
-  "river-channel":    { z: 20, fill: "#8fb8d8" },
-  "river-estuary":    { z: 20, fill: "#8fb8d8" },
-  "river-distributary": { z: 20, fill: "#8fb8d8" },
-  "river-confluence": { z: 20, fill: "#8fb8d8" },
-  "river-oxbow":      { z: 19, fill: "#a5c4dc" },
-  "park-pond":        { z: 20, fill: "#a3c6df" },
-  "wall-moat":        { z: 20, fill: "#a3c6df" },
-  "river-island":     { z: 22, fill: "#ddd4b8", stroke: "#c4b894", width: 0.8 },
-  "river-point-bar":  { z: 22, fill: "#e3d9ba" },
-  "park-island":      { z: 22, fill: "#d3caac" },
-  // blocks / parcels / buildings
-  "city-block":       { z: 24, fill: "rgba(90,80,60,0.07)" },
-  "city-parcel":      { z: 26, stroke: "rgba(90,80,60,0.25)", width: 0.6 },
-  "city-footprint":   { z: 28, fill: "#6f6558" },
-  "city-landmark":    { z: 30, fill: "#8a4a3d" },
-  "farm-building":    { z: 28, fill: "#7d6a52" },
-  "wall-quad":        { z: 32, fill: "#7a7265" },
-  "wall-tower":       { z: 34, fill: "#5f574c" },
-  // lines
-  "mountain-contour": { z: 36, stroke: "#b3a48d", width: 0.7 },
-  "mountain-hachure": { z: 36, stroke: "#a8987f", width: 0.6 },
-  "forest-canopy-rim": { z: 36, stroke: "#7d9c6e", width: 1 },
-  "park-canopy-rim":  { z: 36, stroke: "#7d9c6e", width: 0.8 },
-  "park-pond-shore":  { z: 36, stroke: "#7ba3c2", width: 0.8 },
-  "park-court-rake":  { z: 36, stroke: "#c9bc98", width: 0.5 },
-  "river-bank":       { z: 37, stroke: "#6f96b5", width: 1 },
-  "river-glyph":      { z: 37, stroke: "#7ba3c2", width: 0.6 },
-  "farm-lane":        { z: 38, stroke: "#b09a6a", width: 1.4 },
-  "farm-hedge":       { z: 38, stroke: "#7a9455", width: 1 },
-  "farm-bank":        { z: 38, stroke: "#b0a184", width: 0.8 },
-  "park-path":        { z: 38, stroke: "#c2b28a", width: 1.4 },
-  "city-street":      { z: 40, stroke: "#4a4438", widthFromProp: true },
-  // points
-  "forest-tree":      { z: 50, point: { r: 1.6, color: "#5f7d51" } },
-  "park-tree":        { z: 50, point: { r: 1.6, color: "#5f7d51" } },
-  "orchard-tree":     { z: 50, point: { r: 1.4, color: "#6d8a56" } },
-  "park-rock":        { z: 50, point: { r: 1.6, color: "#8d8578" } },
-  "park-point":       { z: 50, point: { r: 1.4, color: "#8a7a63" } },
-  "park-bridge":      { z: 42, stroke: "#8a7a63", width: 2 },
-  "mountain-peak":    { z: 50, point: { r: 2.2, color: "#5c5347" } },
-  "wall-gate":        { z: 50, point: { r: 2.4, color: "#3d372f" } },
+/** Flat, legible dev colors — one per contract role. Not theme truth. */
+const ROLE_COLORS: Record<SemanticRole, string> = {
+  water: "#8fb8d8",
+  "water-body": "#a3c6df",
+  "water-edge": "#7ba3c2",
+  ground: "#e6dcc0",
+  vegetation: "#b7d0a0",
+  "vegetation-deep": "#7d9c6e",
+  cultivated: "#e6dcb4",
+  built: "#6f6558",
+  "built-accent": "rgba(160,148,120,0.35)",
+  route: "#8a7a55",
+  boundary: "#7a7265",
+  "path-casing": "#b0a184",
+  relief: "#c9bfad",
+  accent: "#8a4a3d",
 };
+
+/** Build the per-gid paint table by interpreting every painted contract bucket
+ * through the role palette + its mark. */
+const PAINT: Record<string, Paint> = (() => {
+  const table: Record<string, Paint> = {};
+  for (const bucket of ALL_STYLE_CONTRACTS.flat()) {
+    if (bucket.unpainted) continue;
+    const color = ROLE_COLORS[bucket.role];
+    const base: Paint = { z: bucket.z };
+    switch (bucket.mark) {
+      case "fill":
+        table[bucket.gid] = { ...base, fill: color };
+        break;
+      case "line":
+        table[bucket.gid] = {
+          ...base,
+          stroke: color,
+          width: 1,
+          widthFromProp: bucket.widthFromProp ? true : undefined,
+          dash: bucket.dashed ? [4, 3] : undefined,
+        };
+        break;
+      case "point":
+        table[bucket.gid] = { ...base, point: { r: 1.6, color } };
+        break;
+      case "fill+outline":
+        table[bucket.gid] = { ...base, fill: color, stroke: color, width: 1 };
+        break;
+    }
+  }
+  return table;
+})();
 
 function hashHue(s: string): number {
   let h = 2166136261;

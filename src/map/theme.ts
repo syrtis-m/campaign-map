@@ -99,7 +99,7 @@ const FABRIC_ON_DARK = {
   fabricWaterShore: "#4a6a86", // lighter steel rim, reads on the dark pond
 } as const;
 
-function obsidianTokensAsThemeTokens(tokens: ObsidianCssTokens): ThemeTokens {
+export function obsidianTokensAsThemeTokens(tokens: ObsidianCssTokens): ThemeTokens {
   const fabric = isDarkBackground(tokens.backgroundPrimary) ? FABRIC_ON_DARK : FABRIC_ON_LIGHT;
   return {
     id: "obsidian-native",

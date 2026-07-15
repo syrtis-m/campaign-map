@@ -24,6 +24,7 @@
  * crossing a shared tile edge gets a bit-identical boundary point from both
  * neighbors, so the 2×2 seam gate passes.
  */
+import { CITY_STYLE_CONTRACT, contractGids } from "../procgen/styleContract";
 import { hashSeed } from "../rng";
 import type { BBox } from "../spatialHash";
 import { clipPolylineToBBox, clipPolygonToBBox, type Vec2 } from "../clip";
@@ -56,16 +57,10 @@ type Pt = [number, number];
  * streets (arterials/bridges/waterfront/grown), blocks (faces), parcels,
  * footprints, landmarks (plaza/church/market), and wards (`city-district` —
  * deliberately the legacy Voronoi district id so wards inherit its paint
- * layer).
+ * layer). Derived from the style contract so a bucket cannot be emitted without
+ * a paint binding, nor bound without a cache key.
  */
-export const DOMAIN_TILE_GENERATOR_IDS: readonly string[] = [
-  "city-street",
-  "city-block",
-  "city-parcel",
-  "city-footprint",
-  "city-landmark",
-  "city-district",
-];
+export const DOMAIN_TILE_GENERATOR_IDS: readonly string[] = contractGids(CITY_STYLE_CONTRACT);
 
 /** Form-based street width: the metre width emitted on a
  * `city-street` feature for its `roadClass`, read straight off the profile's

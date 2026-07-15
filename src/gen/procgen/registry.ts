@@ -13,6 +13,15 @@
  * boundary, never silently mid-pipeline.
  */
 import { z } from "zod";
+import {
+  contractGids,
+  RIVER_STYLE_CONTRACT,
+  FOREST_STYLE_CONTRACT,
+  PARK_STYLE_CONTRACT,
+  WALL_STYLE_CONTRACT,
+  FARMLAND_STYLE_CONTRACT,
+  MOUNTAIN_STYLE_CONTRACT,
+} from "./styleContract";
 import type { FabricKind } from "../../model/fabric";
 import type { GenerationConstraints } from "../types";
 import type { ProcgenRegion } from "../region";
@@ -237,18 +246,9 @@ const RIVER_PRESETS: readonly ProcgenPreset[] = [
 ];
 
 /** River tile-generator ids = the emitted feature buckets: channel water + bank
- * casing lines + island land. Cache keys + paint layers key on these. */
-export const RIVER_TILE_GENERATOR_IDS: readonly string[] = [
-  "river-channel",
-  "river-bank",
-  "river-island",
-  "river-confluence",
-  "river-distributary",
-  "river-estuary",
-  "river-oxbow",
-  "river-point-bar",
-  "river-glyph",
-];
+ * casing lines + island land. Derived from the style contract (cache keys and
+ * paint layers share one manifest). */
+export const RIVER_TILE_GENERATOR_IDS: readonly string[] = contractGids(RIVER_STYLE_CONTRACT);
 
 const riverAlgorithm: ProcgenAlgorithm = {
   id: "river",
@@ -309,12 +309,7 @@ const FOREST_PRESETS: readonly ProcgenPreset[] = [
  * and the `forest-tree` stipple. `forest-clearing` is retained in the list so
  * older caches still surface their clearing cells (cache keys + paint layers
  * key on these ids; an uncached gid is silently dropped). */
-export const FOREST_TILE_GENERATOR_IDS: readonly string[] = [
-  "forest-canopy",
-  "forest-canopy-rim",
-  "forest-clearing",
-  "forest-tree",
-];
+export const FOREST_TILE_GENERATOR_IDS: readonly string[] = contractGids(FOREST_STYLE_CONTRACT);
 
 const forestAlgorithm: ProcgenAlgorithm = {
   id: "forest",
@@ -369,22 +364,7 @@ const PARK_PRESETS: readonly ProcgenPreset[] = [
 /** Park tile-generator ids = the emitted feature buckets: ground fabric + path
  * web + water (pond/island/bridge) + gravel court + rock + tree points. Cache
  * keys + paint layers key on these. */
-export const PARK_TILE_GENERATOR_IDS: readonly string[] = [
-  "park-lawn",
-  "park-canopy",
-  "park-bed",
-  "park-path",
-  "park-pond",
-  "park-island",
-  "park-bridge",
-  "park-court",
-  "park-rock",
-  "park-tree",
-  "park-point",
-  "park-canopy-rim",
-  "park-pond-shore",
-  "park-court-rake",
-];
+export const PARK_TILE_GENERATOR_IDS: readonly string[] = contractGids(PARK_STYLE_CONTRACT);
 
 const parkAlgorithm: ProcgenAlgorithm = {
   id: "park",
@@ -439,7 +419,7 @@ const WALL_PRESETS: readonly ProcgenPreset[] = [
 /** Wall tile-generator ids = the emitted feature buckets: the outboard moat, the
  * masonry band, the towers, and the gate markers. Cache keys + paint layers key
  * on these. */
-export const WALL_TILE_GENERATOR_IDS: readonly string[] = ["wall-moat", "wall-quad", "wall-tower", "wall-gate"];
+export const WALL_TILE_GENERATOR_IDS: readonly string[] = contractGids(WALL_STYLE_CONTRACT);
 
 const wallAlgorithm: ProcgenAlgorithm = {
   id: "wall",
@@ -505,14 +485,7 @@ const FARMLAND_PRESETS: readonly ProcgenPreset[] = [
  * and paddy terrace bank lines. Cache keys + paint layers key on these. (An
  * older cached farmland tile missing the `farm-bank` bucket re-clips the cached
  * network on its next read; the other gids' bytes are unchanged.) */
-export const FARMLAND_TILE_GENERATOR_IDS: readonly string[] = [
-  "farm-field",
-  "farm-lane",
-  "farm-hedge",
-  "farm-building",
-  "orchard-tree",
-  "farm-bank",
-];
+export const FARMLAND_TILE_GENERATOR_IDS: readonly string[] = contractGids(FARMLAND_STYLE_CONTRACT);
 
 const farmlandAlgorithm: ProcgenAlgorithm = {
   id: "farmland",
@@ -569,12 +542,7 @@ const MOUNTAIN_PRESETS: readonly ProcgenPreset[] = [
  * massif, the downslope relief hachures, the summit peaks, and the topographic
  * contour iso-lines. Cache keys + paint layers key on these — EVERY emitted gid
  * MUST appear here or the tile clip silently drops it. */
-export const MOUNTAIN_TILE_GENERATOR_IDS: readonly string[] = [
-  "mountain-massif",
-  "mountain-hachure",
-  "mountain-peak",
-  "mountain-contour",
-];
+export const MOUNTAIN_TILE_GENERATOR_IDS: readonly string[] = contractGids(MOUNTAIN_STYLE_CONTRACT);
 
 const mountainAlgorithm: ProcgenAlgorithm = {
   id: "mountain",
