@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { regionFingerprint, isCacheRecordFresh, type RegionFingerprintInput } from "./fingerprint";
+import {
+  regionFingerprint,
+  isCacheRecordFresh,
+  hashByteBudget,
+  resetHashByteBudget,
+  type RegionFingerprintInput,
+} from "./fingerprint";
 import { makeRegion } from "../region";
 import type { FabricFeature } from "../../model/fabric";
 
@@ -144,6 +150,57 @@ describe("regionFingerprint — upstream artifact fingerprints", () => {
     const one = regionFingerprint({ ...base(), upstreamFingerprints: ["a1"] });
     const two = regionFingerprint({ ...base(), upstreamFingerprints: ["a1", "a2"] });
     expect(two).not.toBe(one);
+  });
+});
+
+describe("hasher (plan 033-B) — two-lane 32-bit, budget counter", () => {
+  it("emits the same 16-hex width as the old FNV-64 output", () => {
+    expect(regionFingerprint(base())).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("byte budget scales with the hashed ring — a big ring hashes O(vertices) more bytes", () => {
+    // The budget counter is the perf surface: a fingerprint pass hashes the
+    // whole quantized ring, so a 10k-vertex ring costs ~O(vertices) bytes. We
+    // assert the counter tracks that WORK (bytes/pass) rather than wall-clock,
+    // per docs/06 (throttled numbers only) — the hasher swap keeps this budget
+    // identical while dropping the per-byte BigInt multiply.
+    const smallRing: [number, number][] = [
+      [0, 0],
+      [1000, 0],
+      [1000, 1000],
+      [0, 1000],
+      [0, 0],
+    ];
+    // A 10k-vertex ring. Built by OVERRIDING `ring` on a small base region so
+    // `makeRegion`'s O(bbox-area) interior-distance lattice scan never runs on
+    // it — `regionFingerprint` reads only `region.ring`/`region.spine`, so this
+    // exercises the hash budget without paying the region constructor's cost.
+    const bigRing: [number, number][] = [];
+    for (let i = 0; i <= 10000; i++) {
+      const a = (i / 10000) * Math.PI * 2;
+      bigRing.push([Math.round(Math.cos(a) * 5000), Math.round(Math.sin(a) * 5000)]);
+    }
+    const smallRegion = makeRegion("small", smallRing);
+    const bigRegion = { ...smallRegion, ring: bigRing };
+
+    resetHashByteBudget();
+    regionFingerprint({ ...base(), region: smallRegion });
+    const smallBytes = hashByteBudget();
+
+    resetHashByteBudget();
+    regionFingerprint({ ...base(), region: bigRegion });
+    const bigBytes = hashByteBudget();
+
+    // Every pass hashes at least its own concatenated field string.
+    expect(smallBytes).toBeGreaterThan(0);
+    // A 10k-vertex ring dominates the budget — tens of KB more than the tiny one.
+    expect(bigBytes).toBeGreaterThan(smallBytes + 50_000);
+  });
+
+  it("resetHashByteBudget zeroes the counter", () => {
+    regionFingerprint(base());
+    resetHashByteBudget();
+    expect(hashByteBudget()).toBe(0);
   });
 });
 

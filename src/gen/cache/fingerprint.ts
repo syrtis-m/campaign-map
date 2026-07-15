@@ -45,9 +45,12 @@ import type { FabricFeature } from "../../model/fabric";
 import { indexFabricConstraints } from "../fabricConstraints";
 import type { ProcgenRegion } from "../region";
 
-/** Bumped when the fingerprint composition changes. Old records carry the old
- * tag ⇒ mismatch ⇒ a MISS that recomputes, so a composition change self-heals. */
-const FP_VERSION = "fp1";
+/** Bumped when the fingerprint composition OR the hash function changes. Old
+ * records carry the old tag ⇒ mismatch ⇒ a MISS that recomputes, so the change
+ * self-heals (the documented, harmless one-time recompute). fp2 (plan 033-B):
+ * the FNV-BigInt hasher was replaced by a two-lane 32-bit hash — hash bytes are
+ * NOT equivalent to fp1, so every record recomputes once on the next open. */
+const FP_VERSION = "fp2";
 
 export interface RegionFingerprintInput {
   /** Registry algorithm id (`procgen.algorithm`). */
@@ -70,18 +73,47 @@ export interface RegionFingerprintInput {
   upstreamFingerprints?: string[];
 }
 
-/** FNV-1a, 64-bit, as 16 lowercase hex chars. Wide enough that a changed input
- * colliding onto the same fingerprint (⇒ a stale record wrongly treated fresh)
- * is negligible for the durable-data volumes here. */
-function fnv1a64Hex(s: string): string {
-  const prime = 0x100000001b3n;
-  let h = 0xcbf29ce484222325n;
-  const mask = 0xffffffffffffffffn;
+/** Bytes hashed since the last reset — the perf budget counter (plan 033-B).
+ * The fingerprint pass hashes mm-quantized rings that can run to 10–15 k
+ * vertices; the old FNV hasher did a BigInt multiply PER CHARACTER (~10–30
+ * MB/s), so a batch fingerprint pass over a campaign of big rings was a real
+ * cost. The replacement below is a pure-TS two-lane 32-bit hash (Math.imul, no
+ * BigInt) — same byte budget, a constant cheap op per byte instead of a BigInt
+ * multiply. Perf is asserted as this budget (bytes-per-pass), never wall-clock
+ * (docs/06: throttled numbers only), so the assertion is machine-stable. */
+let hashedBytesTotal = 0;
+/** Total bytes fed to the hasher since `resetHashByteBudget` — the 033-B budget
+ * counter surface. */
+export function hashByteBudget(): number {
+  return hashedBytesTotal;
+}
+export function resetHashByteBudget(): void {
+  hashedBytesTotal = 0;
+}
+
+/** A two-lane 32-bit string hash (cyrb-style: two independent `Math.imul`
+ * accumulators, cross-mixed at the end), emitted as 16 lowercase hex chars —
+ * the same width as the old FNV-64 output. Pure TS, no BigInt, so it hashes a
+ * 10–15 k-vertex quantized ring at a constant cheap op per byte. Collision
+ * resistance (a changed input landing on the same fingerprint ⇒ a stale record
+ * wrongly treated fresh) is negligible across the two 32-bit lanes for the
+ * durable-data volumes here; hash-equivalence with fp1 is NOT required (the
+ * FP_VERSION bump self-heals). */
+function hash64Hex(s: string): string {
+  hashedBytesTotal += s.length;
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
   for (let i = 0; i < s.length; i++) {
-    h ^= BigInt(s.charCodeAt(i));
-    h = (h * prime) & mask;
+    const ch = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
   }
-  return h.toString(16).padStart(16, "0");
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  const hex = (n: number): string => (n >>> 0).toString(16).padStart(8, "0");
+  return hex(h1) + hex(h2);
 }
 
 /** Canonical JSON with recursively SORTED object keys — so a fingerprint is
@@ -140,7 +172,7 @@ export function regionFingerprint(input: RegionFingerprintInput): string {
   if (upstreamFingerprints && upstreamFingerprints.length > 0) {
     fields.push("U:" + [...upstreamFingerprints].sort().join(","));
   }
-  return fnv1a64Hex(fields.join("|"));
+  return hash64Hex(fields.join("|"));
 }
 
 /**
