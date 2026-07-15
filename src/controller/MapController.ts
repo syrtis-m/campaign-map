@@ -990,11 +990,22 @@ export class MapController {
         const gid = (f.properties as { generatorId?: string } | null)?.generatorId;
         if (wantWater && gid === "river-channel") water.push(f);
         // Settlement (plan 037): the generated `city-street` network — the wall
-        // reads it for gates, peri-urban consumers for entrances/lanes. (City
-        // canal water as a moat source is plan-038 wall-water refinement; keeping
-        // canals OUT of `settlement` avoids farmland/urban-park treating a canal
-        // line as a street.)
+        // reads it for gates, peri-urban consumers for entrances/lanes.
         else if (wantSettlement && gid === "city-street") settlement.push(f);
+        // City canal water (plan 038 item 8, wall-water refinement): the
+        // `city-landmark` type=`canal` LineStrings ride along in `settlement` so
+        // `buildSettlementPayload` can split them into `canalLines` (a moat gaps
+        // over a canal, a water-gate opens where the spine crosses one). The
+        // canal features carry `type: "canal"`, and farmland/urban-park skip that
+        // type in their raw settlement parse — so a canal never reads as a street
+        // for a peri-urban consumer (byte-neutral there).
+        else if (
+          wantSettlement &&
+          gid === "city-landmark" &&
+          (f.properties as { type?: string } | null)?.type === "canal" &&
+          f.geometry?.type === "LineString"
+        )
+          settlement.push(f);
         // Vegetation canopy (plan 037): forest + park canopy MultiPolygons feed
         // the city's growth-cost attenuation + deep-canopy parcel rejection.
         else if (wantVegetation && (gid === "forest-canopy" || gid === "park-canopy")) vegetation.push(f);

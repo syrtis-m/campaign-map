@@ -154,6 +154,36 @@ function segCross(a: Pt, b: Pt, c: Pt, d: Pt): Pt | null {
   return [a[0] + t * rx, a[1] + t * ry];
 }
 
+/** Bisect a spine sub-segment `[p0,p1]` that straddles the channel bank (the
+ * water SDF changes sign along it) to the point where the field ≈ 0 — the bank
+ * crossing. Fixed 24-iteration binary search (deterministic, mm-resolvable). */
+function bisectBank(field: (x: number, y: number) => number, p0: Pt, p1: Pt): Pt {
+  let a = p0;
+  let b = p1;
+  const insideA = field(a[0], a[1]) >= 0;
+  for (let it = 0; it < 24; it++) {
+    const m: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    if ((field(m[0], m[1]) >= 0) === insideA) a = m;
+    else b = m;
+  }
+  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+}
+
+/** Bisect a segment `[dry,wet]` (dry point outside water, wet point inside) to
+ * the DRY side of the water boundary — the last point just outside the bank.
+ * Deterministic fixed-iteration search; returns the dry endpoint so a snapped
+ * moat quad ends AT the bank without poking into the channel. */
+function snapToWaterEdge(inWater: (x: number, y: number) => boolean, dry: Pt, wet: Pt): Pt {
+  let d = dry;
+  let w = wet;
+  for (let it = 0; it < 24; it++) {
+    const m: Pt = [(d[0] + w[0]) / 2, (d[1] + w[1]) / 2];
+    if (inWater(m[0], m[1])) w = m;
+    else d = m;
+  }
+  return d;
+}
+
 /** A tower footprint: a square (curtain) or diamond (bastioned) straddling the
  * spine at (cx,cy), oriented to the wall direction (ux,uy). Straddling keeps
  * containment side-agnostic (reach = `half`, both sides symmetric). */
@@ -318,11 +348,27 @@ export function generateWall(
         const mx = a[0] + ux * ((s0 + s1) / 2);
         const my = a[1] + uy * ((s0 + s1) / 2);
         if (nearGate(mx, my)) continue; // causeway break
-        // Moat/masonry gap over water: where the moat centerline (or the spine
-        // it offsets from) falls in the generated channel/canal, omit it (the
-        // river IS the moat).
-        if (inWater(c0[0], c0[1]) || inWater(c1[0], c1[1]) || inWater(mx, my)) continue;
-        out.push(spanQuad(seed, "wall-moat", c0, c1, moatHalf, { wallStyle: params.style }));
+        // Moat/masonry gap over water (river-is-the-moat): the moat centerline is
+        // gapped over the generated channel/canal. Plan 038 item 8 — moat-END SNAP
+        // TO THE BANK: a step that STRADDLES the water boundary is clipped to the
+        // bank along the moat centerline (a leat junction) instead of being
+        // dropped wholesale, so the moat reaches the river cleanly rather than
+        // ending a resample-step short. Fully-dry ⇒ full quad; fully-wet ⇒ skip.
+        // With NO water in reach `inWater` is always false ⇒ every step is dry ⇒
+        // byte-identical to the uncoupled moat.
+        const w0 = inWater(c0[0], c0[1]);
+        const w1 = inWater(c1[0], c1[1]);
+        if (w0 && w1) continue; // fully in the water — the river is the moat here
+        if (!w0 && !w1) {
+          out.push(spanQuad(seed, "wall-moat", c0, c1, moatHalf, { wallStyle: params.style }));
+          continue;
+        }
+        // Straddle: snap the wet end back to the water boundary (the bank),
+        // draw the dry sub-span up to it (`leat: true` marks the junction quad).
+        const bank = snapToWaterEdge(inWater, w0 ? c1 : c0, w0 ? c0 : c1);
+        const dryEnd = w0 ? c1 : c0;
+        if (Math.hypot(bank[0] - dryEnd[0], bank[1] - dryEnd[1]) < 0.5) continue;
+        out.push(spanQuad(seed, "wall-moat", dryEnd, bank, moatHalf, { wallStyle: params.style, leat: true }));
       }
     }
   }
@@ -396,6 +442,67 @@ export function generateWall(
       const f = towerFeature(seed, "wall-tower", gx, gy, gux, guy, ghHalf, diamond, params.style);
       (f.properties as Record<string, unknown>).gatehouse = true;
       out.push(f);
+    }
+  }
+
+  // ── Water gates + leats (plan 038 item 8): where the spine crosses GENERATED
+  //    water (the river channel or a city canal), a water-gate (sluice) marker
+  //    sits at the bank crossing (`waterGate: true` — a distinct feature themes
+  //    paint as a river-gate, never a road gatehouse), and — when a moat runs — a
+  //    short leat quad snaps the offset moat channel to that bank crossing (the
+  //    moat joins the river, the leat junction). Both are gated on upstream water:
+  //    with NO channel AND no canal the whole block is skipped ⇒ byte-identical to
+  //    the uncoupled wall (the band already gaps over water via `inWater`; this
+  //    only ADDS the marker + leat where the spine actually crosses). ────────────
+  const hasWater = waterField !== null || canalLines.length > 0;
+  if (hasWater) {
+    const waterGates: Pt[] = [];
+    const addWaterGate = (p: Pt): void => {
+      const qp: Pt = [q(p[0]), q(p[1])];
+      // Dedupe among water gates AND against a road/street gate already here (a
+      // road bridge over the same crossing keeps its road gate; no double marker).
+      if (waterGates.some((w) => Math.hypot(w[0] - qp[0], w[1] - qp[1]) < gateHalf)) return;
+      if (gates.some((h) => Math.hypot(h.p[0] - qp[0], h.p[1] - qp[1]) < gateHalf)) return;
+      waterGates.push(qp);
+    };
+    // Channel bank crossings: resample each spine segment, detect a sign
+    // transition of the water SDF (outside < 0 ⇄ inside ≥ 0), bisect the bank.
+    if (waterField) {
+      for (let k = 0; k < pts.length - 1; k++) {
+        const a = pts[k];
+        const b = pts[k + 1];
+        const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (segLen <= 0) continue;
+        const steps = Math.max(1, Math.ceil(segLen / RESAMPLE_STEP_M));
+        let prev: Pt = a;
+        let prevIn = waterField(a[0], a[1]) >= 0;
+        for (let j = 1; j <= steps; j++) {
+          const t = j / steps;
+          const cur: Pt = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+          const curIn = waterField(cur[0], cur[1]) >= 0;
+          if (curIn !== prevIn) addWaterGate(bisectBank(waterField, prev, cur));
+          prev = cur;
+          prevIn = curIn;
+        }
+      }
+    }
+    // Canal crossings: proper segment/segment intersection (canals are lines).
+    for (const c of canalLines) {
+      for (let i = 0; i < c.length - 1; i++) {
+        for (let k = 0; k < pts.length - 1; k++) {
+          const hit = segCross(c[i], c[i + 1], pts[k], pts[k + 1]);
+          if (hit) addWaterGate(hit);
+        }
+      }
+    }
+    // Water-gate markers (position-hashed id, like every gate).
+    for (const wg of waterGates) {
+      out.push({
+        type: "Feature",
+        id: hashSeed(seed, "wall-water-gate", wg[0], wg[1]),
+        geometry: { type: "Point", coordinates: [wg[0], wg[1]] },
+        properties: { generatorId: "wall-gate", type: "wall-gate", wallStyle: params.style, waterGate: true },
+      });
     }
   }
 

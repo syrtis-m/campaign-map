@@ -35,12 +35,16 @@ export interface UpstreamConstraints {
 const EMPTY: UpstreamConstraints = { waterRings: [], vegetationRings: [], settlementLines: [] };
 
 /** Every LineString of a feature list, in feature order (a generated street
- * chain is one LineString; non-lines contribute nothing). */
-function lineStrings(features: GeoJSON.Feature[] | undefined): Pt[][] {
+ * chain is one LineString; non-lines contribute nothing). When `skipCanal` is
+ * set, `type: "canal"` lines are dropped — city canals ride in `upstream.settlement`
+ * for the wall (plan 038 item 8), but a peri-urban STREET consumer (urban-park
+ * entrances, farmland lanes) must never read a canal as a street. */
+function lineStrings(features: GeoJSON.Feature[] | undefined, skipCanal = false): Pt[][] {
   if (!features || features.length === 0) return [];
   const lines: Pt[][] = [];
   for (const f of features) {
     const g = f.geometry;
+    if (skipCanal && (f.properties as { type?: string } | null)?.type === "canal") continue;
     if (g && g.type === "LineString" && g.coordinates.length >= 2) lines.push(g.coordinates as Pt[]);
   }
   return lines;
@@ -79,7 +83,7 @@ export function buildUpstreamConstraints(upstream: UpstreamArtifacts | undefined
   return {
     waterRings: outerRings(upstream.water),
     vegetationRings: outerRings(upstream.vegetation),
-    settlementLines: lineStrings(upstream.settlement),
+    settlementLines: lineStrings(upstream.settlement, true),
   };
 }
 

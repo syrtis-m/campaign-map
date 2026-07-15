@@ -344,6 +344,11 @@ export function generateFarmland(
   for (const f of constraints.upstream?.settlement ?? []) {
     const g = f.geometry;
     if (!g || g.type !== "LineString") continue;
+    // A city canal rides in `settlement` (plan 038 item 8) so the wall can read
+    // it as water; it is NOT a street — skip it here so field-size gradient +
+    // gate lanes never treat a canal line as city fabric (byte-neutral: canals
+    // were simply absent from `settlement` before the wall-water wiring).
+    if ((f.properties as { type?: string } | null)?.type === "canal") continue;
     const line = g.coordinates as Pt[];
     if (line.length < 2) continue;
     for (let i = 0; i + 1 < line.length; i++) streetSegs.push([line[i], line[i + 1]]);
