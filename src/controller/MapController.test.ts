@@ -253,6 +253,78 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
     expect((await host.cache()).has(regionNetworkKey(featureId))).toBe(false);
     expect((await host.log()).at(-1)?.type).toBe("sketch-remove");
   });
+
+  it("deleting an urban-park region unpaints its drawn stage-4 fabric (Jonah: generated feature not deleted)", async () => {
+    // Repro of Jonah 2026-07-15: deleting a generated object leaves its drawn
+    // fabric on the map. Generation paints a region at its PARAMS-AWARE stage
+    // (`dagRoleFor` — the urban-park variety re-homes park from its static stage
+    // 2 to stage 4), but the delete/unpaint path (`dropRegionCacheAndUnpaint`)
+    // repainted the STATIC `algorithm.stage`. MapView's staged `updateData` diff
+    // (032-D) removes a stage's OLD ids and adds its current ones; fired on the
+    // wrong stage it never removes the park's ids, so the drawn park survives.
+    // This drives a faithful, headless mirror of MapView.refreshGeneratedSource.
+    const host = cityHost();
+    // Upstream city supplies the generated `settlement` an urban-park consumes.
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const park = await host.controller.createRegionForTest(
+      [
+        [14, -22],
+        [21, -22],
+        [21, -15],
+        [14, -15],
+      ],
+      "park",
+      { variety: "urban-park", pathDensity: 0.5, pond: true },
+      "__ub_park__",
+      "park"
+    );
+    expect(park.count).toBeGreaterThan(0);
+    const parkIds = new Set(host.controller.regionFeatureIds(park.featureId));
+    expect(parkIds.size).toBeGreaterThan(0);
+    // urban-park paints at its params-aware DAG stage 4, not the static stage 2.
+    expect(host.repaintGeneratedStages).toContain(4);
+
+    // Headless mirror of MapView.refreshGeneratedSource (032-D): a painted
+    // source keyed by feature id + a per-stage id index; a staged repaint drops
+    // that stage's previous ids and adds its current ones (a full repaint reseeds
+    // from every stage).
+    const paintedStageIds = new Map<number, Set<string>>();
+    const painted = new Set<string>();
+    const applyRepaint = (stage: number | "all"): void => {
+      if (stage === "all") {
+        painted.clear();
+        paintedStageIds.clear();
+        for (const [s, feats] of host.controller.displayGeneratedByStage()) {
+          const ids = feats.map((f) => String(f.id));
+          paintedStageIds.set(s, new Set(ids));
+          for (const id of ids) painted.add(id);
+        }
+        return;
+      }
+      const feats = host.controller.displayGeneratedForStage(stage);
+      for (const id of paintedStageIds.get(stage) ?? []) painted.delete(id);
+      const ids = feats.map((f) => String(f.id));
+      paintedStageIds.set(stage, new Set(ids));
+      for (const id of ids) painted.add(id);
+    };
+
+    // Paint everything generated so far (the store still holds the park).
+    for (const s of host.repaintGeneratedStages) applyRepaint(s);
+    expect([...parkIds].every((id) => painted.has(id))).toBe(true); // park is drawn
+
+    // Delete the park; drive the delete's repaint through the same mirror.
+    host.repaintGeneratedStages.length = 0;
+    host.controller.deleteFabricFeature(park.featureId);
+    await new Promise((r) => setTimeout(r, 0)); // fire-and-forget drop settles
+    for (const s of host.repaintGeneratedStages) applyRepaint(s);
+
+    // The drawn park fabric must be GONE from the painted source…
+    expect([...parkIds].some((id) => painted.has(id))).toBe(false);
+    // …and the unpaint must target the stage the park was painted at (4).
+    expect(host.repaintGeneratedStages).toContain(4);
+    // The render store dropped it too (controller-level view).
+    expect(host.controller.regionFeatureIds(park.featureId)).toEqual([]);
+  });
 });
 
 describe("MapController — version pinning", () => {

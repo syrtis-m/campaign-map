@@ -1893,9 +1893,15 @@ export class MapController {
     }
     const prefix = `region:${feature.id}:`;
     for (const k of [...this.loadedTiles.keys()]) if (k.startsWith(prefix)) this.loadedTiles.delete(k);
-    // Repaint the dropped region's stage (full repaint when its algorithm is
-    // unknown — a defensive fallback; drops only ever run on procgen regions).
-    this.repaintGenerated(algorithm?.stage);
+    // Repaint the dropped region's stage — its PARAMS-AWARE stage (`dagRoleFor`),
+    // the exact stage generation painted it at (line ~915). Reading the STATIC
+    // `algorithm.stage` here mis-targets the staged `updateData` diff for a
+    // params-shifted region (an urban-park paints at stage 4 but its static stage
+    // is 2), so the diff removes the wrong stage and the drawn fabric survives the
+    // delete (the one sanctioned stage read is `dagRoleFor`, registry §dagRole).
+    // Full repaint when the algorithm/block is unknown — a defensive fallback;
+    // drops only ever run on procgen regions.
+    this.repaintGenerated(algorithm && block ? dagRoleFor(algorithm, block.params).stage : undefined);
   }
 
   /** "Remove generated city here". */
@@ -2409,7 +2415,11 @@ export class MapController {
       );
     }
     this.previewedRegions.add(featureId);
-    this.repaintGenerated(algorithm.stage);
+    // Params-aware stage (`dagRoleFor`), matching generation's paint (line ~915)
+    // and the drop's unpaint — a static `algorithm.stage` here would preview a
+    // params-shifted region (urban-park: stage 4, static 2) at the wrong stage,
+    // leaving ghost draft fabric the commit's stage-4 repaint never clears.
+    this.repaintGenerated(dagRoleFor(algorithm, block.params).stage);
     return true;
   }
 
