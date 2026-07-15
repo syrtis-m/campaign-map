@@ -421,6 +421,54 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
     expect(await host.controller.adoptRegion(featureId)).toBe(false);
   });
 
+  // ─── 35-A: pinned-v1 river under the REAL river v2 bump (no override
+  //     simulation on reopen — river's actual currentVersion is 2) ────────────
+  it("a pinned-v1 river is byte-stable across replay until explicit adoption (river v2 real bump)", async () => {
+    const host = cityHost();
+    // Pin the block at v1: pretend v1 was current at creation time, then drop
+    // the override — the region is now genuinely pinned-old against the REAL
+    // currentVersion 2. Params omit slopeSensitivity: exactly the persisted
+    // shape whose semantics the v2 default flip changed (v1: absent ⇒ coupled;
+    // v2: absent ⇒ uncoupled) — the case the bump exists for.
+    host.controller.overrideCurrentVersionForTest("river", 1);
+    const river = await host.controller.createSpineForTest(
+      [
+        [6, -30],
+        [18, -18],
+        [24, -14],
+      ],
+      "river",
+      "river",
+      { windiness: 0.85, braiding: 0, width: 20, widthGrowth: 0, braidBias: 0 },
+      "__v1_river__"
+    );
+    host.controller.overrideCurrentVersionForTest("river", null);
+    expect((await host.fabric()).features.find((f) => f.id === river.featureId)!.properties.procgen!.version).toBe(1);
+    expect(host.controller.isRegionPinnedOld(river.featureId)).toBe(true);
+
+    const bytesBefore = new Map<string, string>();
+    for (const [k, rec] of await host.cache()) bytesBefore.set(k, JSON.stringify(rec.features));
+
+    // Replay (NO overrides — the real registry drives): pure cache hits, zero
+    // generator runs, zero prompts, bytes untouched. A plugin update never
+    // visibly changes an existing region.
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    await reopened.controller.replayGeneratedManifest();
+    expect(reopened.controller.generatorRunCount).toBe(0);
+    expect(reopened.confirms.length).toBe(0);
+    for (const [k, rec] of await reopened.cache()) {
+      expect(JSON.stringify(rec.features)).toBe(bytesBefore.get(k));
+    }
+
+    // Explicit adoption raises the pin to the real v2 and regenerates.
+    const adopted = await reopened.controller.adoptRegion(river.featureId);
+    expect(adopted).toBe(true);
+    const block = (await reopened.fabric()).features.find((f) => f.id === river.featureId)!.properties.procgen!;
+    expect(block.version).toBe(2);
+    expect(reopened.controller.generatorRunCount).toBeGreaterThan(0);
+  });
+
   it("adoptAllRegions adopts every pinned-old region and reports the count", async () => {
     const host = cityHost();
     const a = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "A");
@@ -451,8 +499,10 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
   // ─── Plan 034-E — adopt-all as ONE pass (P9: O(k²) → O(k)) ────────────────
   it("adopt-all over a pinned mountain→river→city chain runs each region EXACTLY once (O(k), not O(k²))", async () => {
     const host = cityHost();
-    // The k-chain: mountain (stage 0) feeding a river (stage 1, crosses the
-    // mountain) feeding a city (stage 3, the river's mouth is inside the ring).
+    // Three pinned-old regions adopted in ONE pass: a river (stage 0, plan 035
+    // hydrology) whose mouth is inside a city (stage 3, consumes the channel),
+    // plus a mountain (stage 1 terrain). adopt-all regenerates each EXACTLY once
+    // regardless of the edge structure — the O(k) property.
     const mtn = await host.controller.createRegionForTest(
       [
         [-34, -22],
@@ -478,10 +528,12 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
       "__aa_river__"
     );
     const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "__aa_city__");
-    // The chain is real: mountain→river and river→city DAG edges exist.
-    host.controller.overrideCurrentVersionForTest("mountain", 2);
-    host.controller.overrideCurrentVersionForTest("river", 2);
-    host.controller.overrideCurrentVersionForTest("city", 2);
+    // Each region is created at its algorithm's current pin (river's is already 2
+    // post-035); bump every current version to 3 so all three read as pinned-old
+    // and adopt to the same target.
+    host.controller.overrideCurrentVersionForTest("mountain", 3);
+    host.controller.overrideCurrentVersionForTest("river", 3);
+    host.controller.overrideCurrentVersionForTest("city", 3);
 
     const runsBefore = host.controller.generatorRunCount;
     const fpBefore = host.controller.fingerprintPassCount;
@@ -492,19 +544,21 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
     // (stage, id) order — 3 runs total, not the pre-034 per-adoption cascade's
     // 3+2+1. One fingerprint pass for the whole adopt-all.
     expect(host.controller.generatorRunCount - runsBefore).toBe(3);
-    expect(host.controller.forceRegenOrder).toEqual([mtn.featureId, river.featureId, city.featureId]);
+    // (stage, id) order post-035: river (stage 0) before mountain (stage 1)
+    // before city (stage 3).
+    expect(host.controller.forceRegenOrder).toEqual([river.featureId, mtn.featureId, city.featureId]);
     expect(host.controller.fingerprintPassCount - fpBefore).toBe(1);
 
     // All pins raised; the adopted state is fingerprint-fresh (reopen: 0 runs).
     const fabric = await host.fabric();
     for (const id of [mtn.featureId, river.featureId, city.featureId]) {
-      expect(fabric.features.find((f) => f.id === id)!.properties.procgen!.version).toBe(2);
+      expect(fabric.features.find((f) => f.id === id)!.properties.procgen!.version).toBe(3);
     }
     const reopened = host.reopen({ zoom: 10 });
     reopened.begin();
-    reopened.controller.overrideCurrentVersionForTest("mountain", 2);
-    reopened.controller.overrideCurrentVersionForTest("river", 2);
-    reopened.controller.overrideCurrentVersionForTest("city", 2);
+    reopened.controller.overrideCurrentVersionForTest("mountain", 3);
+    reopened.controller.overrideCurrentVersionForTest("river", 3);
+    reopened.controller.overrideCurrentVersionForTest("city", 3);
     await reopened.controller.replayGeneratedManifest();
     expect(reopened.controller.generatorRunCount).toBe(0);
   });
@@ -820,6 +874,34 @@ describe("MapController — source-node forward closure (034-A)", () => {
     expect(order.indexOf(river.featureId)).toBeLessThan(order.indexOf(city.featureId));
   });
 
+  it("35-A litmus: a mountain edit BEYOND the river's 30 m margin runs ZERO river regens (terrain never cascades up to a canon river)", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(
+      RIVER_LINE,
+      "river",
+      "river",
+      // Opted INTO slope coupling (default is OFF post-035) — the strongest case:
+      // even a coupling-on river ignores a mountain edit outside its compact
+      // support, because the mountain sits ABOVE it in the stage order and the
+      // source→river edge fires only within influenceMargin (30 m).
+      { windiness: 0.85, braiding: 0, width: 20, widthGrowth: 0, braidBias: 0, slopeSensitivity: 1 },
+      "R"
+    );
+    // A raw mountain sketch FAR from the river (tens of display units ≫ 0.6 u).
+    const farMtn = await host.controller.createFabricForTest("mountain", [
+      [-42, 20],
+      [-30, 20],
+      [-30, 32],
+      [-42, 32],
+    ], "M");
+    const runsBefore = host.controller.generatorRunCount;
+    await host.controller.moveVertex(farMtn, 0, [-42.2, 20.2]);
+    // Jonah's litmus: a terrain edit reaches farmland, NEVER a river.
+    expect(host.controller.forceRegenOrder).not.toContain(river.featureId);
+    expect(host.controller.cascadeRegeneratedIds).not.toContain(river.featureId);
+    expect(host.controller.generatorRunCount).toBe(runsBefore);
+  });
+
   it("a district sketch-add dirties nothing (explicit-only: no algorithm consumes `district`)", async () => {
     // Parity with the 033-C fan-out gate, now expressed through source nodes: a
     // source of a kind NO region declares has no outgoing edge, so the closure is
@@ -872,10 +954,10 @@ describe("MapController — the forward pass (034-B)", () => {
     expect(host.controller.fingerprintPassCount - fpBefore).toBe(1);
     // ZERO gateway cache re-reads: the persistent session view serves the batch.
     expect(host.readCachedCount - readsBefore).toBe(0);
-    // Repaints ≤ stages touched: river stage (1) then city stage (3), upstream
-    // first — never a per-region or whole-map storm.
+    // Repaints ≤ stages touched: river stage (0, plan 035 hydrology) then city
+    // stage (3), upstream first — never a per-region or whole-map storm.
     const stages = host.repaintGeneratedStages.filter((s) => s !== "all");
-    expect(stages).toEqual([1, 3]);
+    expect(stages).toEqual([0, 3]);
   });
 
   it("stage-monotonicity assertion FIRES on an injected regression (the guard guards)", async () => {
@@ -890,8 +972,9 @@ describe("MapController — the forward pass (034-B)", () => {
   it("closure-bound assertion FIRES on an injected out-of-closure write (the guard guards)", async () => {
     const host = cityHost();
     const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
-    // A far mountain: never in a river edit's downstream closure (stage 0 sits
-    // UPSTREAM of the river; no source→mountain edge from a river line either).
+    // A far mountain: never in a river edit's downstream closure (post-035 the
+    // mountain at stage 1 sits ABOVE the river at stage 0, so a river edit can
+    // never reach it; and there is no source→mountain edge from a river line).
     const mtn = await host.controller.createRegionForTest(
       [
         [-40, 20],
@@ -1435,11 +1518,14 @@ describe("MapController — forest polygon-kind procgen", () => {
 });
 
 // ─── Cross-layer regen cascade ──────────────────────────────────────────────
-// The suite feels like one world: editing an UPSTREAM procgen region (a
-// mountain, stage 0) regenerates the DOWNSTREAM regions that read its output
-// (a river's slope coupling, stage 1), and leaves non-dependents
-// byte-identical. Fabric is in display units (1 unit = 50 m); worldBounds are
-// [-48,-36,48,36] so every fixture must fit inside.
+// The suite feels like one world: editing an UPSTREAM feature regenerates the
+// DOWNSTREAM regions that read it, and leaves non-dependents byte-identical.
+// Post-035 the mountain (stage 1 terrain) reaches an OPTED-IN river (stage 0
+// hydrology) only through the raw-sketch source edge (`consumesSketch:
+// ["mountain"]`, influenceMargin 30 m) — the reorder freed rivers from terrain
+// as a region-currency, so this coupling fires only where the mountain sits
+// within that compact-support reach of the river corridor. Fabric is in display
+// units (1 unit = 50 m); worldBounds are [-48,-36,48,36] so every fixture fits.
 describe("MapController — cross-layer cascade", () => {
   it("a river param edit re-routes the downstream city (GENERATED channel consumed as data)", async () => {
     const host = cityHost();
@@ -1700,9 +1786,10 @@ describe("MapController — batching parity (031-B)", () => {
     // setup, so this batch (and every later one) is served from memory. Under
     // 031-B alone this was 1 (one shared read per batch); 032-B drops it to 0.
     expect(host.readCachedCount - readsBefore).toBe(0);
-    // ONE coalesced paint PER TOUCHED STAGE (032-D): the river (stage 1) and the
-    // city (stage 3) it cascaded to — upstream-first, NOT one paint per region.
-    expect(host.repaintGeneratedStages.slice(paintsBefore)).toEqual([1, 3]);
+    // ONE coalesced paint PER TOUCHED STAGE (032-D): the river (stage 0, plan
+    // 035) and the city (stage 3) it cascaded to — upstream-first, NOT one paint
+    // per region.
+    expect(host.repaintGeneratedStages.slice(paintsBefore)).toEqual([0, 3]);
   });
 
   it("batched flush output is byte-identical to a from-scratch replay (parity by construction)", async () => {
@@ -2096,8 +2183,8 @@ describe("MapController — staged repaint (032-D)", () => {
     await host.controller.flushSketchRegen();
 
     const stages = host.repaintGeneratedStages.slice(before);
-    expect(stages).toEqual([1, 3]); // river (1) then city (3) — upstream-first, ≤ stages touched
-    expect(stages).not.toContain(0); // the untouched mountain stage is never repainted
+    expect(stages).toEqual([0, 3]); // river (0, plan 035) then city (3) — upstream-first, ≤ stages touched
+    expect(stages).not.toContain(1); // the untouched mountain stage (1) is never repainted
     expect(stages).not.toContain("all"); // no whole-map repaint
   });
 
@@ -2113,9 +2200,9 @@ describe("MapController — staged repaint (032-D)", () => {
     );
 
     const total = host.controller.displayGenerated().length;
-    const riverStageCount = host.controller.displayGeneratedForStage(1).length;
+    const riverStageCount = host.controller.displayGeneratedForStage(0).length;
     expect(riverStageCount).toBeGreaterThan(0);
-    // The river stage is a strict subset — repainting stage 1 alone touches far
+    // The river stage is a strict subset — repainting stage 0 alone touches far
     // fewer features than a whole-map setData would.
     expect(riverStageCount).toBeLessThan(total);
     // Every render-store feature is attributed to exactly one stage.

@@ -5,14 +5,17 @@
  * procgen edit propagates to the layer-1 fabric that reads it: turn a river's
  * windiness up, the city around it regenerates. That propagation is (a)
  * cycle-free BY CONSTRUCTION and (b) deterministic, via a fixed global partial
- * order over STAGES:
+ * order over STAGES (renumbered plan 035 — hydrology above terrain; rivers are
+ * canon strokes that terrain conforms to, so a terrain edit reaches farmland,
+ * never a river):
  *
- *   0 elevation   (mountain — a FIELD)
- *   1 hydrology   (river, water bodies)
- *   2 vegetation  (forest, park, farmland — agriculture is grouped here: it
- *                  consumes stage-0 elevation and produces nothing downstream)
+ *   0 hydrology   (river, water bodies — the canon strokes)
+ *   1 terrain     (mountain — a FIELD; conforms to the rivers above it)
+ *   2 vegetation  (forest, rural park)
  *   3 settlement  (city)
- *   4 detail      (wall elaboration, future street furniture)
+ *   4 peri-urban  (farmland, urban park — read the generated settlement, produce
+ *                  nothing downstream)
+ *   5 detail      (wall elaboration, future street furniture)
  *
  * An algorithm consumes constraints only from STRICTLY LOWER stages (plus raw
  * sketches + canon, unchanged). Same-stage regions never see each other's
@@ -52,12 +55,16 @@ import type { FabricKind } from "../../model/fabric";
  * SOURCE nodes — raw sketch features + canon pins that produce a constraint the
  * generators read but are not themselves generated. A source at stage −1 sorts
  * first under `(stage,id)` and only ever has OUTGOING edges (source → region),
- * so it can never introduce a cycle. */
-export type Stage = -1 | 0 | 1 | 2 | 3 | 4;
+ * so it can never introduce a cycle. Plan 035 adds `5` (detail/wall) and moves
+ * hydrology below terrain — the numbers are the product's semantic order, owned
+ * HERE (via the registry), never serialized into persisted data. */
+export type Stage = -1 | 0 | 1 | 2 | 3 | 4 | 5;
 
 /** The FIELD a stage produces / a downstream stage consumes (§3). Not a feature
- * kind — a constraint currency. `elevation` (stage 0) → `water` (stage 1) →
- * `vegetation` (stage 2) → `settlement` (stage 3) → `detail` (stage 4). */
+ * kind — a constraint currency. Plan 035 renumbers the STAGES but the currency
+ * set is unchanged: `water` (hydrology, stage 0), `elevation` (terrain, stage 1
+ * — read as a durable macro-field via the sketch, never as a river input),
+ * `vegetation` (stage 2), `settlement` (stage 3), `detail` (stage 5). */
 export type ConstraintKind = "elevation" | "water" | "vegetation" | "settlement" | "detail";
 
 /** One node in the invalidation graph. A REGION node (`id` = fabric feature id,

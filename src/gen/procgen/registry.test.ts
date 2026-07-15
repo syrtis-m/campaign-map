@@ -56,6 +56,36 @@ describe("procgen registry", () => {
   });
 });
 
+describe("river v2 (plan 035) — default-off slope coupling, stage 0 hydrology", () => {
+  it("river is at contract version 2 (the default flip is byte-visible for a mountain-crossing river)", () => {
+    expect(algorithmById("river")!.currentVersion).toBe(2);
+  });
+
+  it("slopeSensitivity defaults to 0 — terrain coupling is opt-in", () => {
+    const river = algorithmById("river")!;
+    const parsed = river.paramsSchema.parse({}) as { slopeSensitivity: number };
+    expect(parsed.slopeSensitivity).toBe(0);
+  });
+
+  it("river sits at stage 0 (hydrology, below terrain) and consumes NO region currency", () => {
+    const river = algorithmById("river")!;
+    expect(river.stage).toBe(0);
+    expect(river.consumes).toEqual([]);
+    // The opt-in macro-terrain read stays a raw-sketch declaration, not a
+    // currency: mountain remains in consumesSketch (the 033 harness probes with
+    // slopeSensitivity 1, the most-consuming params).
+    expect(river.consumesSketch).toContain("mountain");
+  });
+
+  it("mountain-torrent is the one preset that opts INTO slope coupling", () => {
+    const river = algorithmById("river")!;
+    for (const preset of river.presets) {
+      const s = (preset.params as { slopeSensitivity?: number }).slopeSensitivity;
+      expect(s, preset.id).toBe(preset.id === "mountain-torrent" ? 1 : 0);
+    }
+  });
+});
+
 describe("consumption declarations (plan 033-C)", () => {
   // The exact declarations the 033-A under-invalidation harness verifies and
   // the scoped invalidation walk / fingerprints key on. A change here is a

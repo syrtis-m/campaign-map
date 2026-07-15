@@ -251,22 +251,31 @@ const riverParamsSchema = z.object({
   widthGrowth: z.number().min(0).max(4).default(0),
   braidBias: z.number().min(0).max(1).default(0),
   /** Terrain-slope coupling strength — steep ground (from the sketched
-   * mountains' elevation field) straightens the meander. Default 1 (coupling
-   * on): with no mountain sketch the output is identical for ANY value, so a
-   * river without mountains is unaffected; a river that DOES cross a sketched
-   * mountain adapts on its next regenerate. */
-  slopeSensitivity: z.number().min(0).max(1).default(1),
+   * mountains' elevation field) straightens the meander. DEFAULT 0 (coupling
+   * OFF, plan 035 river v2): a river is a canon stroke that terrain conforms to,
+   * not the reverse, so a fresh river ignores terrain unless the GM opts in
+   * (>0). With no mountain sketch the output is identical for ANY value, so this
+   * only matters where a river crosses a sketched mountain; the opt-in reads the
+   * elevation field as a durable macro-terrain input (`elevationFieldFromFabric`
+   * — the raw sketch, never the mountain generator's output). */
+  slopeSensitivity: z.number().min(0).max(1).default(0),
 });
 
 /** River presets. Params are the whole truth; the "delta weights braiding
- * toward the end" behavior is carried by `braidBias`, never a preset-id branch. */
+ * toward the end" behavior is carried by `braidBias`, never a preset-id branch.
+ * slopeSensitivity is DEFAULT OFF (river v2, plan 035) — a lowland/delta river is
+ * a canon stroke terrain conforms to; `mountain-torrent` is the one preset that
+ * opts INTO slope coupling (its whole identity is terrain-following), the
+ * intended exemplar of the durable macro-terrain read. */
 const RIVER_PRESETS: readonly ProcgenPreset[] = [
   {
     id: "lazy-lowland",
     label: "Lazy lowland — wide, windy, braided",
-    params: { windiness: 0.85, braiding: 0.5, width: 26, widthGrowth: 0.7, braidBias: 0.2, slopeSensitivity: 1 },
+    params: { windiness: 0.85, braiding: 0.5, width: 26, widthGrowth: 0.7, braidBias: 0.2, slopeSensitivity: 0 },
   },
   {
+    // slopeSensitivity 1: the one preset that opts INTO terrain coupling — a
+    // torrent straightens on steep ground (reads the sketched mountains' field).
     id: "mountain-torrent",
     label: "Mountain torrent — narrow, straight, rocky",
     params: { windiness: 0.15, braiding: 0, width: 8, widthGrowth: 0.2, braidBias: 0, slopeSensitivity: 1 },
@@ -280,7 +289,7 @@ const RIVER_PRESETS: readonly ProcgenPreset[] = [
   {
     id: "delta",
     label: "Delta — heavy braiding near the mouth",
-    params: { windiness: 0.5, braiding: 1, width: 22, widthGrowth: 1.2, braidBias: 1, slopeSensitivity: 1 },
+    params: { windiness: 0.5, braiding: 1, width: 22, widthGrowth: 1.2, braidBias: 1, slopeSensitivity: 0 },
   },
 ];
 
@@ -292,18 +301,36 @@ export const RIVER_TILE_GENERATOR_IDS: readonly string[] = contractGids(RIVER_ST
 const riverAlgorithm: ProcgenAlgorithm = {
   id: "river",
   label: "River",
-  currentVersion: 1,
+  // Version 2 (plan 035, river v2): slopeSensitivity default flipped 1→0. A
+  // river that omits the param and crosses a sketched mountain now runs its full
+  // meander (uncoupled) instead of straightening — a byte change for that case,
+  // so the bump is mandatory; pinned-v1 rivers keep the old coupled bytes until
+  // explicit adoption (a mountain-crossing river re-meanders once on adopt).
+  currentVersion: 2,
   appliesTo: ["river"],
-  // Stage 1 (hydrology): reads the sketched mountains' `elevation` field
-  // (slope straightens the meander); produces the `water` channel the
-  // city/forest read.
-  stage: 1,
+  // Stage 0 (HYDROLOGY — the canon strokes; plan 035 moved hydrology BELOW
+  // terrain). Produces the `water` channel forest/city read. Consumes NOTHING
+  // from a lower stage: there is none. The opt-in (slopeSensitivity>0) slope
+  // coupling reads the sketched mountains' elevation field
+  // (`elevationFieldFromFabric`) as a DURABLE MACRO-TERRAIN input — legal at any
+  // stage because it reads the raw sketch layer, not the stage-1 mountain
+  // GENERATOR output — so it is declared as a `consumesSketch` reach, never a
+  // `consumes` currency (a stage-0 river cannot consume a stage-1 currency; the
+  // reorder is exactly what frees rivers from terrain). "Macro terrain, not
+  // finished terrain."
+  stage: 0,
   produces: ["water"],
-  consumes: ["elevation"],
+  consumes: [],
   // Raw sketch reads: water + a partner river spine (confluence snap,
   // CONFLUENCE_SNAP_M = 30) and the sketched mountains' elevation field (slope
-  // coupling, on by default). The mountain field has compact support, so any
-  // positive gap is byte-inert; 30 m covers the confluence snap.
+  // coupling — DEFAULT OFF as of v2, but the opt-in path reads it, so the
+  // declaration stays honest for the most-consuming params the 033-A harness
+  // probes). The mountain field has compact support, so any positive gap is
+  // byte-inert; 30 m covers the confluence snap. Because the mountain sits ABOVE
+  // the river in the stage order, a mountain edit never cascades DOWN to it: the
+  // source→river edge fires only within this 30 m reach, and Jonah's litmus
+  // fixture keeps the mountain ~110 m away (S7) so a terrain edit does zero
+  // river runs.
   consumesSketch: ["water", "river", "mountain"],
   influenceMargin: 30,
   costClass: "medium",
@@ -483,12 +510,13 @@ const wallAlgorithm: ProcgenAlgorithm = {
   label: "Wall",
   currentVersion: 1,
   appliesTo: ["wall"],
-  // Stage 4 (detail): the procgen wall ELABORATION (towers/gates/moat) consumes
-  // stage-3 `settlement`. The raw wall SKETCH stays a stage-agnostic constraint
-  // every stage reads (`fabricConstraints.wallLines`) — orthogonal to this
-  // stage. The cascade never carries stage-4 output downward (produces `detail`,
-  // which nothing consumes).
-  stage: 4,
+  // Stage 5 (DETAIL — plan 035 renumber; unchanged behavior, payload
+  // consumption is plan 037): the procgen wall ELABORATION (towers/gates/moat)
+  // consumes stage-3 `settlement`. The raw wall SKETCH stays a stage-agnostic
+  // constraint every stage reads (`fabricConstraints.wallLines`) — orthogonal to
+  // this stage. The cascade never carries stage-5 output downward (produces
+  // `detail`, which nothing consumes).
+  stage: 5,
   produces: ["detail"],
   consumes: ["settlement"],
   // Wall reads road only: gates fall where a road crosses the wall spine (exact
@@ -620,10 +648,13 @@ const mountainAlgorithm: ProcgenAlgorithm = {
   label: "Mountain",
   currentVersion: 1,
   appliesTo: ["mountain"],
-  // Stage 0 (elevation): the base FIELD. Produces `elevation` (the river's
-  // slope coupling + farmland's paddy terraces read it via the sketch-derived
-  // `elevationFieldFromFabric`). Consumes nothing.
-  stage: 0,
+  // Stage 1 (TERRAIN — plan 035 moved it ABOVE hydrology; terrain conforms to
+  // the rivers below it). Produces `elevation`. That currency reaches farmland
+  // (stage 4, `consumes: ["elevation"]`) as a real region→region edge; the
+  // river above it (stage 0) reads the SKETCH-derived elevation field as a
+  // durable macro-input, NOT this generated currency (a terrain edit reaches
+  // farmland, never a river). Consumes nothing.
+  stage: 1,
   produces: ["elevation"],
   consumes: [],
   // The base field — generateMountain reads no constraints at all.

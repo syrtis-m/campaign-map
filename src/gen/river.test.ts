@@ -482,7 +482,10 @@ const STRAIGHT: Pt[] = [
   [0, 0],
   [6600, 0],
 ];
-const MEANDER_P = PARAMS({ windiness: 0.8, braiding: 0, width: 20, widthGrowth: 0 });
+// slopeSensitivity 1: this fixture drives the slope-coupling tests, which
+// require the (now opt-in, river v2 / plan 035) terrain coupling ON. With no
+// mountain on the constraints (the meander-shape tests) the value is inert.
+const MEANDER_P = PARAMS({ windiness: 0.8, braiding: 0, width: 20, widthGrowth: 0, slopeSensitivity: 1 });
 
 /** Centerline reconstructed as the midpoint of the left/right bank casing
  * lines (emitted from the same samples, so midpoints ARE the meandered
@@ -653,7 +656,7 @@ function withMountain(x0: number, x1: number): GenerationConstraints {
 
 describe("river generator — slope coupling (box 23-E)", () => {
   it("steep ground straightens the river: smaller amplitude AND fewer bends than the flat control", () => {
-    const p = MEANDER_P; // slopeSensitivity absent ⇒ 1 (coupling on)
+    const p = MEANDER_P; // slopeSensitivity 1 (coupling opted in — river v2 default is OFF)
     const region = regionFor(STRAIGHT, p);
     const flat = centerlineOf(generateRiver(50, region, p, CONSTRAINTS));
     const steep = centerlineOf(generateRiver(50, region, p, withMountain(1000, 5600)));
@@ -734,7 +737,7 @@ describe("river generator — slope coupling (box 23-E)", () => {
       [3000, 0],
       [12000, 0],
     ];
-    const p = PARAMS({ windiness: 0.8, width: 20, widthGrowth: 0 });
+    const p = PARAMS({ windiness: 0.8, width: 20, widthGrowth: 0, slopeSensitivity: 1 });
     const region = regionFor(twoSeg, p);
     const bare = generateRiver(50, region, p, CONSTRAINTS);
     const coupled = generateRiver(50, region, p, withMountain(500, 2500));
@@ -955,7 +958,9 @@ describe("river generator — 28-C dressing: point bars, oxbows, glyphs (plan 02
   });
 
   it("steep ground classifies the glyphs as rapids/falls (slope-driven), even below DRESS_WINDINESS", () => {
-    const p = PARAMS({ windiness: 0.15, braiding: 0, width: 8, widthGrowth: 0.2, braidBias: 0 });
+    // mountain-torrent params: slopeSensitivity 1 opts into terrain coupling
+    // (default OFF as of river v2 / plan 035), the classifier the glyphs read.
+    const p = PARAMS({ windiness: 0.15, braiding: 0, width: 8, widthGrowth: 0.2, braidBias: 0, slopeSensitivity: 1 });
     const mtn = steepMountain("m1", [[-500, -2000], [2000, -2000], [2000, 2000], [-500, 2000], [-500, -2000]]);
     const glyphs = byType(generateRiver(7, regionFor(LINE, p), p, withFabric([mtn])), "river-glyph");
     expect(glyphs.length).toBeGreaterThan(0);

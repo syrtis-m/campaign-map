@@ -117,8 +117,10 @@ export interface RiverParams {
    * of the durable sketch layer) — damps meander amplitude and stretches
    * wavelength, so a river crossing steep ground runs straighter (flat → full
    * meander, steep → straight; the empirical low-sinuosity-on-gradient
-   * signature). 0 disables coupling entirely. Optional: absent ⇒ 1, and with no
-   * mountain sketch the multipliers are EXACTLY 1 through the same arithmetic. */
+   * signature). 0 disables coupling entirely. Optional: absent ⇒ 0 (river v2,
+   * plan 035 — a river is a canon stroke terrain conforms to, so coupling is
+   * opt-in); with no mountain sketch, or slopeSensitivity 0, the multipliers are
+   * EXACTLY 1 through the same arithmetic (no coupling). */
   slopeSensitivity?: number;
 }
 
@@ -348,7 +350,7 @@ function meanderSegment(seed: number, a: Pt, b: Pt, params: RiverParams, elev: E
       s += Math.hypot(g.dx, g.dy);
     }
     s /= 5;
-    const k = (params.slopeSensitivity ?? 1) * (s / (s + SLOPE_HALF_MPM));
+    const k = (params.slopeSensitivity ?? 0) * (s / (s + SLOPE_HALF_MPM));
     slopeAmpMul = 1 - SLOPE_AMP_KILL * k;
     slopeLambdaMul = 1 + SLOPE_LAMBDA_STRETCH * k;
   }
@@ -572,7 +574,7 @@ export function generateRiver(
   // OUTPUT). `null` when no mountain sketch exists or coupling is off ⇒ no
   // coupling. windiness 0 (canal) has zero meander amplitude through the same
   // arithmetic regardless.
-  const slopeSens = params.slopeSensitivity ?? 1;
+  const slopeSens = params.slopeSensitivity ?? 0;
   const elev = slopeSens > 0 && params.windiness > 0 ? elevationFieldFromFabric(constraints.fabricFeatures) : null;
 
   // 1. Per-segment meandered samples (identity-keyed per segment), concatenated

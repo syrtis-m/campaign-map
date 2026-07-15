@@ -21,15 +21,17 @@ import { mulberry32 } from "../rng";
 import type { BBox } from "../spatialHash";
 
 const KINDS: ConstraintKind[] = ["elevation", "water", "vegetation", "settlement", "detail"];
-// The registry's real stage→field wiring, so fuzz nodes resemble real worlds.
-// Region stages only (0–4); stage −1 is the source band (plan 034), which these
-// fuzz worlds don't model.
+// Illustrative stage→field wiring so fuzz nodes resemble real worlds (arbitrary
+// per stage — the graph math is currency-agnostic). Region stages only (0–5,
+// plan 035); stage −1 is the source band (plan 034), which these fuzz worlds
+// don't model.
 const STAGE_PRODUCES: Record<Exclude<Stage, -1>, ConstraintKind[]> = {
-  0: ["elevation"],
-  1: ["water"],
+  0: ["water"],
+  1: ["elevation"],
   2: ["vegetation"],
   3: ["settlement"],
   4: ["detail"],
+  5: ["detail"],
 };
 
 function shuffle<T>(arr: readonly T[], rnd: () => number): T[] {
@@ -46,7 +48,7 @@ function randomWorld(seed: number): DagNode[] {
   const n = 2 + Math.floor(rnd() * 12);
   const nodes: DagNode[] = [];
   for (let i = 0; i < n; i++) {
-    const stage = Math.floor(rnd() * 5) as Exclude<Stage, -1>;
+    const stage = Math.floor(rnd() * 6) as Exclude<Stage, -1>;
     // A node consumes 0–2 random field kinds (may include ones nothing at a
     // lower stage produces — a harmless no-edge).
     const consumeCount = Math.floor(rnd() * 3);
