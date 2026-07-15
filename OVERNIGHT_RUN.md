@@ -19,6 +19,14 @@ eyes lands HERE. Newest items at the top of each section.
    alone". Temple/gate variants stay deferred.
 
 ## NEEDS JONAH'S EYES
+- **Playground eyeball (035)**: farmland gate-lanes radiating from generated arterials +
+  field-size gradient toward the wall; urban-park street-aligned entrances.
+- **River v2 fingerprint side effect (035)**: a v1-pinned river whose fingerprint folded a
+  mountain upstream now mismatches ⇒ needs-adoption badge (renders nothing) instead of
+  stale-serving. Sanctioned per 029 §5 but VISIBLE: mountain-adjacent v1 rivers go badge-blank
+  after this update until adopted.
+- **Overlap campaign is now a pinned-old adoption surface** (pins river v1/park v2/farmland v1
+  from before tonight's bumps) — deliberately not re-emitted; exercise the adoption UX on it.
 - **Overlap campaign eyeball pass**: open `dev-vault/Campaigns/Overlap` in Obsidian (or view in
   the playground) and judge the generated result on the 8 overlap scenarios. Regenerate the
   campaign any time with `npx tsx scripts/emit-overlap-campaign.ts` — never hand-edit.
@@ -28,6 +36,18 @@ eyes lands HERE. Newest items at the top of each section.
   faubourg reading). Flag if plan-037 gate work wants a cleaner separation fixture instead.
 
 ## Landed
+- **Plan 035 COMPLETE** (`ed259c1`, `00d2c71`, `a3fb09b`): stage order is now −1 sources ·
+  0 hydrology · 1 terrain · 2 vegetation · 3 settlement · 4 peri-urban · 5 detail; river v2
+  (slopeSensitivity default 0 — Jonah's litmus holds: mountain edit ⇒ zero river runs, zero
+  river bytes; only `mountain-torrent` opts in); park split by variety via new registry
+  `dagRole(params)` (urban-park at stage 4 consumes settlement, produces NOTHING — cycle-guard
+  contract test standing in registry.test.ts); farmland peri-urban with the settlement read
+  WIRED (gate lanes from arterial ring-projections ≤45 m, field-size gradient within 240 m of
+  city fabric, zero new rng). Version bumps: river v2, park v3, farmland v2 — all three goldens
+  byte-identical (fixtures uncoupled = the no-upstream proof). 974→1004 tests. Judgment calls:
+  farmland keeps `elevation` alongside `settlement` (S7 litmus needs terrain→farmland); river
+  keeps `mountain` in consumesSketch (declarations are per-algorithm; harness probes
+  most-consuming params — opted-in rivers genuinely read it).
 - **Plan 034 COMPLETE — the keystone** (`4a1d932`, `2239983`, `d8f0829`, `41e125f`, `cba1986`):
   sketches/pins are stage −1 DAG source nodes; ONE `runForwardPass` drives every trigger (flush,
   cascade, adopt, replay, undo) — `regenerateAffectedTiles`, `cascadeDownstream`,
