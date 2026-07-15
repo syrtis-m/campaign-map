@@ -4,7 +4,7 @@ How to drive a long, multi-phase build (e.g. plans 021–025) that runs until a
 set of large deliverables is finished, survives usage-limit and machine kills
 with ≤1 unit of rework, and keeps a roughly constant context window no matter
 how many phases it burns through. This is the meta-protocol; docs/06 is the
-per-phase gate protocol it sits on top of, and HEARTBEAT.md is one concrete
+per-phase gate protocol it sits on top of, and review/HEARTBEAT-arc-021-028.md is one concrete
 instance of it.
 
 ## The reframe that makes everything else fall out
@@ -27,7 +27,7 @@ Everything below is machinery in service of that one property.
 
 - One **run-state file** is the single source of truth (checklist of phases,
   each flipped to `[x] <hash>` only after green+committed+pushed; a newest-first
-  Log; open questions). HEARTBEAT.md is this file for the 021–025 arc.
+  Log; open questions). review/HEARTBEAT-arc-021-028.md is this file for the 021–028 arc (archived).
 - **Subagent output is vapor until the orchestrator verifies + commits + pushes.**
   Subagents never commit. A phase's work only becomes durable at the commit. So
   a kill mid-phase loses *exactly that phase* and nothing before it — this is

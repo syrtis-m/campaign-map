@@ -32,7 +32,7 @@ Obsidian plugin: Google-Maps-style map tab for tabletop campaigns (fantasy, real
 
 ## Conventions
 - Zod validators in `src/model/`; validate at every IO boundary — especially frontmatter reconcile (bad frontmatter → warning badge, never silent drop)
-- Unit-test generators with seeded snapshot fixtures; 2×2 adjacent-tile seam tests mandatory
+- Test generators headlessly: shared structural invariants (`gen/testkit/invariants.ts`) + metric bands (`*Metrics.ts`) + ONE byte-golden per algorithm (`npm run goldens:accept -- <algorithm>` on a version bump) + perceptual goldens (`npm run perceptual`); 2×2 adjacent-tile seam tests mandatory
 - Keep frontmatter minimal (geometry, type, map, aliases); complex geometry → sidecar .geojson; note body belongs to the human
 - Use MapLibre agent skills (https://github.com/maplibre/maplibre-agent-skills) and the obsidian-cli skill (https://github.com/kepano/obsidian-skills)
 - Pure TS. `npm run dev` (esbuild watch → dev vault) / `test` (Vitest, generators+model) / `test:app` (CLI integration) / `build` / `playground` (procgen dev server)

@@ -36,7 +36,7 @@ The agent's first act is `scripts/preflight.sh` (build it in Phase 0 before anyt
 **Gate execution tiers (T0–T3, plan 021).** Tier A assertions above are still the bar; what changed is *how many gates you run when*. Don't re-prove the world on every edit — run the smallest tier that covers the change and escalate toward a commit. Full protocol in docs/05 §Test tiers; the gate-relevant summary:
 
 - **T0** (every edit): fast unit suite (`npm test`, <30 s) + `tsc`. No live gates.
-- **T1** (phase checkpoint = **the per-phase commit bar**, Jonah 2026-07-13): T0 + build + **the phase's own gate(s), run standalone** (+ fuzz tier iff generator behavior changed). This is what a phase commits on — unchanged gates inherit the previous board's green. Commit tag: `[gate: T1 …]`.
+- **T1** (phase checkpoint = **the per-phase commit bar**, Jonah 2026-07-13): T0 + build + `npm run perceptual` + **the phase's own gate(s), run standalone** (+ fuzz tier iff generator behavior changed). This is what a phase commits on — unchanged gates inherit the previous board's green. Commit tag: `[gate: T1 …]`.
 - **T2** (optional diagnostic, never required): **change-scoped gates** — `npm run gates:changed` intersects the diff (vs `.lastgreenboard`, override `--ref=<sha>`) against `scripts/gates/coverage.json` and runs only the covering gates. Note it auto-escalates to FULL on determinism-critical paths (`src/gen/region.ts`, `src/gen/rng.ts`, any `clip.ts`, `src/model/tileCache.ts`), which is exactly why it's no longer a per-commit step.
 - **T3** (**ONCE per plan, at its final ⛳ phase** — and releases): the **full board** — unit + fuzz + tsc + build + every live gate, one report. Commit tag: `[gate: full board N/M]`. Run it with the one-command **`npm run board`** runner (plan 021 §2.3, docs/05 §The board runner): one Obsidian process, a health probe between gates that relaunches + re-runs only when the renderer degrades, per-gate fixture-hygiene enforcement, and a `shots/board-report.md` artifact. **Board-flake rule:** a gate that fails in the board but passes standalone immediately after counts green (environment flake — log both results); never re-run the whole board chasing a clean sweep.
 
@@ -104,7 +104,7 @@ label size + collision priority; the old `zoomMin`/`zoomMax` are retained only f
 incidental camera math (fly-to, generation-band split), never for label gating.
 Reveal is per-layer `minzoom` (three bucketed label layers, still filtered on the
 feature's `focus` property) — zoom is NEVER put in a filter (invalidates the whole
-style; see the styleValidation test + styleLoad gate).
+style; see the styleValidation test + the smokeBoot gate's live style-load checks).
 
 **Naming cultures** (seed profiles, one per test campaign): `fantasy-brackish` (harsh coastal: consonant clusters, -haven/-wick/-mire), `modern-anglo` (real-city overlay: person-name + generic), `neon-corpo` (portmanteau + kana-esque syllables + Inc/Corp). Profiles are phoneme tables in `src/gen/naming/cultures/` — agent authors 2 more per genre later, same format.
 

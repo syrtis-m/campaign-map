@@ -408,7 +408,10 @@ Full detail: `docs/05-dev-workflow.md`, `docs/06-autonomous-build.md`, `PROGRESS
 ## Develop
 
 ```
-npm run dev     # esbuild watch → dev vault
-npm test        # Vitest — generators + model
-npm run build   # typecheck + bundle
+npm run dev         # esbuild watch → dev vault
+npm run playground  # procgen inner loop (localhost:8734, no Obsidian)
+npm test            # Vitest fast tier — generators + model (+ test:fuzz)
+npm run perceptual  # headless pixel-diff against approved goldens
+npm run build       # typecheck + bundle
+npm run board       # the 5-gate smoke board (needs a running Obsidian)
 ```

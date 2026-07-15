@@ -25,10 +25,9 @@ minutes to milliseconds, so it is the FIRST stop for any procgen work:
 - **Region robustness**: circle / square / blob / concave-L region shapes and spine
   shapes for line-kind algorithms — eyeball containment and concave behavior live.
 
-What the playground is NOT: its canvas paint is a per-gid **shim** (plan 030-D replaces
-it with the theme style contract), so it judges *geometry and composition*, not theme
-paint — final visual sign-off for anything paint-related still needs the in-app
-screenshot below. It also exercises no host code (cache, worker, lifecycle, undo),
+What the playground is NOT: it renders the style contract's roles with flat colors
+(no theme truth), so it judges *geometry and composition* — final visual sign-off for
+anything paint-related still needs the in-app screenshot below. It also exercises no host code (cache, worker, lifecycle, undo),
 so it never substitutes for a live gate. Generator work order: **playground (tune +
 judge) → unit/fuzz tests (T0/T1) → Obsidian loop only for the host-integration slice.**
 
@@ -144,7 +143,7 @@ The board is the **5-gate smoke set** (smokeBoot · phase1 · smokeProcgen · ve
 ```bash
 npm run board                          # full board: prologue (unit+fuzz+tsc+build) + every live gate
 npm run board -- --changed             # change-scoped: unit+tsc+build + selectGates() live gates (respects full-board escalation)
-npm run board -- --gates=phase1,styleLoad   # explicit live-gate subset (demo/debug)
+npm run board -- --gates=phase1,smokeBoot   # explicit live-gate subset (demo/debug)
 npm run board -- --no-prologue         # live gates only (you already ran unit/build)
 npm run board -- --probe-fail-at=N     # inject ONE probe failure at the Nth gate to exercise the relaunch/resume path
 ```

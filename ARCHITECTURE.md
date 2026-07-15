@@ -104,8 +104,10 @@ Campaigns/<Name>/
 
 **Durable vs. regenerable is the central split.** Durable: notes, `Fabric.geojson`,
 `Generated.json`, the campaign config. Regenerable: everything in `.mapcache/`.
-*Deleting `.mapcache/` must be harmless — the map regenerates byte-identically. If it
-doesn't, determinism broke and that's a release blocker.*
+*Deleting `.mapcache/` is harmless for every region at its algorithm's current
+version — byte-identical regeneration, per machine; if it isn't, determinism broke
+and that's a release blocker. Regions pinned to older versions need explicit adoption
+before they can re-render (§5) — visible badge, never silently different bytes.*
 
 `FabricFeature` (`model/fabric.ts`): `{ id, geometry: LineString|Polygon, properties:
 { kind, name?, procgen? } }`. The optional **procgen block** is what turns a shape into
@@ -115,7 +117,7 @@ a generation request:
 procgen: {
   algorithm: string,   // registry id: "city" | "river" | "forest" | "park" | "wall" | "farmland" | "mountain"
   seed: number,        // hashSeed(campaignSeed, featureId) — persisted AT CREATION, never re-derived
-  version: number,     // params schema version
+  version: number,     // pinned generator contract version (see §5 — adoption raises it)
   params: {...},       // validated by the algorithm's own zod schema in the registry
   presetId?: string    // display-only sugar; generators NEVER read it
 }
@@ -157,10 +159,22 @@ overviews sit around z4.5, so a z14 gate is simply unreachable.
 
 ---
 
-## 5. Determinism (the sacred contract)
+## 5. Determinism (versioned — the consent contract)
 
-Same durable inputs ⇒ same map, forever, on the same machine. The whole cache design
-depends on it. The discipline is codified as **D1–D6** (`docs/procgen-design.md`,
+**Within an algorithm version**: same `(seed, params, region, constraints)` ⇒ same
+bytes, forever, on the same machine — the whole cache design depends on it.
+**Between versions**: generator authors are free. A change that alters output bytes
+for the same inputs bumps the algorithm's `currentVersion` (registry) and re-goldens
+(`npm run goldens:accept -- <algorithm>`); prefer an additive param when its absence
+naturally reproduces old behavior (a preference, not a law). Regions pin
+`procgen.version` at creation; a pinned-old region renders its cached bytes untouched,
+and **only explicit GM adoption raises the pin** (edit prompt / panel Adopt / the
+adopt-all command). A pinned-old region with no cache renders nothing plus a
+needs-adoption badge — never silently different bytes. No per-version generator code
+forks, ever: old bytes survive via cache + consent (`MapController`'s adoption
+section; `scripts/gates/version29.ts`).
+
+The within-version discipline is codified as **D1–D6** (`docs/procgen-design.md`,
 restated in module headers throughout `src/gen/`):
 
 - **D1 — decisions live on integer lattices.** Street-growth topology on a 1 cm integer
@@ -417,10 +431,21 @@ documented local/re-downloadable), mobile (Vault/DataAdapter APIs only, never `f
   and unit-tested: `background < basemap < hillshade < generated < fabric <
   connections < session-path < location dots < labels`. A layer id no group claims
   throws.
-- **Layer builders** (`map/themes/*.ts`, `map/themes/generated/*.ts`) — per-source
-  layer recipes: canon pins/labels, basemap, fabric (sketch), generated (per-algorithm
-  paint under `generated/{city,river,forest,park,wall,farm,mountain,world}.ts`),
-  connections, session paths, hillshade.
+- **Generated paint is contract-driven.** Each algorithm declares a
+  `styleContract: BucketStyle[]` (`gen/procgen/styleContract.ts` — pure, next to the
+  registry): `{ gid, mark: fill|line|point|fill+outline, role: SemanticRole,
+  widthFromProp?, dashed?, z }`. The 14-role vocabulary (water, water-body,
+  water-edge, ground, vegetation, vegetation-deep, cultivated, built, built-accent,
+  route, boundary, path-casing, relief, accent) maps per-theme to concrete values in
+  `map/themes/roleColors.ts`; ONE generic builder (`map/themes/generatedBuilder.ts`)
+  turns contract × role-map into MapLibre layers in contract z-order. One manifest,
+  three consumers: `tileGeneratorIds` derives from the contract, paint derives from
+  it, and a unit test asserts every gid a generator can emit appears in it (the
+  silent-drop trap is structurally dead). Adding a bucket = one contract entry; zero
+  per-theme work. `map/themes/styleGolden.test.ts` byte-pins every theme's built
+  style.
+- **Other layer builders** (`map/themes/*.ts`) — canon pins/labels, basemap, fabric
+  (sketch), connections, session paths, hillshade.
 - **Glyphs & icons** — font PBFs ship in plugin assets, served through a fake
   `campaignmap-glyphs://` scheme resolved in `transformRequest` (`map/glyphs.ts`).
   Tree/park/river prop icons are **runtime-rasterized SDF glyphs** (`map/treeGlyphs.ts`
@@ -446,24 +471,31 @@ Tiers (docs/05 — binding cadence, Jonah 2026-07-13):
 | tier | when | what |
 |---|---|---|
 | **T0** | every edit | `npm test` (fast Vitest, <45 s) + `tsc --noEmit` |
-| **T1** | per-phase commit | T0 + `npm run build` + that phase's own live gate standalone (+ `npm run test:fuzz` iff generator behavior changed) |
+| **T1** | per-phase commit | T0 + `npm run build` + `npm run perceptual` + that phase's own live gate standalone (+ `npm run test:fuzz` iff generator behavior changed) |
 | **T2** | diagnostic | `npm run gates:changed` (diff-scoped gate selection via `scripts/gates/coverage.json`) |
-| **T3** | **once per plan**, at its final phase | `npm run board` — full board in one Obsidian process with renderer-health probes and auto-relaunch (`scripts/board.ts`) |
+| **T3** | **once per plan**, at its final phase | `npm run board` — prologue (unit/fuzz/tsc/build) + the **5-gate smoke set** (smokeBoot · phase1 · smokeProcgen · version29 · phase5) in one Obsidian process with health probes (~5 min; `scripts/board.ts`) |
 
-Hard rules: the full board is never run per phase or to chase flakes — a gate that
-fails in-board but passes standalone is an environment flake (long-lived-renderer
-degradation): log it, count it green. Fuzz/stress tests live in `*.fuzz.test.ts`
-(separate Vitest config). Live gates are `scripts/gates/*.ts`, driven through the
-official Obsidian CLI against `dev-vault/` (**never** Jonah's real vault; note
-`dev-vault/Campaigns/Vespergate` holds his real campaign data — fixtures must be
-name-tagged, self-cleaning, and leave those files byte-intact).
+Hard rules: the board is never run per phase or to chase flakes — a gate that fails
+in-board but passes standalone is an environment flake: log it, count it green.
+Fuzz/stress tests live in `*.fuzz.test.ts` (separate Vitest config). Live gates are
+`scripts/gates/*.ts`, driven through the official Obsidian CLI against `dev-vault/`
+(**never** Jonah's real vault; note `dev-vault/Campaigns/Vespergate` holds his real
+campaign data — fixtures must be name-tagged, self-cleaning, and leave those files
+byte-intact). Every RETIRED live gate has a prove-by-breaking record in
+`review/030B-break-proofs.md`; its coverage lives headless (generator suites +
+`gen/testkit/invariants.ts` + metric bands + perceptual goldens + styleGolden).
+
+**Headless nets:** `npm run perceptual` renders 8 pinned (algorithm, preset, seed,
+region) tuples through a pure-TS rasterizer and pixel-diffs against approved goldens
+in `shots/perceptual/` (re-accept with `--accept` + an eyeball, alongside a version
+bump). `src/map/themes/styleGolden.test.ts` byte-pins each theme's built style JSON.
 
 **Generator work starts in the playground** (`npm run playground` →
 http://localhost:8734; `playground/`): a standalone browser harness that imports
 `src/gen` directly — live zod-derived param knobs, seed scrubbing, a preset grid, and
-region/spine shape variants, with no build/reload cycle. It judges geometry and
-composition only (its paint is a per-gid shim until plan 030-D); theme paint and host
-integration still go through the Obsidian loop.
+region/spine shape variants, with no build/reload cycle. It renders the style
+contract's roles with flat colors — geometry/composition judgment only; theme paint
+and host integration still go through the Obsidian loop.
 
 The live inner loop (host/theme/integration): `npm run build` → `obsidian
 plugin:reload id=campaign-map` (never `plugin:enable` — silent no-op) → drive via
@@ -473,7 +505,7 @@ no voids, no default fonts, genre identifiable in 3 s). Full pitfall list: docs/
 §Hard-won pitfalls.
 
 State files for multi-session/autonomous work: `PROGRESS.md` (log), `DECISIONS.md`
-(rulings + rationale), `HEARTBEAT.md` (current wave checklist), `plans/NNN-*.md`
+(rulings + rationale), `plans/NNN-*.md`
 (numbered feature plans, each with a cold-start §0), `review/` (Tier-B items),
 `GOAL.md`, docs/06 (autonomous protocol), docs/07 (LLM note-emission contract), docs/08
 (loop-run pattern).
@@ -488,7 +520,7 @@ Dependency direction is strictly one-way:
 ```
 src/gen/**  ──►  nothing outside itself (+ zod-only model/fabric.ts)     PURE CORE
 src/model/** ──► zod (+ Obsidian App ONLY in the IO functions)           MOSTLY PURE
-src/controller/** ──► model + gen (host behind 7 interfaces)             PURE BRAIN
+src/controller/** ──► model + gen (host behind 8 interfaces)             PURE BRAIN
 src/map/**  ──► MapLibre + Obsidian App                                  RENDERER-COUPLED
 src/view/** + main.ts ──► Obsidian + MapLibre + controller               HOST SHELL
 src/vault/** ──► Obsidian App                                            HOST IO
@@ -498,15 +530,18 @@ src/vault/** ──► Obsidian App                                            H
 rivers, forests, parks, walls, farmland, mountains, fields, world tier, naming, sigils,
 clip/rng/spatialHash), the zod data model, and `MapController` + `FakeHost`. These have
 zero DOM/MapLibre/Obsidian imports, are plain TS, and carry the entire determinism
-contract. Any new host reimplements the seven gateway interfaces and keeps the brain.
+contract. Any new host reimplements the eight gateway interfaces and keeps the brain.
 
 **The renderer contract** (what a Three.js/WebGL or Godot map must re-provide):
 GeoJSON feature sources (`canon`, `generated`, `fabric`, `connections`,
-`session-path`) + the per-theme paint derived from `ThemeTokens` + the
-`layerOrder.ts` z-invariant + label collision/priority handling (currently free from
-MapLibre's symbol placement — the single biggest thing to replace) + the fictional-CRS
-trick (which only exists *because* MapLibre assumes Mercator; a bespoke renderer can
-use gen-space meters directly and delete `fictionalCRS.ts`). PMTiles basemaps and
+`session-path`) + generated paint interpreted from the **style contract** (the pure
+`gen/procgen/styleContract.ts` manifest ports with the generators; a new renderer
+re-implements only the role→value maps and one contract interpreter — the playground's
+canvas interpreter is a working ~100-line existence proof) + the `layerOrder.ts`
+z-invariant + label collision/priority handling (currently free from MapLibre's
+symbol placement — the single biggest thing to replace) + the fictional-CRS trick
+(which only exists *because* MapLibre assumes Mercator; a bespoke renderer can use
+gen-space meters directly and delete `fictionalCRS.ts`). PMTiles basemaps and
 glyph-PBF fonts are MapLibre-ecosystem artifacts and would be replaced wholesale.
 
 **WebGPU-for-procgen caution:** the determinism contract (§5) is built on exact integer
@@ -589,14 +624,15 @@ a test, an assert, or (marked *policy*) a review-time rule with no mechanical gu
    containment reports in live gates.
 9. Generators are pure `(seed, region|bbox, params, constraints) => Feature[]`; no
    DOM/map/Obsidian imports in `src/gen/` (worker entry excepted); they emit typed
-   features, never styles. — *enforced:* headless Vitest runs (an Obsidian import
-   would fail to resolve); *policy* on the no-styles half until the 030-D contract
-   test lands.
+   features, never styles — paint comes only from the style contract × theme role
+   maps. — *enforced:* headless Vitest runs (an Obsidian import would fail to
+   resolve); `styleContract.test.ts` + `generatedBuilder.test.ts`.
 10. Params are the whole truth; presets/`presetId` are display sugar a generator never
     reads. — *enforced:* `gen/procgen/registry.test.ts` preset/params contract.
-11. Every emitted generator-id must be in the algorithm's `tileGeneratorIds` (an
-    uncached gid is silently dropped at the tile clip). — *enforced:* per-generator
-    emitted-gid tests; becomes derived-from-contract + unit-asserted in 030-D.
+11. Every emitted generator-id must be in the algorithm's style contract —
+    `tileGeneratorIds` derives from it, so an uncached/unpainted gid is structurally
+    impossible. — *enforced:* `styleContract.test.ts` (emitted gids ⊆ contract across
+    every preset of every algorithm).
 12. Zoom LOD affects location-name visibility only; no absolute zoom thresholds
     anywhere. — *enforced:* no-minzoom assertions (procgen41 (i)); fabric layers carry
     no `minzoom` (*policy* beyond that).

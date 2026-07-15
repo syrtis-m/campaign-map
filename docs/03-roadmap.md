@@ -62,7 +62,7 @@
 ## Procgen v4 arc — plans 021–028 (SHIPPED 2026-07-14)
 
 The full 021–025 arc plus the 026–028 visual-overhaul waves landed over
-2026-07-12 → 2026-07-14 (HEARTBEAT.md has the box-by-box log; plans/README.md
+2026-07-12 → 2026-07-14 (review/HEARTBEAT-arc-021-028.md has the box-by-box log; plans/README.md
 rows carry per-phase commits). Summary: fast-testing infrastructure (fuzz tier,
 board runner, headless harness) → the algorithm suite (rivers/forests/parks/
 walls/farmland) → constraint fields + elevation (mountains, contours,
