@@ -318,6 +318,16 @@ const riverParamsSchema = z.object({
    * elevation field as a durable macro-terrain input (`elevationFieldFromFabric`
    * — the raw sketch, never the mountain generator's output). */
   slopeSensitivity: z.number().min(0).max(1).default(0),
+  /** GM-editable per-vertex carve DEPTH (m), aligned to the sketch spine
+   * vertices (plan 040 river depths). Absent (default) ⇒ the uniform
+   * width-derived incision `riverCarveDepth(width)` — byte-identical to a river
+   * with no depths, so the generator (which never reads this — it drives the
+   * TERRAIN CARVE only, not the channel geometry) and its goldens are untouched.
+   * Present ⇒ the carve interpolates depth along arc length between vertices;
+   * downhill flow is still guaranteed by the carve's cumulative-min (a river can
+   * never flow uphill regardless of the GM's input). A length mismatch or a
+   * non-finite entry is ignored (falls back to uniform). */
+  depths: z.array(z.number()).optional(),
 });
 
 /** River presets. Params are the whole truth; the "delta weights braiding

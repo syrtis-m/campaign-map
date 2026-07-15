@@ -92,7 +92,7 @@
  */
 import { hashSeed, mulberry32 } from "./rng";
 import { q, harmonicBlobRing, blobFeature } from "./waterEmit";
-import type { ProcgenRegion } from "./region";
+import type { ProcgenRegion, Spine } from "./region";
 import type { GenerationConstraints } from "./types";
 import { macroTerrainField } from "./fields/terrain";
 import type { ElevationField } from "./fields/elevation";
@@ -546,6 +546,90 @@ function weldToward(from: Pt, toward: Pt): Pt {
   return [from[0] + dx * t, from[1] + dy * t];
 }
 
+/** The meandered + filleted CENTERLINE of a river — steps 1–2 of the river
+ * generator, extracted so the terrain CARVE can incise the EXACT SAME path the
+ * generator paints (plan 036-B: the trench must follow the visible meandered
+ * channel, never the straight sketched spine). Pure/headless and deterministic:
+ * a function of `(seed, spine, params, elev)` ONLY — the same shared math the
+ * generator runs, so "carve centerline == generator centerline" is trivially
+ * true (one function, two callers). `elev` is the durable MACRO terrain field
+ * (`macroTerrainField`) for slope coupling — never the river's own carve.
+ *
+ * Returns the concatenated centerline samples plus the per-sample bookkeeping
+ * (`sampleSeg`/`sampleS`) and the per-segment contexts the generator's later
+ * steps (banks, braids, dressing) consume. */
+export interface RiverCenterline {
+  center: CenterPoint[];
+  sampleSeg: number[];
+  sampleS: number[];
+  segs: SegmentCtx[];
+}
+
+export function buildRiverCenterline(
+  seed: number,
+  spine: Spine,
+  params: RiverParams,
+  elev: ElevationField | null
+): RiverCenterline {
+  const pts = spine.points;
+  const totalLen = spine.totalLen;
+  // 1. Per-segment meandered samples (identity-keyed per segment), concatenated
+  //    into ONE global centerline. The join vertex appears exactly once (as the
+  //    tail sample of the previous segment), so banks and quads bridge every
+  //    spine vertex seamlessly — a per-segment emission would leave a gap and
+  //    a normal mismatch at each vertex (the "sharp bend" notch).
+  const center: CenterPoint[] = [];
+  const sampleSeg: number[] = []; // per-sample original-segment index
+  const sampleS: number[] = []; // per-sample segment-local arc (m)
+  const segs: SegmentCtx[] = [];
+  for (let k = 0; k < pts.length - 1; k++) {
+    const seg = segmentCtx(seed, params, pts[k], pts[k + 1], spine.cumLen[k], totalLen, elev);
+    segs.push(seg);
+    const steps = Math.max(1, Math.ceil(seg.segLen / RESAMPLE_STEP_M));
+    for (let j = k === 0 ? 0 : 1; j <= steps; j++) {
+      const s = (j * seg.segLen) / steps;
+      const [x, y] = seg.evalAt(s);
+      center.push({ x, y, f: totalLen > 0 ? (spine.cumLen[k] + s) / totalLen : 0 });
+      sampleSeg.push(k);
+      sampleS.push(s);
+    }
+  }
+
+  // 2. Corner fillets: near each interior spine vertex, blend the centerline
+  //    toward a quadratic Bezier (entry point, vertex, exit point) so bends
+  //    curve naturally instead of kinking. Radius scales with windiness (a
+  //    canal keeps engineered corners) and is capped per adjacent segment; the
+  //    cos² blend is 1 at the vertex and 0 at the window edges, so the curve
+  //    stays continuous where it rejoins the meander. Identity: a fillet
+  //    depends only on its two adjacent segments, so an edit's blast radius is
+  //    the adjacent segments plus ≤FILLET_MAX_M into their neighbors' tails.
+  const filletMax = params.windiness * FILLET_MAX_M;
+  if (filletMax > RESAMPLE_STEP_M && center.length >= 2) {
+    for (let k = 1; k < pts.length - 1; k++) {
+      const prev = segs[k - 1];
+      const next = segs[k];
+      const R = Math.min(FILLET_FRAC * prev.segLen, FILLET_FRAC * next.segLen, filletMax);
+      if (R <= RESAMPLE_STEP_M) continue;
+      const A = prev.evalAt(prev.segLen - R);
+      const B = next.evalAt(R);
+      const V = pts[k];
+      for (let i = 0; i < center.length; i++) {
+        let u: number | null = null;
+        if (sampleSeg[i] === k - 1 && sampleS[i] >= prev.segLen - R) u = sampleS[i] - prev.segLen;
+        else if (sampleSeg[i] === k && sampleS[i] <= R) u = sampleS[i];
+        if (u === null) continue;
+        const t = (u + R) / (2 * R);
+        const bx = (1 - t) * (1 - t) * A[0] + 2 * t * (1 - t) * V[0] + t * t * B[0];
+        const by = (1 - t) * (1 - t) * A[1] + 2 * t * (1 - t) * V[1] + t * t * B[1];
+        const w = Math.cos((Math.PI * u) / (2 * R)) ** 2;
+        center[i].x += (bx - center[i].x) * w;
+        center[i].y += (by - center[i].y) * w;
+      }
+    }
+  }
+  return { center, sampleSeg, sampleS, segs };
+}
+
 /**
  * Generate a river inside a spine corridor.
  * `region.spine` is the mm-quantized sketched polyline; output is per-segment
@@ -566,7 +650,6 @@ export function generateRiver(
   const spine = region.spine;
   if (!spine || spine.points.length < 2) return [];
   const pts = spine.points;
-  const totalLen = spine.totalLen;
 
   // Slope coupling input: the elevation field composed from the SKETCHED
   // mountain features on the constraints — the raw sketch layer, the one
@@ -622,61 +705,11 @@ export function generateRiver(
         return hw;
       };
 
-  // 1. Per-segment meandered samples (identity-keyed per segment), concatenated
-  //    into ONE global centerline. The join vertex appears exactly once (as the
-  //    tail sample of the previous segment), so banks and quads bridge every
-  //    spine vertex seamlessly — a per-segment emission would leave a gap and
-  //    a normal mismatch at each vertex (the "sharp bend" notch).
-  const center: CenterPoint[] = [];
-  const sampleSeg: number[] = []; // per-sample original-segment index
-  const sampleS: number[] = []; // per-sample segment-local arc (m)
-  const segs: SegmentCtx[] = [];
-  for (let k = 0; k < pts.length - 1; k++) {
-    const seg = segmentCtx(seed, params, pts[k], pts[k + 1], spine.cumLen[k], totalLen, elev);
-    segs.push(seg);
-    const steps = Math.max(1, Math.ceil(seg.segLen / RESAMPLE_STEP_M));
-    for (let j = k === 0 ? 0 : 1; j <= steps; j++) {
-      const s = (j * seg.segLen) / steps;
-      const [x, y] = seg.evalAt(s);
-      center.push({ x, y, f: totalLen > 0 ? (spine.cumLen[k] + s) / totalLen : 0 });
-      sampleSeg.push(k);
-      sampleS.push(s);
-    }
-  }
+  // 1–2. Meandered + filleted centerline. Extracted into `buildRiverCenterline`
+  //    so the terrain CARVE incises the SAME path (plan 036-B) — the generator
+  //    and the carve share ONE centerline function, never duplicated math.
+  const { center, sampleSeg, sampleS, segs } = buildRiverCenterline(seed, spine, params, elev);
   if (center.length < 2) return [];
-
-  // 2. Corner fillets: near each interior spine vertex, blend the centerline
-  //    toward a quadratic Bezier (entry point, vertex, exit point) so bends
-  //    curve naturally instead of kinking. Radius scales with windiness (a
-  //    canal keeps engineered corners) and is capped per adjacent segment; the
-  //    cos² blend is 1 at the vertex and 0 at the window edges, so the curve
-  //    stays continuous where it rejoins the meander. Identity: a fillet
-  //    depends only on its two adjacent segments, so an edit's blast radius is
-  //    the adjacent segments plus ≤FILLET_MAX_M into their neighbors' tails.
-  const filletMax = params.windiness * FILLET_MAX_M;
-  if (filletMax > RESAMPLE_STEP_M) {
-    for (let k = 1; k < pts.length - 1; k++) {
-      const prev = segs[k - 1];
-      const next = segs[k];
-      const R = Math.min(FILLET_FRAC * prev.segLen, FILLET_FRAC * next.segLen, filletMax);
-      if (R <= RESAMPLE_STEP_M) continue;
-      const A = prev.evalAt(prev.segLen - R);
-      const B = next.evalAt(R);
-      const V = pts[k];
-      for (let i = 0; i < center.length; i++) {
-        let u: number | null = null;
-        if (sampleSeg[i] === k - 1 && sampleS[i] >= prev.segLen - R) u = sampleS[i] - prev.segLen;
-        else if (sampleSeg[i] === k && sampleS[i] <= R) u = sampleS[i];
-        if (u === null) continue;
-        const t = (u + R) / (2 * R);
-        const bx = (1 - t) * (1 - t) * A[0] + 2 * t * (1 - t) * V[0] + t * t * B[0];
-        const by = (1 - t) * (1 - t) * A[1] + 2 * t * (1 - t) * V[1] + t * t * B[1];
-        const w = Math.cos((Math.PI * u) / (2 * R)) ** 2;
-        center[i].x += (bx - center[i].x) * w;
-        center[i].y += (by - center[i].y) * w;
-      }
-    }
-  }
 
   // 3. Global banks, then ONE merged channel ribbon + two bank casing lines
   //    per ORIGINAL segment. Normals by central difference over

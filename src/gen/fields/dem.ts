@@ -66,8 +66,14 @@ export function demVerticalScale(scaleMetersPerUnit: number): number {
  *   4: monotone-downhill river bed (buildRiverCarve cumulative-min) — the carve
  *      field moved for the same river inputs, so every DEM tile + contour leaf
  *      must re-derive or a stale bumpy lattice serves forever.
+ *   5: the carve follows the river generator's MEANDERED centerline
+ *      (`buildRiverCenterline`), not the straight sketched spine, so the trench
+ *      matches the painted channel (plan 040 item 1) + per-vertex `depths`. The
+ *      carve field moved for the same river inputs ⇒ re-derive every DEM tile +
+ *      contour leaf. Generator bytes are untouched (macroTerrainField excludes
+ *      the carve), so river goldens are unchanged.
  */
-export const TERRAIN_FIELD_VERSION = 4;
+export const TERRAIN_FIELD_VERSION = 5;
 
 /** Longitude/latitude bounds of a slippy tile (z/x/y, XYZ scheme). Standard
  * web-mercator inverse — the tile grid MapLibre requests DEM tiles on. */

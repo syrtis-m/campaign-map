@@ -37,6 +37,8 @@ import { tileLngLatBounds, TERRAIN_FIELD_VERSION } from "./dem";
 import { SegmentHash } from "../segmentHash";
 import type { BBox } from "../spatialHash";
 import type { FabricFeature } from "../../model/fabric";
+import { buildRiverCenterline, type RiverParams } from "../river";
+import { makeSpine, type Spine } from "../region";
 
 type Pt = [number, number];
 
@@ -412,7 +414,19 @@ const CARVE_DEPTH_BASE = 60; // channel-floor incision below the surrounding sur
 const CARVE_DEPTH_PER_WIDTH = 1.5; // wider rivers cut deeper
 const CARVE_BANK_SLOPE = 2.2; // gorge-wall rise (meters up per meter out past the channel)
 const CARVE_SMIN_K = 40; // smooth-min blend radius (soft banks, no hard crease)
-const CARVE_RESAMPLE_M = 40; // densify the spine so the bed follows terrain finely
+
+/** The uniform channel incision (m) a river of base `width` cuts below the
+ * surrounding surface — the depth used when a river carries no per-vertex
+ * `depths` override, and the value each GM depth grip starts at (plan 040 river
+ * depths). Clamps `width` the same way the carve does so the UI default matches
+ * the field exactly. */
+export function riverCarveDepth(width: number): number {
+  return CARVE_DEPTH_BASE + Math.max(4, width) * CARVE_DEPTH_PER_WIDTH;
+}
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
 
 /** TEST SEAM ONLY: disable the carve fast-reject (bbox + occupancy grid) so every
  * sample runs the full nearest-spiral + smin. The reject is engineered to be
@@ -499,30 +513,36 @@ function buildSpineClearance(spine: Pt[], bnd: BBox): SpineClearance | null {
   return { c, gx0, gy0, w, h, dist };
 }
 
-/** Resample a polyline so no segment exceeds `maxStep` meters — the bed floor is
- * sampled per vertex, so a coarse GM spine (km between clicks) would let the
- * incision drift off the terrain between vertices. Deterministic (pure geometry).
- */
-function densify(line: Pt[], maxStep: number): Pt[] {
-  const out: Pt[] = [line[0]];
-  for (let i = 0; i < line.length - 1; i++) {
-    const [ax, ay] = line[i];
-    const [bx, by] = line[i + 1];
-    const len = Math.hypot(bx - ax, by - ay);
-    const n = Math.max(1, Math.ceil(len / maxStep));
-    for (let k = 1; k <= n; k++) {
-      const t = k / n;
-      out.push([ax + (bx - ax) * t, ay + (by - ay) * t]);
-    }
-  }
-  return out;
-}
-
 interface RiverCarve {
   id: string;
-  spine: Pt[];
+  seed: number;
+  /** The `makeSpine`'d sketch spine — the EXACT input the river generator's
+   * `region.spine` carries, so the carve reproduces the generator's centerline. */
+  spine: Spine;
+  /** The RAW sketch vertices (pre-`makeSpine`) — per-vertex `depths` anchor to
+   * these, the same vertices the GM's depth grips edit. */
+  rawSpine: Pt[];
+  params: RiverParams;
   halfWidth: number;
-  depth: number;
+  /** Uniform incision (m) — the depth used at every vertex when `depths` is null. */
+  uniformDepth: number;
+  /** Per-vertex incision (m), aligned to `rawSpine`; null ⇒ uniform everywhere
+   * (byte-identical to a river with no `depths` param). */
+  depths: number[] | null;
+}
+
+/** Per-vertex carve depths aligned to the RAW sketch spine. Honoured ONLY when
+ * present, all-finite, and length-matched to the sketch vertex count — a
+ * malformed / mismatched array is ignored (⇒ uniform depth, byte-identical to a
+ * river with no `depths` at all: the absent-param-reproduces-old-bytes rule). */
+function readDepths(v: unknown, rawVertexCount: number): number[] | null {
+  if (!Array.isArray(v) || v.length !== rawVertexCount || rawVertexCount < 2) return null;
+  const out: number[] = [];
+  for (const d of v) {
+    if (typeof d !== "number" || !Number.isFinite(d)) return null;
+    out.push(d);
+  }
+  return out;
 }
 
 function riverCarvesFromFabric(features: FabricFeature[]): RiverCarve[] {
@@ -530,20 +550,72 @@ function riverCarvesFromFabric(features: FabricFeature[]): RiverCarve[] {
   for (const f of features) {
     if (f.properties.kind !== "river" || f.properties.procgen?.algorithm !== "river") continue;
     if (f.geometry.type !== "LineString") continue;
-    const spine = f.geometry.coordinates as Pt[];
-    if (!spine || spine.length < 2) continue;
+    const rawSpine = f.geometry.coordinates as Pt[];
+    if (!rawSpine || rawSpine.length < 2) continue;
+    const id = String(f.id);
+    const spine = makeSpine(id, rawSpine);
+    if (spine.points.length < 2) continue;
     const p = f.properties.procgen.params as Record<string, unknown>;
     const width = Math.max(4, num(p.width, 12));
+    // Full river params, parsed defensively (the durable sketch layer may be
+    // malformed) — drives the SAME meandered centerline the generator paints via
+    // `buildRiverCenterline`, so the trench matches the visible channel. Defaults
+    // mirror the river zod schema (all 0) so an unset param reproduces old bytes.
+    const params: RiverParams = {
+      windiness: clamp01(num(p.windiness, 0)),
+      braiding: clamp01(num(p.braiding, 0)),
+      width,
+      widthGrowth: Math.max(0, num(p.widthGrowth, 0)),
+      braidBias: clamp01(num(p.braidBias, 0)),
+      slopeSensitivity: clamp01(num(p.slopeSensitivity, 0)),
+    };
+    const seed = typeof f.properties.procgen.seed === "number" ? f.properties.procgen.seed : 0;
     out.push({
-      id: String(f.id),
+      id,
+      seed,
       spine,
+      rawSpine,
+      params,
       halfWidth: width,
-      depth: CARVE_DEPTH_BASE + width * CARVE_DEPTH_PER_WIDTH,
+      uniformDepth: riverCarveDepth(width),
+      depths: readDepths(p.depths, rawSpine.length),
     });
   }
   // id-sorted before the fold (FP determinism — smin is not order-independent).
   out.sort((a, b) => a.id.localeCompare(b.id));
   return out;
+}
+
+/** The per-vertex depth interpolator for a carve: a pure function of the sketch
+ * DEPTH FRACTION `f` (0 = source, 1 = mouth). Absent `depths` ⇒ a constant
+ * `uniformDepth` (byte-identical to the pre-depths carve). Present ⇒ the depth
+ * linearly interpolated between the two bracketing sketch vertices by arc-length
+ * fraction (anchored on the RAW spine, the vertices the GM's grips edit), held
+ * flat past the endpoints. */
+function makeDepthAt(carve: RiverCarve): (f: number) => number {
+  const depths = carve.depths;
+  if (!depths) {
+    const d = carve.uniformDepth;
+    return () => d;
+  }
+  const raw = carve.rawSpine;
+  const cum: number[] = [0];
+  let total = 0;
+  for (let i = 1; i < raw.length; i++) {
+    total += Math.hypot(raw[i][0] - raw[i - 1][0], raw[i][1] - raw[i - 1][1]);
+    cum.push(total);
+  }
+  const fr = total > 0 ? cum.map((c) => c / total) : cum.map(() => 0);
+  return (f: number): number => {
+    if (f <= fr[0]) return depths[0];
+    const n = fr.length;
+    if (f >= fr[n - 1]) return depths[n - 1];
+    let j = 0;
+    while (j < n - 1 && f > fr[j + 1]) j++;
+    const span = fr[j + 1] - fr[j];
+    const t = span > 0 ? (f - fr[j]) / span : 0;
+    return depths[j] + (depths[j + 1] - depths[j]) * t;
+  };
 }
 
 /** iq polynomial smooth-min (min-blend over `k`): pulls `a` down toward the
@@ -582,17 +654,31 @@ function polySmin(a: number, b: number, k: number): { v: number; h: number; smoo
  * a mis-sketched grade.
  */
 function buildRiverCarve(carve: RiverCarve, pre: ElevationField): (s: HeightSample, x: number, y: number) => HeightSample {
-  const spine = densify(carve.spine, CARVE_RESAMPLE_M);
+  // Incise the MEANDERED CENTERLINE the generator paints, not the straight
+  // sketched spine (plan 036-B): `buildRiverCenterline` is the ONE shared math
+  // (river.ts), so the trench low-point tracks the same bends the visible channel
+  // does. `pre` is the durable macro-terrain surface (base + mountain + relief +
+  // landform, no carve) — the exact field the generator's slope coupling reads
+  // via `macroTerrainField`, so the carve's centerline is byte-identical to the
+  // generator's. Sampled at RESAMPLE_STEP_M (6 m) — finer than the old 40 m
+  // densify, so the bed follows terrain at least as closely.
+  const centerline = buildRiverCenterline(carve.seed, carve.spine, carve.params, pre).center;
+  if (centerline.length < 2) return (s: HeightSample): HeightSample => s; // degenerate ⇒ inert
+  const spine: Pt[] = centerline.map((c) => [c.x, c.y]);
   const hash = new SegmentHash(spine, { cellSize: Math.max(64, carve.halfWidth * 4) });
-  // Memoize the bed floor at each (densified) spine vertex — region-scoped
-  // whole-artifact pass: sample the pre-carve surface once per vertex, incise by
-  // `depth`, then take the cumulative min DOWNSTREAM (spine[0] = source) so the bed
-  // is monotone non-increasing toward the mouth (water flows downhill, no bumps).
+  const depthAt = makeDepthAt(carve);
+  // Memoize the bed floor at each centerline vertex — region-scoped whole-artifact
+  // pass: sample the pre-carve surface once per vertex, incise by the (GM-editable,
+  // per-vertex) depth, then take the cumulative min DOWNSTREAM (centerline[0] =
+  // source) so the bed is monotone non-increasing toward the mouth (water flows
+  // downhill, no bumps — and no vertex's bed can climb above an upstream one,
+  // regardless of the GM's per-vertex depth input). Depth is interpolated by the
+  // centerline sample's arc-length fraction `f` (0 = source, 1 = mouth).
   const bedVert = new Float64Array(spine.length);
   let running = Infinity; // running min of (pre − depth) from the source downstream
   for (let i = 0; i < spine.length; i++) {
     const [vx, vy] = spine[i];
-    const local = pre(vx, vy).v - carve.depth;
+    const local = pre(vx, vy).v - depthAt(centerline[i].f);
     if (local < running) running = local;
     bedVert[i] = running;
   }
