@@ -15,13 +15,20 @@ const DRAFT_LAYERS = [
   "fabric-draft-midpoint",
   "fabric-draft-vertex",
   "fabric-draft-center",
-  "fabric-draft-height",
 ] as const;
-/** Handle layers hit-tested during a vertex/midpoint/center/height grab. */
-const HANDLE_LAYERS = ["fabric-draft-height", "fabric-draft-center", "fabric-draft-vertex", "fabric-draft-midpoint"];
-/** Idle handle offset (px) from the anchor caps here so a tall stamp's grip
+/** Handle layers hit-tested during a vertex/midpoint/center grab. The extrude
+ * grip is NOT here — it is a screen-space DOM overlay (see the grip section
+ * below), never a draped GeoJSON feature. */
+const HANDLE_LAYERS = ["fabric-draft-center", "fabric-draft-vertex", "fabric-draft-midpoint"];
+/** Idle grip offset (px) from the anchor caps here so a tall stamp's grip
  * stays on screen; during a drag the grip follows the cursor 1:1. */
 const HEIGHT_REST_CAP_PX = 100;
+/** Extrude-grip core diameter (px) + its white ring — the r11-scale prominence
+ * of the old circle-radius:11 grip, now the largest deliberate DOM target
+ * (core ≥ 22 px per the plan-040 bar). */
+const HEIGHT_GRIP_CORE_PX = 22;
+const HEIGHT_GRIP_RING_PX = 4;
+const HEIGHT_GRIP_OUTER_PX = HEIGHT_GRIP_CORE_PX + HEIGHT_GRIP_RING_PX * 2;
 
 type Pt = [number, number];
 
@@ -100,10 +107,26 @@ export class SketchController {
   private hoverVertexIndex: number | null = null;
   /** True while the (single) center handle is being dragged. */
   private draggingCenter = false;
-  /** Height-handle drag bookkeeping: the grab's screen-Y + value baseline, the
-   * live cursor Y (so the grip follows the cursor 1:1 while dragging), or null
-   * when no height drag is active. */
-  private heightDrag: { startScreenY: number; startValue: number; cursorY: number } | null = null;
+  /** Extrude-grip drag bookkeeping: the pointer's client-Y at grab + the value
+   * baseline + the grip's pixel offset at grab (so the grip follows the cursor
+   * 1:1 while dragging). Client-Y only appears in a DELTA, so the map-canvas
+   * offset cancels; the value math (`valueFromDrag`) is unchanged. Null when no
+   * extrude drag is active. */
+  private heightDrag: { startClientY: number; startValue: number; startOffsetPx: number } | null = null;
+  /** Screen-space extrude overlay (plan 040 projection fix): the grip is a DOM
+   * element offset PURELY in screen pixels above the terrain-projected anchor,
+   * so the stem rises vertically at ANY pitch/bearing — never a draped GeoJSON
+   * point that reads as lying on the ground. Null when no terrain stamp with a
+   * height handle is selected. */
+  private gripEl: HTMLElement | null = null;
+  private stemEl: HTMLElement | null = null;
+  /** Current pixel offset of the grip above its anchor (negative = below, for a
+   * valley/basin). Idle it tracks value/coarse-mpp (capped); mid-drag it follows
+   * the cursor 1:1. */
+  private gripOffsetPx = 0;
+  /** Camera-move reposition hook (terrain-aware `project` reruns), registered
+   * only while a grip exists. */
+  private gripMoveHook: (() => void) | null = null;
   /** Set true when a mousedown grabs a handle, so the trailing `click`
    * MapLibre may fire is suppressed (see `consumeInteraction`). Cleared at the
    * start of every mousedown so a stale flag can never silently eat the next
@@ -123,10 +146,9 @@ export class SketchController {
     if (!this.active || this.tool !== "select" || !this.edit || this.dragVertexIndex !== null) return;
     const hit = this.handleAt(e.point.x, e.point.y);
     this.hoverVertexIndex = hit && hit.handle === "vertex" ? hit.index : null;
-    const cvs = this.map.getCanvas();
-    // The extrude grip is a VERTICAL drag — advertise it (ns-resize), the one
-    // cursor cue that separates it from every horizontal-move handle.
-    cvs.style.cursor = hit ? (hit.handle === "height" ? "ns-resize" : "move") : "";
+    // The extrude grip owns its own ns-resize cursor (it is a DOM element); the
+    // map-canvas hit-test only cues the move handles now.
+    this.map.getCanvas().style.cursor = hit ? "move" : "";
   };
 
   private readonly downHandler = (e: MapMouseEvent): void => {
@@ -135,10 +157,7 @@ export class SketchController {
     const hit = this.handleAt(e.point.x, e.point.y);
     if (!hit) return; // empty ground — let the click deselect/select
     e.preventDefault();
-    if (hit.handle === "height") {
-      if (!this.edit.height) return;
-      this.heightDrag = { startScreenY: e.point.y, startValue: this.edit.height.value, cursorY: e.point.y };
-    } else if (hit.handle === "center") {
+    if (hit.handle === "center") {
       this.draggingCenter = true;
       this.edit.center = [e.lngLat.lng, e.lngLat.lat];
     } else if (hit.handle === "midpoint") {
@@ -157,17 +176,6 @@ export class SketchController {
 
   private readonly dragMove = (e: MapMouseEvent): void => {
     if (!this.edit) return;
-    if (this.heightDrag && this.edit.height) {
-      const dyUp = this.heightDrag.startScreenY - e.point.y; // up = raise
-      const fine = (e.originalEvent as MouseEvent | undefined)?.shiftKey ?? false;
-      const mpp = fine ? HEIGHT_MPP_FINE : HEIGHT_MPP_COARSE;
-      const v = valueFromDrag(this.heightDrag.startValue, dyUp, mpp, this.edit.height.min, this.edit.height.max);
-      this.edit.height.value = v;
-      this.heightDrag.cursorY = e.point.y;
-      this.renderDraft();
-      this.handlers.onHeightDrag?.(this.edit.featureId, v);
-      return;
-    }
     if (this.draggingCenter) {
       this.edit.center = [e.lngLat.lng, e.lngLat.lat];
       this.renderDraft();
@@ -185,20 +193,6 @@ export class SketchController {
     this.map.off("mousemove", this.dragMove);
     this.map.off("mouseup", this.dragUp);
     this.map.dragPan.enable();
-    if (this.heightDrag) {
-      const { startValue } = this.heightDrag;
-      this.heightDrag = null;
-      if (this.edit?.height) {
-        const v = this.edit.height.value;
-        if (Math.abs(v - startValue) >= HEIGHT_DRAG_DEADZONE_M) {
-          this.handlers.onHeightCommit?.(this.edit.featureId, v);
-        } else {
-          this.edit.height.value = startValue; // deadzone: treat as a click, snap back
-        }
-      }
-      this.renderDraft();
-      return;
-    }
     if (this.draggingCenter) {
       this.draggingCenter = false;
       if (this.edit && this.edit.center) this.handlers.onCenterEdit?.(this.edit.featureId, this.edit.center);
@@ -206,6 +200,77 @@ export class SketchController {
     }
     this.dragVertexIndex = null;
     if (this.edit) this.commitEdit();
+  };
+
+  // ── Extrude grip (screen-space DOM overlay) ──────────────────────────────
+  // The grip runs its OWN pointer capture instead of the map's mouse pipeline,
+  // so the drag is decoupled from the terrain surface: client-Y deltas drive
+  // the unchanged `valueFromDrag` math, and the grip is positioned in raw
+  // screen pixels above a terrain-aware `map.project` of the anchor.
+
+  /** Swallow the grip's mousedown so MapLibre's DragPanHandler (mouse-based)
+   * never starts a pan under the grab — pointer capture owns the gesture. */
+  private readonly onGripMouseDown = (e: Event): void => {
+    e.stopPropagation();
+  };
+
+  private readonly onGripPointerDown = (e: PointerEvent): void => {
+    if (!this.edit?.height || !this.gripEl) return;
+    // Stop the event reaching the map canvas → no map drag, no trailing click
+    // (so the selection is never deselected by grabbing the grip).
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      this.gripEl.setPointerCapture(e.pointerId);
+    } catch {
+      /* jsdom / headless mock has no capture — the delta math still runs */
+    }
+    this.heightDrag = {
+      startClientY: e.clientY,
+      startValue: this.edit.height.value,
+      startOffsetPx: this.gripOffsetPx,
+    };
+    this.gripEl.addEventListener("pointermove", this.onGripPointerMove);
+    this.gripEl.addEventListener("pointerup", this.onGripPointerUp);
+    this.gripEl.addEventListener("pointercancel", this.onGripPointerUp);
+    this.map.dragPan.disable();
+  };
+
+  private readonly onGripPointerMove = (e: PointerEvent): void => {
+    if (!this.heightDrag || !this.edit?.height) return;
+    const dyUp = this.heightDrag.startClientY - e.clientY; // up = raise
+    const mpp = e.shiftKey ? HEIGHT_MPP_FINE : HEIGHT_MPP_COARSE;
+    const v = valueFromDrag(this.heightDrag.startValue, dyUp, mpp, this.edit.height.min, this.edit.height.max);
+    this.edit.height.value = v;
+    this.gripOffsetPx = this.heightDrag.startOffsetPx + dyUp; // grip follows cursor 1:1
+    this.repositionHeightGrip();
+    this.handlers.onHeightDrag?.(this.edit.featureId, v);
+  };
+
+  private readonly onGripPointerUp = (e: PointerEvent): void => {
+    if (!this.heightDrag) return;
+    const { startValue } = this.heightDrag;
+    this.heightDrag = null;
+    if (this.gripEl) {
+      try {
+        this.gripEl.releasePointerCapture(e.pointerId);
+      } catch {
+        /* headless mock */
+      }
+      this.gripEl.removeEventListener("pointermove", this.onGripPointerMove);
+      this.gripEl.removeEventListener("pointerup", this.onGripPointerUp);
+      this.gripEl.removeEventListener("pointercancel", this.onGripPointerUp);
+    }
+    this.map.dragPan.enable();
+    if (this.edit?.height) {
+      const v = this.edit.height.value;
+      if (Math.abs(v - startValue) >= HEIGHT_DRAG_DEADZONE_M) {
+        this.handlers.onHeightCommit?.(this.edit.featureId, v);
+      } else {
+        this.edit.height.value = startValue; // deadzone: treat as a click, snap back
+      }
+    }
+    this.repositionHeightGrip();
   };
 
   constructor(
@@ -302,7 +367,7 @@ export class SketchController {
     this.edit = null;
     this.dragVertexIndex = null;
     this.hoverVertexIndex = null;
-    this.heightDrag = null;
+    this.removeHeightGrip();
     this.map.off("mousemove", this.moveHandler);
     this.map.off("mousemove", this.hoverHandler);
     this.map.off("mousedown", this.downHandler);
@@ -451,7 +516,7 @@ export class SketchController {
   private handleAt(
     x: number,
     y: number
-  ): { handle: "vertex" | "midpoint" | "center" | "height"; index: number } | null {
+  ): { handle: "vertex" | "midpoint" | "center"; index: number } | null {
     const layers = HANDLE_LAYERS.filter((l) => this.map.getLayer(l));
     if (layers.length === 0) return null;
     const box: [[number, number], [number, number]] = [
@@ -459,20 +524,20 @@ export class SketchController {
       [x + 8, y + 8],
     ];
     const hits = this.map.queryRenderedFeatures(box, { layers });
-    let best: { handle: "vertex" | "midpoint" | "center" | "height"; index: number } | null = null;
+    let best: { handle: "vertex" | "midpoint" | "center"; index: number } | null = null;
     let bestScore = Infinity;
     for (const f of hits) {
-      const handle = f.properties?.handle as "vertex" | "midpoint" | "center" | "height" | undefined;
+      const handle = f.properties?.handle as "vertex" | "midpoint" | "center" | undefined;
       const index = f.properties?.index as number | undefined;
       if (handle === undefined || index === undefined) continue;
       if (f.geometry.type !== "Point") continue;
       const p = this.map.project(f.geometry.coordinates as Pt);
-      // Distance, with a small bias so height/center win over vertex win over
-      // midpoint on a near-tie (the big deliberate targets go first).
-      // The extrude grip wins decisively near the centroid (it overlaps the
-      // center/move handle's neighbourhood — the "extrude feels horizontal"
-      // report was a center-handle grab).
-      const bias = handle === "height" ? -6 : handle === "center" ? -1 : handle === "vertex" ? 0 : 0.5;
+      // Distance, with a small bias so center wins over vertex wins over
+      // midpoint on a near-tie (the big deliberate targets go first). The
+      // extrude grip is no longer here — it is a DOM overlay with its own
+      // pointer capture, so it can never be confused with a center grab (the
+      // old "extrude feels horizontal" report's root cause).
+      const bias = handle === "center" ? -1 : handle === "vertex" ? 0 : 0.5;
       const d = Math.hypot(p.x - x, p.y - y) + bias;
       if (d < bestScore) {
         bestScore = d;
@@ -559,23 +624,11 @@ export class SketchController {
           "circle-stroke-color": this.accent,
         },
       } as unknown as LayerSpecification,
-      {
-        // Drag-to-extrude height grip (relief/landform): accent core + thick
-        // white ring, the largest deliberate target. The dashed accent "stem"
-        // from the anchor to the grip (a plain LineString, painted by
-        // fabric-draft-line) is the ghost cross-section. Drawn on top of all.
-        id: "fabric-draft-height",
-        type: "circle",
-        source: DRAFT_SOURCE,
-        filter: ["==", ["get", "handle"], "height"],
-        paint: {
-          "circle-radius": 11,
-          "circle-color": this.accent,
-          "circle-stroke-width": 4,
-          "circle-stroke-color": "#ffffff",
-        },
-      } as unknown as LayerSpecification,
     ];
+    // NB: the drag-to-extrude grip is intentionally NOT a draft layer — a
+    // GeoJSON point/line drapes onto 3D terrain under a pitched camera and
+    // reads as lying flat on the ground (the plan-040 projection bug). It is a
+    // screen-space DOM overlay instead — see `ensureHeightGrip`.
     for (const layer of layers) {
       if (!this.map.getLayer(layer.id)) this.map.addLayer(layer);
     }
@@ -615,30 +668,6 @@ export class SketchController {
           properties: { handle: "center", index: 0 },
         });
       }
-      if (this.edit.height) {
-        // Anchor = the stamp's centroid (open vertices); the grip sits above/
-        // below it. While dragging it follows the cursor 1:1 (direct
-        // manipulation); idle, it rests at value/coarse-mpp px (capped so a tall
-        // stamp's grip stays on screen). The stem anchor→grip is the ghost
-        // cross-section.
-        const anchor = centroid(open);
-        const anchorPx = this.map.project(anchor);
-        const gripY = this.heightDrag
-          ? this.heightDrag.cursorY
-          : anchorPx.y - clampHeight(this.edit.height.value / HEIGHT_MPP_COARSE, -HEIGHT_REST_CAP_PX, HEIGHT_REST_CAP_PX);
-        const grip = this.map.unproject([anchorPx.x, gripY]);
-        const gripPt: Pt = [grip.lng, grip.lat];
-        features.push({
-          type: "Feature",
-          geometry: { type: "LineString", coordinates: [anchor, gripPt] },
-          properties: { handle: "height-stem" },
-        });
-        features.push({
-          type: "Feature",
-          geometry: { type: "Point", coordinates: gripPt },
-          properties: { handle: "height", index: 0, value: this.edit.height.value },
-        });
-      }
     }
 
     if (this.isDrawing) {
@@ -665,6 +694,125 @@ export class SketchController {
 
     const source = this.map.getSource(DRAFT_SOURCE) as GeoJSONSource | undefined;
     source?.setData({ type: "FeatureCollection", features });
+    this.syncHeightGrip();
+  }
+
+  // ── Extrude-grip overlay lifecycle ───────────────────────────────────────
+
+  /** Create/position the grip when a terrain stamp with a height handle is
+   * selected; tear it down otherwise. Idempotent — safe to call every render. */
+  private syncHeightGrip(): void {
+    if (this.active && this.edit?.height) {
+      this.ensureHeightGrip();
+      this.repositionHeightGrip();
+    } else {
+      this.removeHeightGrip();
+    }
+  }
+
+  /** Lazily build the grip + dashed stem as absolutely-positioned children of
+   * the map's canvas container (project() space), and start tracking camera
+   * moves. Inline-styled so it needs no stylesheet — the accent core + white
+   * ring reproduce the old circle-radius:11 grip's visual language in 2D. */
+  private ensureHeightGrip(): void {
+    if (this.gripEl) return;
+    const container = this.map.getCanvasContainer();
+    const doc = container.ownerDocument;
+
+    const stem = doc.createElement("div");
+    stem.className = "campaign-map-height-stem";
+    stem.style.position = "absolute";
+    stem.style.width = "0px";
+    stem.style.borderLeft = `2px dashed ${this.accent}`;
+    stem.style.pointerEvents = "none";
+    stem.style.zIndex = "5";
+
+    const grip = doc.createElement("div");
+    grip.className = "campaign-map-height-grip";
+    grip.style.position = "absolute";
+    grip.style.width = `${HEIGHT_GRIP_CORE_PX}px`;
+    grip.style.height = `${HEIGHT_GRIP_CORE_PX}px`;
+    grip.style.borderRadius = "50%";
+    grip.style.background = this.accent;
+    grip.style.border = `${HEIGHT_GRIP_RING_PX}px solid #ffffff`;
+    grip.style.boxSizing = "content-box"; // core stays 22px; ring adds outside
+    grip.style.cursor = "ns-resize"; // the vertical-drag cue, now grip-owned
+    grip.style.zIndex = "6";
+    grip.style.touchAction = "none"; // pointer capture owns the gesture
+    grip.addEventListener("pointerdown", this.onGripPointerDown);
+    grip.addEventListener("mousedown", this.onGripMouseDown);
+
+    container.appendChild(stem);
+    container.appendChild(grip);
+    this.stemEl = stem;
+    this.gripEl = grip;
+
+    // Reproject the anchor on every camera move (pan/zoom/pitch/rotate) and on
+    // render (terrain elevation settling) so the grip stays glued to the stamp
+    // — project() is terrain-aware when terrain is on.
+    this.gripMoveHook = () => this.repositionHeightGrip();
+    this.map.on("move", this.gripMoveHook);
+    this.map.on("render", this.gripMoveHook);
+  }
+
+  /** Place the grip in raw screen pixels above (or below) the terrain-projected
+   * anchor, and stretch the dashed stem between them. Idle offset tracks the
+   * value; mid-drag it follows the cursor (set by the pointer-move handler). */
+  private repositionHeightGrip(): void {
+    if (!this.gripEl || !this.stemEl || !this.edit?.height) return;
+    const anchor = this.map.project(centroid(this.edit.vertices));
+    if (!this.heightDrag) {
+      this.gripOffsetPx = clampHeight(
+        this.edit.height.value / HEIGHT_MPP_COARSE,
+        -HEIGHT_REST_CAP_PX,
+        HEIGHT_REST_CAP_PX
+      );
+    }
+    const gripX = anchor.x;
+    const gripY = anchor.y - this.gripOffsetPx; // +offset = up (screen −y)
+    const half = HEIGHT_GRIP_OUTER_PX / 2;
+    this.gripEl.style.left = `${gripX - half}px`;
+    this.gripEl.style.top = `${gripY - half}px`;
+    const stemTop = Math.min(anchor.y, gripY);
+    this.stemEl.style.left = `${gripX - 1}px`;
+    this.stemEl.style.top = `${stemTop}px`;
+    this.stemEl.style.height = `${Math.abs(gripY - anchor.y)}px`;
+  }
+
+  /** Remove the grip + stem, unwire every listener, and re-enable dragPan if a
+   * drag was mid-flight — no leaked DOM or handlers on deselect/teardown. */
+  private removeHeightGrip(): void {
+    if (this.gripMoveHook) {
+      this.map.off("move", this.gripMoveHook);
+      this.map.off("render", this.gripMoveHook);
+      this.gripMoveHook = null;
+    }
+    if (this.heightDrag) {
+      this.map.dragPan.enable();
+      this.heightDrag = null;
+    }
+    if (this.gripEl) {
+      this.gripEl.removeEventListener("pointerdown", this.onGripPointerDown);
+      this.gripEl.removeEventListener("mousedown", this.onGripMouseDown);
+      this.gripEl.removeEventListener("pointermove", this.onGripPointerMove);
+      this.gripEl.removeEventListener("pointerup", this.onGripPointerUp);
+      this.gripEl.removeEventListener("pointercancel", this.onGripPointerUp);
+      this.gripEl.remove();
+      this.gripEl = null;
+    }
+    this.stemEl?.remove();
+    this.stemEl = null;
+  }
+
+  /** The grip DOM element (or null) — the headless-test seam for driving the
+   * pointer sequence directly, mirroring `heightHandleValue` for the value. */
+  get heightGripElement(): HTMLElement | null {
+    return this.gripEl;
+  }
+
+  /** The dashed-stem DOM element (or null) — test seam for the ghost stem. */
+  get heightStemElement(): HTMLElement | null {
+    return this.stemEl;
   }
 }
 

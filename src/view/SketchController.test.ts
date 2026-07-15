@@ -18,12 +18,36 @@ import { describe, it, expect } from "vitest";
 import { SketchController, type SketchControllerHandlers } from "./SketchController";
 import type { FabricGeometry, FabricKind } from "../model/fabric";
 
+/** A DOM-element stand-in — the extrude grip/stem overlay is created via the
+ * canvas container's `ownerDocument`; in the node tier there is no real DOM, so
+ * the controller drives this recorder instead. `fire` replays a pointer event
+ * through the listeners the controller registered (the headless twin of a real
+ * pointerdown/move/up on the grip). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mockEl(): any {
+  const listeners: Record<string, Function[]> = {};
+  return {
+    className: "",
+    style: {} as Record<string, string>,
+    setPointerCapture() {},
+    releasePointerCapture() {},
+    addEventListener: (t: string, h: Function) => void (listeners[t] ??= []).push(h),
+    removeEventListener: (t: string, h: Function) =>
+      void (listeners[t] = (listeners[t] ?? []).filter((x) => x !== h)),
+    appendChild() {},
+    remove() {},
+    fire: (t: string, e: unknown) => (listeners[t] ?? []).slice().forEach((h) => h(e)),
+  };
+}
+
 /** Minimal MapLibre stand-in — only the surface SketchController calls. */
 function mockMap() {
   const handlers: Record<string, Function[]> = {};
   const sources: Record<string, { setData(d: unknown): void; _data: unknown }> = {};
   const layers: Record<string, unknown> = {};
   const canvas = { style: { cursor: "" } };
+  const canvasContainer = mockEl();
+  canvasContainer.ownerDocument = { createElement: () => mockEl() };
   let queryReturn: unknown[] = [];
   const map = {
     on: (t: string, h: Function) => void (handlers[t] ??= []).push(h),
@@ -37,6 +61,7 @@ function mockMap() {
     removeLayer: (id: string) => void delete layers[id],
     removeSource: (id: string) => void delete sources[id],
     getCanvas: () => canvas,
+    getCanvasContainer: () => canvasContainer,
     project: ([lng, lat]: [number, number]) => ({ x: lng * 10, y: -lat * 10 }),
     unproject: (p: { x: number; y: number } | [number, number]) =>
       Array.isArray(p) ? { lng: p[0] / 10, lat: -p[1] / 10 } : { lng: p.x / 10, lat: -p.y / 10 },
@@ -54,9 +79,10 @@ function ev(lng: number, lat: number) {
   return { point: { x: lng * 10, y: -lat * 10 }, lngLat: { lng, lat }, preventDefault() {}, originalEvent: { shiftKey: false } };
 }
 
-/** Event at explicit screen pixels (height drag is screen-Y driven). */
-function pxEv(x: number, y: number, shiftKey = false) {
-  return { point: { x, y }, lngLat: { lng: x / 10, lat: -y / 10 }, preventDefault() {}, originalEvent: { shiftKey } };
+/** A pointer event on the grip element — only client-Y + shift matter (the
+ * value math reads their delta; the map-canvas offset cancels). */
+function ptr(clientY: number, shiftKey = false, pointerId = 1) {
+  return { clientY, shiftKey, pointerId, stopPropagation() {}, preventDefault() {} };
 }
 
 const POLY: FabricGeometry = {
@@ -82,15 +108,9 @@ function makeController(over: Partial<SketchControllerHandlers> = {}) {
 }
 
 const RELIEF_LINE: FabricGeometry = { type: "LineString", coordinates: [[0, 0], [4, 0]] };
-/** The height grip for value 300 on RELIEF_LINE: centroid [2,0]→screen (20,0),
- * idle offset 300/12≈25px up → grip screen (20,-25) → lngLat [2,2.5]. */
-const GRIP_COORD: [number, number] = [2, 2.5];
 function selectReliefWithHeight(c: SketchController, value = 300) {
   c.setTool("select");
   c.select({ id: "R1", geometry: RELIEF_LINE, kind: "relief", center: null, height: { value, min: -4000, max: 4000 } });
-}
-function armGripQuery(map: ReturnType<typeof mockMap>) {
-  map.setQuery([{ properties: { handle: "height", index: 0 }, geometry: { type: "Point", coordinates: GRIP_COORD } }]);
 }
 
 describe("SketchController — click-out contract (plan 040 Phase 0)", () => {
@@ -175,47 +195,51 @@ describe("SketchController — click-out contract (plan 040 Phase 0)", () => {
   });
 });
 
-describe("SketchController — drag-to-extrude height handle (plan 040 Phase 1)", () => {
-  it("renders a height grip + ghost stem for a selected relief", () => {
-    const { map, c } = makeController();
+describe("SketchController — drag-to-extrude height grip (plan 040, screen-space overlay)", () => {
+  it("renders a DOM grip + ghost stem for a selected relief", () => {
+    const { c } = makeController();
     c.activate("relief");
     selectReliefWithHeight(c, 300);
-    const feats = map.draftFeatures() as { properties: { handle?: string } }[];
-    expect(feats.some((f) => f.properties.handle === "height")).toBe(true);
-    expect(feats.some((f) => f.properties.handle === "height-stem")).toBe(true);
+    expect(c.heightGripElement).not.toBeNull();
+    expect(c.heightStemElement).not.toBeNull();
+    // The grip is the accent core + white ring, ≥ 22 px (r11-scale prominence).
+    expect(c.heightGripElement?.style.width).toBe("22px");
+    expect(c.heightGripElement?.style.cursor).toBe("ns-resize");
+    // …and it is NOT a draped GeoJSON feature (the projection bug's mechanism).
+    expect(c.heightStemElement?.className).toContain("height-stem");
   });
 
   it("dragging the grip up raises the value and commits once on release", () => {
-    const { map, c, heightDrags, heightCommits } = makeController();
+    const { c, heightDrags, heightCommits } = makeController();
     c.activate("relief");
     selectReliefWithHeight(c, 300);
-    armGripQuery(map);
-    map.fire("mousedown", pxEv(20, -25)); // grab the grip at its screen pos
-    map.fire("mousemove", pxEv(20, -145)); // 120 px up → +1440 m at coarse mpp
+    const grip = c.heightGripElement as unknown as { fire(t: string, e: unknown): void };
+    grip.fire("pointerdown", ptr(200)); // client-Y baseline
+    grip.fire("pointermove", ptr(80)); // 120 px up → +1440 m at coarse mpp
     expect(heightDrags.at(-1)?.value).toBe(1740);
     expect(c.heightHandleValue).toBe(1740);
-    map.fire("mouseup", pxEv(20, -145));
+    grip.fire("pointerup", ptr(80));
     expect(heightCommits).toEqual([{ id: "R1", value: 1740 }]);
   });
 
   it("Shift drags fine (smaller metres/pixel)", () => {
-    const { map, c, heightCommits } = makeController();
+    const { c, heightCommits } = makeController();
     c.activate("relief");
     selectReliefWithHeight(c, 300);
-    armGripQuery(map);
-    map.fire("mousedown", pxEv(20, -25));
-    map.fire("mousemove", pxEv(20, -145, true)); // shift → mpp 3 → +360
-    map.fire("mouseup", pxEv(20, -145, true));
+    const grip = c.heightGripElement as unknown as { fire(t: string, e: unknown): void };
+    grip.fire("pointerdown", ptr(200));
+    grip.fire("pointermove", ptr(80, true)); // shift → mpp 3 → +360
+    grip.fire("pointerup", ptr(80, true));
     expect(heightCommits).toEqual([{ id: "R1", value: 660 }]);
   });
 
   it("a sub-deadzone grab (no real drag) does NOT commit and snaps back", () => {
-    const { map, c, heightCommits } = makeController();
+    const { c, heightCommits } = makeController();
     c.activate("relief");
     selectReliefWithHeight(c, 300);
-    armGripQuery(map);
-    map.fire("mousedown", pxEv(20, -25));
-    map.fire("mouseup", pxEv(20, -25)); // released without moving
+    const grip = c.heightGripElement as unknown as { fire(t: string, e: unknown): void };
+    grip.fire("pointerdown", ptr(200));
+    grip.fire("pointerup", ptr(200)); // released without moving
     expect(heightCommits).toHaveLength(0);
     expect(c.heightHandleValue).toBe(300);
   });
@@ -236,13 +260,17 @@ describe("SketchController — drag-to-extrude height handle (plan 040 Phase 1)"
     expect(heightCommits).toHaveLength(0);
   });
 
-  it("no height handle for a shape selected without a height descriptor", () => {
-    const { map, c } = makeController();
+  it("no grip for a shape selected without a height descriptor; deselect tears it down", () => {
+    const { c } = makeController();
     c.activate("district");
     c.setTool("select");
     c.select({ id: "D1", geometry: POLY, kind: "district", center: null });
-    const feats = map.draftFeatures() as { properties: { handle?: string } }[];
-    expect(feats.some((f) => f.properties.handle === "height")).toBe(false);
+    expect(c.heightGripElement).toBeNull();
+    // …and a relief grip is removed (no leaked DOM) once deselected.
+    c.select({ id: "R1", geometry: RELIEF_LINE, kind: "relief", center: null, height: { value: 300, min: -4000, max: 4000 } });
+    expect(c.heightGripElement).not.toBeNull();
+    c.clearSelection();
+    expect(c.heightGripElement).toBeNull();
   });
 });
 
