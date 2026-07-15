@@ -9,8 +9,13 @@ import { z } from "zod";
 import { generateWorldRegions, generateSettlements, generateRoutes } from "../world";
 import { algorithmById, type ProcgenAlgorithm } from "../procgen/registry";
 import { makeRegion, makeSpine, makeCorridorRegion, type ProcgenRegion } from "../region";
+import { terrainAt, type TerrainBaseParams } from "../fields/terrain";
+import { demTileLattice } from "../fields/dem";
+import { traceTerrainContourTile, type ContourTileParams } from "../fields/terrainContours";
+import type { ElevationField } from "../fields/elevation";
 import type { GenerationConstraints } from "../types";
 import type { BBox } from "../spatialHash";
+import type { FabricFeature } from "../../model/fabric";
 
 /** World-tier generators are per-tile; city-tier generation is region-scoped —
  * the whole-region network is the one expensive job that must run off-thread,
@@ -87,12 +92,64 @@ export interface TileJob {
   constraints: GenerationConstraints;
 }
 
-export type GenerationRequest = TileJob | ProcgenRegionJob;
+/**
+ * The DURABLE, plain-data terrain inputs a DEM/contour job carries across the
+ * structured-clone boundary (Jonah 2026-07-15: per-tile terrain sampling moves
+ * off the main thread — the cold DEM fill stalled the renderer). The worker
+ * rebuilds the SAME composed field `campaignElevationSnapshot` builds on the main
+ * thread (`terrainAt` over the sketch layer), so worker output is byte-identical
+ * to the main-thread fallback. `features` are gen-space METERS (already unit-
+ * transformed by the host, exactly as `campaignElevationSnapshot` does).
+ */
+export interface SerializableTerrainInputs {
+  features: FabricFeature[];
+  base: TerrainBaseParams;
+  campaignSeed: number;
+  include: { relief: boolean; landform: boolean; carve: boolean; grade: boolean };
+}
+
+/** A DEM tile lattice-fill job — the 256² field sampling that stalled the main
+ * thread. Returns the quantized int lattice (the durable determinism record). */
+export interface DemTileJob {
+  kind: "dem-tile";
+  requestId: number;
+  terrain: SerializableTerrainInputs;
+  z: number;
+  x: number;
+  y: number;
+  res: number;
+  scaleMetersPerUnit: number;
+  k: number;
+}
+
+/** A single global-terrain contour leaf (one world-aligned tile). Returns the
+ * `terrain-contour` line features (gen-space meters — the host converts to
+ * display units before setData). */
+export interface ContourLeafJob {
+  kind: "contour-leaf";
+  requestId: number;
+  terrain: SerializableTerrainInputs;
+  tx: number;
+  ty: number;
+  params: ContourTileParams;
+}
+
+export type GenerationRequest = TileJob | ProcgenRegionJob | DemTileJob | ContourLeafJob;
 
 export interface GenerationResponse {
   requestId: number;
   features?: GeoJSON.Feature[];
+  /** DEM-tile jobs only: the quantized int height lattice (row-major res²). */
+  heights?: number[];
   error?: string;
+}
+
+/** Rebuild the composed campaign terrain field from the plain-data inputs — the
+ * SINGLE reconstruct shared by the worker dispatch and the round-trip test, and
+ * byte-matched to the main thread's `terrainAt` call in
+ * `campaignElevationSnapshot`. Pure/deterministic. */
+export function terrainFieldFromInputs(t: SerializableTerrainInputs): ElevationField {
+  return terrainAt(t.features, { base: t.base, campaignSeed: t.campaignSeed, include: t.include });
 }
 
 /**
@@ -103,18 +160,25 @@ export interface GenerationResponse {
  */
 export function handleWorkerMessage(req: GenerationRequest): GenerationResponse {
   try {
-    let features: GeoJSON.Feature[];
     if (req.kind === "procgen-region") {
       const algorithm = algorithmById(req.algorithmId);
       if (!algorithm) throw new Error(`unknown procgen algorithm: ${req.algorithmId}`);
       const region = reconstructJobRegion(algorithm, req.regionId, req.ring, req.spine, req.params);
-      features = algorithm.generate(req.seed, region, req.params, req.constraints);
-    } else {
-      const generator = GENERATORS[req.generatorId];
-      if (!generator) throw new Error(`unknown generatorId: ${req.generatorId}`);
-      features = generator(req.seed, req.bbox, req.constraints);
+      return { requestId: req.requestId, features: algorithm.generate(req.seed, region, req.params, req.constraints) };
     }
-    return { requestId: req.requestId, features };
+    if (req.kind === "dem-tile") {
+      const field = terrainFieldFromInputs(req.terrain);
+      const heights = demTileLattice(field, req.z, req.x, req.y, req.res, req.scaleMetersPerUnit, req.k);
+      return { requestId: req.requestId, heights };
+    }
+    if (req.kind === "contour-leaf") {
+      const field = terrainFieldFromInputs(req.terrain);
+      const elev = (x: number, y: number): number => field(x, y).v;
+      return { requestId: req.requestId, features: traceTerrainContourTile(elev, req.tx, req.ty, req.params) };
+    }
+    const generator = GENERATORS[req.generatorId];
+    if (!generator) throw new Error(`unknown generatorId: ${req.generatorId}`);
+    return { requestId: req.requestId, features: generator(req.seed, req.bbox, req.constraints) };
   } catch (err) {
     return { requestId: req.requestId, error: err instanceof Error ? err.message : String(err) };
   }

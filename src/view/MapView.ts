@@ -42,6 +42,8 @@ import { genreForCampaign } from "../gen/naming/cultures";
 import { cultureAt } from "../gen/naming/regions";
 import type { BBox } from "../gen/spatialHash";
 import { generateRegionTile, generateTile, type GenerationContext } from "../map/generation/generationService";
+import { TerrainContourManager } from "../map/generation/terrainContourManager";
+import { TERRAIN_CONTOUR_SOURCE_ID } from "../map/themes/terrainContourLayer";
 import { algorithmForKind, matchingPresetId, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import { RegionProcgenModal } from "./RegionProcgenModal";
 import { paramFieldSpecs, renderParamControls } from "./paramControls";
@@ -292,6 +294,7 @@ export class MapView extends ItemView {
     if (this.toolbarEl) this.buildToolbar();
     if (this.map && (isFirstApply || themeChanged)) {
       if (switched) this.terrainEnabled = false; // terrain is per-session, never carried across campaigns
+      if (switched) this.terrainContourManager?.reset(); // drop the prior campaign's contour engine
       this.map.setStyle(this.buildStyle(campaign));
       this.map.once("styledata", () => {
         registerTreeGlyphs(this.map!);
@@ -301,8 +304,10 @@ export class MapView extends ItemView {
         this.refreshGeneratedSource();
         this.applyFocusReveal();
         // setStyle rebuilds the hillshade layer default-hidden and drops the 3D
-        // terrain mesh — re-apply the GM's toggle across a theme change.
+        // terrain mesh — re-apply the GM's toggle across a theme change. setStyle
+        // also recreates the (empty) terrain-contour source → repopulate it.
         if (this.terrainEnabled) this.setTerrainEnabled(true);
+        this.refreshTerrainContours();
       });
       this.updateTerrainButton();
     }
@@ -442,9 +447,12 @@ export class MapView extends ItemView {
     }
   }
 
-  /** Re-point + refresh the DEM after a mountain region changed, but only if
-   * terrain is currently on (otherwise the next enable rebuilds it anyway). */
+  /** Re-point + refresh the DEM (only if terrain is on) AND the global contour
+   * surface (ALWAYS — contour lines render regardless of the hillshade/3D toggle)
+   * after a terrain region changed. The contour manager keys its engine on the
+   * field digest, so the edit is picked up on this refresh. */
   private refreshTerrainIfEnabled(): void {
+    this.refreshTerrainContours();
     if (!this.terrainEnabled || !this.map || !this.campaign) return;
     this.registerDemProviderFor(this.campaign);
     this.bustDemTileCache(`dem-${this.campaign.id}`);
@@ -489,7 +497,61 @@ export class MapView extends ItemView {
       campaignFolder: campaignFolderFromConfigPath(campaign.path),
       scaleMetersPerUnit: campaign.config.scaleMetersPerUnit,
       k: demVerticalScale(campaign.config.scaleMetersPerUnit),
-      snapshot: () => this.controller.campaignElevationSnapshot() ?? { field: () => ({ v: 0, dx: 0, dy: 0 }), digest: "empty" },
+      snapshot: () =>
+        this.controller.campaignElevationSnapshot() ?? {
+          field: () => ({ v: 0, dx: 0, dy: 0 }),
+          digest: "empty",
+          inputs: {
+            features: [],
+            base: { campAmp: 0, seaDatum: 0 },
+            campaignSeed: 0,
+            include: { relief: true, landform: true, carve: true, grade: false },
+          },
+        },
+      // DEM lattice fill OFF the main thread (Jonah 2026-07-15): the 256² sample
+      // stalled the renderer on a cold fill. `null` (no worker) ⇒ the protocol
+      // falls back to the main-thread pure function, byte-identical.
+      computeLatticeOffThread: async (inputs, z, x, y, res, scaleMU, k) => {
+        const worker = await this.plugin.getGenerationWorker();
+        if (!worker) return null;
+        return worker.computeDemTile(inputs, z, x, y, res, scaleMU, k);
+      },
+    });
+    this.ensureTerrainContourManager(campaign);
+  }
+
+  // ─── Global terrain contours ───────────────────────────────────────────────
+  private terrainContourManager: TerrainContourManager | null = null;
+  private terrainContourCampaignId: string | null = null;
+
+  /** (Re)build the viewport-keyed contour manager for `campaign` — fictional
+   * only (the `terrain-contour` source exists only there, same gate as the DEM).
+   * Rebuilt on campaign switch (scale is fixed per manager). */
+  private ensureTerrainContourManager(campaign: ParsedCampaign): void {
+    if (campaign.config.crs !== "fictional") {
+      this.terrainContourManager = null;
+      this.terrainContourCampaignId = null;
+      return;
+    }
+    if (this.terrainContourManager && this.terrainContourCampaignId === campaign.id) return;
+    this.terrainContourManager = new TerrainContourManager({
+      sourceId: TERRAIN_CONTOUR_SOURCE_ID,
+      scaleMetersPerUnit: campaign.config.scaleMetersPerUnit,
+      getMap: () => this.map,
+      getSnapshot: () => {
+        const snap = this.controller.campaignElevationSnapshot();
+        return snap ? { digest: snap.digest, inputs: snap.inputs } : null;
+      },
+      getWorker: () => this.plugin.getGenerationWorker(),
+    });
+    this.terrainContourCampaignId = campaign.id;
+  }
+
+  /** Refresh the global contour surface for the current viewport (best-effort —
+   * a failed worker round-trip must never break the map). */
+  private refreshTerrainContours(): void {
+    void this.terrainContourManager?.update().catch(() => {
+      /* worker/setData hiccup — the next settle retries */
     });
   }
 
@@ -588,7 +650,11 @@ export class MapView extends ItemView {
       this.applyFocusReveal();
       this.updateScaleBar();
       this.updateFocusReadout();
+      this.refreshTerrainContours();
     });
+    // Global terrain contours are viewport-keyed (LOD by zoom); recompute the
+    // touched tiles once the camera settles (coalesced + off-thread).
+    this.map.on("moveend", () => this.refreshTerrainContours());
     this.map.on("move", () => this.updateScaleBar());
     this.map.on("zoom", () => {
       this.updateScaleBar();
@@ -2141,6 +2207,8 @@ export class MapView extends ItemView {
       this.applyFocusReveal();
       // css-change setStyle also resets hillshade/terrain — restore the toggle.
       if (this.terrainEnabled) this.setTerrainEnabled(true);
+      // ...and recreates the empty terrain-contour source → repopulate it.
+      this.refreshTerrainContours();
     });
   }
 

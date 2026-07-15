@@ -389,16 +389,18 @@ const riverAlgorithm: ProcgenAlgorithm = {
   produces: ["water"],
   consumes: [],
   // Raw sketch reads: water + a partner river spine (confluence snap,
-  // CONFLUENCE_SNAP_M = 30) and the sketched mountains' elevation field (slope
-  // coupling — DEFAULT OFF as of v2, but the opt-in path reads it, so the
-  // declaration stays honest for the most-consuming params the 033-A harness
-  // probes). The mountain field has compact support, so any positive gap is
-  // byte-inert; 30 m covers the confluence snap. Because the mountain sits ABOVE
-  // the river in the stage order, a mountain edit never cascades DOWN to it: the
-  // source→river edge fires only within this 30 m reach, and Jonah's litmus
-  // fixture keeps the mountain ~110 m away (S7) so a terrain edit does zero
-  // river runs.
-  consumesSketch: ["water", "river", "mountain"],
+  // CONFLUENCE_SNAP_M = 30) and the durable global TERRAIN system's stamps —
+  // mountain/relief/landform (slope coupling reads the composed field via
+  // `macroTerrainField`; ruling 2026-07-15 — DEFAULT OFF as of v2, but the opt-in
+  // path reads it, so the declaration stays honest for the most-consuming params
+  // the 033-A harness probes). VARIABLE SUPPORT: the terrain kinds use a
+  // PER-FEATURE reach (`terrainStampSupport`: relief → halfWidth, mountain/
+  // landform → 0), so the 30 m scalar governs only water/river (confluence snap).
+  // Because terrain sits ABOVE the river in the stage order, a terrain edit never
+  // cascades DOWN via a currency; it can only reach the river through the
+  // source→region edge within a stamp's support, and Jonah's litmus fixture keeps
+  // the mountain ~110 m away (S7) so a terrain edit does zero river runs.
+  consumesSketch: ["water", "river", "mountain", "relief", "landform"],
   influenceMargin: 30,
   costClass: "medium",
   paramsSchema: riverParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
@@ -475,15 +477,20 @@ const forestAlgorithm: ProcgenAlgorithm = {
   stage: 2,
   produces: ["vegetation"],
   consumes: ["water"],
-  // Raw sketch reads: the sketched MOUNTAINS' elevation field (item 4
-  // timberline/conifer-upslope/contour-sag; compact support, byte-inert when
-  // disjoint) + adjacent FARMLAND/PARK rings (item 7 shared-boundary hedgerow,
-  // within HEDGE_ADJ_EPS). The `consumes: ["water"]` above is a DAG OUTPUT edge,
-  // not a raw-sketch read.
-  consumesSketch: ["mountain", "farmland", "park"],
-  // 8 = HEDGE_ADJ_EPS (adjacency reach). A region whose bbox is farther than this
-  // cannot put a ring vertex within eps of ours ⇒ byte-inert (the mountain read
-  // is compact-support, so 8 bounds it too).
+  // Raw sketch reads: the durable global TERRAIN system's stamps —
+  // mountain/relief/landform (ruling 2026-07-15: the forest timberline reads the
+  // composed terrain field, not a mountain polygon; a relief RIDGE thins the
+  // canopy above its treeline with no mountain present) + adjacent FARMLAND/PARK
+  // rings (item 7 shared-boundary hedgerow, within HEDGE_ADJ_EPS). The
+  // `consumes: ["water"]` above is a DAG OUTPUT edge, not a raw-sketch read.
+  consumesSketch: ["mountain", "relief", "landform", "farmland", "park"],
+  // VARIABLE SUPPORT (ruling 2026-07-15): the terrain-stamp kinds use a
+  // PER-FEATURE reach (`terrainStampSupport`: relief → its halfWidth, mountain/
+  // landform → 0, all compact-support) wherever invalidation is computed
+  // (fingerprint scope + DAG source→region edge), so this scalar governs only the
+  // NON-terrain kinds. 8 = HEDGE_ADJ_EPS (farmland/park adjacency reach): a region
+  // whose bbox is farther than this cannot put a ring vertex within eps of ours ⇒
+  // byte-inert.
   influenceMargin: 8,
   costClass: "cheap",
   paramsSchema: forestParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
@@ -746,14 +753,17 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   stage: 4,
   produces: [],
   consumes: ["elevation", "settlement", "water"],
-  // Farmland reads the sketched mountains' elevation field (paddy contours +
-  // item-4 slope-gating; compact support, byte-inert when disjoint) + adjacent
-  // FOREST/PARK rings (item 7 shared-boundary hedgerow, within HEDGE_ADJ_EPS).
-  // The city reads a raw farmland SKETCH, but that is the CITY's consumesSketch,
-  // not farmland's.
-  consumesSketch: ["mountain", "forest", "park"],
-  // 8 = HEDGE_ADJ_EPS (item 7 adjacency reach); bounds the compact-support
-  // mountain read too. Beyond it, byte-inert.
+  // Farmland reads the durable global TERRAIN system's stamps —
+  // mountain/relief/landform (paddy contours + item-4 slope-gating via
+  // `macroTerrainField`; ruling 2026-07-15 — a landform PLATEAU edge banks
+  // paddies with no mountain present) + adjacent FOREST/PARK rings (item 7
+  // shared-boundary hedgerow, within HEDGE_ADJ_EPS). The city reads a raw farmland
+  // SKETCH, but that is the CITY's consumesSketch, not farmland's.
+  consumesSketch: ["mountain", "relief", "landform", "forest", "park"],
+  // VARIABLE SUPPORT (ruling 2026-07-15): the terrain-stamp kinds use a
+  // PER-FEATURE reach (`terrainStampSupport`: relief → halfWidth, mountain/
+  // landform → 0), so this scalar governs only the NON-terrain kinds. 8 =
+  // HEDGE_ADJ_EPS (item 7 forest/park adjacency reach); beyond it, byte-inert.
   influenceMargin: 8,
   costClass: "medium",
   paramsSchema: farmlandParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
@@ -795,15 +805,25 @@ const MOUNTAIN_PRESETS: readonly ProcgenPreset[] = [
 ];
 
 /** Mountain tile-generator ids = the emitted feature buckets: the rocky-ground
- * massif, the downslope relief hachures, the summit peaks, and the topographic
- * contour iso-lines. Cache keys + paint layers key on these — EVERY emitted gid
- * MUST appear here or the tile clip silently drops it. */
+ * massif, the downslope relief hachures, and the summit peaks. Cache keys + paint
+ * layers key on these — EVERY emitted gid MUST appear here or the tile clip
+ * silently drops it. (The `mountain-contour` bucket was RETIRED in v2 — iso-lines
+ * are now a global surface off the composed terrain field, not a mountain gid.) */
 export const MOUNTAIN_TILE_GENERATOR_IDS: readonly string[] = contractGids(MOUNTAIN_STYLE_CONTRACT);
 
 const mountainAlgorithm: ProcgenAlgorithm = {
   id: "mountain",
   label: "Mountain",
-  currentVersion: 1,
+  // Version 2 (Jonah 2026-07-15, contour retirement): the mountain generator no
+  // longer emits `mountain-contour` iso-lines — relief lines are now a global
+  // viewport-keyed surface off the composed campaign terrain field
+  // (`fields/terrainContours.ts` → the `terrain-contour` paint role), rendering
+  // EVERYWHERE the field has relief, not only inside a mountain ring. The
+  // massif/hachure/peak dressing is byte-IDENTICAL to v1 (asserted in
+  // mountain.test.ts — only the contour features disappear); this is a pure
+  // emit-shape shrink, so any existing region re-goldens under the bump and a
+  // pinned-v1 region without cache shows the needs-adoption badge until adopted.
+  currentVersion: 2,
   appliesTo: ["mountain"],
   // Stage 1 (TERRAIN — plan 035 moved it ABOVE hydrology; terrain conforms to
   // the rivers below it). Produces `elevation`. That currency reaches farmland

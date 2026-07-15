@@ -10,27 +10,42 @@
 import type { App } from "obsidian";
 import type { BBox } from "../../gen/spatialHash";
 import type { GenerationConstraints } from "../../gen/types";
-import type { GeneratorId, GenerationRequest, GenerationResponse } from "../../gen/worker/generationWorker";
+import type { ContourTileParams } from "../../gen/fields/terrainContours";
+import type {
+  GeneratorId,
+  GenerationRequest,
+  GenerationResponse,
+  SerializableTerrainInputs,
+} from "../../gen/worker/generationWorker";
 
 export class GenerationWorkerClient {
   private worker: Worker | null;
   private nextRequestId = 1;
-  private pending = new Map<number, { resolve: (f: GeoJSON.Feature[]) => void; reject: (e: Error) => void }>();
+  private pending = new Map<number, { resolve: (r: GenerationResponse) => void; reject: (e: Error) => void }>();
 
   private constructor(worker: Worker) {
     this.worker = worker;
     worker.onmessage = (event: MessageEvent<GenerationResponse>) => {
-      const { requestId, features, error } = event.data;
-      const entry = this.pending.get(requestId);
+      const entry = this.pending.get(event.data.requestId);
       if (!entry) return;
-      this.pending.delete(requestId);
-      if (error) entry.reject(new Error(error));
-      else entry.resolve(features ?? []);
+      this.pending.delete(event.data.requestId);
+      if (event.data.error) entry.reject(new Error(event.data.error));
+      else entry.resolve(event.data);
     };
     worker.onerror = (event: ErrorEvent) => {
       for (const { reject } of this.pending.values()) reject(new Error(event.message));
       this.pending.clear();
     };
+  }
+
+  /** Dispatch a request and resolve with the raw response (the caller unwraps
+   * `features`/`heights`). */
+  private dispatch(request: GenerationRequest): Promise<GenerationResponse> {
+    if (!this.worker) return Promise.reject(new Error("worker terminated"));
+    return new Promise((resolve, reject) => {
+      this.pending.set(request.requestId, { resolve, reject });
+      this.worker!.postMessage(request);
+    });
   }
 
   static async create(app: App): Promise<GenerationWorkerClient> {
@@ -51,13 +66,37 @@ export class GenerationWorkerClient {
     bbox: BBox,
     constraints: GenerationConstraints
   ): Promise<GeoJSON.Feature[]> {
-    if (!this.worker) return Promise.reject(new Error("worker terminated"));
     const requestId = this.nextRequestId++;
-    const request: GenerationRequest = { requestId, generatorId, seed, bbox, constraints };
-    return new Promise((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject });
-      this.worker!.postMessage(request);
-    });
+    return this.dispatch({ requestId, generatorId, seed, bbox, constraints }).then((r) => r.features ?? []);
+  }
+
+  /** DEM tile lattice fill, OFF the main thread (Jonah 2026-07-15). Returns the
+   * quantized int height lattice; the protocol handler caches + PNG-encodes it. */
+  computeDemTile(
+    terrain: SerializableTerrainInputs,
+    z: number,
+    x: number,
+    y: number,
+    res: number,
+    scaleMetersPerUnit: number,
+    k: number
+  ): Promise<number[]> {
+    const requestId = this.nextRequestId++;
+    return this.dispatch({ kind: "dem-tile", requestId, terrain, z, x, y, res, scaleMetersPerUnit, k }).then(
+      (r) => r.heights ?? []
+    );
+  }
+
+  /** One global-terrain contour leaf (one world-aligned tile), OFF the main
+   * thread. Returns `terrain-contour` line features in gen-space meters. */
+  computeContourLeaf(
+    terrain: SerializableTerrainInputs,
+    tx: number,
+    ty: number,
+    params: ContourTileParams
+  ): Promise<GeoJSON.Feature[]> {
+    const requestId = this.nextRequestId++;
+    return this.dispatch({ kind: "contour-leaf", requestId, terrain, tx, ty, params }).then((r) => r.features ?? []);
   }
 
   /** Whole-region network computation — the expensive job that must run
@@ -73,9 +112,8 @@ export class GenerationWorkerClient {
     constraints: GenerationConstraints,
     spine?: [number, number][]
   ): Promise<GeoJSON.Feature[]> {
-    if (!this.worker) return Promise.reject(new Error("worker terminated"));
     const requestId = this.nextRequestId++;
-    const request: GenerationRequest = {
+    return this.dispatch({
       kind: "procgen-region",
       requestId,
       algorithmId,
@@ -87,11 +125,7 @@ export class GenerationWorkerClient {
       ...(spine ? { spine } : {}),
       params,
       constraints,
-    };
-    return new Promise((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject });
-      this.worker!.postMessage(request);
-    });
+    }).then((r) => r.features ?? []);
   }
 
   terminate(): void {

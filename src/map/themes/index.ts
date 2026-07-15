@@ -7,6 +7,11 @@ import { connectionLayers } from "./connectionLayers";
 import { sessionPathLayers } from "./sessionPathLayers";
 import { fabricLayers, FABRIC_SOURCE_SPEC } from "./fabricLayers";
 import { hillshadeLayer, hillshadeSourceSpec } from "./hillshadeLayer";
+import {
+  terrainContourLayer,
+  TERRAIN_CONTOUR_SOURCE_ID,
+  TERRAIN_CONTOUR_SOURCE_SPEC,
+} from "./terrainContourLayer";
 import { assertLayerOrder } from "./layerOrder";
 
 export { HANDCRAFTED_THEMES, type ThemeTokens };
@@ -41,6 +46,8 @@ export function buildThemeStyle(
         ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } }
         : {}),
       ...(dem ? { [dem.sourceId]: hillshadeSourceSpec(dem.url) } : {}),
+      // Global terrain-contour surface (fictional-only, same gate as the DEM).
+      ...(dem ? { [TERRAIN_CONTOUR_SOURCE_ID]: { ...TERRAIN_CONTOUR_SOURCE_SPEC } } : {}),
     },
     // Z-order invariant (see layerOrder.ts): Locations always above fabric;
     // sketched fabric above generated (the GM's hand wins). Hillshade relief
@@ -49,6 +56,8 @@ export function buildThemeStyle(
       { id: "background", type: "background", paint: { "background-color": tokens.land } },
       ...(basemap ? basemapLayers(basemap.sourceId, tokens) : []),
       ...(dem ? [hillshadeLayer(tokens, dem.sourceId)] : []),
+      // Contours at the bottom of the generated group (relief under fabric).
+      ...(dem ? [terrainContourLayer(tokens)] : []),
       ...generatedLayers(tokens),
       ...fabricLayers(tokens),
       ...connectionLayers({ lineColor: tokens.accent }),

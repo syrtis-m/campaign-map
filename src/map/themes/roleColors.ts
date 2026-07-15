@@ -31,6 +31,11 @@ export function roleColorsForTheme(t: ThemeTokens): RoleColors {
     boundary: t.fabricWall,
     "path-casing": t.fabricPathCasing ?? t.fabricWall,
     relief: t.fabricMountain,
+    // Contours share the mountain stone token (relief-derived); the dedicated
+    // terrain-contour layer applies the luminance-aware darken/lighten. Same
+    // token as `relief` today — a theme could diverge them later without any
+    // per-theme special-casing here.
+    "terrain-contour": t.fabricMountain,
     accent: t.accent,
   };
 }

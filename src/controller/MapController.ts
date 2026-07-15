@@ -104,8 +104,8 @@ import {
 import { cascadeOrder, downstreamClosure, upstreamEdges, type DagNode } from "../gen/procgen/dag";
 import { isCacheRecordFresh, regionFingerprint } from "../gen/cache/fingerprint";
 import { mountainHeightField, type MountainTerrain } from "../gen/mountain";
-import { terrainAt, demVerticalScale, type ElevationField, type TerrainBaseParams } from "../gen/fields";
-import type { GeneratorId } from "../gen/worker/generationWorker";
+import { terrainAt, demVerticalScale, terrainStampSupport, type ElevationField, type TerrainBaseParams } from "../gen/fields";
+import type { GeneratorId, SerializableTerrainInputs } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
 import { hashSeed } from "../gen/rng";
 import {
@@ -730,6 +730,17 @@ export class MapController {
     const algorithm = algorithmById(block.algorithm);
     return (region, constraints) => {
       this.generatorRunCounter++;
+      // Thread the campaign base-terrain params (ruling 2026-07-15) onto the
+      // constraints here — the ONE place both the worker and direct paths funnel
+      // through — so a terrain-reading generator (forest/farmland/river via
+      // `macroTerrainField`) composes the SAME global terrain surface the DEM
+      // does. Structured-clone-safe (plain numbers); the base defaults inert
+      // (campAmp 0) ⇒ byte-identical to a pre-ruling run.
+      const withTerrain: GenerationConstraints = {
+        ...constraints,
+        terrainBase: this.terrainBase(),
+        campaignSeed: this.campaign?.config.seed ?? 0,
+      };
       // Both polygon AND line-kind (river/wall) regions run in the worker when
       // one is available: the job now carries `region.spine` as plain data
       // (plan 031-D), so the worker rebuilds the corridor region and river/wall
@@ -743,12 +754,12 @@ export class MapController {
           region.id,
           region.ring,
           block.params,
-          constraints,
+          withTerrain,
           region.spine?.points
         );
       }
       if (!algorithm) throw new Error(`unknown procgen algorithm: ${block.algorithm}`);
-      return algorithm.generate(block.seed, region, block.params, constraints);
+      return algorithm.generate(block.seed, region, block.params, withTerrain);
     };
   }
 
@@ -820,6 +831,8 @@ export class MapController {
           fabricFeatures: ctx.fabricFeatures,
           consumesSketch: algorithm.consumesSketch,
           influenceMargin: algorithm.influenceMargin,
+          terrainBase: this.terrainBase(),
+          campaignSeed: campaign.config.seed,
         });
     let force = (opts.force ?? false) && !pinnedOld && !opts.serveStale;
     // 033-D: an INVALIDATION-WALK force (raw-sketch flush / cascade) that lands
@@ -1083,6 +1096,11 @@ export class MapController {
       };
       scan(f.geometry.coordinates);
       if (!Number.isFinite(minX)) continue;
+      // A terrain STAMP source carries its own variable support reach (ruling
+      // 2026-07-15): relief → its halfWidth (params are meters, no unit scale),
+      // mountain/landform → 0. `terrainStampSupport` returns null for a non-stamp
+      // ⇒ omit the field ⇒ the consumer's scalar `influenceMargin` governs.
+      const support = terrainStampSupport(f);
       nodes.push({
         id: `source:${f.id}`,
         stage: -1,
@@ -1090,6 +1108,7 @@ export class MapController {
         consumes: [],
         bbox: { minX, minY, maxX, maxY },
         sketchKind: f.properties.kind,
+        ...(support !== null ? { supportMargin: support } : {}),
       });
     }
     return nodes;
@@ -1149,6 +1168,8 @@ export class MapController {
           fabricFeatures: ctx.fabricFeatures,
           consumesSketch: algo?.consumesSketch,
           influenceMargin: algo?.influenceMargin,
+          terrainBase: this.terrainBase(),
+          campaignSeed: this.campaign?.config.seed ?? 0,
           upstreamFingerprints: upFps,
         })
       );
@@ -2781,7 +2802,14 @@ export class MapController {
    * cached tiles (old digest shape) always re-derive. `null` when no campaign is
    * loaded.
    */
-  campaignElevationSnapshot(): { field: ElevationField; digest: string } | null {
+  campaignElevationSnapshot(): {
+    field: ElevationField;
+    digest: string;
+    /** The SAME inputs as plain data (gen-space-meter features + base + seed +
+     * include), so the generation worker can rebuild a byte-identical field
+     * off-thread (DEM tile fill + contour leaves — Jonah 2026-07-15). */
+    inputs: SerializableTerrainInputs;
+  } | null {
     if (!this.campaign) return null;
     const scale = this.campaign.config.scaleMetersPerUnit;
     // Gen-space (meters) region features — the exact conversion generators see.
@@ -2791,13 +2819,10 @@ export class MapController {
     const base = this.terrainBase();
     const gradeEnabled = this.campaign.config.terrain?.grade ?? false;
     const campaignSeed = this.campaign.config.seed;
-    const field = terrainAt(feats, {
-      base,
-      campaignSeed,
-      include: { relief: true, landform: true, carve: true, grade: gradeEnabled },
-    });
+    const include = { relief: true, landform: true, carve: true, grade: gradeEnabled };
+    const field = terrainAt(feats, { base, campaignSeed, include });
     const digest = this.elevationDigest(feats, base, gradeEnabled, campaignSeed);
-    return { field, digest };
+    return { field, digest, inputs: { features: feats, base, campaignSeed, include } };
   }
 
   /** Fingerprint the composed-terrain inputs: the id-sorted digest of every

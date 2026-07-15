@@ -571,17 +571,17 @@ describe("generatedLayers — farmland field/lane/hedge/building/tree paint cove
 });
 
 /** Every emitted mountain feature type needs paint in every theme: the rocky
- * massif fill, the topographic contour iso-lines (LINE), the downslope hachure
- * ticks (LINE) and the summit peak markers (CIRCLE). Coverage guard for the
- * mountain types. */
+ * massif fill, the downslope hachure ticks (LINE) and the summit peak markers
+ * (CIRCLE). (Contours were RETIRED from the mountain emit — Jonah 2026-07-15;
+ * iso-lines are now the global `generated-terrain-contour` surface, covered by
+ * terrainContourLayer.test.ts.) Coverage guard for the mountain types. */
 const MOUNTAIN_LAYER_IDS = [
   "generated-mountain-massif",
-  "generated-mountain-contour",
   "generated-mountain-hachure",
   "generated-mountain-peak",
 ] as const;
 
-describe("generatedLayers — mountain massif/contour/hachure/peak paint coverage", () => {
+describe("generatedLayers — mountain massif/hachure/peak paint coverage", () => {
   it("all mountain layers exist on the generated source and filter on generatorId (no zoom LOD)", () => {
     const layers = generatedLayers(PARCHMENT);
     for (const id of MOUNTAIN_LAYER_IDS) {
@@ -594,18 +594,16 @@ describe("generatedLayers — mountain massif/contour/hachure/peak paint coverag
     }
   });
 
-  it("massif is a fill, contour + hachure are lines, peak a circle", () => {
+  it("massif is a fill, hachure is a line, peak a circle", () => {
     const layers = generatedLayers(PARCHMENT);
     expect(layers.find((l) => l.id === "generated-mountain-massif")!.type).toBe("fill");
-    expect(layers.find((l) => l.id === "generated-mountain-contour")!.type).toBe("line");
     expect(layers.find((l) => l.id === "generated-mountain-hachure")!.type).toBe("line");
     expect(layers.find((l) => l.id === "generated-mountain-peak")!.type).toBe("circle");
   });
 
-  it("layers relief bottom-up: massif under contour under hachure under peak", () => {
+  it("layers relief bottom-up: massif under hachure under peak", () => {
     const ids = generatedLayers(PARCHMENT).map((l) => l.id);
-    expect(ids.indexOf("generated-mountain-contour")).toBeGreaterThan(ids.indexOf("generated-mountain-massif"));
-    expect(ids.indexOf("generated-mountain-hachure")).toBeGreaterThan(ids.indexOf("generated-mountain-contour"));
+    expect(ids.indexOf("generated-mountain-hachure")).toBeGreaterThan(ids.indexOf("generated-mountain-massif"));
     expect(ids.indexOf("generated-mountain-peak")).toBeGreaterThan(ids.indexOf("generated-mountain-hachure"));
   });
 

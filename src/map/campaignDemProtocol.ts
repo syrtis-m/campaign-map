@@ -1,6 +1,7 @@
 import maplibregl from "maplibre-gl";
 import type { App } from "obsidian";
 import { demTileLattice, latticeToRGBA, type ElevationField } from "../gen/fields";
+import type { SerializableTerrainInputs } from "../gen/worker/generationWorker";
 import { appendDemTile, getDemTile, demTileKey, type DemTile } from "../model/demCache";
 
 /**
@@ -36,7 +37,21 @@ export interface DemProvider {
   scaleMetersPerUnit: number;
   /** Vertical scale K (demVerticalScale) — constant per campaign. */
   k: number;
-  snapshot: () => { field: ElevationField; digest: string };
+  snapshot: () => { field: ElevationField; digest: string; inputs: SerializableTerrainInputs };
+  /** Off-thread lattice fill (Jonah 2026-07-15): sample the 256² terrain lattice
+   * in the generation worker so a cold DEM fill never stalls the renderer.
+   * Returns `null` when the worker is unavailable so the caller falls back to the
+   * main-thread `demTileLattice` (byte-identical — same pure function, same
+   * inputs). Absent entirely ⇒ always main-thread (e.g. the headless test path). */
+  computeLatticeOffThread?: (
+    inputs: SerializableTerrainInputs,
+    z: number,
+    x: number,
+    y: number,
+    res: number,
+    scaleMetersPerUnit: number,
+    k: number
+  ) => Promise<number[] | null>;
 }
 
 const providers = new Map<string, DemProvider>();
@@ -102,12 +117,30 @@ async function resolveLattice(
   x: number,
   y: number
 ): Promise<number[]> {
-  const { field, digest } = provider.snapshot();
+  const { field, digest, inputs } = provider.snapshot();
   const cached = await getDemTile(provider.app, provider.campaignFolder, z, x, y);
   if (cached && cached.digest === digest && cached.res === DEM_TILE_RES && cached.k === provider.k) {
     return cached.heights;
   }
-  const heights = demTileLattice(field, z, x, y, DEM_TILE_RES, provider.scaleMetersPerUnit, provider.k);
+  // Off-thread fill (worker) when available; else the main-thread pure function.
+  // Both sample the SAME composed field from the SAME inputs → byte-identical.
+  let heights: number[] | null = null;
+  if (provider.computeLatticeOffThread) {
+    try {
+      heights = await provider.computeLatticeOffThread(
+        inputs,
+        z,
+        x,
+        y,
+        DEM_TILE_RES,
+        provider.scaleMetersPerUnit,
+        provider.k
+      );
+    } catch {
+      heights = null; // worker error → main-thread fallback keeps the map alive
+    }
+  }
+  if (!heights) heights = demTileLattice(field, z, x, y, DEM_TILE_RES, provider.scaleMetersPerUnit, provider.k);
   const tile: DemTile = {
     key: demTileKey(z, x, y),
     z,

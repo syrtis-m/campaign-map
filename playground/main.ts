@@ -206,6 +206,7 @@ const ROLE_COLORS: Record<SemanticRole, string> = {
   boundary: "#7a7265",
   "path-casing": "#b0a184",
   relief: "#c9bfad",
+  "terrain-contour": "#a89a7f",
   accent: "#8a4a3d",
 };
 

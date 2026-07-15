@@ -16,7 +16,7 @@
  * function of the durable sketch layer, so a leaf is a pure memo.
  */
 import { marchingSquares } from "./marchingSquares";
-import { terrainAt, type TerrainBaseParams } from "./terrain";
+import { terrainAt, type TerrainBaseParams, type TerrainOptions } from "./terrain";
 import type { BBox } from "../spatialHash";
 import type { FabricFeature } from "../../model/fabric";
 
@@ -29,6 +29,11 @@ const TERRAIN_INPUT_ALGORITHMS = new Set(["mountain", "relief", "landform", "riv
 export interface TerrainContourOptions {
   base?: Partial<TerrainBaseParams>;
   campaignSeed?: number;
+  /** Which composed-field operators to include — MUST match the DEM's
+   * `campaignElevationSnapshot` (relief/landform/carve on, grade per config) so
+   * the contour lines trace the SAME surface the hillshade/3D shades. Omitted ⇒
+   * the `terrainAt` default (all on). */
+  include?: TerrainOptions["include"];
   /** Lattice spacing (meters). World-aligned; adjacent tiles agree on it. */
   step: number;
   /** Tile edge (meters) — MUST be a multiple of `step` so tiles align to the
@@ -79,11 +84,11 @@ function inputDigest(f: FabricFeature): string {
 }
 
 export class TerrainContourLeaves {
-  private readonly opts: Required<TerrainContourOptions>;
+  private readonly opts: Required<Omit<TerrainContourOptions, "include">>;
   private readonly field: (x: number, y: number) => { v: number };
   private readonly inputs: { feature: FabricFeature; bbox: BBox }[];
-  private readonly levels: number[];
   private readonly leaves = new Map<string, Leaf>();
+  private readonly inflight = new Map<string, Promise<GeoJSON.Feature[]>>();
   computedLeaves = 0;
   evictedLeaves = 0;
 
@@ -101,15 +106,10 @@ export class TerrainContourLeaves {
       inputMargin: opts.inputMargin ?? 600,
     };
     const feats = features ?? [];
-    this.field = terrainAt(feats, { base: this.opts.base, campaignSeed: this.opts.campaignSeed });
+    this.field = terrainAt(feats, { base: this.opts.base, campaignSeed: this.opts.campaignSeed, include: opts.include });
     this.inputs = feats
       .filter((f) => f.properties.procgen && TERRAIN_INPUT_ALGORITHMS.has(f.properties.procgen.algorithm))
       .map((f) => ({ feature: f, bbox: bboxOf(f) }));
-    this.levels = [];
-    for (let lv = this.opts.levelMin; lv <= this.opts.levelMax; lv += this.opts.interval) {
-      if (lv === 0) continue; // the datum itself is a coastline, not a relief line
-      this.levels.push(lv);
-    }
   }
 
   get leafCount(): number {
@@ -149,9 +149,51 @@ export class TerrainContourLeaves {
       return { features: hit.features, cached: true };
     }
     const features = this.traceTile(tx, ty);
-    const leaf: Leaf = { key, features };
+    this.store(mapKey, key, features);
+    return { features, cached: false };
+  }
+
+  /**
+   * Async leaf resolution with an INJECTED tracer — the SAME laziness / LRU /
+   * counter bookkeeping as `leafFor`, but the heavy trace runs through `trace`
+   * (e.g. the generation worker, off the main thread — Jonah 2026-07-15). Falls
+   * back to the synchronous `traceTile` when `trace` is absent (worker
+   * unavailable). Concurrent misses for the same tile+key are de-duped so a
+   * viewport that touches a tile twice before it resolves computes it once.
+   */
+  async leafForAsync(
+    tx: number,
+    ty: number,
+    trace?: (tx: number, ty: number) => Promise<GeoJSON.Feature[]>
+  ): Promise<{ features: GeoJSON.Feature[]; cached: boolean }> {
+    const key = this.tileKey(tx, ty);
+    const mapKey = `${tx}:${ty}`;
+    const hit = this.leaves.get(mapKey);
+    if (hit && hit.key === key) {
+      this.leaves.delete(mapKey);
+      this.leaves.set(mapKey, hit);
+      return { features: hit.features, cached: true };
+    }
+    const inflightKey = `${mapKey}|${key}`;
+    let pending = this.inflight.get(inflightKey);
+    if (!pending) {
+      pending = trace ? trace(tx, ty) : Promise.resolve(this.traceTile(tx, ty));
+      this.inflight.set(inflightKey, pending);
+    }
+    let features: GeoJSON.Feature[];
+    try {
+      features = await pending;
+    } finally {
+      this.inflight.delete(inflightKey);
+    }
+    this.store(mapKey, key, features);
+    return { features, cached: false };
+  }
+
+  /** Insert a freshly-computed leaf, bump the compute counter, evict the LRU. */
+  private store(mapKey: string, key: string, features: GeoJSON.Feature[]): void {
     this.leaves.delete(mapKey);
-    this.leaves.set(mapKey, leaf);
+    this.leaves.set(mapKey, { key, features });
     this.computedLeaves++;
     if (this.leaves.size > this.opts.maxLeaves) {
       const oldest = this.leaves.keys().next().value as string | undefined;
@@ -160,37 +202,83 @@ export class TerrainContourLeaves {
         this.evictedLeaves++;
       }
     }
-    return { features, cached: false };
   }
 
   private traceTile(tx: number, ty: number): GeoJSON.Feature[] {
-    const bbox = this.tileBBox(tx, ty);
     const elev = (x: number, y: number): number => this.field(x, y).v;
-    const contours = marchingSquares(elev, { bbox, step: this.opts.step, levels: this.levels });
-    const out: GeoJSON.Feature[] = [];
-    for (const c of contours) {
-      // Clip each traced line to the tile bbox so a leaf owns only its own tile
-      // (a contour that wandered a lattice cell past the edge is trimmed — the
-      // neighbour tile owns that run). Endpoints ON the shared edge are kept, so
-      // the two tiles' runs meet.
-      const band = Math.round(c.level / this.opts.interval);
-      const index = band % this.opts.majorEvery === 0 ? "major" : "minor";
-      const elevation = Math.round(c.level);
-      for (const run of clipToTile(c.points, bbox)) {
-        if (run.length < 2) continue;
-        const [fx, fy] = run[0];
-        out.push({
-          type: "Feature",
-          id: `terrain-contour:${elevation}:${Math.round(fx * 10)}:${Math.round(fy * 10)}`,
-          geometry: { type: "LineString", coordinates: run },
-          properties: { generatorId: "terrain-contour", type: "terrain-contour", elevation, index },
-        });
-      }
-    }
-    // Deterministic order (marchingSquares already sorts; re-sort after clipping).
-    out.sort((a, b) => String(a.id).localeCompare(String(b.id)));
-    return out;
+    return traceTerrainContourTile(elev, tx, ty, {
+      step: this.opts.step,
+      tileSpan: this.opts.tileSpan,
+      interval: this.opts.interval,
+      levelMin: this.opts.levelMin,
+      levelMax: this.opts.levelMax,
+      majorEvery: this.opts.majorEvery,
+    });
   }
+}
+
+/** The world-aligned tile parameters a single contour leaf is traced from. A
+ * multiple-of-`step` `tileSpan` keeps adjacent tiles sharing their boundary
+ * lattice line (seam safety). */
+export interface ContourTileParams {
+  step: number;
+  tileSpan: number;
+  interval: number;
+  levelMin: number;
+  levelMax: number;
+  majorEvery: number;
+}
+
+/**
+ * Trace ONE world-aligned contour tile from an elevation-VALUE field — the pure
+ * primitive shared by the main-thread `TerrainContourLeaves` LRU AND the
+ * generation worker (`worker vs fallback byte-identical`). Deterministic: the
+ * lattice is world-aligned (marchingSquares samples identical shared points), the
+ * output is clipped to the tile and id-sorted, and ids hash POSITION (level + mm
+ * first vertex), never emission order. Emits `terrain-contour` features with a
+ * numeric `elevation` and a `minor|major` index cadence (the paint hooks).
+ */
+export function traceTerrainContourTile(
+  elev: (x: number, y: number) => number,
+  tx: number,
+  ty: number,
+  p: ContourTileParams
+): GeoJSON.Feature[] {
+  const bbox: BBox = {
+    minX: tx * p.tileSpan,
+    minY: ty * p.tileSpan,
+    maxX: (tx + 1) * p.tileSpan,
+    maxY: (ty + 1) * p.tileSpan,
+  };
+  const levels: number[] = [];
+  for (let lv = p.levelMin; lv <= p.levelMax; lv += p.interval) {
+    if (lv === 0) continue; // the datum itself is a coastline, not a relief line
+    levels.push(lv);
+  }
+  const contours = marchingSquares(elev, { bbox, step: p.step, levels });
+  const out: GeoJSON.Feature[] = [];
+  for (const c of contours) {
+    // Clip each traced line to the tile bbox so a leaf owns only its own tile
+    // (a contour that wandered a lattice cell past the edge is trimmed — the
+    // neighbour tile owns that run). Endpoints ON the shared edge are kept, so
+    // the two tiles' runs meet.
+    const band = Math.round(c.level / p.interval);
+    const index = band % p.majorEvery === 0 ? "major" : "minor";
+    const elevation = Math.round(c.level);
+    for (const run of clipToTile(c.points, bbox)) {
+      if (run.length < 2) continue;
+      const [fx, fy] = run[0];
+      out.push({
+        type: "Feature",
+        id: `terrain-contour:${elevation}:${Math.round(fx * 10)}:${Math.round(fy * 10)}`,
+        geometry: { type: "LineString", coordinates: run },
+        properties: { generatorId: "terrain-contour", type: "terrain-contour", elevation, index },
+      });
+    }
+  }
+  // Deterministic order (marchingSquares already sorts; re-sort after clipping).
+  out.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  return out;
 }
 
 /** Split a polyline into the runs that lie within `bbox` (inclusive). A vertex on

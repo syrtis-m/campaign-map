@@ -63,7 +63,6 @@ export const PAINT_TABLE: Record<string, Paint> = {
   "wall-quad": { z: 32, fill: [122, 114, 101, 255] },
   "wall-tower": { z: 34, fill: [95, 87, 76, 255] },
   // lines
-  "mountain-contour": { z: 36, stroke: [179, 164, 141, 255], strokeWidth: 1 },
   "mountain-hachure": { z: 36, stroke: [168, 152, 127, 255], strokeWidth: 1 },
   "forest-canopy-rim": { z: 36, stroke: [125, 156, 110, 255], strokeWidth: 1 },
   "park-canopy-rim": { z: 36, stroke: [125, 156, 110, 255], strokeWidth: 1 },

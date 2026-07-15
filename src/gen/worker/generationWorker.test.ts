@@ -10,9 +10,17 @@
  * into the worker never changes output.
  */
 import { describe, it, expect } from "vitest";
-import { reconstructJobRegion, handleWorkerMessage } from "./generationWorker";
+import {
+  reconstructJobRegion,
+  handleWorkerMessage,
+  terrainFieldFromInputs,
+  type SerializableTerrainInputs,
+} from "./generationWorker";
 import { algorithmById } from "../procgen/registry";
 import { makeSpine, makeCorridorRegion, makeRegion } from "../region";
+import { demTileLattice } from "../fields/dem";
+import { traceTerrainContourTile, type ContourTileParams } from "../fields/terrainContours";
+import type { FabricFeature } from "../../model/fabric";
 import type { GenerationConstraints } from "../types";
 import type { BBox } from "../spatialHash";
 
@@ -119,5 +127,97 @@ describe("generationWorker — line-kind spine crosses the worker boundary (031-
     expect(() =>
       reconstructJobRegion(river, "x", [], [[0, 0], [1] as unknown as [number, number]], RIVER_PARAMS)
     ).toThrow();
+  });
+});
+
+// ─── Terrain sampling off the main thread (Jonah 2026-07-15) ─────────────────
+
+/** A mountain stamp in gen-space meters, spanning the [0,1200]² tile block. */
+function mountainInputs(): SerializableTerrainInputs {
+  const ring: [number, number][] = [
+    [40, 40],
+    [1160, 40],
+    [1160, 1160],
+    [40, 1160],
+    [40, 40],
+  ];
+  const feature: FabricFeature = {
+    type: "Feature",
+    id: "mtn-1",
+    geometry: { type: "Polygon", coordinates: [ring] },
+    properties: { kind: "mountain", procgen: { algorithm: "mountain", seed: 4242, version: 2, params: { terrain: "alpine", amplitude: 0.9, roughness: 0.6 } } },
+  } as FabricFeature;
+  return {
+    features: [feature],
+    base: { campAmp: 0, seaDatum: 0 },
+    campaignSeed: 7,
+    include: { relief: true, landform: true, carve: true, grade: false },
+  };
+}
+
+/** Simulate the structured-clone boundary (JSON round-trip of the payload). */
+function clone<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v)) as T;
+}
+
+describe("generationWorker — DEM tile fill crosses the worker boundary byte-identically", () => {
+  it("worker `dem-tile` output equals the main-thread demTileLattice fallback", () => {
+    const inputs = mountainInputs();
+    const z = 6;
+    const x = 32;
+    const y = 32;
+    const res = 32; // small lattice, exercises the full sampler cheaply
+    const scale = 200;
+    const k = 5;
+
+    // Main-thread fallback: rebuild the field, run the pure lattice fill.
+    const field = terrainFieldFromInputs(inputs);
+    const expected = demTileLattice(field, z, x, y, res, scale, k);
+    expect(expected.length).toBe(res * res);
+
+    // Worker path: the exact dispatch onmessage runs, over the clone boundary.
+    const response = handleWorkerMessage({
+      kind: "dem-tile",
+      requestId: 1,
+      terrain: clone(inputs),
+      z,
+      x,
+      y,
+      res,
+      scaleMetersPerUnit: scale,
+      k,
+    });
+    expect(response.error).toBeUndefined();
+    expect(response.heights).toEqual(expected);
+  });
+});
+
+describe("generationWorker — contour leaf crosses the worker boundary byte-identically", () => {
+  const params: ContourTileParams = {
+    step: 20,
+    tileSpan: 1200,
+    interval: 100,
+    levelMin: 100,
+    levelMax: 1400,
+    majorEvery: 5,
+  };
+
+  it("worker `contour-leaf` output equals the main-thread traceTerrainContourTile fallback", () => {
+    const inputs = mountainInputs();
+    const field = terrainFieldFromInputs(inputs);
+    const elev = (px: number, py: number): number => field(px, py).v;
+    const expected = traceTerrainContourTile(elev, 0, 0, params);
+    expect(expected.length).toBeGreaterThan(0); // the massif crosses this tile
+
+    const response = handleWorkerMessage({
+      kind: "contour-leaf",
+      requestId: 2,
+      terrain: clone(inputs),
+      tx: 0,
+      ty: 0,
+      params,
+    });
+    expect(response.error).toBeUndefined();
+    expect(JSON.stringify(response.features)).toBe(JSON.stringify(expected));
   });
 });

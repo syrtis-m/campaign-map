@@ -219,31 +219,6 @@ const RECIPES: Record<string, Recipe> = {
       paint: { "fill-color": roles.relief, "fill-opacity": 0.45, "fill-antialias": false },
     }),
   ],
-  "mountain-contour": (roles) => {
-    const darkMap = luma(roles.ground) < 128;
-    const contour = darkMap ? reliefLighten(roles.relief, 0.3) : reliefDarken(roles.relief, 0.6);
-    return [
-      L({
-        id: "generated-mountain-contour",
-        type: "line",
-        filter: gidFilter("mountain-contour"),
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: {
-          "line-color": contour,
-          "line-width": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            4,
-            ["match", ["get", "index"], "major", 0.9, 0.4],
-            14,
-            ["match", ["get", "index"], "major", 2.2, 1.1],
-          ],
-          "line-opacity": ["match", ["get", "index"], "major", 0.8, 0.5],
-        },
-      }),
-    ];
-  },
   "mountain-hachure": (roles) => {
     const darkMap = luma(roles.ground) < 128;
     const hachure = darkMap ? reliefLighten(roles.relief, 0.4) : reliefDarken(roles.relief, 0.5);

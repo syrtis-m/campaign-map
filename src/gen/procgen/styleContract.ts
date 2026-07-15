@@ -31,6 +31,11 @@
  *  - `path-casing` — the dark cased-path / rim edge token (park paths, canopy
  *    rims, raked gravel), distinct from the masonry `boundary`.
  *  - `built-accent` — the low-opacity neighborhood district wash.
+ *  - `terrain-contour` — the global iso-line hue (relief-derived, painted by the
+ *    dedicated `terrain-contour` layer over the campaign terrain field, not a
+ *    generated-fabric bucket). Distinct from `relief` (mountain massif/hachure)
+ *    so a theme could later diverge the two; today both derive from the mountain
+ *    stone token.
  */
 export type SemanticRole =
   | "water"
@@ -46,6 +51,7 @@ export type SemanticRole =
   | "boundary"
   | "path-casing"
   | "relief"
+  | "terrain-contour"
   | "accent";
 
 /**
@@ -161,12 +167,14 @@ export const FARMLAND_STYLE_CONTRACT: readonly BucketStyle[] = [
   { gid: "farm-bank", mark: "line", role: "boundary", z: 6 },
 ];
 
-/** Mountain. Bucket order matches `MOUNTAIN_TILE_GENERATOR_IDS`. */
+/** Mountain. Bucket order matches `MOUNTAIN_TILE_GENERATOR_IDS`. The
+ * `mountain-contour` bucket was RETIRED (Jonah 2026-07-15): iso-lines now trace
+ * the composed campaign terrain field as a global surface painted by the
+ * `terrain-contour` role, not a per-mountain-ring generated feature. */
 export const MOUNTAIN_STYLE_CONTRACT: readonly BucketStyle[] = [
   { gid: "mountain-massif", mark: "fill", role: "relief", z: 1 },
   { gid: "mountain-hachure", mark: "line", role: "relief", z: 3 },
   { gid: "mountain-peak", mark: "point", role: "relief", z: 4 },
-  { gid: "mountain-contour", mark: "line", role: "relief", z: 2 },
 ];
 
 /** Every contract the paint builder composes, in generated-group source order

@@ -129,3 +129,82 @@ describe("TerrainContourLeaves — cache key scopes to intersecting inputs", () 
     expect(empty.features).toEqual([]);
   });
 });
+
+// A relief-polyline stamp (NO mountain polygon) — the ruling's litmus: contours
+// must render off the GLOBAL terrain field, not only inside a mountain ring.
+function relief(id: string, spine: Pt[], params: Record<string, unknown> = { polarity: "ridge", height: 300, halfWidth: 150 }): FabricFeature {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "LineString", coordinates: spine },
+    properties: { kind: "relief", procgen: { algorithm: "relief", seed: 1, version: 1, params } },
+  } as FabricFeature;
+}
+
+const RELIEF_OPTS: TerrainContourOptions = {
+  step: 20,
+  tileSpan: 400,
+  interval: 50,
+  levelMin: 50,
+  levelMax: 300,
+  majorEvery: 5,
+  maxLeaves: 16,
+};
+
+describe("TerrainContourLeaves — global field: relief stamp with NO mountain polygon", () => {
+  it("a relief ridge spine produces contour lines (relief lines show everywhere)", () => {
+    const spine: Pt[] = [
+      [40, 200],
+      [360, 200],
+    ];
+    const leaves = new TerrainContourLeaves([relief("r", spine)], RELIEF_OPTS);
+    const feats = leaves.leafFor(0, 0).features;
+    expect(feats.length).toBeGreaterThan(0);
+    for (const f of feats) {
+      expect(f.geometry.type).toBe("LineString");
+      expect((f.properties as { generatorId?: string }).generatorId).toBe("terrain-contour");
+    }
+  });
+
+  it("a wholly flat campaign (no stamps) yields no contours anywhere", () => {
+    const leaves = new TerrainContourLeaves([], RELIEF_OPTS);
+    expect(leaves.leafFor(0, 0).features).toEqual([]);
+    expect(leaves.leafFor(3, -2).features).toEqual([]);
+  });
+});
+
+describe("TerrainContourLeaves — leafForAsync (off-thread trace hook)", () => {
+  it("delegates the trace, preserves laziness + LRU counters", async () => {
+    const spine: Pt[] = [
+      [40, 200],
+      [360, 200],
+    ];
+    const leaves = new TerrainContourLeaves([relief("r", spine)], RELIEF_OPTS);
+    // Injected tracer stands in for the worker: returns the SAME bytes the
+    // synchronous engine would (here, the engine's own trace via leafFor on a
+    // twin) — asserting the async path is a faithful drop-in.
+    const twin = new TerrainContourLeaves([relief("r", spine)], RELIEF_OPTS);
+    const trace = async (tx: number, ty: number): Promise<GeoJSON.Feature[]> => twin.leafFor(tx, ty).features;
+
+    expect(leaves.computedLeaves).toBe(0);
+    const first = await leaves.leafForAsync(0, 0, trace);
+    expect(first.cached).toBe(false);
+    expect(first.features.length).toBeGreaterThan(0);
+    expect(leaves.computedLeaves).toBe(1);
+
+    const again = await leaves.leafForAsync(0, 0, trace);
+    expect(again.cached).toBe(true); // LRU hit, no recompute
+    expect(leaves.computedLeaves).toBe(1);
+  });
+
+  it("falls back to the synchronous trace when no tracer is injected (worker unavailable)", async () => {
+    const spine: Pt[] = [
+      [40, 200],
+      [360, 200],
+    ];
+    const leaves = new TerrainContourLeaves([relief("r", spine)], RELIEF_OPTS);
+    const viaAsync = (await leaves.leafForAsync(0, 0)).features;
+    const viaSync = new TerrainContourLeaves([relief("r", spine)], RELIEF_OPTS).leafFor(0, 0).features;
+    expect(JSON.stringify(viaAsync)).toBe(JSON.stringify(viaSync));
+  });
+});

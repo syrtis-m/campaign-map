@@ -6,6 +6,11 @@ import { connectionLayers } from "./themes/connectionLayers";
 import { sessionPathLayers } from "./themes/sessionPathLayers";
 import { fabricLayers, FABRIC_SOURCE_SPEC } from "./themes/fabricLayers";
 import { hillshadeLayer, hillshadeSourceSpec } from "./themes/hillshadeLayer";
+import {
+  terrainContourLayer,
+  TERRAIN_CONTOUR_SOURCE_ID,
+  TERRAIN_CONTOUR_SOURCE_SPEC,
+} from "./themes/terrainContourLayer";
 import { assertOrdered } from "./themes";
 import type { ThemeTokens } from "./themes/tokens";
 
@@ -144,12 +149,19 @@ export function obsidianNativeStyle(
       fabric: { ...FABRIC_SOURCE_SPEC },
       ...(basemap ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } } : {}),
       ...(dem ? { [dem.sourceId]: hillshadeSourceSpec(dem.url) } : {}),
+      // The global terrain-contour surface is fictional-campaign-only (it derives
+      // from the same composed field as the DEM); `dem` presence is exactly that
+      // gate. Populated per viewport by TerrainContourManager.
+      ...(dem ? { [TERRAIN_CONTOUR_SOURCE_ID]: { ...TERRAIN_CONTOUR_SOURCE_SPEC } } : {}),
     },
     // Same z-order contract as buildThemeStyle (see layerOrder.ts).
     layers: assertOrdered([
       { id: "background", type: "background", paint: { "background-color": t.land } },
       ...(basemap ? basemapLayers(basemap.sourceId, t) : []),
       ...(dem ? [hillshadeLayer(t, dem.sourceId)] : []),
+      // Contours sit at the BOTTOM of the generated group (relief context under
+      // the fabric), above hillshade.
+      ...(dem ? [terrainContourLayer(t)] : []),
       ...generatedLayers(t),
       ...fabricLayers(t),
       ...connectionLayers({ lineColor: t.accent }),

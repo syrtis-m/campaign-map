@@ -82,6 +82,9 @@ export {
   terrainAt,
   macroTerrainField,
   hasTerrainRelief,
+  // Per-feature variable-support invalidation reach for terrain stamps (ruling
+  // 2026-07-15): relief → halfWidth, landform/mountain → 0, null otherwise.
+  terrainStampSupport,
   DEFAULT_TERRAIN_BASE,
   RELIEF_POLARITIES,
   RELIEF_DEFAULTS,
@@ -93,11 +96,13 @@ export type { TerrainContourOptions } from "./terrainContours";
 export {
   // Viewport-keyed, lazily-computed, LRU-bounded contour leaves of the composed
   // terrain field (plan 036-C). Seam-safe (world-aligned marching squares),
-  // keyed on the durable terrain inputs intersecting each tile. The RE-HOME
-  // ENGINE; wiring it into the live render path (and retiring the mountain
-  // generator's baked `mountain-contour`) is the remaining paint-side
-  // integration — judged in-app, per the plan (no scripted live check).
+  // keyed on the durable terrain inputs intersecting each tile. WIRED into the
+  // live render path (Jonah 2026-07-15): the global `terrain-contour` source is
+  // fed per viewport from these leaves (`map/generation/terrainContourManager`),
+  // replacing the retired per-mountain-ring `mountain-contour` feature — relief
+  // lines now render EVERYWHERE the composed field has relief.
   TerrainContourLeaves,
+  traceTerrainContourTile,
 } from "./terrainContours";
 export type { FieldLatticeOptions } from "./fieldLattice";
 export {

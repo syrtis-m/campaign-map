@@ -2,13 +2,12 @@
 
 exports[`mountain generator — determinism > matches the seeded snapshot fixture (alpine — golden drift tripwire) 1`] = `
 {
-  "sha256": "46649bdc1f8f45df3ec04c26753637ef77c9b1dc0434de6eed3c8beff85969f0",
+  "sha256": "274c402514b92524a1ed5862d35c2887104127ac29a2526f13dfb89ce17887db",
   "summary": {
-    "mountain-contour": 84,
     "mountain-hachure": 1888,
     "mountain-massif": 1,
     "mountain-peak": 29,
-    "total": 2002,
+    "total": 1918,
   },
 }
 `;
