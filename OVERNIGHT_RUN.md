@@ -28,6 +28,25 @@ eyes lands HERE. Newest items at the top of each section.
   faubourg reading). Flag if plan-037 gate work wants a cleaner separation fixture instead.
 
 ## Landed
+- **Plan 032 COMPLETE** (`8b2cc5a`, `5b5e4f0`, `6d77f3a`, `ff1f065`): per-region cache shards
+  with verbatim-line streaming migration (pinned-old network record proven byte-identical —
+  STOP condition never triggered), persistent per-controller cache view (one disk read per
+  session, zero re-reads across batches), per-tile clip records eliminated (fixture city:
+  55 records → 1; ~721 KB shard = network only — this was the bulk of 170 MB/17 regions),
+  staged repaint (river→city flush repaints exactly stages [1,3] via MapLibre updateData diff
+  on the single generated source — no theme/style surface change). 924→939 tests. Judgment
+  calls: write-THROUGH not write-behind (undo-log hazard structurally impossible); view is
+  per-controller (reopen = fresh view — deliberate, keeps pinned-old blanking + mid-session
+  .mapcache-delete safety); world tier stays on the direct disk path.
+  **Jonah's eyes: the MapView `updateData` staged-repaint path is build/tsc-verified only —
+  judge it visually in your next normal app session** (pan around after an edit cascade).
+- **Plan 033-A landed early** (`d9dacc2`, parallel with 032): the under-invalidation property
+  harness — the shipping gate for everything consumption-keyed. TWO REAL FINDINGS vs the
+  report §1 table: (1) **river also consumes mountain** (slope coupling on by default;
+  compact-support field ⇒ 30 m margin suffices); (2) **city's influence margin is ~1500 m,
+  not 200 m** (the exp(−d/60) road tensor blend has no cutoff — a road at 400 m still steers
+  streets by whole degrees; measured byte-inert from ≈1 km). 33-C seeds from THIS table, not
+  the report's. Prove-the-net: 4 intentional under-declarations all detected.
 - **Plan 031 COMPLETE** (`cebb66f`, `02f0e07`, `5557ba6`, `a42cace`, `c111ec2`): network-once
   under force (P1), batching parity (one fp pass + one shared cache read + ≤1 repaint per batch),
   stage-ordered raw channel (P2/P3 correctness — ordering assertion verified to fail with the
