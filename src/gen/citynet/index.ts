@@ -46,6 +46,7 @@ import { subdivideBlocks } from "./parcels";
 import { buildWards } from "./wards";
 import { buildOutskirts } from "./outskirts";
 import { makeCityness, attenuateCitynessByCanopy } from "./cityness";
+import { inBankSetback } from "./bankTangent";
 import { buildUpstreamVegetationField } from "../upstream";
 
 // Package barrel: the host (MapView, generationService, worker, modal) imports
@@ -548,6 +549,7 @@ export function generateCityNetwork(
     if (deepInCanopy(p.ring)) continue; // no parcel deep in the wood (plan 037)
     const [pcx, pcy] = ringCentroid(p.ring);
     if (blockedByHole(fabricIdx, pcx, pcy)) continue; // no parcel in a contained region (plan 037)
+    if (inBankSetback(fabricIdx.channelRings, pcx, pcy)) continue; // building setback off the channel bank (plan 038.1)
     const ring = [...p.ring, p.ring[0]];
     features.push({
       type: "Feature",
@@ -577,6 +579,7 @@ export function generateCityNetwork(
     if (blockedByWater(fabricIdx, fcx, fcy)) continue;
     if (blockedByHole(fabricIdx, fcx, fcy)) continue; // no footprint in a contained region (plan 037)
     if (deepInCanopy(fp.ring)) continue; // buildings don't grow under a closed canopy (plan 037)
+    if (inBankSetback(fabricIdx.channelRings, fcx, fcy)) continue; // building setback off the channel bank (plan 038.1)
     const ring = [...fp.ring, fp.ring[0]];
     features.push({
       type: "Feature",
@@ -611,6 +614,8 @@ export function generateCityNetwork(
   // enforced inside buildOutskirts (all quad corners in-region).
   const outskirts = buildOutskirts(citySeed, region, profile, skel, cityness, fabricIdx);
   for (const rf of outskirts.ribbonFootprints) {
+    const [rcx, rcy] = ringCentroid(rf.ring);
+    if (inBankSetback(fabricIdx.channelRings, rcx, rcy)) continue; // no ribbon in the bank setback (plan 038.1)
     features.push({
       type: "Feature",
       id: hashSeed(citySeed, "ribbon", rf.key),

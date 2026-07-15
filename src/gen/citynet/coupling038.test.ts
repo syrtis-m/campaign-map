@@ -23,6 +23,13 @@ import {
   OVERLAP_SCALE_M_PER_UNIT,
   OVERLAP_PINS,
 } from "../testkit/overlapMap";
+import { nearestOnLine } from "../fabricConstraints";
+import {
+  bankAlignedSampler,
+  distToChannelBank,
+  BANK_SETBACK_M,
+  BANK_ALIGN_FALLOFF_M,
+} from "./bankTangent";
 
 type Pt = [number, number];
 
@@ -116,5 +123,120 @@ describe("039 §1.1 — typed market pin anchors the plaza (S8)", () => {
     const a = JSON.stringify(gen(region, "euro-medieval"));
     const b = JSON.stringify(gen(region, "euro-medieval"));
     expect(a).toBe(b);
+  });
+});
+
+// ─── 038.1 — waterfront street alignment + building setback ───────────────────
+
+describe("038.1 — bank-tangent street alignment near the generated channel", () => {
+  const region = makeRegion("wf-region", [
+    [-350, -300],
+    [350, -300],
+    [350, 300],
+    [-350, 300],
+  ]);
+  // A horizontal channel band crossing the region (upstream.water polygon → the
+  // city's channelRings). Its horizontal banks give a horizontal tangent.
+  const channelRing: Pt[] = [
+    [-350, -45],
+    [350, -45],
+    [350, 45],
+    [-350, 45],
+    [-350, -45],
+  ];
+  const upstream: UpstreamArtifacts = {
+    water: [
+      {
+        type: "Feature",
+        id: "ch",
+        geometry: { type: "Polygon", coordinates: [channelRing] },
+        properties: { generatorId: "river-channel" },
+      },
+    ],
+  };
+
+  it("bankAlignedSampler bends toward the bank near it, unchanged far away", () => {
+    const base = (): number => Math.PI / 2; // base field points vertical everywhere
+    const s = bankAlignedSampler(base, [channelRing]);
+    // Just above the horizontal bank (y≈55): the tangent is horizontal (≈0), so
+    // the blended angle leaves vertical for near-horizontal.
+    const near = s(0, 55);
+    expect(Math.abs(Math.sin(near))).toBeLessThan(0.4); // pulled toward horizontal
+    // Far from any bank (2× the falloff): the base vertical field survives.
+    const far = s(0, 45 + BANK_ALIGN_FALLOFF_M * 3);
+    expect(Math.abs(Math.sin(far))).toBeGreaterThan(0.9);
+  });
+
+  it("empty channelRings ⇒ the SAME sampler reference (referential no-op)", () => {
+    const base = (x: number, y: number): number => x + y;
+    expect(bankAlignedSampler(base, [])).toBe(base);
+  });
+
+  const nearBankStreets = (net: GeoJSON.Feature[]) => {
+    let nearSum = 0;
+    let nearN = 0;
+    let farSum = 0;
+    let farN = 0;
+    for (const f of net) {
+      const p = f.properties as { generatorId?: string; roadClass?: string; type?: string };
+      if (p?.generatorId !== "city-street") continue;
+      if (p.roadClass === "arterial" || p.roadClass === "ring" || p.type === "bridge") continue;
+      const coords = (f.geometry as GeoJSON.LineString).coordinates as Pt[];
+      for (let i = 0; i < coords.length - 1; i++) {
+        const a = coords[i];
+        const b = coords[i + 1];
+        const mx = (a[0] + b[0]) / 2;
+        const my = (a[1] + b[1]) / 2;
+        const d = distToChannelBank([channelRing], mx, my);
+        const segAng = Math.atan2(b[1] - a[1], b[0] - a[0]);
+        const bankAng = nearestOnLine(channelRing, mx, my).angle;
+        const align = Math.abs(Math.cos(2 * (segAng - bankAng)));
+        if (Math.abs(my) > 45 && d < 55) {
+          nearSum += align;
+          nearN++;
+        } else if (d > 150) {
+          farSum += align;
+          farN++;
+        }
+      }
+    }
+    return { near: nearN ? nearSum / nearN : NaN, nearN, far: farN ? farSum / farN : NaN, farN };
+  };
+
+  it("near-bank grown streets run parallel to the bank (correlation ≫ far streets)", () => {
+    const net = generateCityNetwork(SEED, region, "euro-medieval", { worldBounds: WORLD, upstream });
+    const m = nearBankStreets(net);
+    expect(m.nearN).toBeGreaterThan(6); // enough samples to be meaningful
+    expect(m.near).toBeGreaterThan(0.72); // strongly bank-parallel
+    expect(m.near).toBeGreaterThan(m.far + 0.1); // and markedly more than the far field
+  });
+
+  it("no building sits in the bank setback strip (streets/quays still may)", () => {
+    const net = generateCityNetwork(SEED, region, "euro-medieval", { worldBounds: WORLD, upstream });
+    for (const f of net) {
+      const p = f.properties as { generatorId?: string };
+      if (p?.generatorId !== "city-footprint" && p?.generatorId !== "city-parcel") continue;
+      const ring = (f.geometry as GeoJSON.Polygon).coordinates[0] as Pt[];
+      let cx = 0;
+      let cy = 0;
+      const n = ring.length - 1;
+      for (let i = 0; i < n; i++) {
+        cx += ring[i][0];
+        cy += ring[i][1];
+      }
+      cx /= n;
+      cy /= n;
+      // Dry centroids only (in-channel ones are dropped by blockedByWater); no dry
+      // building centroid may fall inside the setback strip.
+      if (Math.abs(cy) > 45) {
+        expect(distToChannelBank([channelRing], cx, cy)).toBeGreaterThanOrEqual(BANK_SETBACK_M);
+      }
+    }
+  });
+
+  it("no upstream channel ⇒ byte-identical to the uncoupled city", () => {
+    const bare = JSON.stringify(generateCityNetwork(SEED, region, "euro-medieval", { worldBounds: WORLD }));
+    const again = JSON.stringify(generateCityNetwork(SEED, region, "euro-medieval", { worldBounds: WORLD }));
+    expect(bare).toBe(again);
   });
 });

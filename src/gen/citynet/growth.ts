@@ -47,6 +47,7 @@ import { chaikinSmooth } from "../city/corridor";
 import type { CityProfile } from "./profiles";
 import { CANON_RADIUS_M } from "./costField";
 import { makeCityness, attenuateCitynessByCanopy, type CitynessFn } from "./cityness";
+import { bankAlignedSampler } from "./bankTangent";
 import type { Field } from "../fields/sdf";
 import type { SkeletonOutput } from "./skeleton";
 import { StreetGraph, toLattice, toMeters, type GraphNode } from "./graph";
@@ -327,9 +328,13 @@ export function growNetwork(
   const spacing = profile.segmentLen * SEED_SPACING_FACTOR;
 
   // Orientation prior: tensor field blended with sketched-road alignment via
-  // the existing machinery. Seeded by citySeed — pure (D6).
+  // the existing machinery, then bent PARALLEL to the generated river channel's
+  // bank near the water (plan 038.1). `bankAlignedSampler` is a referential
+  // no-op when there is no channel (idx.channelRings empty) ⇒ byte-identical to
+  // the uncoupled city. Seeded by citySeed — pure (D6).
   const field = buildTensorField(citySeed, constraints.worldBounds);
-  const sampler = fabricAngleSampler(field, idx) ?? ((x: number, y: number) => sampleFieldAngle(field, x, y));
+  const roadSampler = fabricAngleSampler(field, idx) ?? ((x: number, y: number) => sampleFieldAngle(field, x, y));
+  const sampler = bankAlignedSampler(roadSampler, idx.channelRings);
 
   // ── Pre-seed the graph ───────────────────────────────────────────────────
   // Stage-A arterials/waterfront: snappable targets + branch-candidate spines.
