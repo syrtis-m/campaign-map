@@ -248,6 +248,18 @@ export default class CampaignMapPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "toggle-reference-underlay",
+      name: "Toggle reference underlay",
+      checkCallback: (checking) => {
+        const view = this.activeMapView();
+        // Only when a reference underlay is actually attached (plan 041).
+        if (!view?.campaign?.config.underlay) return false;
+        if (!checking) void view.toggleUnderlay();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "generate-fabric-here",
       name: "Generate fabric here",
       checkCallback: (checking) => {

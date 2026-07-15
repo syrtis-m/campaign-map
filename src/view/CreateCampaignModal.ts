@@ -25,7 +25,13 @@ const TERRAIN_STARTER_CAMP_AMP = 150;
  * i create a new map... no UIUX right now") — until now the only way in was
  * hand-authoring a *.map.md note with the right frontmatter from memory. Now
  * covers the full creation surface: name, world type, scale, theme, seed
- * (re-rollable), and an optional base-terrain block (fictional). */
+ * (re-rollable), and an optional base-terrain block (fictional).
+ *
+ * DEFERRED (plan 041): an "attach a reference image now" checkbox to seed the
+ * underlay block at creation time (the killer trace-mode setup for recreating a
+ * published map). For now the underlay is attached post-creation in the
+ * campaign-settings modal (Reference underlay section); wiring it here is a small
+ * follow-up once the placement UX is eyeballed. */
 export class CreateCampaignModal extends Modal {
   private name = "";
   private template: StarterTemplate = "blank";

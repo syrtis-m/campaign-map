@@ -7,18 +7,22 @@ import type { LayerSpecification } from "maplibre-gl";
  * procgen over the GM's sketch, must fail loudly (unit test + runtime assert in
  * both style builders), not ship as a happenstance of array order.
  *
- * background < basemap < hillshade < generated (layer 1) < fabric/sketch (layer 2)
- * < connections < session-path < location dots < location labels (layer 3)
+ * background < underlay < basemap < hillshade < generated (layer 1) <
+ * fabric/sketch (layer 2) < connections < session-path < location dots <
+ * location labels (layer 3)
  *
  * (Generated below sketch: the GM's hand beats the generator's where they
  * overlap. Connections/session-path are location-derived, so they ride above
  * all fabric but below the dots/labels they connect. Hillshade — the generated
  * DEM relief shading — sits below the vector fabric so the
  * massif/hachures/contours read ON TOP of the shaded ground, and above basemap
- * so real-city relief would overlay the tiles.)
+ * so real-city relief would overlay the tiles. The reference-image underlay —
+ * plan 041 "trace mode" — sits JUST above the background fill and BELOW every
+ * content layer, so the GM traces the reference with fabric that renders on top.)
  */
 export const LAYER_GROUP_ORDER = [
   "background",
+  "underlay",
   "basemap",
   "hillshade",
   "generated",
@@ -34,6 +38,7 @@ export type LayerGroup = (typeof LAYER_GROUP_ORDER)[number];
  * claims, so a new layer family must declare where it sits. */
 export function layerGroupOf(id: string): LayerGroup {
   if (id === "background") return "background";
+  if (id === "underlay") return "underlay";
   if (id.startsWith("basemap-")) return "basemap";
   if (id === "hillshade" || id.startsWith("hillshade-")) return "hillshade";
   if (id.startsWith("generated-")) return "generated";

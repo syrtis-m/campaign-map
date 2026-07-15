@@ -57,6 +57,46 @@ describe("parseCampaignConfig", () => {
     });
     expect(result.ok).toBe(false);
   });
+
+  it("accepts an optional reference underlay block and fills its defaults (plan 041)", () => {
+    const result = parseCampaignConfig("Cradle.map.md", "Cradle", {
+      "map-campaign": true,
+      crs: "fictional",
+      underlay: {
+        image: "Campaigns/Cradle/reference.png",
+        sw: [-10, 20],
+        ne: [30, 60],
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const u = result.campaign.config.underlay;
+      expect(u?.image).toBe("Campaigns/Cradle/reference.png");
+      expect(u?.sw).toEqual([-10, 20]);
+      expect(u?.ne).toEqual([30, 60]);
+      // Defaults: fully opaque + visible.
+      expect(u?.opacity).toBe(1);
+      expect(u?.visible).toBe(true);
+    }
+  });
+
+  it("rejects an underlay with an out-of-range opacity", () => {
+    const result = parseCampaignConfig("Cradle.map.md", "Cradle", {
+      "map-campaign": true,
+      crs: "fictional",
+      underlay: { image: "ref.png", sw: [0, 0], ne: [1, 1], opacity: 5 },
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects an underlay missing the image path", () => {
+    const result = parseCampaignConfig("Cradle.map.md", "Cradle", {
+      "map-campaign": true,
+      crs: "fictional",
+      underlay: { sw: [0, 0], ne: [1, 1] },
+    });
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe("slugify", () => {

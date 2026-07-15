@@ -33,6 +33,7 @@ export class CampaignControlModal extends Modal {
     this.renderGenerateAndExport(contentEl);
     this.renderTheme(contentEl);
     this.renderNamingCultures(contentEl);
+    this.renderUnderlay(contentEl);
     if (this.campaign.config.crs === "fictional") this.renderBaseTerrain(contentEl);
     if (this.campaign.config.crs === "real") this.renderBasemap(contentEl);
   }
@@ -240,6 +241,110 @@ export class CampaignControlModal extends Modal {
             void this.view.applyTerrainSettings(normalizeTerrainBlock(draft));
             this.close();
           })
+      );
+  }
+
+  /**
+   * Reference-image underlay (plan 041 "trace mode"): attach a positioned raster
+   * the GM traces the reference map onto. The image is read through the
+   * DataAdapter (never Node fs); corners are two anchor points (SW/NE) in display
+   * units. Opacity is a LIVE slider (display-only, no regen — ratified fine);
+   * everything else persists on Apply, which restyles to splice the layer in below
+   * all fabric. Available for both fictional and real campaigns.
+   */
+  private renderUnderlay(root: HTMLElement): void {
+    new Setting(root).setName("Reference underlay").setHeading();
+    root.createEl("p", {
+      cls: "setting-item-description",
+      text: "Drop an image in the vault and place it under the fabric to trace a reference map's coastline, ridges, and regions. Display-only — it never generates anything. Give a vault-relative image path and two corners (south-west, north-east) in map units.",
+    });
+
+    const current = this.campaign.config.underlay;
+    // Seed corners from the current viewport if there's no underlay yet (a sensible
+    // "drop it over what I'm looking at"), else from the persisted placement.
+    const bounds = this.plugin.map?.getBounds();
+    const draft = {
+      image: current?.image ?? "",
+      sw: current?.sw ?? ([bounds ? bounds.getWest() : 0, bounds ? bounds.getSouth() : 0] as [number, number]),
+      ne: current?.ne ?? ([bounds ? bounds.getEast() : 1, bounds ? bounds.getNorth() : 1] as [number, number]),
+      opacity: current?.opacity ?? 0.6,
+      visible: current?.visible ?? true,
+    };
+
+    new Setting(root)
+      .setName("Image (vault-relative path)")
+      .setDesc("e.g. Campaigns/Cradle/reference.png — the file must already be in the vault.")
+      .addText((text) => {
+        text.setPlaceholder("Campaigns/…/reference.png").setValue(draft.image);
+        text.onChange((v) => (draft.image = v.trim()));
+      });
+
+    const corner = (label: string, get: () => number, set: (n: number) => void) =>
+      new Setting(root).setName(label).addText((text) => {
+        text.setValue(String(get()));
+        text.inputEl.type = "number";
+        text.onChange((v) => {
+          const n = Number.parseFloat(v);
+          if (Number.isFinite(n)) set(n);
+        });
+      });
+    corner("SW corner — X (min longitude)", () => draft.sw[0], (n) => (draft.sw[0] = n));
+    corner("SW corner — Y (min latitude)", () => draft.sw[1], (n) => (draft.sw[1] = n));
+    corner("NE corner — X (max longitude)", () => draft.ne[0], (n) => (draft.ne[0] = n));
+    corner("NE corner — Y (max latitude)", () => draft.ne[1], (n) => (draft.ne[1] = n));
+
+    new Setting(root)
+      .setName("Opacity")
+      .setDesc("Live — dims the reference so the fabric you trace stays legible.")
+      .addSlider((slider) => {
+        slider
+          .setLimits(0, 1, 0.05)
+          .setValue(draft.opacity)
+          .setDynamicTooltip()
+          .onChange((v) => {
+            draft.opacity = v;
+            this.view.setUnderlayOpacityLive(v); // display-only feedback
+          });
+      });
+
+    new Setting(root)
+      .setName("Visible")
+      .addToggle((toggle) => {
+        toggle.setValue(draft.visible);
+        toggle.onChange((v) => (draft.visible = v));
+      });
+
+    new Setting(root)
+      .setName("Apply / remove reference")
+      .setDesc("Apply persists the placement and restyles; Remove detaches it.")
+      .addButton((btn) =>
+        btn
+          .setButtonText("Apply")
+          .setCta()
+          .onClick(() => {
+            if (!draft.image) {
+              new Notice("Campaign Map: enter a vault-relative image path first.");
+              return;
+            }
+            if (!this.app.vault.getFileByPath(draft.image)) {
+              new Notice(`Campaign Map: no vault file at "${draft.image}".`);
+              return;
+            }
+            void this.view.applyUnderlay({
+              image: draft.image,
+              sw: [draft.sw[0], draft.sw[1]],
+              ne: [draft.ne[0], draft.ne[1]],
+              opacity: draft.opacity,
+              visible: draft.visible,
+            });
+            this.close();
+          })
+      )
+      .addButton((btn) =>
+        btn.setButtonText("Remove").onClick(() => {
+          void this.view.applyUnderlay(undefined);
+          this.close();
+        })
       );
   }
 

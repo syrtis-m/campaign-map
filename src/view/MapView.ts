@@ -1,6 +1,10 @@
 import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Modal, Notice, TFile, setIcon, FuzzySuggestModal, App } from "obsidian";
 import maplibregl, { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature, StyleSpecification } from "maplibre-gl";
-import type { ParsedCampaign } from "../model/campaignConfig";
+import type { CampaignConfig, ParsedCampaign } from "../model/campaignConfig";
+
+/** The persisted reference-underlay block (plan 041) — the non-optional shape of
+ * the campaign config's `underlay` field, used by the apply/test/toggle entries. */
+type UnderlayConfig = NonNullable<CampaignConfig["underlay"]>;
 import { LOCATION_TYPES, VISIBILITY_VALUES, type ParsedLocation, type Visibility } from "../model/locationNote";
 import { buildConnectionFeatures } from "../model/connections";
 import { parseSessionPath, sessionPathFeature } from "../model/sessionPath";
@@ -54,6 +58,7 @@ import type { BBox } from "../gen/spatialHash";
 import { generateRegionTile, generateTile, type GenerationContext } from "../map/generation/generationService";
 import { TerrainContourManager } from "../map/generation/terrainContourManager";
 import { TERRAIN_CONTOUR_SOURCE_ID } from "../map/themes/terrainContourLayer";
+import { UNDERLAY_LAYER_ID, type UnderlayDescriptor } from "../map/themes/underlayLayer";
 import { algorithmForKind, matchingPresetId, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import { RegionProcgenModal } from "./RegionProcgenModal";
 import { paramFieldSpecs, renderParamControls } from "./paramControls";
@@ -333,6 +338,12 @@ export class MapView extends ItemView {
     // is skipped for a terrain-only change, so refresh the DEM explicitly below.
     const terrainBaseChanged =
       JSON.stringify(this.campaign?.config.terrain ?? null) !== JSON.stringify(campaign.config.terrain ?? null);
+    // A reference-underlay change (plan 041: attach / move corners / change image /
+    // opacity / visibility) is spliced into the style at build time, so it rides
+    // the same setStyle rebuild as a theme/basemap change — a rare, explicit GM
+    // action, and reusing the asserted style order keeps the z-stack correct.
+    const underlayChanged =
+      JSON.stringify(this.campaign?.config.underlay ?? null) !== JSON.stringify(campaign.config.underlay ?? null);
     // The controller drops its own per-campaign state (render store, manifest,
     // fabric) on a genuine switch and tells us so we can reset the view-side
     // (selection / session-path / sketch-mode / camera-replay) state to match.
@@ -354,7 +365,7 @@ export class MapView extends ItemView {
     // have been built before the campaign arrived — rebuild it now. Guarded:
     // setCampaign can run before onOpen has created the toolbar element.
     if (this.toolbarEl) this.buildToolbar();
-    if (this.map && (isFirstApply || themeChanged)) {
+    if (this.map && (isFirstApply || themeChanged || underlayChanged)) {
       if (switched) this.terrainEnabled = false; // terrain is per-session, never carried across campaigns
       if (switched) this.terrainContourManager?.reset(); // drop the prior campaign's contour engine
       this.map.setStyle(this.buildStyle(campaign));
@@ -426,6 +437,87 @@ export class MapView extends ItemView {
     const block = normalizeTerrainBlock(input);
     await this.applyTerrainSettings(block);
     return block;
+  }
+
+  // ─── Reference-image underlay (plan 041 "trace mode") ───────────────────────
+  /**
+   * Resolve the campaign's underlay config to a style descriptor: a directly-
+   * loadable URL (via the DataAdapter's `getResourcePath` — NEVER Node fs, the
+   * same mechanism the font glyphs use) plus the two display-unit anchor corners.
+   * Returns `undefined` when no underlay is attached (⇒ the style carries no
+   * underlay source/layer at all, the pre-041 behavior). A NON-visible underlay is
+   * still resolved (layer present, `visibility: none`) so the toggle command is a
+   * cheap `setLayoutProperty` with no restyle.
+   */
+  private resolveUnderlay(campaign: ParsedCampaign): UnderlayDescriptor | undefined {
+    const u = campaign.config.underlay;
+    if (!u) return undefined;
+    return {
+      url: this.app.vault.adapter.getResourcePath(u.image),
+      sw: u.sw,
+      ne: u.ne,
+      opacity: u.opacity,
+      visible: u.visible,
+    };
+  }
+
+  /**
+   * Persist a reference-underlay block (plan 041) to campaign frontmatter behind
+   * the settings modal's Apply. `undefined` ⇒ detach (delete the key). The config
+   * rescan pushes it into `setCampaign`, whose `underlayChanged` triggers the
+   * style rebuild that splices the source/layer in at the asserted z-order.
+   * `setUnderlayForTest` is the modal-free twin (a modal hangs the CLI).
+   */
+  async applyUnderlay(block: UnderlayConfig | undefined): Promise<void> {
+    if (!this.campaign) return;
+    const file = this.app.vault.getAbstractFileByPath(this.campaign.path);
+    if (!(file instanceof TFile)) return;
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      if (block) fm.underlay = { ...block };
+      else delete fm.underlay;
+    });
+    new Notice(
+      block
+        ? "Campaign Map: reference underlay applied."
+        : "Campaign Map: reference underlay removed."
+    );
+  }
+
+  /** Headless twin of the settings Apply — persist the block (or detach on
+   * `undefined`), no Notice/DOM. Returns what was persisted. */
+  async setUnderlayForTest(block: UnderlayConfig | undefined): Promise<UnderlayConfig | undefined> {
+    if (!this.campaign) return undefined;
+    const file = this.app.vault.getAbstractFileByPath(this.campaign.path);
+    if (!(file instanceof TFile)) return undefined;
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      if (block) fm.underlay = { ...block };
+      else delete fm.underlay;
+    });
+    return block;
+  }
+
+  /** LIVE opacity feedback for the settings slider — display-only, no persist, no
+   * regen (ratified fine per plan 041). Persisting on Apply triggers the restyle
+   * that bakes the final value in. No-op until the layer exists. */
+  setUnderlayOpacityLive(opacity: number): void {
+    if (!this.map?.getLayer(UNDERLAY_LAYER_ID)) return;
+    this.map.setPaintProperty(UNDERLAY_LAYER_ID, "raster-opacity", Math.max(0, Math.min(1, opacity)));
+  }
+
+  /** Flip the attached underlay's visibility (command + headless entry). Live
+   * `setLayoutProperty` for instant feedback, then persist (the async frontmatter
+   * write reconverges via `setCampaign`). Notices when nothing is attached. */
+  async toggleUnderlay(): Promise<void> {
+    const u = this.campaign?.config.underlay;
+    if (!u) {
+      new Notice("Campaign Map: no reference underlay attached (add one in campaign settings).");
+      return;
+    }
+    const next = !u.visible;
+    if (this.map?.getLayer(UNDERLAY_LAYER_ID)) {
+      this.map.setLayoutProperty(UNDERLAY_LAYER_ID, "visibility", next ? "visible" : "none");
+    }
+    await this.applyUnderlay({ ...u, visible: next });
   }
 
   // ─── Terrain: hillshade relief + 3D ────────────────────────────────────────
@@ -547,10 +639,13 @@ export class MapView extends ItemView {
       dem = { sourceId: `dem-${campaign.id}`, url: campaignDemUrlTemplate(campaign.id) };
       this.registerDemProviderFor(campaign);
     }
+    // Reference-image underlay (plan 041): resolved to a directly-loadable URL +
+    // display-unit corners before the pure style builder runs.
+    const underlay = this.resolveUnderlay(campaign);
     if (isHandcraftedTheme(config.theme)) {
-      return buildThemeStyle(HANDCRAFTED_THEMES[config.theme], glyphsUrlTemplate(), basemap, dem);
+      return buildThemeStyle(HANDCRAFTED_THEMES[config.theme], glyphsUrlTemplate(), basemap, dem, underlay);
     }
-    return obsidianNativeStyle(readObsidianCssTokens(this.containerEl), glyphsUrlTemplate(), basemap, dem);
+    return obsidianNativeStyle(readObsidianCssTokens(this.containerEl), glyphsUrlTemplate(), basemap, dem, underlay);
   }
 
   /** Point the `campaigndem` protocol at this campaign's live elevation field.

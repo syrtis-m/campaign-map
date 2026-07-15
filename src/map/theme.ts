@@ -12,6 +12,12 @@ import {
   TERRAIN_CONTOUR_SOURCE_ID,
   TERRAIN_CONTOUR_SOURCE_SPEC,
 } from "./themes/terrainContourLayer";
+import {
+  underlayLayer,
+  underlaySourceSpec,
+  UNDERLAY_SOURCE_ID,
+  type UnderlayDescriptor,
+} from "./themes/underlayLayer";
 import { assertOrdered } from "./themes";
 import type { ThemeTokens } from "./themes/tokens";
 
@@ -135,7 +141,8 @@ export function obsidianNativeStyle(
   tokens: ObsidianCssTokens,
   glyphsUrl: string,
   basemap?: { sourceId: string; url: string },
-  dem?: { sourceId: string; url: string }
+  dem?: { sourceId: string; url: string },
+  underlay?: UnderlayDescriptor
 ): StyleSpecification {
   const t = obsidianTokensAsThemeTokens(tokens);
   return {
@@ -151,6 +158,9 @@ export function obsidianNativeStyle(
       // One centroid POINT per named region — keeps the overview label from
       // repeating per-tile on a canvas-filling polygon (see regionLabels.ts).
       "region-labels": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      // Reference-image underlay (plan 041) — present only when a visible one is
+      // attached; below all fabric so it can be traced over.
+      ...(underlay ? { [UNDERLAY_SOURCE_ID]: underlaySourceSpec(underlay) } : {}),
       ...(basemap ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } } : {}),
       ...(dem ? { [dem.sourceId]: hillshadeSourceSpec(dem.url) } : {}),
       // The global terrain-contour surface is fictional-campaign-only (it derives
@@ -161,6 +171,8 @@ export function obsidianNativeStyle(
     // Same z-order contract as buildThemeStyle (see layerOrder.ts).
     layers: assertOrdered([
       { id: "background", type: "background", paint: { "background-color": t.land } },
+      // Reference underlay just above the background fill, below every content layer.
+      ...(underlay ? [underlayLayer(underlay)] : []),
       ...(basemap ? basemapLayers(basemap.sourceId, t) : []),
       ...(dem ? [hillshadeLayer(t, dem.sourceId)] : []),
       // Contours sit at the BOTTOM of the generated group (relief context under

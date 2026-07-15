@@ -39,6 +39,26 @@ export const CampaignConfigSchema = z.object({
       grade: z.boolean().default(false),
     })
     .optional(),
+  // Reference-image underlay (plan 041 "trace mode") — a positioned raster the GM
+  // drops in the vault and traces the reference map's coastline/ridges/regions
+  // onto with the existing sketch tools. Display-only, below all fabric (above the
+  // background), never regenerated. Absent ⇒ no underlay (the pre-041 behavior).
+  //  - image:   vault-relative path to the image file (read via the DataAdapter's
+  //             getResourcePath, never Node fs — same mechanism as the font glyphs).
+  //  - sw / ne: the two anchor corners (south-west, north-east) in DISPLAY units
+  //             (fake lng/lat for fictional, real lng/lat for real); the four image
+  //             corners derive from them.
+  //  - opacity: 0..1, so the fabric traced on top stays legible over the reference.
+  //  - visible: a quick on/off without discarding the placement.
+  underlay: z
+    .object({
+      image: z.string().min(1),
+      sw: z.tuple([z.number(), z.number()]),
+      ne: z.tuple([z.number(), z.number()]),
+      opacity: z.number().min(0).max(1).default(1),
+      visible: z.boolean().default(true),
+    })
+    .optional(),
 });
 
 export type CampaignConfig = z.infer<typeof CampaignConfigSchema>;

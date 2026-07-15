@@ -13,6 +13,12 @@ import {
   TERRAIN_CONTOUR_SOURCE_ID,
   TERRAIN_CONTOUR_SOURCE_SPEC,
 } from "./terrainContourLayer";
+import {
+  underlayLayer,
+  underlaySourceSpec,
+  UNDERLAY_SOURCE_ID,
+  type UnderlayDescriptor,
+} from "./underlayLayer";
 import { assertLayerOrder } from "./layerOrder";
 
 export { HANDCRAFTED_THEMES, type ThemeTokens };
@@ -31,7 +37,8 @@ export function buildThemeStyle(
   tokens: ThemeTokens,
   glyphsUrl: string,
   basemap?: { sourceId: string; url: string },
-  dem?: { sourceId: string; url: string }
+  dem?: { sourceId: string; url: string },
+  underlay?: UnderlayDescriptor
 ): StyleSpecification {
   return {
     version: 8,
@@ -46,6 +53,9 @@ export function buildThemeStyle(
       // One centroid POINT per named region — keeps the overview label from
       // repeating per-tile on a canvas-filling polygon (see regionLabels.ts).
       "region-labels": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      // Reference-image underlay (plan 041) — present only when the GM attached a
+      // visible one; below all fabric so it can be traced over.
+      ...(underlay ? { [UNDERLAY_SOURCE_ID]: underlaySourceSpec(underlay) } : {}),
       ...(basemap
         ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } }
         : {}),
@@ -55,9 +65,11 @@ export function buildThemeStyle(
     },
     // Z-order invariant (see layerOrder.ts): Locations always above fabric;
     // sketched fabric above generated (the GM's hand wins). Hillshade relief
-    // sits below the vector fabric, default-hidden.
+    // sits below the vector fabric, default-hidden. The reference underlay sits
+    // just above the background fill, below every content layer.
     layers: assertOrdered([
       { id: "background", type: "background", paint: { "background-color": tokens.land } },
+      ...(underlay ? [underlayLayer(underlay)] : []),
       ...(basemap ? basemapLayers(basemap.sourceId, tokens) : []),
       ...(dem ? [hillshadeLayer(tokens, dem.sourceId)] : []),
       // Contours at the bottom of the generated group (relief under fabric).
