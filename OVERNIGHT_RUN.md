@@ -351,3 +351,17 @@ _(none yet)_
 
 ## Flakes / environment notes
 _(none yet)_
+
+## LIVE SESSION ROUND 3 (2026-07-15 late afternoon, all pushed, suite 1343/1343)
+- Carve↔visual alignment: buildRiverCarve now incises the MEANDERED centerline (shared
+  buildRiverCenterline export — one function, two callers; TERRAIN_FIELD_VERSION 5).
+- Per-vertex river carve depth: optional `depths[]` (absent = byte-identical), on-map depth
+  grips per spine vertex (plan-040 idiom), downhill guaranteed structurally (cumulative-min)
+  + UI clamp (no vertex above its upstream neighbor).
+- Sketch mode defaults to Select (not road pen).
+- River "didn't repaint" = NO BUG: verified 9-algorithm repaint matrix; slopeSensitivity is a
+  documented no-op with no terrain in reach (locking tests added). Check registry doc line
+  ("no mountain sketch") for stale phrasing post-ruling.
+- Farmland streaks: riverine rang long-lots were cell-scaled (166 m ≈ 6× strip depth ⇒ 39%
+  region coverage, fan ribbons); now frontage-anchored (74 m, 19%), farmland v6, regression
+  guard fails on pre-fix code.
