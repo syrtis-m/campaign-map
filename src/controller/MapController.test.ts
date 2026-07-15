@@ -1006,7 +1006,10 @@ describe("MapController — batching parity (031-B)", () => {
 
     expect(host.controller.cascadeRegeneratedIds).toContain(cityId); // batch really spanned both
     expect(host.controller.fingerprintPassCount - fpBefore).toBe(1); // ONE fp pass
-    expect(host.readCachedCount - readsBefore).toBe(1); // ONE shared cache read (upstream served from it)
+    // ZERO disk reads: the persistent session view (032-B) was warmed during
+    // setup, so this batch (and every later one) is served from memory. Under
+    // 031-B alone this was 1 (one shared read per batch); 032-B drops it to 0.
+    expect(host.readCachedCount - readsBefore).toBe(0);
     expect(host.repaintGeneratedCount - paintsBefore).toBe(1); // ONE coalesced paint
   });
 
@@ -1278,5 +1281,88 @@ describe("MapController — cache sharding (032-A)", () => {
     expect(reopened.controller.generatorRunCount).toBe(0);
     expect(reopened.controller.needsAdoptionIds()).toEqual([]);
     expect(reopened.controller.regionFeatureIds(featureId).length).toBeGreaterThan(0);
+  });
+});
+
+// ─── Plan 032-B — persistent in-memory cache view ────────────────────────────
+// The generated cache is read from disk ONCE per campaign open, then kept live:
+// region appends `.set()` into it and drops `.delete()` from it, so no batch
+// re-reads a shard it already holds (research P7). The view is controller-owned,
+// so a fresh controller (reopen / switch) starts empty and reads disk fresh —
+// which is exactly why a lost write is harmless (reopen regenerates from a
+// fingerprint miss, byte-identically).
+describe("MapController — persistent cache view (032-B)", () => {
+  it("reads the cache from disk exactly ONCE per session; consecutive batches never re-read", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    // Building the region (generate + its cascade) warmed the view with a SINGLE
+    // disk read; everything after is served from memory.
+    expect(host.readCachedCount).toBe(1);
+    expect(host.controller.cacheViewSize).toBeGreaterThan(0);
+
+    const before = host.readCachedCount;
+    await host.controller.regenerateRegionById(featureId); // batch 1
+    await host.controller.regenerateRegionById(featureId); // batch 2
+    expect(host.readCachedCount - before).toBe(0); // zero re-reads across two edit batches
+  });
+
+  it("a flush and a cascade in the same session share ONE disk read (no per-batch re-read)", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(
+      [
+        [6, -30],
+        [18, -18],
+        [30, -6],
+      ],
+      "river",
+      "river",
+      { windiness: 0.5 },
+      "R"
+    );
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const before = host.readCachedCount;
+    host.controller.queueRegionRegen(river.featureId);
+    await host.controller.flushSketchRegen(); // force-regen river + cascade to city
+    await host.controller.regenerateRegionById(river.featureId); // another batch
+    expect(host.readCachedCount - before).toBe(0);
+  });
+
+  it("crash consistency: a lost cache write is a fingerprint MISS that regenerates byte-identically on reopen", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const before = new Map<string, string>();
+    for (const [k, rec] of await host.cache()) before.set(k, JSON.stringify(rec.features));
+    expect(before.size).toBeGreaterThan(0);
+
+    // Simulate a crash before the write-behind flushed: the shard never reached
+    // disk. (Determinism makes lost writes harmless — the plan's write-behind
+    // fallback is exactly this: reopen regenerates from fingerprint misses.)
+    await host.clearCacheOnDisk();
+    expect((await host.cache()).size).toBe(0);
+
+    // A FRESH controller drops the in-memory view, reads disk, misses, and
+    // regenerates from the durable sketch — byte-identically.
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    await reopened.controller.replayGeneratedManifest();
+    expect(reopened.controller.generatorRunCount).toBeGreaterThan(0); // it DID recompute
+    expect(reopened.controller.cacheViewSize).toBeGreaterThan(0); // view rebuilt on the read miss
+    expect(reopened.controller.regionFeatureIds(featureId).length).toBeGreaterThan(0);
+
+    const after = new Map<string, string>();
+    for (const [k, rec] of await reopened.cache()) after.set(k, JSON.stringify(rec.features));
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [k, bytes] of before) expect(after.get(k)).toBe(bytes); // byte-identical
+  });
+
+  it("a drop removes the key from the live view (a later regen reads no stale record)", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const netKey = regionNetworkKey(featureId);
+    expect(host.controller.cacheViewSize).toBeGreaterThan(0);
+    await host.controller.removeRegionById(featureId); // strips procgen → drops the region's cache
+    // The view no longer holds the region's network record (write-through drop).
+    const view = await host.cache(); // disk is the source of truth after a drop
+    expect(view.has(netKey)).toBe(false);
   });
 });

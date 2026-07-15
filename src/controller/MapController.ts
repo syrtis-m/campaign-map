@@ -270,6 +270,21 @@ export class MapController {
   /** In-memory mirror of `<campaign>/Fabric.geojson`. */
   private fabricCollection: FabricCollection = emptyFabric();
   private fabricLoadedFor: string | null = null;
+  /**
+   * Persistent in-memory cache view (plan 032-B): the campaign's generated
+   * cache read from disk ONCE per open (all shards, via the gateway), then kept
+   * live — every region append `.set()`s into it and every drop `.delete()`s
+   * from it, so no batch (flush/cascade/replay) re-reads a shard it already
+   * holds (research P7 read-amplification). Threaded as `preloadedCache` into
+   * every region regen. Owned per-controller (not a module global) so a fresh
+   * controller — `reopen()` / a campaign switch — starts with an empty view and
+   * reads disk fresh: that is what keeps the delete-`.mapcache`-then-reopen
+   * pinned-old test blanking instead of serving a stale in-memory record.
+   * World-tier tile records stay on the direct `getCachedTile` disk path
+   * (per-shard, cheap, out of the batch hot path) — they are not threaded here.
+   * Null until first access. Lost writes are harmless: determinism means a
+   * missing record is a fingerprint MISS that regenerates byte-identically. */
+  private sessionCache: Map<string, CachedTile> | null = null;
   /** Explicit generate/replay runs in flight — drives the loading badge. */
   private pendingGenerations = 0;
   /** Gate counter: actual generator EXECUTIONS. */
@@ -310,6 +325,7 @@ export class MapController {
       this.manifestReplayedFor = null;
       this.fabricCollection = emptyFabric();
       this.fabricLoadedFor = null;
+      this.sessionCache = null; // drop the previous campaign's cache view
     }
     this.campaign = campaign;
     return { switched };
@@ -356,6 +372,31 @@ export class MapController {
         this.host.render.repaintGenerated();
       }
     }
+  }
+
+  /** The persistent cache view (plan 032-B), read from disk ONCE per campaign
+   * open and served from memory thereafter. Callers thread the returned map as
+   * `preloadedCache`; region appends `.set()` into it and drops (`dropCached`)
+   * `.delete()` from it, so the view stays == disk without any re-read. */
+  private async cacheView(folder: string): Promise<Map<string, CachedTile>> {
+    if (!this.sessionCache) {
+      this.sessionCache = await this.host.vault.readCached(folder);
+    }
+    return this.sessionCache;
+  }
+
+  /** Drop cache records from BOTH disk and the live session view (plan 032-B),
+   * so a later `cacheView` never serves a dropped key. The single write-through
+   * path for every generated-cache removal. */
+  private async dropCached(folder: string, keys: string[]): Promise<void> {
+    await this.host.vault.removeCached(folder, keys);
+    if (this.sessionCache) for (const k of keys) this.sessionCache.delete(k);
+  }
+
+  /** Gate surface (032-B): how many records the persistent cache view holds
+   * (0 when it has never been read this session). */
+  get cacheViewSize(): number {
+    return this.sessionCache?.size ?? 0;
   }
 
   /** Pending explicit generations (MapView reads this for the loading badge). */
@@ -655,23 +696,21 @@ export class MapController {
     // direct GM edits were already consent-gated upstream).
     const pinnedOld = this.isPinnedOld(block, algorithm);
     const force = (opts.force ?? false) && !pinnedOld;
-    let preloaded = opts.preloadedCache;
+    // The working cache is always the persistent session view (032-B) unless a
+    // batch threaded one (which IS the session view) — never a fresh disk read.
+    const preloaded = opts.preloadedCache ?? (await this.cacheView(folder));
     if (force) {
       const keys = [
         regionNetworkKey(region.id),
         ...tiles.flatMap((t) => algorithm.tileGeneratorIds.map((gid) => regionTileKey(region.id, t.tileX, t.tileY, gid))),
       ];
-      await this.host.vault.removeCached(folder, keys);
+      // Write-through drop from disk AND the session view, so the forced pass
+      // recomputes fresh bytes instead of reading this region's PRE-edit records
+      // back out of the view (would defeat 031-A's network-once read).
+      await this.dropCached(folder, keys);
       const renderPrefix = `region:${region.id}:`;
       for (const k of [...this.loadedTiles.keys()]) if (k.startsWith(renderPrefix)) this.loadedTiles.delete(k);
-      // A shared cache view threaded through a batch (flush/cascade, 031-B) still
-      // holds this region's PRE-edit network + per-tile records; drop them so the
-      // forced pass recomputes fresh bytes instead of reading its own stale cache
-      // (would otherwise defeat 031-A's network-once read under a shared map).
-      if (preloaded) for (const k of keys) preloaded.delete(k);
-      preloaded = preloaded ?? new Map();
-    } else if (!preloaded) {
-      preloaded = await this.host.vault.readCached(folder);
+      for (const k of keys) preloaded.delete(k); // covers a caller-supplied map too
     }
     if (this.campaign?.id !== campaign.id) return [];
     const ctx = this.generationContext();
@@ -798,7 +837,7 @@ export class MapController {
       const key = regionNetworkKey(up.id);
       let rec = cache?.get(key);
       if (!rec) {
-        full = full ?? (await this.host.vault.readCached(folder));
+        full = full ?? (await this.cacheView(folder));
         rec = full.get(key);
       }
       if (!rec) continue;
@@ -972,7 +1011,7 @@ export class MapController {
         const ctx = this.generationContext();
         const opts: RegionBatchOpts = {
           fingerprints: this.computeRegionFingerprints(ctx),
-          preloadedCache: await this.host.vault.readCached(campaignFolderFromConfigPath(this.campaign!.path)),
+          preloadedCache: await this.cacheView(campaignFolderFromConfigPath(this.campaign!.path)),
         };
         const done = new Set<string>(roots);
         for (const id of roots) {
@@ -1072,7 +1111,7 @@ export class MapController {
     const keys = entries.flatMap((e) =>
       generatorIdsForBand(e.tier).map((gid) => tileKey(seed, e.tileX, e.tileY, GENERATION_ZOOM, gid))
     );
-    await this.host.vault.removeCached(folder, keys);
+    await this.dropCached(folder, keys);
     for (const e of entries) {
       this.manifest = withoutEntry(this.manifest, e.id);
       this.loadedTiles.delete(this.tileKeyFor(e.tier, e.tileX, e.tileY));
@@ -1340,7 +1379,7 @@ export class MapController {
     await this.withRepaintBatch(async () => {
       const ctx = this.generationContext();
       const fingerprints = this.computeRegionFingerprints(ctx);
-      const preloadedCache = await this.host.vault.readCached(campaignFolderFromConfigPath(this.campaign!.path));
+      const preloadedCache = await this.cacheView(campaignFolderFromConfigPath(this.campaign!.path));
       await this.cascadeDownstream([rootId], new Set([rootId]), { fingerprints, preloadedCache });
     });
   }
@@ -1384,7 +1423,7 @@ export class MapController {
         regionNetworkKey(region.id),
         ...tiles.flatMap((t) => algorithm.tileGeneratorIds.map((gid) => regionTileKey(region.id, t.tileX, t.tileY, gid))),
       ];
-      await this.host.vault.removeCached(folder, keys);
+      await this.dropCached(folder, keys);
     }
     const prefix = `region:${feature.id}:`;
     for (const k of [...this.loadedTiles.keys()]) if (k.startsWith(prefix)) this.loadedTiles.delete(k);
@@ -1604,7 +1643,7 @@ export class MapController {
     }
     await this.host.vault.saveFabric(campaign, this.fabricCollection);
     await this.host.vault.saveManifest(campaign, this.manifest);
-    await this.host.vault.removeCached(folder, oldKeys);
+    await this.dropCached(folder, oldKeys);
     this.host.render.repaintFabric();
     this.host.notices.notify(
       `Campaign Map: ${domains.length} city domain${domains.length === 1 ? "" : "s"} migrated to sketched district${
@@ -1648,7 +1687,7 @@ export class MapController {
     const ctx = this.generationContext();
     const worker = await this.host.gen.getWorker();
     const folder = campaignFolderFromConfigPath(campaign.path);
-    const cached = await this.host.vault.readCached(folder);
+    const cached = await this.cacheView(folder);
     const seed = campaign.config.seed;
     this.pendingGenerations++;
     this.host.render.loadingChanged();
@@ -1741,7 +1780,7 @@ export class MapController {
       const ctx = this.generationContext();
       const opts: RegionBatchOpts = {
         fingerprints: this.computeRegionFingerprints(ctx),
-        preloadedCache: await this.host.vault.readCached(campaignFolderFromConfigPath(campaign.path)),
+        preloadedCache: await this.cacheView(campaignFolderFromConfigPath(campaign.path)),
       };
       const done = new Set<string>();
       // Merge the queued region-edit roots with the raw-sketch bbox reach into
