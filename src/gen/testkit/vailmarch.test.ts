@@ -26,6 +26,7 @@ import {
   type FabricFeature,
 } from "../../model/fabric";
 import { algorithmById } from "../procgen/registry";
+import { rangReachOrientationSpread, rangOverlapAreas } from "../farmlandMetrics";
 import { makeRegion, makeCorridorRegion, makeSpine, regionContains, distanceToBoundary } from "../region";
 import { pointInRingClosed, signedDistancePolygon, distanceToPolyline } from "../fields/sdf";
 import { terrainAt, macroTerrainField } from "../fields/terrain";
@@ -384,6 +385,20 @@ describe("gen-proof · riverine farmland long-lots + water meadows (Marnside Str
   it("no upstream channel ⇒ byte-identical to the uncoupled farm (no bankLots)", () => {
     const bare = generate("vm-farm-riverine");
     expect(bare.filter((f) => (f.properties as { bankLot?: boolean }).bankLot === true).length).toBe(0);
+  });
+
+  it("the Marnside rang reads as coherent parallel reaches, not a per-sample fan", () => {
+    // Jonah's report, twice: the v4–v6 lots each took their own bank normal, so
+    // the meandering Marn sprayed crossing ribbons over the grid on both banks.
+    // v7 shares one orientation per reach, packs edge-to-edge, and suppresses the
+    // lattice inside the band. Metric bands on the actual fixture.
+    const marnChannel = ofGid(generate("vm-river-marn"), "river-channel");
+    const farm = generate("vm-farm-riverine", { upstream: { water: marnChannel } });
+    expect(rangReachOrientationSpread(farm), "every lot in a reach is parallel").toBeLessThan(0.02);
+    const { selfOverlap, latticeOverlap, bandArea } = rangOverlapAreas(farm, polyRegion("vm-farm-riverine"), 4);
+    expect(bandArea).toBeGreaterThan(0);
+    expect(latticeOverlap, "no grid field paints through the strips").toBe(0);
+    expect(selfOverlap / bandArea, "no crossing-ribbon fan").toBeLessThan(0.03);
   });
 });
 

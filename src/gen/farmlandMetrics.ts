@@ -93,6 +93,128 @@ export function maxDiagonalLaneRunCells(features: GeoJSON.Feature[], cellM: numb
   return maxCells;
 }
 
+// ── Riverine rang composition (plan 038 item 2, v7 REACH rewrite) ─────────────
+// Three measurements that prove the rang reads as coherent parallel blocks, not
+// the pre-v7 per-sample fan (Jonah, Vailmarch Marnside):
+//   (1) per-reach orientation spread ≈ 0 — every lot in a river REACH shares one
+//       inland normal, so their long axes are parallel within the reach;
+//   (2) zero strip-strip overlap — lots never cross (parallel side edges +
+//       monotone frontage), so no two bankLots cover the same ground;
+//   (3) zero lattice overlap — the grid fields inside the band are suppressed, so
+//       no ambient field paints through the strips.
+// All read `bankLot` / `reach` feature tags only — pure measurement, zero bytes.
+
+type Pt = [number, number];
+
+/** The `bankLot` rang lots (v7 riverine long-lots). */
+function bankLots(features: GeoJSON.Feature[]): GeoJSON.Feature[] {
+  return features.filter((f) => (f.properties as { bankLot?: boolean } | null)?.bankLot === true);
+}
+
+/** Long-axis orientation of a 4-corner (+closing) lot, as an angle in [0, π)
+ * (mod π — a lot and its 180°-flip share an orientation). */
+function lotOrientation(f: GeoJSON.Feature): number {
+  const r = (f.geometry as GeoJSON.Polygon).coordinates[0] as Pt[];
+  const e1: Pt = [r[1][0] - r[0][0], r[1][1] - r[0][1]];
+  const e3: Pt = [r[3][0] - r[0][0], r[3][1] - r[0][1]];
+  const e = Math.hypot(e1[0], e1[1]) >= Math.hypot(e3[0], e3[1]) ? e1 : e3;
+  let a = Math.atan2(e[1], e[0]);
+  if (a < 0) a += Math.PI;
+  return a;
+}
+
+/** Ray-cast point-in-polygon on a feature's outer ring. */
+function pointInField(f: GeoJSON.Feature, x: number, y: number): boolean {
+  const r = (f.geometry as GeoJSON.Polygon).coordinates[0] as Pt[];
+  let inside = false;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    const xi = r[i][0];
+    const yi = r[i][1];
+    const xj = r[j][0];
+    const yj = r[j][1];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Max WITHIN-REACH long-axis orientation spread (radians) over all rang lots —
+ * grouped by the `reach` tag. ≈ 0 when every lot in a reach is parallel (the v7
+ * contract). No bankLots ⇒ 0. Cross-reach differences (a bank bend changes the
+ * range's heading) are deliberately NOT measured — the fan bug was WITHIN a
+ * reach, and rangs genuinely re-orient at bends.
+ */
+export function rangReachOrientationSpread(features: GeoJSON.Feature[]): number {
+  const byReach = new Map<number, number[]>();
+  for (const f of bankLots(features)) {
+    const r = (f.properties as { reach?: number } | null)?.reach;
+    if (r === undefined) continue;
+    if (!byReach.has(r)) byReach.set(r, []);
+    byReach.get(r)!.push(lotOrientation(f));
+  }
+  let worst = 0;
+  for (const angles of byReach.values()) {
+    for (let i = 0; i < angles.length; i++) {
+      for (let k = i + 1; k < angles.length; k++) {
+        let d = Math.abs(angles[i] - angles[k]);
+        if (d > Math.PI / 2) d = Math.PI - d;
+        if (d > worst) worst = d;
+      }
+    }
+  }
+  return worst;
+}
+
+export interface RangOverlapAreas {
+  /** Ground (m²) covered by ≥ 2 rang lots — strip-strip overlap. */
+  selfOverlap: number;
+  /** Ground (m²) covered by a rang lot AND an ambient lattice field. */
+  latticeOverlap: number;
+  /** Ground (m²) covered by at least one rang lot (the band footprint). */
+  bandArea: number;
+}
+
+/**
+ * Sampled overlap areas over the region bbox (a `step`-metre grid). The rang band
+ * should carry ZERO self-overlap and ZERO lattice overlap (v7); a small residual
+ * self-overlap can occur only in the seam wedge where two reaches re-orient — the
+ * caller bands it generously, never asserting bit-zero on the sampled area.
+ */
+export function rangOverlapAreas(features: GeoJSON.Feature[], region: ProcgenRegion, step = 4): RangOverlapAreas {
+  const lots = bankLots(features);
+  const lattice = features.filter(
+    (f) =>
+      (f.properties as { generatorId?: string; bankLot?: boolean } | null)?.generatorId === "farm-field" &&
+      (f.properties as { bankLot?: boolean } | null)?.bankLot !== true
+  );
+  const { minX, minY, maxX, maxY } = region.bbox;
+  const cellArea = step * step;
+  let selfOverlap = 0;
+  let latticeOverlap = 0;
+  let bandArea = 0;
+  for (let x = minX; x <= maxX; x += step) {
+    for (let y = minY; y <= maxY; y += step) {
+      let nb = 0;
+      for (const f of lots) {
+        if (pointInField(f, x, y)) {
+          nb++;
+          if (nb > 1) break;
+        }
+      }
+      if (nb === 0) continue;
+      bandArea += cellArea;
+      if (nb > 1) selfOverlap += cellArea;
+      for (const f of lattice) {
+        if (pointInField(f, x, y)) {
+          latticeOverlap += cellArea;
+          break;
+        }
+      }
+    }
+  }
+  return { selfOverlap, latticeOverlap, bandArea };
+}
+
 /** Every metric of `m` outside `band` (empty ⇒ all pass). */
 export function farmlandBandViolations(m: FarmlandMetrics, band: FarmlandBand = FARMLAND_BAND): string[] {
   const out: string[] = [];

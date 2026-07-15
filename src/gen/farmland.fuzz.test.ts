@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { generateFarmland, type FarmlandParams } from "./farmland";
-import { makeRegion, distanceToBoundary } from "./region";
+import { generateRiver, riverMaxOffset } from "./river";
+import { makeRegion, makeSpine, makeCorridorRegion, distanceToBoundary } from "./region";
 import { mulberry32 } from "./rng";
 import type { GenerationConstraints } from "./types";
 
@@ -151,6 +152,34 @@ describe("farmland generator — fuzz (seeded random polygons × 4 presets × re
       }).not.toThrow();
       assertContained(a, region);
       const b = generateFarmland(s + 11, region, paddy, constraints);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    }
+  });
+
+  it("riverine rang coupled to a random RIVER channel: never throws, contained, byte-deterministic", () => {
+    // Exercises the v7 REACH long-lot path (the coupled code) over random regions
+    // + random meandering channels: no throw, every lot inside the ring, and the
+    // whole coupled artifact byte-stable double-run.
+    const rangPresets = PRESETS.filter((p) => p.fieldType !== "paddy-terraces");
+    for (let s = 0; s < 40; s++) {
+      const region = makeRegion("fuzz-rang", randomRing(s + 2100, 120, 500));
+      // A random 4-vertex spine sweeping across the region → a meandering channel.
+      const rng = mulberry32(s + 4200);
+      const spine: Pt[] = [];
+      for (let i = 0; i < 4; i++) spine.push([(rng() - 0.5) * 900, (rng() - 0.5) * 900]);
+      const rparams = { windiness: 0.4 + rng() * 0.5, braiding: rng() * 0.4, width: 12 + rng() * 30, widthGrowth: rng() * 0.6, braidBias: rng() * 0.3, slopeSensitivity: 0 };
+      const rriver = makeCorridorRegion("fuzz-riv", makeSpine("fuzz-riv", spine), riverMaxOffset(rparams));
+      const channel = generateRiver(s * 17 + 3, rriver, rparams, { worldBounds: CONSTRAINTS.worldBounds }).filter(
+        (f) => (f.properties as { generatorId?: string } | null)?.generatorId === "river-channel"
+      );
+      const constraints = { worldBounds: CONSTRAINTS.worldBounds, upstream: { water: channel } } as GenerationConstraints;
+      const params = rangPresets[s % rangPresets.length];
+      let a: GeoJSON.Feature[] = [];
+      expect(() => {
+        a = generateFarmland(s + 13, region, params, constraints);
+      }).not.toThrow();
+      assertContained(a, region);
+      const b = generateFarmland(s + 13, region, params, constraints);
       expect(JSON.stringify(a)).toBe(JSON.stringify(b));
     }
   });

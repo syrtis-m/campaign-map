@@ -200,6 +200,20 @@ const PADDY_INTERVAL_LADDER = [1, 2, 5, 10, 20, 25] as const;
 // upstream water) ⇒ the whole path is skipped and farmland is byte-identical to
 // the uncoupled generator. paddy-terraces is excluded (its riverine culture is
 // terraced paddies, not rangs — the wash/contour banks own that band).
+//
+// REACHES (v7, 2026-07-15). A real rang shares ONE orientation over a river
+// REACH — the whole range of holdings runs parallel, packed edge-to-edge,
+// perpendicular to the AVERAGE bank direction over a few hundred metres. The
+// v4–v6 code instead gave every lot its OWN per-sample bank normal, so a
+// meandering bank sprayed ribbons at every rotation, crossing each other and
+// the underlying lattice fields (Jonah, Vailmarch Marnside — twice). v7 cuts
+// each bank into `RANG_REACH_LEN_M` arc-length windows; within a reach the
+// inland normal N is a single shared vector (the reach's average tangent turned
+// perpendicular), every lot's side edges are parallel to N (so no two lots can
+// ever cross — parallel offset lines), and the frontage is snapped so the lots
+// tile the reach with no gaps. The lattice fields AND lanes inside the whole
+// rang band footprint are suppressed so nothing paints through the strips.
+const RANG_REACH_LEN_M = 400; // arc-length window that shares one rang orientation (~300–500 m)
 const RANG_ARPENT_MIN_M = 12; // narrowest long-lot width (river frontage)
 // Lot DEPTH is a fixed multiple of the lot's own FRONTAGE (`arpentW`), never of
 // the coarse lattice `cell`. The old `1.6·cell` reach read `cell` as "one field
@@ -226,6 +240,12 @@ function arpentWidthM(cell: number): number {
  * one reach. */
 function rangDepthM(cell: number): number {
   return Math.min(RANG_DEPTH_ARPENTS * arpentWidthM(cell), RANG_LEN_CAP_M);
+}
+/** The riparian rang band depth (metres inland of the bank) for a `fieldSize` —
+ * the reach the lattice fields + lanes are suppressed within and the rang lots
+ * span. Exported for the composition metrics/tests. */
+export function rangBandDepthM(fieldSize: number): number {
+  return rangDepthM(fieldCellM(fieldSize));
 }
 // ── Slope-gating (plan 038 item 4, needs 036) ────────────────────────────────
 // A field whose ground is too steep to plough is left as untilled PASTURE (a
@@ -412,6 +432,28 @@ export function generateFarmland(
     const v = channel(x, y);
     return v < 0 && v > -rangLen;
   };
+  /** Does a world-axis rectangle touch the rang band (v7 suppression)? Samples the
+   * corners, centre and edge midpoints — the same probe cloud as `rectHitsChannel`
+   * — so a lattice field that OVERLAPS the band (not just centres in it) is
+   * dropped and no grid ever paints through the strips. `rangEnabled === false`
+   * (no channel / paddy) ⇒ always false ⇒ byte-identical to the uncoupled path. */
+  const rectHitsRangBand = (rect: Pt[]): boolean => {
+    if (!rangEnabled) return false;
+    let cx = 0;
+    let cy = 0;
+    for (const [x, y] of rect) {
+      if (inRangBand(x, y)) return true;
+      cx += x;
+      cy += y;
+    }
+    if (inRangBand(cx / rect.length, cy / rect.length)) return true;
+    for (let i = 0; i < rect.length; i++) {
+      const a = rect[i];
+      const b = rect[(i + 1) % rect.length];
+      if (inRangBand((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)) return true;
+    }
+    return false;
+  };
   // Slope-gating terrain (plan 038 item 4): the macro terrain field, for the
   // non-paddy field types (paddy reads it separately, below). null on a flat
   // campaign ⇒ no field is ever re-tagged (byte-identical).
@@ -420,13 +462,20 @@ export function generateFarmland(
       ? macroTerrainField(constraints.fabricFeatures, constraints.terrainBase, constraints.campaignSeed)
       : null;
   const LANE_STEP_M = 8; // resample step for lane channel-splitting (coupled path only)
-  /** Emit a lane run, truncated at the channel when there is upstream water. */
+  // Lanes stop at the channel; where the rang band is active they stop at the
+  // BAND's inland edge too (a lane inside the rang footprint would cut across the
+  // strips). Encoded as a shifted field: `channel + rangLen` is ≥ 0 throughout the
+  // channel AND the band, so `splitLineOutsideChannel` keeps only the runs at
+  // least `rangLen` inland of the water. Paddy / no-channel ⇒ `laneCutField` is
+  // the plain channel (or null) ⇒ byte-identical to the pre-v7 behaviour.
+  const laneCutField = rangEnabled ? (x: number, y: number): number => channel!(x, y) + rangLen : channel;
+  /** Emit a lane run, truncated at the channel (and the rang band, when active). */
   const emitLaneRun = (run: Pt[]): void => {
-    if (channel === null) {
+    if (laneCutField === null) {
       if (run.length >= 2) out.push(laneLine(seed, run, fieldType));
       return;
     }
-    for (const piece of splitLineOutsideChannel(resampleLine(run, LANE_STEP_M), channel)) {
+    for (const piece of splitLineOutsideChannel(resampleLine(run, LANE_STEP_M), laneCutField)) {
       if (piece.length >= 2) out.push(laneLine(seed, piece, fieldType));
     }
   };
@@ -501,13 +550,14 @@ export function generateFarmland(
   const emitField = (ix: number, iy: number, sub: number, rect: Pt[]): void => {
     if (!rectContained(region, rect, FIELD_MARGIN_M)) return;
     if (rectHitsChannel(rect, channel)) return; // no field across the channel (plan 037)
-    // Riverine long-lots (plan 038 item 2): a lattice field whose CENTER sits in
-    // the riparian band is replaced by the perpendicular rang lots emitted below
-    // — suppress it here so they don't overlap. Gated on `rangEnabled` ⇒ no-op
-    // (byte-identical) with no upstream channel.
+    // Riverine long-lots (plan 038 item 2, v7): a lattice field that OVERLAPS the
+    // riparian band is replaced by the perpendicular rang lots emitted below —
+    // suppress it here so nothing grid ever paints through the strips (v6 tested
+    // only the centre, so a field straddling the band still double-painted; Jonah
+    // Marnside). Gated on `rangEnabled` ⇒ no-op (byte-identical) with no channel.
     const fcx = (rect[0][0] + rect[2][0]) / 2;
     const fcy = (rect[0][1] + rect[2][1]) / 2;
-    if (rangEnabled && inRangBand(fcx, fcy)) return;
+    if (rectHitsRangBand(rect)) return;
     const props: Record<string, unknown> = { crop: cropAt(seed, ix, iy, sub), fieldType };
     // Slope-gating (plan 038 item 4): steep ground is untilled pasture. Slope 0
     // (flat) ⇒ never tagged ⇒ byte-identical.
@@ -594,82 +644,148 @@ export function generateFarmland(
     }
   }
 
-  // ── Riverine long-lots (Quebec rang / arpent — plan 038 item 2): along each
-  //    generated river bank, narrow holdings run PERPENDICULAR to the water and
-  //    stretch ~rangLen inland (fronting the river). Each lot splits into a near
-  //    `waterMeadow` cell (flood meadow) + a far tilled cell. Determinism: the
-  //    bank ring is walked by arc length (pure geometry), the inland direction is
-  //    the channel SDF's downhill gradient (pure f(channel)), the crop keys on
-  //    the quantized base position — zero rng. Only non-paddy types, only with an
-  //    upstream channel ⇒ byte-identical to the uncoupled generator otherwise. ──
+  // ── Riverine long-lots (Quebec rang / arpent — plan 038 item 2, REACH rewrite
+  //    v7): along each generated river bank, narrow holdings run PERPENDICULAR to
+  //    the water and stretch ~rangLen inland (fronting the river). Each lot splits
+  //    into a near `waterMeadow` cell (flood meadow) + a far tilled cell.
+  //
+  //    The bank is cut into REACHES — `RANG_REACH_LEN_M` arc-length windows. Every
+  //    lot in a reach shares ONE inland normal `N` (the reach's average bank
+  //    tangent turned perpendicular), so the whole range runs parallel — no
+  //    per-sample fan. Because every lot's side edges are parallel to `N`, two
+  //    lots can never cross (parallel offset lines), and a monotone-advance guard
+  //    on the frontage keeps their footprints disjoint ⇒ zero strip-strip overlap.
+  //    Frontage is snapped so the lots tile the reach with no gaps.
+  //
+  //    Determinism: reaches are cut by arc length (pure geometry), `N` is the
+  //    average of the reach's unit segment tangents + a channel-gradient sign test
+  //    (pure f(ring, channel)), the crop keys on the quantized frontage position —
+  //    zero rng. Only non-paddy types, only with an upstream channel ⇒
+  //    byte-identical to the uncoupled generator otherwise. ─────────────────────
   if (rangEnabled) {
     const banks = buildUpstreamConstraints(constraints.upstream).waterRings;
     const arpentW = arpentWidthM(cell);
-    const halfW = arpentW / 2;
     const wmLen = rangLen * RANG_WM_FRAC;
-    // Inland unit direction at (x,y): the channel SDF (positive inside) DECREASES
-    // away from the water, so −∇channel points inland. Central differences.
-    const inward = (x: number, y: number): Pt => {
-      const e = 1;
-      const gx = channel!(x + e, y) - channel!(x - e, y);
-      const gy = channel!(x, y + e) - channel!(x, y - e);
-      const l = Math.hypot(gx, gy) || 1;
-      return [-gx / l, -gy / l];
-    };
-    const emitLotCell = (p0: Pt, p1: Pt, t: Pt, sub: number, waterMeadow: boolean): void => {
-      const corners: Pt[] = [
-        [p0[0] - t[0] * halfW, p0[1] - t[1] * halfW],
-        [p1[0] - t[0] * halfW, p1[1] - t[1] * halfW],
-        [p1[0] + t[0] * halfW, p1[1] + t[1] * halfW],
-        [p0[0] + t[0] * halfW, p0[1] + t[1] * halfW],
-      ];
+    const grow = rangLen + RANG_BASE_OFFSET_M + arpentW;
+    /** Emit one lot cell (a parallelogram sheared along the shared reach normal).
+     * `base` is the bank frontage point used to key the crop; `reach` tags the lot
+     * so the metric can prove the per-reach orientation is uniform. */
+    const emitLotCell = (corners: Pt[], base: Pt, sub: number, waterMeadow: boolean, reach: number): void => {
       if (!rectContained(region, corners, FIELD_MARGIN_M)) return;
       if (rectHitsChannel(corners, channel)) return;
-      const ci = Math.round(p0[0] / cell);
-      const cj = Math.round(p0[1] / cell);
+      const ci = Math.round(base[0] / cell);
+      const cj = Math.round(base[1] / cell);
       const props: Record<string, unknown> = {
         crop: waterMeadow ? "water-meadow" : cropAt(seed, ci, cj, sub),
         fieldType,
         bankLot: true,
+        reach,
       };
       if (waterMeadow) props.waterMeadow = true;
       out.push(fieldFeature(seed, corners, props));
     };
-    const grow = rangLen + arpentW;
+    let reachIdx = 0;
     for (const ring of banks) {
-      // Arc-length carry so lots are spaced `arpentW` continuously across the
-      // whole bank (not restarted per segment).
-      let carry = 0;
-      for (let i = 0; i + 1 < ring.length; i++) {
-        const a = ring[i];
-        const b = ring[i + 1];
-        // Skip bank segments far from this farmland region (perf; correctness is
-        // still guarded by rectContained).
-        if (
-          Math.max(a[0], b[0]) < bbox.minX - grow ||
-          Math.min(a[0], b[0]) > bbox.maxX + grow ||
-          Math.max(a[1], b[1]) < bbox.minY - grow ||
-          Math.min(a[1], b[1]) > bbox.maxY + grow
-        ) {
-          carry = 0;
+      const nv = ring.length;
+      if (nv < 2) continue;
+      // Walk the ring, cutting it into contiguous reaches of ~RANG_REACH_LEN_M arc
+      // length. Reaches share their boundary vertex so bank coverage is continuous.
+      let ri = 0;
+      while (ri + 1 < nv) {
+        let arc = 0;
+        let j = ri;
+        while (j + 1 < nv && arc < RANG_REACH_LEN_M) {
+          arc += Math.hypot(ring[j + 1][0] - ring[j][0], ring[j + 1][1] - ring[j][1]);
+          j++;
+        }
+        const reachPts = ring.slice(ri, j + 1);
+        ri = j;
+        if (reachPts.length < 2) continue;
+        // Perf reject: skip a reach whose bbox is far from this farmland region
+        // (correctness is still guarded per-lot by rectContained).
+        let rMinX = Infinity;
+        let rMinY = Infinity;
+        let rMaxX = -Infinity;
+        let rMaxY = -Infinity;
+        for (const [x, y] of reachPts) {
+          if (x < rMinX) rMinX = x;
+          if (y < rMinY) rMinY = y;
+          if (x > rMaxX) rMaxX = x;
+          if (y > rMaxY) rMaxY = y;
+        }
+        if (rMaxX < bbox.minX - grow || rMinX > bbox.maxX + grow || rMaxY < bbox.minY - grow || rMinY > bbox.maxY + grow) {
           continue;
         }
-        const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
-        if (segLen <= 0) continue;
-        const tx = (b[0] - a[0]) / segLen;
-        const ty = (b[1] - a[1]) / segLen;
-        for (let s = arpentW - carry; s < segLen; s += arpentW) {
-          const bx = a[0] + tx * s;
-          const by = a[1] + ty * s;
-          const d = inward(bx, by);
-          const base: Pt = [bx + d[0] * RANG_BASE_OFFSET_M, by + d[1] * RANG_BASE_OFFSET_M];
-          const mid: Pt = [base[0] + d[0] * wmLen, base[1] + d[1] * wmLen];
-          const tip: Pt = [base[0] + d[0] * rangLen, base[1] + d[1] * rangLen];
-          const t: Pt = [tx, ty];
-          emitLotCell(base, mid, t, 0, true); // riparian water-meadow (near)
-          emitLotCell(mid, tip, t, 1, false); // tilled long-lot (far)
+        // Average bank tangent T = normalized sum of the reach's UNIT segment
+        // tangents (a heading average that a long straight segment can't dominate).
+        let tx = 0;
+        let ty = 0;
+        let reachArc = 0;
+        for (let k = 0; k + 1 < reachPts.length; k++) {
+          const dx = reachPts[k + 1][0] - reachPts[k][0];
+          const dy = reachPts[k + 1][1] - reachPts[k][1];
+          const l = Math.hypot(dx, dy);
+          if (l <= 0) continue;
+          tx += dx / l;
+          ty += dy / l;
+          reachArc += l;
         }
-        carry = (carry + segLen) % arpentW;
+        const tl = Math.hypot(tx, ty);
+        if (tl < 1e-6 || reachArc <= 0) continue; // degenerate (hairpin) reach — skip
+        const Tx = tx / tl;
+        const Ty = ty / tl;
+        // Shared inland normal N ⟂ T: the perpendicular whose small step LOWERS the
+        // channel field (channel is + inside, decreasing away from the water, so
+        // inland is the descending side). One vector for the whole reach.
+        const mid = reachPts[Math.floor(reachPts.length / 2)];
+        let Nx = -Ty;
+        let Ny = Tx;
+        if (channel!(mid[0] + Nx, mid[1] + Ny) > channel!(mid[0] - Nx, mid[1] - Ny)) {
+          Nx = -Nx;
+          Ny = -Ny;
+        }
+        const thisReach = reachIdx++;
+        // Snap frontage so an integer number of lots tiles the reach exactly.
+        const nLots = Math.max(1, Math.round(reachArc / arpentW));
+        const w = reachArc / nLots;
+        // Interpolate the bank position at arc length `t` within the reach.
+        const at = (t: number): Pt => {
+          let acc = 0;
+          for (let k = 0; k + 1 < reachPts.length; k++) {
+            const dx = reachPts[k + 1][0] - reachPts[k][0];
+            const dy = reachPts[k + 1][1] - reachPts[k][1];
+            const l = Math.hypot(dx, dy);
+            if (l <= 0) continue;
+            if (acc + l >= t) {
+              const f = (t - acc) / l;
+              return [reachPts[k][0] + dx * f, reachPts[k][1] + dy * f];
+            }
+            acc += l;
+          }
+          return reachPts[reachPts.length - 1];
+        };
+        let prev = at(0);
+        for (let li = 0; li < nLots; li++) {
+          const cur = at((li + 1) * w);
+          // Monotone-advance guard: the frontage must move in +T. A doubling-back
+          // chord (a tight bend inside the reach) would let two parallel lots share
+          // a T-interval and overlap — skip it (a small realistic gap at the bend).
+          if ((cur[0] - prev[0]) * Tx + (cur[1] - prev[1]) * Ty <= 0) {
+            prev = cur;
+            continue;
+          }
+          // Near edge sits RANG_BASE_OFFSET_M inland of the bank (just clear of the
+          // channel); the lot then runs `wmLen` (water-meadow) + on to `rangLen`.
+          const n0: Pt = [prev[0] + Nx * RANG_BASE_OFFSET_M, prev[1] + Ny * RANG_BASE_OFFSET_M];
+          const n1: Pt = [cur[0] + Nx * RANG_BASE_OFFSET_M, cur[1] + Ny * RANG_BASE_OFFSET_M];
+          const m0: Pt = [n0[0] + Nx * wmLen, n0[1] + Ny * wmLen];
+          const m1: Pt = [n1[0] + Nx * wmLen, n1[1] + Ny * wmLen];
+          const t0: Pt = [n0[0] + Nx * rangLen, n0[1] + Ny * rangLen];
+          const t1: Pt = [n1[0] + Nx * rangLen, n1[1] + Ny * rangLen];
+          emitLotCell([n0, n1, m1, m0], prev, 0, true, thisReach); // riparian water-meadow (near)
+          emitLotCell([m0, m1, t1, t0], prev, 1, false, thisReach); // tilled long-lot (far)
+          prev = cur;
+        }
       }
     }
   }

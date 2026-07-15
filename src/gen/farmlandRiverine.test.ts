@@ -11,10 +11,11 @@
 //   (d) every lot stays inside the region and out of the channel,
 //   (e) paddy-terraces is excluded (no bankLot fields).
 import { describe, expect, it } from "vitest";
-import { generateFarmland, fieldCellM, type FarmlandParams } from "./farmland";
+import { generateFarmland, fieldCellM, rangBandDepthM, type FarmlandParams } from "./farmland";
 import { generateRiver, riverMaxOffset } from "./river";
 import { makeRegion, makeSpine, makeCorridorRegion, distanceToBoundary } from "./region";
 import { buildUpstreamWaterField } from "./upstream";
+import { rangReachOrientationSpread, rangOverlapAreas } from "./farmlandMetrics";
 import type { BBox } from "./spatialHash";
 
 type Pt = [number, number];
@@ -175,5 +176,45 @@ describe("riverine farmland long-lots (plan 038 item 2)", () => {
     const a = generateFarmland(SEED, REGION, PARAMS, { worldBounds: WORLD, upstream: { water: WATER } });
     const b = generateFarmland(SEED, REGION, PARAMS, { worldBounds: WORLD, upstream: { water: WATER } });
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+// v7 REACH rewrite (2026-07-15) — the rang reads as coherent parallel blocks per
+// river reach, not the pre-v7 per-sample fan (Jonah, Vailmarch Marnside, twice).
+// Metric bands: per-reach orientation variance ≈ 0, zero strip-strip overlap,
+// zero lattice-field overlap with the band, lanes suppressed inside the band.
+describe("riverine farmland — reach composition (plan 038 v7)", () => {
+  const coupled = generateFarmland(SEED, REGION, PARAMS, { worldBounds: WORLD, upstream: { water: WATER } });
+  const lots = bankLots(coupled);
+
+  it("(g) every lot in a reach shares one orientation (per-reach spread ≈ 0)", () => {
+    // The whole point of the rewrite: a `reach` groups the lots that must run
+    // parallel. Within a reach the spread is mm-quantization noise, never the
+    // 40°+ fan v6 produced.
+    expect(lots.length).toBeGreaterThan(6);
+    for (const f of lots) expect((f.properties as { reach?: number }).reach).toBeTypeOf("number");
+    expect(rangReachOrientationSpread(coupled)).toBeLessThan(0.02); // < ~1.1°
+  });
+
+  it("(h) lots don't overlap each other or the ambient lattice fields", () => {
+    const { selfOverlap, latticeOverlap, bandArea } = rangOverlapAreas(coupled, REGION, 4);
+    expect(bandArea).toBeGreaterThan(0);
+    // No grid field paints through the strips — the band is fully suppressed.
+    expect(latticeOverlap).toBe(0);
+    // Strip-strip overlap is confined to the seam wedge where two reaches
+    // re-orient; a hair of the band, never the v6 crossing-ribbon fan.
+    expect(selfOverlap / bandArea).toBeLessThan(0.03);
+  });
+
+  it("(i) no lane threads through the rang band (lanes stop at its inland edge)", () => {
+    const band = rangBandDepthM(PARAMS.fieldSize);
+    for (const f of coupled) {
+      if ((f.properties as { generatorId?: string }).generatorId !== "farm-lane") continue;
+      for (const [x, y] of (f.geometry as GeoJSON.LineString).coordinates as Pt[]) {
+        // Outside the channel (CHAN < 0) AND at least the band depth inland — a
+        // lane vertex never sits in (−band, 0), the rang footprint.
+        expect(CHAN(x, y)).toBeLessThanOrEqual(-band + 1.5);
+      }
+    }
   });
 });
