@@ -2,7 +2,61 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plan 031 COMPLETE (2026-07-15). Plans 020–028 complete.
+## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 COMPLETE (2026-07-15). Plans 020–028 complete.
+
+## Plan 032 — cache sharding, persistent view, staged repaint (2026-07-15, COMPLETE — headless-only per Jonah 2026-07-14)
+The load-bearing cache/repaint floor for the pipeline arc (research §3, §6.3/6.7/6.8).
+Verified in Vitest + FakeHost IO/repaint counters only (no live gates). +15 tests
+(939 total green; the sole tsc error is a parallel session's untracked plan-033
+`underInvalidation.*`, not this work).
+- **[x] 032-A — shard the cache per region** (`8b2cc5a`): `generated.jsonl` split by
+  key into per-region `region-<id>.jsonl` + a shared `world.jsonl` (keys DISJOINT
+  across shards). A drop rewrites — or, for a whole-region drop, DELETES — only the
+  one shard (research P6: a 10-region cascade was ~3.4 GB of vault IO); appends/reads
+  scope to a shard; `readCachedTiles` enumerates shards via `adapter.list`. Migration:
+  a pre-032 monolith splits line-by-line on first touch (per-folder lock, idempotent
+  truncate-write, then delete), routing RAW line strings so records — incl. a
+  pinned-old region's network record (the plan §3 STOP condition) — carry over
+  BYTE-IDENTICALLY. Proof: region records land only in their shard; a drop deletes its
+  shard + rewrites no sibling; a monolith migrates + self-deletes byte-for-byte; the
+  pinned-old STOP gate (network line verbatim, still renders cache-only).
+- **[x] 032-B — persistent in-memory cache view** (`5b5e4f0`): the cache is read from
+  disk ONCE per campaign open (`cacheView`) and served from memory; region appends
+  `.set()` into it and drops (`dropCached`) write through to disk AND `.delete()` from
+  it, so no batch re-reads a held shard (research P7). Owned per-controller (not a
+  module global) — a fresh controller (`reopen`/switch) starts empty, so
+  delete-`.mapcache`-then-reopen still blanks a pinned-old region and a lost write is
+  a fingerprint MISS that regenerates byte-identically (write-through, not deferred
+  write-behind — determinism makes lost writes harmless, sidestepping the undo-log
+  sequencing hazard). World-tier tiles stay on the direct `getCachedTile` disk path.
+  Proof: one disk read per session, ZERO re-reads across consecutive batches;
+  crash-consistency (cleared cache regenerates byte-identically on reopen, view
+  rebuilt on the miss); a drop clears the live view. The 031-B per-batch read
+  assertion tightens 1→0.
+- **[x] 032-C — stop persisting per-tile clip records** (`6d77f3a`): a region wrote a
+  network record PLUS one per-tile clip per (tile × generator) — the per-tile clips
+  just re-sliced the network's bytes (the ~10 MB/region figure). Now ONLY the network
+  record persists; tiles RE-CLIP it on demand (`clipNetworkToTile`, pure), so bytes
+  are byte-identical to the dropped per-tile records and the network is both the
+  freshness authority and the fast path. World tiers keep their own records.
+  Measured on the RING city fixture: **55 region cache records → 1** (54 per-tile
+  clips eliminated; 9 tiles × 6 generators). Pinned-old still renders from its network
+  alone. Proof: exactly ONE persisted region record; a re-clip == `clipNetworkToTile`
+  of the persisted network byte-for-byte; forced regen leaves record + render
+  byte-identical.
+- **[x] 032-D — staged repaint** (`<this commit>`): a batch now fires ONE repaint per
+  TOUCHED DAG STAGE, upstream-first (`dirtyStages` in `withRepaintBatch`), not one
+  blanket paint — a river→city cascade repaints stages [1,3] and never touches the
+  untouched mountain (stage 0). MapView scopes each staged repaint to that stage's
+  features via an incremental `updateData` diff (single `generated` source, no
+  theme/layer changes; full `setData` on the no-stage initial/replay path). MapView
+  side is build+tsc-only; visual judgment deferred to normal app use (plan §2). Proof
+  (FakeHost `repaintGeneratedStages`): river→city flush repaints `[1,3]` (upstream-
+  first, no `0`, no full paint); a single city regen repaints `[3]`; world generation
+  repaints the WORLD_STAGE bucket; a stage's feature budget ⊂ the whole map.
+- **STOP conditions honored**: pinned-old records migrate + render byte-identically
+  (never blanked/re-derived); delete-`.mapcache`+replay stays byte-identical; no plan
+  034 unified pass begun.
 
 ## Plan 031 — pipeline hotfixes (2026-07-15, COMPLETE — headless-only per Jonah 2026-07-14)
 Four fixes from `plans/research-generation-pipeline.md` §3; mostly byte-identical,

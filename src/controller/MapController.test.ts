@@ -1016,7 +1016,9 @@ describe("MapController — batching parity (031-B)", () => {
     // setup, so this batch (and every later one) is served from memory. Under
     // 031-B alone this was 1 (one shared read per batch); 032-B drops it to 0.
     expect(host.readCachedCount - readsBefore).toBe(0);
-    expect(host.repaintGeneratedCount - paintsBefore).toBe(1); // ONE coalesced paint
+    // ONE coalesced paint PER TOUCHED STAGE (032-D): the river (stage 1) and the
+    // city (stage 3) it cascaded to — upstream-first, NOT one paint per region.
+    expect(host.repaintGeneratedStages.slice(paintsBefore)).toEqual([1, 3]);
   });
 
   it("batched flush output is byte-identical to a from-scratch replay (parity by construction)", async () => {
@@ -1370,5 +1372,92 @@ describe("MapController — persistent cache view (032-B)", () => {
     // The view no longer holds the region's network record (write-through drop).
     const view = await host.cache(); // disk is the source of truth after a drop
     expect(view.has(netKey)).toBe(false);
+  });
+});
+
+// ─── Plan 032-D — staged repaint (one repaint per touched stage) ─────────────
+// A batch that changed only some stages repaints ONLY those stages (upstream
+// first), not the whole map — repaint cost scales with the changed stages, not
+// the total feature count. FakeHost records the stage of every repaint call.
+describe("MapController — staged repaint (032-D)", () => {
+  const RIVER_LINE: [number, number][] = [
+    [6, -30],
+    [18, -18],
+    [30, -6],
+  ];
+  // A mountain far from the river/city, so a river edit never touches it.
+  const MOUNTAIN_RING: [number, number][] = [
+    [-40, 20],
+    [-28, 20],
+    [-28, 32],
+    [-40, 32],
+  ];
+
+  it("a river→city cascade repaints exactly the river + city stages, upstream first", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const cityRes = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    // An untouched mountain (stage 0) whose features must NOT be repainted.
+    const mtn = await host.controller.createRegionForTest(
+      MOUNTAIN_RING,
+      "mountain",
+      { terrain: "alpine", amplitude: 0.6, roughness: 0.5 },
+      "M"
+    );
+    // Sanity: the three stages differ (mountain 0, river 1, city 3).
+    expect(mtn.featureId).not.toBe(cityRes.featureId);
+
+    const before = host.repaintGeneratedStages.length;
+    host.controller.queueRegionRegen(river.featureId);
+    await host.controller.flushSketchRegen();
+
+    const stages = host.repaintGeneratedStages.slice(before);
+    expect(stages).toEqual([1, 3]); // river (1) then city (3) — upstream-first, ≤ stages touched
+    expect(stages).not.toContain(0); // the untouched mountain stage is never repainted
+    expect(stages).not.toContain("all"); // no whole-map repaint
+  });
+
+  it("a staged repaint's feature budget is the stage's own features, not the whole map", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    await host.controller.createRegionForTest(
+      MOUNTAIN_RING,
+      "mountain",
+      { terrain: "alpine", amplitude: 0.6, roughness: 0.5 },
+      "M"
+    );
+
+    const total = host.controller.displayGenerated().length;
+    const riverStageCount = host.controller.displayGeneratedForStage(1).length;
+    expect(riverStageCount).toBeGreaterThan(0);
+    // The river stage is a strict subset — repainting stage 1 alone touches far
+    // fewer features than a whole-map setData would.
+    expect(riverStageCount).toBeLessThan(total);
+    // Every render-store feature is attributed to exactly one stage.
+    let byStageTotal = 0;
+    for (const [, feats] of host.controller.displayGeneratedByStage()) byStageTotal += feats.length;
+    expect(byStageTotal).toBe(total);
+
+    void river;
+  });
+
+  it("a single (non-batched) region regen paints just that region's stage", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const before = host.repaintGeneratedStages.length;
+    await host.controller.regenerateRegionById(featureId);
+    // City is stage 3; the regen fires exactly one staged repaint.
+    expect(host.repaintGeneratedStages.slice(before)).toEqual([3]);
+  });
+
+  it("world-tier generation repaints the world bucket (a distinct stage from regions)", async () => {
+    const host = new FakeHost({ zoom: 4 }); // world tier
+    host.begin();
+    const before = host.repaintGeneratedStages.length;
+    await host.controller.generateFabricHere([0, 0]);
+    const stages = host.repaintGeneratedStages.slice(before);
+    expect(stages.length).toBeGreaterThan(0);
+    for (const s of stages) expect(s).toBe(-1); // WORLD_STAGE, never a region stage
   });
 });

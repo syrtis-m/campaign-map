@@ -217,8 +217,12 @@ export interface ConfirmSink {
  * id so selection state (which the controller must not know) stays in MapView.
  */
 export interface RenderSink {
-  /** Repaint the `generated` source from the controller's render store. */
-  repaintGenerated(): void;
+  /** Repaint the `generated` source from the controller's render store. With a
+   * `stage` (plan 032-D), repaint ONLY that DAG stage's features — the host
+   * scopes an incremental `updateData` diff to it, so repaint cost scales with
+   * the changed stage, not the whole map. Omitted ⇒ full repaint (initial paint
+   * / replay). A batch fires one call per touched stage, upstream stage first. */
+  repaintGenerated(stage?: number): void;
   /** Repaint the `fabric` source from the controller's fabric collection. */
   repaintFabric(): void;
   /** The pending-generation count changed (loading indicator). */
@@ -292,11 +296,20 @@ export class MapController {
   /** Gate counter (031-B): how many `computeRegionFingerprints` passes ran —
    * a batch (flush/cascade/replay) must do exactly ONE, threading the result. */
   private fingerprintPassCounter = 0;
-  /** Repaint coalescing (031-B): while >0, `repaintGenerated` is deferred to a
-   * single paint at the end of the batch — a 10-region cascade fires one
-   * `setData`, not ten (research P7). */
+  /** Repaint coalescing (031-B) + staging (032-D): while >0, `repaintGenerated`
+   * is deferred; on batch exit the pass fires ONE repaint PER TOUCHED STAGE, in
+   * ascending (upstream-first) order — a 10-region cascade that only changed the
+   * river + city stages repaints those two stages, not all ten regions and not
+   * the whole map (research P7). */
   private repaintBatchDepth = 0;
-  private repaintPending = false;
+  /** Stages touched this batch (032-D); flushed upstream-first on batch exit. */
+  private dirtyStages = new Set<number>();
+  /** A stage-less (full) repaint was requested this batch — supersedes the
+   * per-stage flush (initial paint / replay path). */
+  private pendingFullRepaint = false;
+  /** World-tier render keys have no DAG stage; bucket them below stage 0 so a
+   * world repaint sorts first (upstream-most) in a batch flush. */
+  private static readonly WORLD_STAGE = -1;
   /** Sketch edits accumulated while the regen debounce is pending. */
   private pendingConstraintFeatures: FabricFeature[] = [];
   /** Region ids whose OWN geometry changed and need a force-regen next flush. */
@@ -348,28 +361,35 @@ export class MapController {
     return this.fingerprintPassCounter;
   }
 
-  /** Repaint the generated layer, coalescing to ONE paint per open batch
-   * (flush/cascade/replay). Outside a batch it paints immediately, unchanged. */
-  private repaintGenerated(): void {
+  /** Repaint the generated layer. Inside a batch, defer — record the touched
+   * `stage` (or a full-repaint request) and flush on batch exit. Outside a
+   * batch it paints immediately, scoped to `stage` when given (032-D). */
+  private repaintGenerated(stage?: number): void {
     if (this.repaintBatchDepth > 0) {
-      this.repaintPending = true;
+      if (stage === undefined) this.pendingFullRepaint = true;
+      else this.dirtyStages.add(stage);
       return;
     }
-    this.host.render.repaintGenerated();
+    this.host.render.repaintGenerated(stage);
   }
 
-  /** Run `fn` as one repaint batch: every `repaintGenerated` inside collapses
-   * into a single paint on exit (only if something asked to paint). Reentrant
-   * (nested batches coalesce into the outermost). */
+  /** Run `fn` as one repaint batch: `repaintGenerated` calls inside collapse to
+   * ONE paint PER TOUCHED STAGE on exit, upstream stage first (032-D) — or a
+   * single full paint if any caller asked for one. Reentrant (nested batches
+   * coalesce into the outermost). */
   private async withRepaintBatch<T>(fn: () => Promise<T>): Promise<T> {
     this.repaintBatchDepth++;
     try {
       return await fn();
     } finally {
       this.repaintBatchDepth--;
-      if (this.repaintBatchDepth === 0 && this.repaintPending) {
-        this.repaintPending = false;
-        this.host.render.repaintGenerated();
+      if (this.repaintBatchDepth === 0) {
+        const full = this.pendingFullRepaint;
+        const stages = [...this.dirtyStages].sort((a, b) => a - b);
+        this.pendingFullRepaint = false;
+        this.dirtyStages.clear();
+        if (full) this.host.render.repaintGenerated();
+        else for (const s of stages) this.host.render.repaintGenerated(s);
       }
     }
   }
@@ -429,6 +449,49 @@ export class MapController {
     if (!this.campaign) return all;
     const scale = this.campaign.config.scaleMetersPerUnit;
     return all.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+  }
+
+  /** The DAG stage a render-store key belongs to (032-D): a region key
+   * (`region:<id>:…`) → its algorithm's stage; a world-tier key → `WORLD_STAGE`.
+   * Drives staged repaint — a repaint scoped to one stage touches only that
+   * stage's features. */
+  private stageOfRenderKey(key: string): number {
+    if (!key.startsWith("region:")) return MapController.WORLD_STAGE;
+    const id = key.slice("region:".length).split(":")[0];
+    const feature = this.fabricCollection.features.find((f) => f.id === id);
+    const algo = feature?.properties.procgen ? algorithmById(feature.properties.procgen.algorithm) : undefined;
+    return algo?.stage ?? MapController.WORLD_STAGE;
+  }
+
+  /** Display-space generated features grouped by DAG stage (032-D) — the host
+   * uses this to seed its per-stage source tracking on a full repaint. */
+  displayGeneratedByStage(): Map<number, GeoJSON.Feature[]> {
+    const out = new Map<number, GeoJSON.Feature[]>();
+    if (!this.campaign) return out;
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    for (const [key, feats] of this.loadedTiles) {
+      const stage = this.stageOfRenderKey(key);
+      let arr = out.get(stage);
+      if (!arr) {
+        arr = [];
+        out.set(stage, arr);
+      }
+      for (const f of feats) arr.push(transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+    }
+    return out;
+  }
+
+  /** Display-space generated features for ONE DAG stage (032-D) — the host
+   * repaints just these via an incremental `updateData` diff. */
+  displayGeneratedForStage(stage: number): GeoJSON.Feature[] {
+    if (!this.campaign) return [];
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const out: GeoJSON.Feature[] = [];
+    for (const [key, feats] of this.loadedTiles) {
+      if (this.stageOfRenderKey(key) !== stage) continue;
+      for (const f of feats) out.push(transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+    }
+    return out;
   }
 
   // ─── "Generate fabric here" and world/region generation ────────────────
@@ -754,7 +817,7 @@ export class MapController {
             10000
           );
         }
-        this.repaintGenerated();
+        this.repaintGenerated(algorithm.stage);
         return [];
       }
       this.needsAdoption.delete(feature.id);
@@ -779,7 +842,7 @@ export class MapController {
       this.pendingGenerations--;
       this.host.render.loadingChanged();
     }
-    this.repaintGenerated();
+    this.repaintGenerated(algorithm.stage);
     return all;
   }
 
@@ -1117,7 +1180,7 @@ export class MapController {
       this.loadedTiles.delete(this.tileKeyFor(e.tier, e.tileX, e.tileY));
     }
     await this.host.vault.saveManifest(campaign, this.manifest);
-    this.repaintGenerated();
+    this.repaintGenerated(MapController.WORLD_STAGE);
     await this.host.vault.appendLog(folder, {
       ts: Date.now(),
       type: "clear-area",
@@ -1185,7 +1248,7 @@ export class MapController {
       this.host.render.loadingChanged();
     }
     this.loadedTiles.set(this.tileKeyFor(tier, tileX, tileY), features);
-    this.repaintGenerated();
+    this.repaintGenerated(MapController.WORLD_STAGE);
     return features;
   }
 
@@ -1427,7 +1490,9 @@ export class MapController {
     }
     const prefix = `region:${feature.id}:`;
     for (const k of [...this.loadedTiles.keys()]) if (k.startsWith(prefix)) this.loadedTiles.delete(k);
-    this.repaintGenerated();
+    // Repaint the dropped region's stage (full repaint when its algorithm is
+    // unknown — a defensive fallback; drops only ever run on procgen regions).
+    this.repaintGenerated(algorithm?.stage);
   }
 
   /** "Remove generated city here". */

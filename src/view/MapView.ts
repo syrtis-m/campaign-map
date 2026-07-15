@@ -201,7 +201,7 @@ export class MapView extends ItemView {
         confirm: (message) => this.confirmDialog(message),
       },
       render: {
-        repaintGenerated: () => this.refreshGeneratedSource(),
+        repaintGenerated: (stage?: number) => this.refreshGeneratedSource(stage),
         repaintFabric: () => this.refreshFabric(),
         loadingChanged: () => this.updateLoadingIndicator(),
         featureChanged: (id, opts) => this.onControllerFeatureChanged(id, opts),
@@ -1005,14 +1005,42 @@ export class MapView extends ItemView {
     }).open();
   }
 
-  /** Repaints the `generated` source from the controller's render store
-   * (already converted to display units). Called from the load/styledata paint
-   * paths and from the controller's render sink after any generation. */
-  private refreshGeneratedSource(): void {
+  /** Feature ids currently painted in the `generated` source, grouped by DAG
+   * stage (plan 032-D). A staged repaint diffs against this to `updateData` only
+   * the changed stage; a full repaint rebuilds it. */
+  private paintedStageIds = new Map<number, Set<string | number>>();
+
+  /**
+   * Repaints the `generated` source from the controller's render store (already
+   * converted to display units). Called from the load/styledata paint paths and
+   * the controller's render sink after any generation.
+   *
+   * With a `stage` (plan 032-D) the repaint is INCREMENTAL: only that DAG
+   * stage's features are replaced via `updateData` (remove the stage's old
+   * features by id, add its current ones), so the repaint scales with the
+   * changed stage instead of re-indexing all generated features. A full repaint
+   * (no `stage`, e.g. initial paint / replay) does the authoritative `setData`
+   * and re-seeds the per-stage id tracking. Visual judgment of the staged path
+   * is deferred to normal app use (plan 032 §2, headless-only verification).
+   */
+  private refreshGeneratedSource(stage?: number): void {
     if (!this.map || !this.campaign) return;
     const source = this.map.getSource("generated") as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
-    source.setData({ type: "FeatureCollection", features: this.controller.displayGenerated() });
+    if (stage === undefined || typeof source.updateData !== "function") {
+      source.setData({ type: "FeatureCollection", features: this.controller.displayGenerated() });
+      this.paintedStageIds.clear();
+      for (const [s, feats] of this.controller.displayGeneratedByStage()) {
+        this.paintedStageIds.set(s, new Set(feats.map((f) => f.id as string | number)));
+      }
+      return;
+    }
+    const feats = this.controller.displayGeneratedForStage(stage);
+    const oldIds = this.paintedStageIds.get(stage) ?? new Set<string | number>();
+    // Remove the stage's previous features, add its current ones — other stages'
+    // features in the source are untouched.
+    source.updateData({ remove: [...oldIds], add: feats });
+    this.paintedStageIds.set(stage, new Set(feats.map((f) => f.id as string | number)));
   }
 
   private updateLoadingIndicator(): void {

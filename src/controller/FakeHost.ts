@@ -124,6 +124,10 @@ export class FakeHost {
   readonly selectionKeptPanel: string[] = [];
   readonly undoneNotes: LogEntry[] = [];
   repaintGeneratedCount = 0;
+  /** The `stage` of each `repaintGenerated` call in order (032-D): a number for
+   * a staged repaint, "all" for a full one. A batch fires one entry per touched
+   * stage, upstream-first — the staged-repaint assertion surface. */
+  readonly repaintGeneratedStages: (number | "all")[] = [];
   repaintFabricCount = 0;
   regenArmedCount = 0;
   /** Gateway-level cache IO counters (031-B): count host.vault.readCached /
@@ -187,8 +191,9 @@ export class FakeHost {
         },
       },
       render: {
-        repaintGenerated: () => {
+        repaintGenerated: (stage?: number) => {
           this.repaintGeneratedCount++;
+          this.repaintGeneratedStages.push(stage ?? "all");
         },
         repaintFabric: () => {
           this.repaintFabricCount++;
