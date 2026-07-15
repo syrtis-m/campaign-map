@@ -69,7 +69,7 @@ describe("MapController — sketch-driven city procgen (procgen40)", () => {
     for (const [k, rec] of await host.cache()) before.set(k, JSON.stringify(rec.features));
 
     // Blow away `.mapcache/` and regenerate — must reproduce identical bytes.
-    await host.adapter.remove(host.cachePath());
+    await host.clearCacheOnDisk();
     expect((await host.cache()).size).toBe(0);
     await host.controller.regenerateRegionById(featureId);
 
@@ -375,7 +375,7 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
 
   it("cache missing: a pinned-old region renders NOTHING + a needs-adoption badge — never regenerates", async () => {
     const { host, featureId } = await pinnedOldHost();
-    await host.adapter.remove(host.cachePath());
+    await host.clearCacheOnDisk();
 
     const reopened = host.reopen({ zoom: 10 });
     reopened.begin();
@@ -390,7 +390,7 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
 
   it("adoptRegion raises the pin, regenerates deterministically, and clears the badge", async () => {
     const { host, featureId } = await pinnedOldHost();
-    await host.adapter.remove(host.cachePath());
+    await host.clearCacheOnDisk();
     const reopened = host.reopen({ zoom: 10 });
     reopened.begin();
     reopened.controller.overrideCurrentVersionForTest("city", 2);
@@ -406,7 +406,7 @@ describe("MapController — adoption lifecycle (pinned-old regions)", () => {
     // Determinism at the adopted version: delete cache ⇒ identical bytes.
     const bytes = new Map<string, string>();
     for (const [k, rec] of await reopened.cache()) bytes.set(k, JSON.stringify(rec.features));
-    await reopened.adapter.remove(reopened.cachePath());
+    await reopened.clearCacheOnDisk();
     await reopened.controller.regenerateRegionById(featureId);
     for (const [k, rec] of await reopened.cache()) {
       expect(JSON.stringify(rec.features)).toBe(bytes.get(k));
@@ -578,7 +578,7 @@ describe("MapController — spine (river) line-kind procgen", () => {
     const { featureId } = await host.controller.createSpineForTest(RIVER, "river", "river", LAZY, "__spine_test__");
     const before = regionKeys(await host.cache(), featureId);
     expect(before.size).toBeGreaterThan(0);
-    await host.adapter.remove(host.cachePath());
+    await host.clearCacheOnDisk();
     await host.controller.regenerateRegionById(featureId);
     const after = regionKeys(await host.cache(), featureId);
     expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
@@ -700,7 +700,7 @@ describe("MapController — forest polygon-kind procgen", () => {
     };
     const before = keys(await host.cache());
     expect(before.size).toBeGreaterThan(0);
-    await host.adapter.remove(host.cachePath());
+    await host.clearCacheOnDisk();
     await host.controller.regenerateRegionById(featureId);
     const after = keys(await host.cache());
     expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
@@ -925,7 +925,7 @@ describe("MapController — network once per forced regen (031-A)", () => {
    * (last-wins), so the deduped Map hides duplicate appends — the raw line
    * count is what actually catches P1's per-tile duplicate network records. */
   function rawRecordCount(host: FakeHost, key: string): number {
-    const text = host.adapter.files.get(host.cachePath()) ?? "";
+    const text = host.cacheShardText(key);
     let n = 0;
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
@@ -1029,7 +1029,7 @@ describe("MapController — batching parity (031-B)", () => {
     // order). The batched-flush bytes must equal the from-scratch bytes.
     const reopened = host.reopen({ zoom: 10 });
     reopened.begin();
-    await reopened.adapter.remove(reopened.cachePath());
+    await reopened.clearCacheOnDisk();
     await reopened.controller.replayGeneratedManifest();
     const replayed = await netBytes(reopened);
 
@@ -1116,7 +1116,7 @@ describe("MapController — stage-ordered raw channel (031-C)", () => {
 
     const reopened = host.reopen({ zoom: 10 });
     reopened.begin();
-    await reopened.adapter.remove(reopened.cachePath());
+    await reopened.clearCacheOnDisk();
     await reopened.controller.replayGeneratedManifest();
     const replayed = await netBytes(reopened);
     expect([...replayed.keys()].sort()).toEqual([...live.keys()].sort());
@@ -1135,12 +1135,148 @@ describe("MapController — stage-ordered raw channel (031-C)", () => {
     const fabric = await reopened.fabric();
     const shuffled = { ...fabric, features: [...fabric.features].reverse() };
     await reopened.adapter.write(fabricPath(reopened.campaign), JSON.stringify(shuffled, null, 2));
-    await reopened.adapter.remove(reopened.cachePath());
+    await reopened.clearCacheOnDisk();
     reopened.begin();
     await reopened.controller.replayGeneratedManifest();
     const shuffledBytes = await netBytes(reopened);
 
     expect([...shuffledBytes.keys()].sort()).toEqual([...inOrder.keys()].sort());
     for (const [k, bytes] of inOrder) expect(shuffledBytes.get(k)).toBe(bytes);
+  });
+});
+
+// ─── Plan 032-A — cache sharding + monolith migration ────────────────────────
+// `.mapcache/generated.jsonl` is split per region (`region-<id>.jsonl`) + a
+// shared `world.jsonl`, so a drop is a per-shard file delete (not a whole-cache
+// rewrite) and reads/appends scope to a shard. A pre-032 monolith is migrated
+// line-by-line on first load; pinned-old network records MUST survive
+// byte-identically (plan §3 STOP condition — else the region blanks).
+describe("MapController — cache sharding (032-A)", () => {
+  const RING2: [number, number][] = [
+    [-26, 10],
+    [-10, 10],
+    [-10, 26],
+    [-26, 26],
+  ];
+
+  /** Fold every cache shard back into one legacy `generated.jsonl` and delete
+   * the shards — reproduces a pre-032 on-disk cache to migrate. */
+  function collapseToMonolith(host: FakeHost): void {
+    const dir = `${host.cacheDir()}/`;
+    const lines: string[] = [];
+    for (const [path, text] of [...host.adapter.files.entries()]) {
+      if (!path.startsWith(dir)) continue;
+      const base = path.slice(dir.length);
+      if (base === "world.jsonl" || (base.startsWith("region-") && base.endsWith(".jsonl"))) {
+        for (const l of text.split("\n")) if (l.trim()) lines.push(l);
+        host.adapter.files.delete(path);
+      }
+    }
+    host.adapter.files.set(`${dir}generated.jsonl`, lines.join("\n") + "\n");
+  }
+
+  it("a region's records land in its own shard; the world shard is a separate file", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const shard = host.cacheShardPath(regionNetworkKey(featureId));
+    expect(shard).toBe(`${host.cacheDir()}/region-${featureId}.jsonl`);
+    expect(host.adapter.files.has(shard)).toBe(true);
+    // No monolith is ever written on the sharded path.
+    expect(host.adapter.files.has(`${host.cacheDir()}/generated.jsonl`)).toBe(false);
+    // Every cache line in this campaign belongs to that region's shard.
+    for (const [path] of host.adapter.files) {
+      if (path.startsWith(`${host.cacheDir()}/region-`)) expect(path).toBe(shard);
+    }
+  });
+
+  it("generating a region appends ONLY to its own shard (no world / sibling writes)", async () => {
+    const host = cityHost();
+    host.adapter.appends.length = 0;
+    host.adapter.writes.length = 0;
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const shard = host.cacheShardPath(regionNetworkKey(featureId));
+    const cacheIO = [...host.adapter.appends, ...host.adapter.writes].filter((p) =>
+      p.startsWith(`${host.cacheDir()}/`) && (p.endsWith("world.jsonl") || p.includes("/region-"))
+    );
+    expect(cacheIO.length).toBeGreaterThan(0);
+    for (const p of cacheIO) expect(p).toBe(shard); // every cache write hit ONE shard
+    expect(cacheIO).not.toContain(`${host.cacheDir()}/world.jsonl`);
+  });
+
+  it("dropping a region DELETES its shard and never rewrites a sibling shard", async () => {
+    const host = cityHost();
+    const a = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const b = await host.controller.createRegionForTest(RING2, "city", { profile: "euro-medieval" });
+    const shardA = host.cacheShardPath(regionNetworkKey(a.featureId));
+    const shardB = host.cacheShardPath(regionNetworkKey(b.featureId));
+    expect(host.adapter.files.has(shardA)).toBe(true);
+    expect(host.adapter.files.has(shardB)).toBe(true);
+
+    host.adapter.removes.length = 0;
+    host.adapter.writes.length = 0;
+    await host.controller.removeRegionById(a.featureId);
+
+    // A's whole key set empties its shard ⇒ file delete, NOT a rewrite.
+    expect(host.adapter.removes).toContain(shardA);
+    expect(host.adapter.writes).not.toContain(shardA);
+    expect(host.adapter.files.has(shardA)).toBe(false);
+    // B's shard is never touched by A's drop (no whole-cache rewrite — research P6).
+    expect(host.adapter.writes).not.toContain(shardB);
+    expect(host.adapter.removes).not.toContain(shardB);
+    expect(host.adapter.files.has(shardB)).toBe(true);
+  });
+
+  it("migrates a legacy monolith into shards on first read, then deletes it", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const before = new Map<string, string>();
+    for (const [k, rec] of await host.cache()) before.set(k, JSON.stringify(rec.features));
+
+    collapseToMonolith(host);
+    const monolith = `${host.cacheDir()}/generated.jsonl`;
+    expect(host.adapter.files.has(monolith)).toBe(true);
+
+    // A fresh controller reads the cache → migration splits + deletes the monolith.
+    const reopened = host.reopen({ zoom: 10 });
+    const after = new Map<string, string>();
+    for (const [k, rec] of await reopened.cache()) after.set(k, JSON.stringify(rec.features));
+
+    expect(reopened.adapter.files.has(monolith)).toBe(false); // monolith gone
+    expect(reopened.adapter.files.has(host.cacheShardPath(regionNetworkKey(featureId)))).toBe(true);
+    // Every record survives the split byte-for-byte.
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [k, bytes] of before) expect(after.get(k)).toBe(bytes);
+  });
+
+  it("STOP condition: a pinned-old region's network record survives migration BYTE-IDENTICALLY and still renders cache-only", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    host.controller.overrideCurrentVersionForTest("city", 2); // now pinned-old (v1 < v2)
+    const netKey = regionNetworkKey(featureId);
+    // Capture the exact raw JSONL line for the pinned network record.
+    const shard = host.cacheShardText(netKey);
+    const netLineBefore = shard
+      .split("\n")
+      .find((l: string) => l.trim() && (JSON.parse(l) as { key?: string }).key === netKey);
+    expect(netLineBefore).toBeDefined();
+
+    collapseToMonolith(host);
+
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    reopened.controller.overrideCurrentVersionForTest("city", 2);
+    await reopened.controller.replayGeneratedManifest();
+
+    // The migrated shard holds the pinned network record's line verbatim.
+    const netLineAfter = reopened
+      .cacheShardText(netKey)
+      .split("\n")
+      .find((l: string) => l.trim() && (JSON.parse(l) as { key?: string }).key === netKey);
+    expect(netLineAfter).toBe(netLineBefore); // byte-identical
+
+    // Cache-only render holds: no generator ran, region paints, no adoption badge.
+    expect(reopened.controller.generatorRunCount).toBe(0);
+    expect(reopened.controller.needsAdoptionIds()).toEqual([]);
+    expect(reopened.controller.regionFeatureIds(featureId).length).toBeGreaterThan(0);
   });
 });

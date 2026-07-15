@@ -13,7 +13,7 @@ import type { App } from "obsidian";
 import type { ParsedCampaign, CampaignConfig } from "../model/campaignConfig";
 import { loadFabric, saveFabric } from "../vault/fabricStore";
 import { loadGeneratedManifest, saveGeneratedManifest } from "../vault/generatedManifestStore";
-import { readCachedTiles, removeCachedTiles, type CachedTile } from "../model/tileCache";
+import { cacheShardBasename, readCachedTiles, removeCachedTiles, type CachedTile } from "../model/tileCache";
 import {
   appendLogEntry,
   readLog,
@@ -36,6 +36,7 @@ export class MemAdapter {
   readonly reads: string[] = [];
   readonly writes: string[] = [];
   readonly appends: string[] = [];
+  readonly removes: string[] = [];
 
   async exists(path: string): Promise<boolean> {
     return this.files.has(path) || this.dirs.has(path);
@@ -58,7 +59,24 @@ export class MemAdapter {
     this.dirs.add(path);
   }
   async remove(path: string): Promise<void> {
+    this.removes.push(path);
     this.files.delete(path);
+  }
+
+  /** Obsidian DataAdapter.list: files + folders directly under `path` (full
+   * vault-relative paths), needed by the sharded tileCache to enumerate cache
+   * shards in `.mapcache/` (plan 032-A). */
+  async list(path: string): Promise<{ files: string[]; folders: string[] }> {
+    const prefix = path.endsWith("/") ? path : `${path}/`;
+    const files: string[] = [];
+    for (const f of this.files.keys()) {
+      if (f.startsWith(prefix) && !f.slice(prefix.length).includes("/")) files.push(f);
+    }
+    const folders: string[] = [];
+    for (const d of this.dirs) {
+      if (d.startsWith(prefix) && d !== path && !d.slice(prefix.length).includes("/")) folders.push(d);
+    }
+    return { files, folders };
   }
 
   /** A byte-for-byte snapshot of every file (for determinism assertions). */
@@ -226,9 +244,35 @@ export class FakeHost {
   log(): Promise<LogEntry[]> {
     return readLog(this.app, this.folder);
   }
-  /** The persisted cache-file path (for delete-and-regen determinism tests). */
-  cachePath(): string {
-    return `${this.folder}/.mapcache/generated.jsonl`;
+  /** The `.mapcache` directory (cache shards live here — plan 032-A). */
+  cacheDir(): string {
+    return `${this.folder}/.mapcache`;
+  }
+
+  /** The shard file a record key persists to (plan 032-A). */
+  cacheShardPath(key: string): string {
+    return `${this.cacheDir()}/${cacheShardBasename(key)}`;
+  }
+
+  /** Raw text of the shard holding `key` (for raw-line-count assertions that
+   * `readCachedTiles` dedup would otherwise hide). */
+  cacheShardText(key: string): string {
+    return this.adapter.files.get(this.cacheShardPath(key)) ?? "";
+  }
+
+  /** Delete every cache shard on disk (plan 032-A replacement for removing the
+   * old monolith) — the delete-`.mapcache`-and-regenerate determinism tests.
+   * Removes `region-*.jsonl` + `world.jsonl` (and a leftover monolith), leaving
+   * `log.jsonl` / `dem.jsonl` intact. */
+  async clearCacheOnDisk(): Promise<void> {
+    const dir = `${this.cacheDir()}/`;
+    for (const path of [...this.adapter.files.keys()]) {
+      if (!path.startsWith(dir)) continue;
+      const base = path.slice(dir.length);
+      if (base === "world.jsonl" || base === "generated.jsonl" || (base.startsWith("region-") && base.endsWith(".jsonl"))) {
+        this.adapter.files.delete(path);
+      }
+    }
   }
 }
 

@@ -41,6 +41,14 @@ function fakeApp(): { app: App; files: Map<string, string> } {
     remove: vi.fn(async (path: string) => {
       files.delete(path);
     }),
+    list: vi.fn(async (path: string) => {
+      const prefix = path.endsWith("/") ? path : `${path}/`;
+      const fs: string[] = [];
+      for (const f of files.keys()) if (f.startsWith(prefix) && !f.slice(prefix.length).includes("/")) fs.push(f);
+      const folders: string[] = [];
+      for (const d of dirs) if (d.startsWith(prefix) && d !== path && !d.slice(prefix.length).includes("/")) folders.push(d);
+      return { files: fs, folders };
+    }),
   };
   const vault = {
     adapter,
@@ -113,7 +121,7 @@ describe("generateTile", () => {
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
 
     const first = await generateTile(ctx, 1, 1, "city-street", fakeStreets as never);
-    files.delete("Campaigns/Ashfall/.mapcache/generated.jsonl");
+    files.delete("Campaigns/Ashfall/.mapcache/world.jsonl");
     const second = await generateTile(ctx, 1, 1, "city-street", fakeStreets as never);
 
     expect(second).toEqual(first);
@@ -192,7 +200,7 @@ describe("generateRegionTile", () => {
     const { app, files } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
     const first = await generateRegionTile(ctx, region, gids, 0, 0, directCompute);
-    files.delete("Campaigns/Ashfall/.mapcache/generated.jsonl");
+    files.delete(`Campaigns/Ashfall/.mapcache/region-${region.id}.jsonl`);
     const second = await generateRegionTile(ctx, region, gids, 0, 0, directCompute);
     expect(second).toEqual(first);
   });
@@ -222,7 +230,7 @@ describe("generateRegionTile", () => {
     expect(compute).toHaveBeenCalledTimes(1);
     expect(again).toEqual(first); // same constraints → same bytes
     // Once the network is cleared, a forced pass recomputes it (still byte-identical).
-    files.delete("Campaigns/Ashfall/.mapcache/generated.jsonl");
+    files.delete(`Campaigns/Ashfall/.mapcache/region-${region.id}.jsonl`);
     const third = await generateRegionTile(ctx, region, gids, 0, 0, compute, { force: true });
     expect(compute).toHaveBeenCalledTimes(2);
     expect(third).toEqual(first);
@@ -266,7 +274,7 @@ describe("generateRegionTile staleness fingerprints", () => {
     // Simulate an old cache: records written WITHOUT any fingerprint.
     await generateRegionTile(ctx, region, gids, 0, 0, compute, {});
     expect(compute).toHaveBeenCalledTimes(1);
-    const path = "Campaigns/Ashfall/.mapcache/generated.jsonl";
+    const path = `Campaigns/Ashfall/.mapcache/region-${region.id}.jsonl`;
     for (const line of files.get(path)!.split("\n")) {
       if (line.trim()) expect(JSON.parse(line).fingerprint).toBeUndefined();
     }
@@ -289,7 +297,7 @@ describe("generateRegionTile staleness fingerprints", () => {
     const { app, files } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
     await generateRegionTile(ctx, region, gids, 0, 0, directCompute, { fingerprint: "fp-xyz" });
-    const path = "Campaigns/Ashfall/.mapcache/generated.jsonl";
+    const path = `Campaigns/Ashfall/.mapcache/region-${region.id}.jsonl`;
     const records = files
       .get(path)!
       .split("\n")
