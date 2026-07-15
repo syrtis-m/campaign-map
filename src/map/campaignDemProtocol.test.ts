@@ -53,19 +53,23 @@ const INPUTS: SerializableTerrainInputs = {
 
 interface HarnessOpts {
   failAppend?: boolean;
-  digest?: string;
+  /** Override the terrain inputs — the per-tile digest is derived from these
+   * (base params are always in it), so a distinct `base` yields a distinct
+   * digest ⇒ a stale miss. */
+  inputs?: SerializableTerrainInputs;
   /** When set, an off-thread fill that resolves via this hook (to count/dedupe/
    * delay); return null to force the main-thread fallback. */
   offThread?: DemProvider["computeLatticeOffThread"];
 }
 
 function makeProvider(app: App, opts: HarnessOpts = {}): DemProvider {
+  const inputs = opts.inputs ?? INPUTS;
   return {
     app,
     campaignFolder: "Campaigns/Test",
     scaleMetersPerUnit: SCALE,
     k: K,
-    snapshot: () => ({ field: FIELD, digest: opts.digest ?? "digest-A", inputs: INPUTS }),
+    snapshot: () => ({ field: FIELD, digest: "unused", inputs }),
     ...(opts.offThread ? { computeLatticeOffThread: opts.offThread } : {}),
   };
 }
@@ -140,25 +144,20 @@ describe("campaigndem protocol — retryability (reappear bug)", () => {
   it("the in-flight entry clears on completion — cache hit next, and a new digest re-derives", async () => {
     let computes = 0;
     const app = fakeApp();
-    const idA = register(app, {
-      digest: "digest-A",
-      offThread: async (inputs, z, x, y, res, scale, k) => {
-        computes++;
-        return demTileLattice(FIELD, z, x, y, res, scale, k);
-      },
-    });
+    const count: DemProvider["computeLatticeOffThread"] = async (inputs, z, x, y, res, scale, k) => {
+      computes++;
+      return demTileLattice(FIELD, z, x, y, res, scale, k);
+    };
+    const idA = register(app, { offThread: count });
     await resolveDemTileForTest(idA, 6, 24, 36); // computes → 1, persists
     await resolveDemTileForTest(idA, 6, 24, 36); // cache hit (entry cleared, warm) → still 1
     expect(computes).toBe(1);
 
-    // Same app+tile but a moved field ⇒ new digest ⇒ stale miss ⇒ recompute, proving
-    // no stale in-flight entry blocks the re-derive.
+    // Same app+tile but moved base params ⇒ new per-tile digest ⇒ stale miss ⇒
+    // recompute, proving no stale in-flight entry blocks the re-derive.
     const idB = register(app, {
-      digest: "digest-B",
-      offThread: async (inputs, z, x, y, res, scale, k) => {
-        computes++;
-        return demTileLattice(FIELD, z, x, y, res, scale, k);
-      },
+      inputs: { ...INPUTS, base: { campAmp: 999, seaDatum: 0 } },
+      offThread: count,
     });
     await resolveDemTileForTest(idB, 6, 24, 36);
     expect(computes).toBe(2);

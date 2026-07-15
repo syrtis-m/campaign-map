@@ -85,6 +85,9 @@ export {
   // Per-feature variable-support invalidation reach for terrain stamps (ruling
   // 2026-07-15): relief → halfWidth, landform/mountain → 0, null otherwise.
   terrainStampSupport,
+  // Per-tile terrain digest — scoped DEM cache invalidation so an extrude
+  // re-derives only the tiles the edited stamp reaches (not the whole viewport).
+  perTileTerrainDigest,
   DEFAULT_TERRAIN_BASE,
   RELIEF_POLARITIES,
   RELIEF_DEFAULTS,
@@ -123,6 +126,7 @@ export {
   // quantization + terrarium RGBA packing (the pure/numeric half — PNG encoding
   // is a host concern in campaignDemProtocol.ts).
   TERRARIUM_BASE,
+  TERRAIN_FIELD_VERSION,
   demVerticalScale,
   tileLngLatBounds,
   unionFields,

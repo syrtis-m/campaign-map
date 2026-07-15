@@ -55,6 +55,17 @@ export function demVerticalScale(scaleMetersPerUnit: number): number {
   return Math.min(physical, ceilingFit);
 }
 
+/**
+ * Composed-terrain FIELD version — the ONE salt bumped whenever the field math
+ * changes output bytes for the SAME durable inputs. Both the per-tile DEM digest
+ * (below) and the campaign-wide contour digest (`elevationDigest`) carry it, so a
+ * bump re-derives every cached DEM tile AND contour leaf; old-salt records simply
+ * mismatch and re-derive (self-healing, no migration). NOT a persisted
+ * determinism surface — a compared cache key, re-derivable per machine.
+ *   3: per-tile DEM digest (was a single campaign-wide digest) + t2→t3 salt.
+ */
+export const TERRAIN_FIELD_VERSION = 3;
+
 /** Longitude/latitude bounds of a slippy tile (z/x/y, XYZ scheme). Standard
  * web-mercator inverse — the tile grid MapLibre requests DEM tiles on. */
 export function tileLngLatBounds(

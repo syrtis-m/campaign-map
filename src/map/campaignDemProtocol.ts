@@ -1,6 +1,6 @@
 import maplibregl from "maplibre-gl";
 import type { App } from "obsidian";
-import { demTileLattice, latticeToRGBA, type ElevationField } from "../gen/fields";
+import { demTileLattice, latticeToRGBA, perTileTerrainDigest, type ElevationField } from "../gen/fields";
 import type { SerializableTerrainInputs } from "../gen/worker/generationWorker";
 import { appendDemTile, getDemTile, demTileKey, type DemTile } from "../model/demCache";
 
@@ -203,7 +203,21 @@ async function resolveLattice(
   x: number,
   y: number
 ): Promise<number[]> {
-  const { field, digest, inputs } = provider.snapshot();
+  const { field, inputs } = provider.snapshot();
+  // Per-tile digest (not the campaign-wide `snapshot().digest`): a cached tile is
+  // stale only when a stamp that actually reaches THIS tile changed, so an edit
+  // re-derives just the tiles it touches instead of the whole viewport.
+  const digest = perTileTerrainDigest(
+    inputs.features,
+    inputs.base,
+    inputs.campaignSeed,
+    inputs.include.grade,
+    z,
+    x,
+    y,
+    provider.scaleMetersPerUnit,
+    provider.k
+  );
   const cached = await getDemTile(provider.app, provider.campaignFolder, z, x, y);
   if (cached && cached.digest === digest && cached.res === DEM_TILE_RES && cached.k === provider.k) {
     return cached.heights;

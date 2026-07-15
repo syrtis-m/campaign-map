@@ -33,7 +33,9 @@
 import { fbmEroded, type HeightSample, type ElevationField } from "./elevation";
 import { elevationFieldFromFabric } from "./mountainField";
 import { pointInRingClosed } from "./sdf";
+import { tileLngLatBounds, TERRAIN_FIELD_VERSION } from "./dem";
 import { SegmentHash } from "../segmentHash";
+import type { BBox } from "../spatialHash";
 import type { FabricFeature } from "../../model/fabric";
 
 type Pt = [number, number];
@@ -170,6 +172,128 @@ export function terrainStampSupport(feature: FabricFeature): number | null {
   }
   if (alg === "landform" || alg === "mountain") return 0;
   return null;
+}
+
+// ─── Per-tile terrain digest (scoped DEM cache invalidation) ─────────────────
+// The DEM cache keyed every tile on a CAMPAIGN-WIDE digest: a single stamp edit
+// (an extrude release) changed the digest, so EVERY cached DEM tile went stale
+// and the whole viewport re-derived at res² samples/tile — the cheap contour
+// leaves finished first, so an extrude "painted the topo lines long before the 3D
+// height" (Jonah). Scoping the digest per-tile — hash only the durable inputs
+// whose support intersects THAT tile — means an extrude re-derives ONLY the tiles
+// the edited stamp touches; every other tile stays a cache hit and never
+// recomputes. Same discipline the contour leaves already key on.
+
+function stampBBox(f: FabricFeature): BBox {
+  const b: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  const coords = f.geometry.type === "Polygon" ? f.geometry.coordinates[0] : f.geometry.coordinates;
+  for (const pt of coords as Pt[]) {
+    if (pt[0] < b.minX) b.minX = pt[0];
+    if (pt[1] < b.minY) b.minY = pt[1];
+    if (pt[0] > b.maxX) b.maxX = pt[0];
+    if (pt[1] > b.maxY) b.maxY = pt[1];
+  }
+  return b;
+}
+
+/** Does `stamp` (grown by its support `reach`) touch `tile`? Inclusive on the
+ * boundary — err on the side of INCLUDING a stamp (an unneeded recompute) rather
+ * than dropping one (a stale-byte false hit). */
+function bboxTouches(stamp: BBox, tile: BBox, reach: number): boolean {
+  return (
+    stamp.minX - reach <= tile.maxX &&
+    stamp.maxX + reach >= tile.minX &&
+    stamp.minY - reach <= tile.maxY &&
+    stamp.maxY + reach >= tile.minY
+  );
+}
+
+/** Fingerprint one terrain stamp's durable identity (matches `elevationDigest`'s
+ * per-feature shape so the two digests move together on an edit). */
+function stampFingerprint(f: FabricFeature): string {
+  const p = f.properties.procgen!;
+  return JSON.stringify({
+    id: f.id,
+    kind: f.properties.kind,
+    algorithm: p.algorithm,
+    seed: p.seed,
+    params: p.params,
+    geometry: f.geometry.coordinates,
+  });
+}
+
+/**
+ * The per-tile terrain digest: base params + K + campaign seed + grade-enable,
+ * plus the id-sorted fingerprints of every durable terrain stamp whose
+ * (support-expanded) bbox intersects the tile's gen-space extent. A cached DEM
+ * record with a different digest is a stale miss.
+ *
+ * Support reach per kind (byte-exact compact support — a stamp beyond its reach
+ * cannot move the field over this tile, so omitting it is a true no-op):
+ *   - relief   → `terrainStampSupport` (halfWidth + apron; reliefField is exactly
+ *                0 past it).
+ *   - mountain / landform → 0 (compact-support inside their ring bbox).
+ *   - graded district → the grade band (a safe over-estimate; grade fades to
+ *                natural ground by the rim, so it is really bbox-bounded).
+ *   - river carve → ALWAYS included (global). The carve's horizontal reach is
+ *                terrain-dependent — a gorge wall can climb an adjacent massif for
+ *                hundreds of metres — with no cheap sound UPPER bound, so scoping a
+ *                river risks a false-miss (stale bytes, a determinism-law
+ *                violation). Global inclusion is the maximally-inclusive safe
+ *                choice, and it does NOT dilute the extrude win: an extrude edits a
+ *                relief/landform stamp, never a river, so a far tile's river
+ *                entries are unchanged ⇒ that tile still cache-hits. (A bounded
+ *                carve reach could scope rivers later — a follow-up.)
+ *
+ * Enumeration-order-stable (id-sorted) — the fold discipline. Cheap string,
+ * compared not persisted. Carries `TERRAIN_FIELD_VERSION` so a field-math change
+ * re-derives every tile.
+ */
+export function perTileTerrainDigest(
+  features: FabricFeature[],
+  base: TerrainBaseParams,
+  campaignSeed: number,
+  gradeEnabled: boolean,
+  z: number,
+  x: number,
+  y: number,
+  scaleMetersPerUnit: number,
+  k: number
+): string {
+  const { west, east, north, south } = tileLngLatBounds(z, x, y);
+  const tile: BBox = {
+    minX: Math.min(west, east) * scaleMetersPerUnit,
+    maxX: Math.max(west, east) * scaleMetersPerUnit,
+    minY: Math.min(south, north) * scaleMetersPerUnit,
+    maxY: Math.max(south, north) * scaleMetersPerUnit,
+  };
+  const hits: string[] = [];
+  for (const f of features) {
+    const alg = f.properties.procgen?.algorithm;
+    if (!alg) continue;
+    if (alg === "river") {
+      // Global (see doc): a river always contributes to every tile's digest.
+      hits.push(stampFingerprint(f));
+      continue;
+    }
+    let reach: number | null;
+    if (alg === "mountain" || alg === "relief" || alg === "landform") {
+      reach = terrainStampSupport(f); // 0 / halfWidth+apron
+    } else if (
+      gradeEnabled &&
+      f.properties.kind === "district" &&
+      alg === "city" &&
+      (f.properties.procgen?.params as Record<string, unknown> | undefined)?.grade === true
+    ) {
+      reach = GRADE_DEFAULT_BAND; // conservative; grade fades to natural by the rim (bbox-bounded)
+    } else {
+      reach = null; // not a terrain-field input ⇒ never in the digest
+    }
+    if (reach === null) continue;
+    if (bboxTouches(stampBBox(f), tile, reach)) hits.push(stampFingerprint(f));
+  }
+  hits.sort();
+  return `t${TERRAIN_FIELD_VERSION}|k${k}|b${base.campAmp}:${base.seaDatum}|s${campaignSeed}|g${gradeEnabled ? 1 : 0}|${hits.join("|")}`;
 }
 
 /** A relief stamp's ADD contribution: `sign·height·bump(d/reach)` where `d` is
