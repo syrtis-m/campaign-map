@@ -989,6 +989,11 @@ export class MapController {
       for (const f of rec.features as unknown as GeoJSON.Feature[]) {
         const gid = (f.properties as { generatorId?: string } | null)?.generatorId;
         if (wantWater && gid === "river-channel") water.push(f);
+        // Settlement (plan 037): the generated `city-street` network — the wall
+        // reads it for gates, peri-urban consumers for entrances/lanes. (City
+        // canal water as a moat source is plan-038 wall-water refinement; keeping
+        // canals OUT of `settlement` avoids farmland/urban-park treating a canal
+        // line as a street.)
         else if (wantSettlement && gid === "city-street") settlement.push(f);
         // Vegetation canopy (plan 037): forest + park canopy MultiPolygons feed
         // the city's growth-cost attenuation + deep-canopy parcel rejection.

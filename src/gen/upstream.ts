@@ -83,6 +83,80 @@ export function buildUpstreamConstraints(upstream: UpstreamArtifacts | undefined
   };
 }
 
+/** The generated street with its form-based class (plan 037, city → wall). */
+export interface SettlementStreet {
+  line: Pt[];
+  roadClass: string;
+}
+
+/**
+ * The SETTLEMENT payload the wall consumes (plan 037 item 4) — rebuilt purely
+ * from `upstream.settlement` GeoJSON (host + worker agree, same discipline as
+ * the water/vegetation fields). The city already computed every part of it in
+ * `citynet` (streets with class, the ring, canals); this reassembles the
+ * consumable structure:
+ *  - `streets`: every generated street line + its `roadClass` (gate crossings,
+ *    class precedence, gatehouse bearing);
+ *  - `ring`: the city ring road (`roadClass === "ring"`), when present;
+ *  - `canalLines`: city canal water lines (a moat/masonry gap crosses them);
+ *  - `interior`: a town-interior reference point (ring centroid, else the street
+ *    vertex mean) — the moat goes on the side AWAY from it, towers face outboard.
+ * `null` when there is no settlement upstream ⇒ the wall keeps its uncoupled
+ * bytes (sketched-road gates only), the 23-E discipline.
+ */
+export interface SettlementPayload {
+  streets: SettlementStreet[];
+  ring: Pt[] | null;
+  canalLines: Pt[][];
+  interior: Pt | null;
+}
+
+export function buildSettlementPayload(upstream: UpstreamArtifacts | undefined): SettlementPayload | null {
+  const feats = upstream?.settlement;
+  if (!feats || feats.length === 0) return null;
+  const streets: SettlementStreet[] = [];
+  const canalLines: Pt[][] = [];
+  let ring: Pt[] | null = null;
+  let sx = 0;
+  let sy = 0;
+  let n = 0;
+  for (const f of feats) {
+    const g = f.geometry;
+    if (!g || g.type !== "LineString" || g.coordinates.length < 2) continue;
+    const line = g.coordinates as Pt[];
+    const props = (f.properties ?? {}) as { roadClass?: string; type?: string; generatorId?: string };
+    if (props.type === "canal") {
+      canalLines.push(line);
+      continue;
+    }
+    const roadClass = props.roadClass ?? "street";
+    streets.push({ line, roadClass });
+    if (roadClass === "ring" && ring === null) ring = line;
+    for (const [x, y] of line) {
+      sx += x;
+      sy += y;
+      n++;
+    }
+  }
+  if (streets.length === 0 && canalLines.length === 0) return null;
+  // Interior reference: ring centroid when the city walled itself, else the
+  // street vertex mean (a stable, order-free "middle of the town").
+  let interior: Pt | null = null;
+  if (ring) {
+    let rx = 0;
+    let ry = 0;
+    const m = ring.length - 1; // closed ring: last === first
+    for (let i = 0; i < m; i++) {
+      rx += ring[i][0];
+      ry += ring[i][1];
+    }
+    interior = m > 0 ? [rx / m, ry / m] : null;
+  } else if (n > 0) {
+    interior = [sx / n, sy / n];
+  }
+  return { streets, ring, canalLines, interior };
+}
+
 /**
  * The upstream WATER field as an SDF closure rebuilt from the data: POSITIVE
  * inside the meandered channel, negative outside (the `sdfPolygon` convention),

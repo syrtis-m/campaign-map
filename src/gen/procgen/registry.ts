@@ -592,17 +592,26 @@ export const WALL_TILE_GENERATOR_IDS: readonly string[] = contractGids(WALL_STYL
 const wallAlgorithm: ProcgenAlgorithm = {
   id: "wall",
   label: "Wall",
-  currentVersion: 1,
+  // Version 2 (plan 037 item 4): the `settlement` payload is now WIRED — gates
+  // fall where GENERATED streets cross the spine (class precedence, gatehouse
+  // axis = crossing bearing), the moat sits AWAY from the town interior, and the
+  // moat/masonry band gaps over the generated channel + canals (river-is-the-
+  // moat) → `water` joins consumes. A wall with NO settlement AND no upstream
+  // water in reach is byte-identical to v1 (golden unchanged); either present
+  // changes bytes ⇒ the bump gates adoption. The 035 cycle guard holds: wall
+  // consumes settlement at stage 5 and produces `detail`, which the city never
+  // reads — no city→wall→city cycle.
+  currentVersion: 2,
   appliesTo: ["wall"],
-  // Stage 5 (DETAIL — plan 035 renumber; unchanged behavior, payload
-  // consumption is plan 037): the procgen wall ELABORATION (towers/gates/moat)
-  // consumes stage-3 `settlement`. The raw wall SKETCH stays a stage-agnostic
-  // constraint every stage reads (`fabricConstraints.wallLines`) — orthogonal to
-  // this stage. The cascade never carries stage-5 output downward (produces
-  // `detail`, which nothing consumes).
+  // Stage 5 (DETAIL — plan 035 renumber): the procgen wall ELABORATION
+  // (towers/gates/moat) consumes stage-3 `settlement` (gates/gatehouses, moat
+  // side) and stage-0 `water` (moat/band gap over the channel — plan 037). The
+  // raw wall SKETCH stays a stage-agnostic constraint every stage reads
+  // (`fabricConstraints.wallLines`) — orthogonal to this stage. The cascade never
+  // carries stage-5 output downward (produces `detail`, which nothing consumes).
   stage: 5,
   produces: ["detail"],
-  consumes: ["settlement"],
+  consumes: ["settlement", "water"],
   // Wall reads road only: gates fall where a road crosses the wall spine (exact
   // segment intersection). A road strictly outside the corridor bbox cannot
   // cross the spine, so the margin is 0.

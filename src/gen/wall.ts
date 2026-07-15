@@ -38,7 +38,8 @@
  */
 import { hashSeed, mulberry32 } from "./rng";
 import { q, quad, spanQuad } from "./waterEmit";
-import { indexFabricConstraints } from "./fabricConstraints";
+import { indexFabricConstraints, nearestOnLine } from "./fabricConstraints";
+import { buildSettlementPayload, buildUpstreamWaterField } from "./upstream";
 import type { ProcgenRegion } from "./region";
 import type { GenerationConstraints } from "./types";
 
@@ -72,6 +73,41 @@ const GATE_HALF_M = 6; // gate opening half-length along the wall (× gatehouseS
 const CORRIDOR_MARGIN_M = 4;
 const MIN_TOWER_SPACING_M = 15; // clamp — a denser spacing would carpet the wall
 const MIN_TOWER_SEG_LEN_M = 12; // segments shorter than this carry no along-run towers
+// ── Settlement payload coupling (plan 037 item 4, city → wall) ────────────────
+// A gate falls where a GENERATED street crosses the spine, alongside the
+// sketched-road crossings. Higher street class wins a min-spacing merge; the
+// gatehouse axis is the crossing street's bearing. All keyed on the generated
+// geometry (`upstream.settlement`); with NO settlement the wall is byte-identical
+// (sketched-road gates only). Moat + masonry gap over water (the generated
+// channel + city canals) — the river-is-the-moat case.
+const CANAL_HALF_M = 15; // a city canal line reads as water within this half-width
+/** Street-class precedence for the gate merge (higher wins); a sketched road is
+ * the floor. */
+function gateRank(roadClass: string | null): number {
+  switch (roadClass) {
+    case "arterial":
+      return 5;
+    case "ring":
+      return 4;
+    case "boulevard":
+      return 3;
+    case "street":
+      return 2;
+    case "alley":
+      return 1;
+    default:
+      return 0; // sketched road
+  }
+}
+
+/** A candidate gate: crossing point, the crossing street's bearing (null for a
+ * sketched road — keeps its marker byte-identical to today), class rank + name. */
+interface WallGate {
+  p: Pt;
+  bearing: number | null;
+  rank: number;
+  roadClass: string | null;
+}
 
 /** Along-segment / gatehouse tower half-extent for `style` (0 = palisade). */
 function towerHalf(params: WallParams): number {
@@ -172,26 +208,54 @@ export function generateWall(
   const out: GeoJSON.Feature[] = [];
   const gateHalf = GATE_HALF_M * Math.max(0.2, params.gatehouseScale);
 
-  // ── Gates: where a sketched ROAD crosses the spine (deterministic order:
-  //    collect every crossing, sort by position, dedupe within a gate width) ──
+  // Settlement payload + water (plan 037 item 4). Both null with no upstream ⇒
+  // the wall is byte-identical to today (sketched-road gates, left-normal moat,
+  // no water gaps).
+  const settlement = buildSettlementPayload(constraints.upstream);
+  const waterField = buildUpstreamWaterField(constraints.upstream);
+  const canalLines = settlement?.canalLines ?? [];
+  const inWater = (x: number, y: number): boolean => {
+    if (waterField && waterField(x, y) >= 0) return true;
+    for (const c of canalLines) if (c.length >= 2 && nearestOnLine(c, x, y).dist < CANAL_HALF_M) return true;
+    return false;
+  };
+
+  // ── Gates: where a sketched ROAD or a GENERATED street crosses the spine.
+  //    Collect every crossing, then greedily merge within a gate width keeping
+  //    the HIGHER street class (arterial > ring > … > sketched road). Processing
+  //    highest-rank-first makes the merge deterministic and, when there is no
+  //    settlement (all rank 0), reduces to today's sort-by-position dedupe. ──
   const idx = indexFabricConstraints(constraints.fabricFeatures);
-  const rawGates: Pt[] = [];
+  const raw: WallGate[] = [];
   for (const road of idx.roadLines) {
     for (let i = 0; i < road.length - 1; i++) {
       for (let k = 0; k < pts.length - 1; k++) {
         const hit = segCross(road[i], road[i + 1], pts[k], pts[k + 1]);
-        if (hit) rawGates.push([q(hit[0]), q(hit[1])]);
+        if (hit) raw.push({ p: [q(hit[0]), q(hit[1])], bearing: null, rank: 0, roadClass: null });
       }
     }
   }
-  rawGates.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const gates: Pt[] = [];
-  for (const g of rawGates) {
-    if (gates.some(([gx, gy]) => Math.hypot(gx - g[0], gy - g[1]) < gateHalf)) continue;
+  for (const s of settlement?.streets ?? []) {
+    const line = s.line;
+    for (let i = 0; i < line.length - 1; i++) {
+      for (let k = 0; k < pts.length - 1; k++) {
+        const hit = segCross(line[i], line[i + 1], pts[k], pts[k + 1]);
+        if (!hit) continue;
+        const bearing = Math.atan2(line[i + 1][1] - line[i][1], line[i + 1][0] - line[i][0]);
+        raw.push({ p: [q(hit[0]), q(hit[1])], bearing, rank: gateRank(s.roadClass), roadClass: s.roadClass });
+      }
+    }
+  }
+  // Highest rank first, then position — a total order (D2). Greedy merge keeps
+  // the first (highest-class) hit in each min-spacing cluster.
+  raw.sort((a, b) => b.rank - a.rank || a.p[0] - b.p[0] || a.p[1] - b.p[1]);
+  const gates: WallGate[] = [];
+  for (const g of raw) {
+    if (gates.some((h) => Math.hypot(h.p[0] - g.p[0], h.p[1] - g.p[1]) < gateHalf)) continue;
     gates.push(g);
   }
   const nearGate = (x: number, y: number): boolean =>
-    gates.some(([gx, gy]) => Math.hypot(gx - x, gy - y) < gateHalf);
+    gates.some((g) => Math.hypot(g.p[0] - x, g.p[1] - y) < gateHalf);
 
   // ── Masonry band: per-segment resampled quads, gapped at gate openings ─────
   for (let k = 0; k < pts.length - 1; k++) {
@@ -209,6 +273,10 @@ export function generateWall(
       const mx = (p0[0] + p1[0]) / 2;
       const my = (p0[1] + p1[1]) / 2;
       if (nearGate(mx, my)) continue; // gate opening — a break in the wall
+      // Masonry gap over water (river-is-the-moat): drop the segment if its
+      // midpoint OR either endpoint falls in the channel/canal, so the quad
+      // (±half wide) never straddles the bank.
+      if (inWater(mx, my) || inWater(p0[0], p0[1]) || inWater(p1[0], p1[1])) continue;
       out.push(spanQuad(seed, "wall-quad", p0, p1, WALL_HALF_WIDTH_M, { wallStyle: params.style }));
     }
   }
@@ -220,23 +288,40 @@ export function generateWall(
   if (params.moat) {
     const centerOff = WALL_HALF_WIDTH_M + MOAT_GAP_M + MOAT_WIDTH_M / 2;
     const moatHalf = MOAT_WIDTH_M / 2;
+    const interior = settlement?.interior ?? null;
     for (let k = 0; k < pts.length - 1; k++) {
       const a = pts[k];
       const b = pts[k + 1];
       const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
       if (segLen <= 0) continue;
       const [ux, uy] = unit(b[0] - a[0], b[1] - a[1]);
-      const nx = -uy;
-      const ny = ux;
+      // Moat side = AWAY from the town interior (plan 037): the left normal
+      // (−uy,ux) is the default (v1 arbitrary choice); when the settlement
+      // payload gives an interior reference, flip to whichever side points away
+      // from it. No settlement ⇒ left normal, byte-identical to today.
+      let nx = -uy;
+      let ny = ux;
+      if (interior) {
+        const mmx = (a[0] + b[0]) / 2;
+        const mmy = (a[1] + b[1]) / 2;
+        if (nx * (interior[0] - mmx) + ny * (interior[1] - mmy) > 0) {
+          nx = -nx;
+          ny = -ny;
+        }
+      }
       const steps = Math.max(1, Math.ceil(segLen / RESAMPLE_STEP_M));
       for (let j = 0; j < steps; j++) {
         const s0 = (j * segLen) / steps;
         const s1 = ((j + 1) * segLen) / steps;
         const c0: Pt = [a[0] + ux * s0 + nx * centerOff, a[1] + uy * s0 + ny * centerOff];
         const c1: Pt = [a[0] + ux * s1 + nx * centerOff, a[1] + uy * s1 + ny * centerOff];
-        const mx = (a[0] + ux * ((s0 + s1) / 2));
-        const my = (a[1] + uy * ((s0 + s1) / 2));
+        const mx = a[0] + ux * ((s0 + s1) / 2);
+        const my = a[1] + uy * ((s0 + s1) / 2);
         if (nearGate(mx, my)) continue; // causeway break
+        // Moat/masonry gap over water: where the moat centerline (or the spine
+        // it offsets from) falls in the generated channel/canal, omit it (the
+        // river IS the moat).
+        if (inWater(c0[0], c0[1]) || inWater(c1[0], c1[1]) || inWater(mx, my)) continue;
         out.push(spanQuad(seed, "wall-moat", c0, c1, moatHalf, { wallStyle: params.style }));
       }
     }
@@ -264,6 +349,7 @@ export function generateWall(
         const cx = a[0] + ux * s;
         const cy = a[1] + uy * s;
         if (nearGate(cx, cy)) continue; // no tower blocking a gate
+        if (inWater(cx, cy)) continue; // no tower standing in the channel
         out.push(towerFeature(seed, "wall-tower", cx, cy, ux, uy, half, diamond, params.style));
       }
     }
@@ -273,21 +359,44 @@ export function generateWall(
     // bastioned trace comes from these + the GM's angular sketch.
     for (let k = 1; k < pts.length - 1; k++) {
       const v = pts[k];
+      if (inWater(v[0], v[1])) continue; // no corner tower in the channel
       const [ux, uy] = unit(pts[k + 1][0] - pts[k - 1][0], pts[k + 1][1] - pts[k - 1][1]);
       const cornerHalf = diamond ? BASTION_HALF_M : CORNER_TOWER_HALF_M;
       out.push(towerFeature(seed, "wall-tower", v[0], v[1], ux, uy, cornerHalf, diamond, params.style));
     }
   }
 
-  // ── Gate markers: a small stone dot where an arterial pierces the wall
-  //    (never a Location pin) — mirrors the city's `gate` points. ───────────
-  for (const [gx, gy] of gates) {
+  // ── Gate markers: a small stone dot where a road/arterial pierces the wall
+  //    (never a Location pin) — mirrors the city's `gate` points. A gate from a
+  //    GENERATED street additionally carries its crossing `bearing` + `roadClass`
+  //    (the gatehouse axis) and grows a gatehouse tower aligned to that bearing;
+  //    a sketched-road gate keeps its today-identical marker (no extra props, no
+  //    gatehouse) — the no-settlement byte-identity. ────────────────────────────
+  const ghHalf = gatehouseHalf(params);
+  const diamond = params.style === "bastioned";
+  for (const g of gates) {
+    const [gx, gy] = g.p;
+    const props: Record<string, unknown> = { generatorId: "wall-gate", type: "wall-gate", wallStyle: params.style };
+    if (g.bearing !== null) {
+      props.bearing = q(g.bearing);
+      if (g.roadClass) props.roadClass = g.roadClass;
+    }
     out.push({
       type: "Feature",
       id: hashSeed(seed, "wall-gate", q(gx), q(gy)),
       geometry: { type: "Point", coordinates: [q(gx), q(gy)] },
-      properties: { generatorId: "wall-gate", type: "wall-gate", wallStyle: params.style },
+      properties: props,
     });
+    // Gatehouse (generated gates only): a tower straddling the spine at the gate,
+    // its axis the crossing street's bearing (the gate faces the road).
+    // palisades carry no towers, so no gatehouse either.
+    if (g.bearing !== null && params.style !== "palisade") {
+      const gux = Math.cos(g.bearing);
+      const guy = Math.sin(g.bearing);
+      const f = towerFeature(seed, "wall-tower", gx, gy, gux, guy, ghHalf, diamond, params.style);
+      (f.properties as Record<string, unknown>).gatehouse = true;
+      out.push(f);
+    }
   }
 
   return out;
