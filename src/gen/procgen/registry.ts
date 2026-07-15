@@ -735,6 +735,15 @@ export const FARMLAND_TILE_GENERATOR_IDS: readonly string[] = contractGids(FARML
 const farmlandAlgorithm: ProcgenAlgorithm = {
   id: "farmland",
   label: "Farmland",
+  // Version 6 (2026-07-15 riverine long-lot rescale): the rang holdings' inland
+  // DEPTH is now a fixed multiple of their own frontage (`rangDepthM` ≈ 4:1 lot,
+  // capped), not a multiple of the coarse field-cell. The v4/v5 `1.6·cell` reach
+  // ran the lots 4–6× deeper than the ambient fields, so against a river crossing
+  // the region the rang band covered the WHOLE patch and each long straight lot
+  // amplified a meandering bank's swinging normal into sweeping crossing ribbons
+  // (Jonah, Vailmarch Marnside). Bytes change ONLY for a region a generated river
+  // borders (the rang path is `channel !== null`); a farmland with no upstream
+  // channel is byte-identical to v5 (golden unchanged — the bump gates adoption).
   // Version 5 (make-it-look-real shortlist, items 8 + 9): (item 8) the peri-urban
   // GATE LANES no longer ray straight across the belt to a distant junction — each
   // is a short diagonal stub (clipped at the first field-cell boundary, with
@@ -758,7 +767,7 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   // Version 2 (plan 035, peri-urban move): farmland reads the generated city
   // street network (`upstream.settlement`) — gate lanes radiate from the
   // arterial exits, a field-size gradient runs toward the wall line.
-  currentVersion: 5,
+  currentVersion: 6,
   appliesTo: ["farmland"],
   // Stage 4 (PERI-URBAN, plan 035): farmland is the city's apron, generated
   // AFTER it. Consumes `settlement` (WIRED: lanes orient to the generated

@@ -201,9 +201,32 @@ const PADDY_INTERVAL_LADDER = [1, 2, 5, 10, 20, 25] as const;
 // the uncoupled generator. paddy-terraces is excluded (its riverine culture is
 // terraced paddies, not rangs — the wash/contour banks own that band).
 const RANG_ARPENT_MIN_M = 12; // narrowest long-lot width (river frontage)
-const RANG_LEN_CAP_M = 180; // deepest a long-lot reaches inland (≈1–2 field depths)
+// Lot DEPTH is a fixed multiple of the lot's own FRONTAGE (`arpentW`), never of
+// the coarse lattice `cell`. The old `1.6·cell` reach read `cell` as "one field
+// depth", but the emitted field for most presets is a FRACTION of a cell (an
+// open-field strip is `cell/STRIP_COUNT` deep, a patchwork leaf ~0.4·cell), so a
+// cell-scaled reach ran the lots 4–6× deeper than the fields they sit among —
+// against a river that crosses the region the band then covered the WHOLE patch,
+// and each long straight lot amplified a meandering bank's swinging normal into a
+// sweeping fan of crossing ribbons (Jonah, Vailmarch Marnside, 2026-07-15).
+// Anchoring depth to frontage keeps a bounded, self-consistent aspect (a genuine
+// bank-local long-lot band of ~1–2 field depths) whatever the preset/fieldSize.
+const RANG_DEPTH_ARPENTS = 4; // lot reaches this many frontages inland (≈4:1 lot)
+const RANG_LEN_CAP_M = 110; // hard ceiling on inland reach (big-field regions)
 const RANG_WM_FRAC = 0.42; // near fraction of each lot tagged `waterMeadow`
 const RANG_BASE_OFFSET_M = 2; // start the lot just inland of the bank (field < 0)
+/** Long-lot FRONTAGE (river-facing width) for a field-cell size. The narrowest
+ * arpent floors at `RANG_ARPENT_MIN_M`; otherwise it scales gently with the cell
+ * so bigger-field regions get proportionally wider holdings. */
+function arpentWidthM(cell: number): number {
+  return Math.max(RANG_ARPENT_MIN_M, cell * 0.18);
+}
+/** Inland DEPTH of a long-lot: a fixed multiple of its frontage, capped. Depends
+ * only on the cell size, so `inRangBand` (suppression) and the lot emission share
+ * one reach. */
+function rangDepthM(cell: number): number {
+  return Math.min(RANG_DEPTH_ARPENTS * arpentWidthM(cell), RANG_LEN_CAP_M);
+}
 // ── Slope-gating (plan 038 item 4, needs 036) ────────────────────────────────
 // A field whose ground is too steep to plough is left as untilled PASTURE (a
 // `crop: "pasture"` + `pasture: true` tag themes can paint rough grazing). The
@@ -374,11 +397,14 @@ export function generateFarmland(
   // field/lane/bank geometry crosses the channel. A stage-0 OUTPUT edge (added
   // to `consumes`), never a raw sketch read.
   const channel = buildUpstreamWaterField(constraints.upstream);
-  // Riverine long-lot band (plan 038 item 2): a lot reaches ~1.6 cells inland,
-  // capped. Non-paddy field types near the bank become rang lots — the normal
-  // lattice fields there are suppressed (below) so the two never double-paint.
+  // Riverine long-lot band (plan 038 item 2): a lot reaches a fixed multiple of
+  // its own frontage inland (`rangDepthM` — bank-local, ~1–2 field depths), NOT a
+  // multiple of the coarse cell (which over-ran the band across the whole region;
+  // see RANG_DEPTH_ARPENTS). Non-paddy field types near the bank become rang lots
+  // — the normal lattice fields there are suppressed (below) so the two never
+  // double-paint.
   const rangEnabled = channel !== null && fieldType !== "paddy-terraces";
-  const rangLen = Math.min(1.6 * cell, RANG_LEN_CAP_M);
+  const rangLen = rangDepthM(cell);
   /** A point in the riparian band: outside the channel but within `rangLen` of
    * the bank. Always false with no channel (byte-identity). */
   const inRangBand = (x: number, y: number): boolean => {
@@ -578,7 +604,7 @@ export function generateFarmland(
   //    upstream channel ⇒ byte-identical to the uncoupled generator otherwise. ──
   if (rangEnabled) {
     const banks = buildUpstreamConstraints(constraints.upstream).waterRings;
-    const arpentW = Math.max(RANG_ARPENT_MIN_M, cell * 0.18);
+    const arpentW = arpentWidthM(cell);
     const halfW = arpentW / 2;
     const wmLen = rangLen * RANG_WM_FRAC;
     // Inland unit direction at (x,y): the channel SDF (positive inside) DECREASES

@@ -11,7 +11,7 @@
 //   (d) every lot stays inside the region and out of the channel,
 //   (e) paddy-terraces is excluded (no bankLot fields).
 import { describe, expect, it } from "vitest";
-import { generateFarmland, type FarmlandParams } from "./farmland";
+import { generateFarmland, fieldCellM, type FarmlandParams } from "./farmland";
 import { generateRiver, riverMaxOffset } from "./river";
 import { makeRegion, makeSpine, makeCorridorRegion, distanceToBoundary } from "./region";
 import { buildUpstreamWaterField } from "./upstream";
@@ -143,6 +143,24 @@ describe("riverine farmland long-lots (plan 038 item 2)", () => {
         expect(CHAN(x, y)).toBeLessThan(0.01); // outside the channel
       }
     }
+  });
+
+  it("(f) the rang band stays bank-local — no lot reaches beyond one field-cell of the water (no whole-region sweep)", () => {
+    // Regression net for Jonah's Vailmarch Marnside report (2026-07-15): the lot
+    // DEPTH is now scaled to its own frontage, not the coarse `cell`. A holding
+    // reaches ~1–2 emitted-field depths (a fraction of the cell) inland; the old
+    // `1.6·cell` reach ran the lots ≈1.6 cells deep, so against a river crossing
+    // the region the band filled the WHOLE patch with sweeping ribbons. Assert the
+    // deepest lot vertex sits within one coarse field-cell of the bank.
+    const cell = fieldCellM(PARAMS.fieldSize);
+    let deepest = 0;
+    for (const f of bankLots(coupled)) {
+      for (const [x, y] of (f.geometry as GeoJSON.Polygon).coordinates[0] as Pt[]) {
+        deepest = Math.max(deepest, -CHAN(x, y)); // metres inland of the bank (SDF < 0 outside)
+      }
+    }
+    expect(deepest).toBeGreaterThan(0); // lots do reach inland (it is a long-lot band)
+    expect(deepest).toBeLessThan(cell); // …but bank-local, never the whole-region ribbon
   });
 
   it("(e) paddy-terraces is excluded from rang lots (its own riverine culture)", () => {
