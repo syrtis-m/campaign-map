@@ -28,6 +28,50 @@ the top items are the ones that change what you'd do next.
    alone". Temple/gate variants stay deferred.
 
 ## NEEDS JONAH'S EYES
+- **VAILMARCH 3D INSPECTION — the make-it-look-real shortlist** (screenshots in
+  `review/vailmarch-{overview,capital,spine-3d,dem-raster-debug}.png`; ranked by visual payoff):
+  1. **Base terrain on by default for terrain-native campaigns** — the space between regions is
+     dead parchment; even low-amp base fBm + hillshade would knit the world together. Gated on
+     DEM per-tile cost (see engineering notes) and the Apply UI (landed, needs your wording pass).
+  2. **Foothill aprons on mountain/relief stamps** — in 3D the massif rises as a vertical-walled
+     mesa off flat ground (compact-support mask edge × exaggeration 6). Add a skirt falloff
+     (apron ≈ 2–3× the current mask band) so peaks rise out of foothills. Consider dialling
+     `TERRAIN_EXAGGERATION` 6 → 3–4.
+  3. **Hillshade under settlements** — the valley-relief band smears a dark stain diagonally
+     across the capital's street fabric. Options: mask hillshade under city fill, revisit Q3
+     (city grading default OFF → ON), or narrower valley stamps near towns.
+  4. **Walls need mass** — today a thin line + square tower studs (reads as a dashed rectangle).
+     Wall band with casing/glacis tint, legible gatehouses, VISIBLE moat ribbon, a water-gate
+     glyph where the river pierces the wall (the data is all there since 037/038 — it's paint).
+  5. **Organic boundaries** — everything reads as postage stamps because the demo's rings are
+     axis-aligned rectangles AND the city fills its claim to the boundary. Re-emit Vailmarch with
+     irregular rings; longer-term: let the town's grown edge, not the sketch ring, carry the wall.
+  6. **Seas need water paint** — the `landform sea` shapes the DEM only; the coast reads as blank
+     parchment. Give sea-mode landforms a water fill in themes (+ estuary/delta at the mouth).
+  7. **Sketched roads outside cities are dead-straight faint strokes** — smooth (Catmull-Rom at
+     paint), stronger track styling; inside-city promotion already works.
+  8. **Farmland gate-lane fan** — lanes radiate as literal spokes; clip at the first field
+     boundary / jitter angles so they read as lanes, not rays.
+  9. **Peri-urban transition band** — a faubourg/orchard strip where the belt meets the wall
+     would sell the gradient the 035 read already computes.
+  10. **Label pass** — region names at overview (forests/farms), market label sits on water.
+- **3D/DEM engineering notes from the live session (2026-07-15 morning):**
+  - The far-field stall hit TWICE: the carve got the byte-exact reject in `f215840`, but relief
+    + landform paid the same O(dist²) spiral — one DEM tile took >2 min on the main thread and
+    3D rendered flat (tiles never resolved). Fixed byte-exact in `7fa7ea4` (+ standing
+    zero-segment-tests budget test). DEM tiles now ~0.3–2 s each — still MAIN-THREAD; the real
+    fix is the 036-C worker-side DEM leaf. Repeated heavy tile loads degraded the Electron
+    renderer to the point of needing an app restart — same root cause, same fix.
+  - `queryTerrainElevation` returning 0 is a red herring while terrain tiles stream — the
+    raster-overlay debug trick (add the `campaigndem://` tiles as a plain raster layer) is the
+    reliable way to see what the DEM actually serves; kept as
+    `review/vailmarch-dem-raster-debug.png`.
+  - The 09:21 `urban-park` zod errors in your session were the STALE pre-arc bundle (worker
+    enum predated 035); the current bundle validates fine — no source bug.
+  - Minor: each `open-map` command opens a NEW leaf (ghost "Campaign map" tabs accumulate);
+    dedupe-or-focus would be nicer.
+  - Cost-cap UX worked as designed on first Vailmarch open: 14 regions generated, 17 deferred
+    with badges; "Apply pending cascade" generated the rest (runs 14→31, outdated→0, 0 errors).
 - **Vailmarch (the demo ask) — two composition findings:**
   1. **Relief/landform stamps are generator-INERT**: forest/farmland/river read terrain via
      `macroTerrainField` = mountains + base only (the variable-support-margin gap, by design
@@ -108,6 +152,18 @@ the top items are the ones that change what you'd do next.
   faubourg reading). Flag if plan-037 gate work wants a cleaner separation fixture instead.
 
 ## Landed
+- **GUI-control audit + fixes** (`dfa635b`, `c7eb41f`): the audit found the BIG gap — NO
+  per-param controls existed anywhere (creation modal + selection panel rendered only a preset
+  dropdown; every zod param of all 9 algorithms was GUI-unreachable). Now schema-driven
+  (`paramControls.ts` introspects the zod schemas; both UIs render from it) with a standing
+  CONTRACT TEST (schema keys ⊆ rendered controls — a param without GUI is a failing test
+  forever). Plus: base-terrain (campAmp/seaDatum/grade) section in the campaign modal behind
+  explicit Apply + cost notice w/ headless twin; "Toggle terrain relief" command; `market` pin
+  type in QuickAdd (the 039 loop was frontmatter-only before). NOT-A-GAP rulings documented
+  (redo, scale editing, post-creation pin type = note frontmatter). 1157→1193 tests.
+- **Terrain far-field reject round 2** (`7fa7ea4`): relief/landform stamps stalled DEM fills
+  exactly like the carve had — byte-exact bbox reject + `SegmentHash.totalSegmentTests` budget
+  test. Found live when Vailmarch 3D rendered flat. 1193→1194 tests.
 - **Vailmarch showcase campaign** (`3ee2d7c`): terrain-native demo, ~8×6 km — north relief
   spine w/ two massifs, east plateau, south basin, west sea, one four-river system (gorge
   carve, two Strahler confluences, mountain-torrent opt-in), walled capital straddling the
