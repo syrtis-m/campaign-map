@@ -97,11 +97,18 @@ export const WORLD_STYLE_CONTRACT: readonly BucketStyle[] = [
 
 /** City. Bucket order matches `DOMAIN_TILE_GENERATOR_IDS`. `city-landmark` paints
  * three layers (landmark fill + canal line + gate circle, discriminated by the
- * feature `type`). `city-block` is unpainted. `city-street` paints last of all
- * generated layers. */
+ * feature `type`). `city-block` paints the settlement-ground MASK (a `ground`
+ * fill at the bottom of the generated group — z −1 sorts first, so it lays down
+ * a clean opaque ground UNDER every other city detail and OVER the hillshade/
+ * contour relief below; shortlist 3, Jonah 2026-07-15): the terrain hillshade
+ * used to smear a dark diagonal stain across the street fabric, because the
+ * built layers above it are thin lines + low-opacity washes that the relief
+ * showed through. Farms/forest have no `city-block`, so they keep their
+ * hillshade — only settlements mask. `city-street` paints last of all generated
+ * layers. */
 export const CITY_STYLE_CONTRACT: readonly BucketStyle[] = [
   { gid: "city-street", mark: "line", role: "route", z: 51, widthFromProp: "width" },
-  { gid: "city-block", mark: "fill", role: "built", z: -1, unpainted: true },
+  { gid: "city-block", mark: "fill", role: "ground", z: -1 },
   { gid: "city-parcel", mark: "line", role: "built", z: 13 },
   { gid: "city-footprint", mark: "fill", role: "built", z: 12 },
   { gid: "city-landmark", mark: "fill", role: "built", z: 14 },

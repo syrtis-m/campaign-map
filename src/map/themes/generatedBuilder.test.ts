@@ -70,9 +70,32 @@ describe("generatedBuilder — the one-line-add property", () => {
     }
   });
 
-  it("an unpainted bucket contributes no layer (city-block stays invisible)", () => {
-    const ids = buildGeneratedLayers(HANDCRAFTED_THEMES.parchment).map((l) => l.id);
-    expect(ids).not.toContain("generated-city-block");
-    expect(ids).not.toContain("generated-block");
+  it("an `unpainted` bucket contributes no layer (a test-only clone)", () => {
+    // The real contract no longer has an unpainted bucket (city-block became the
+    // settlement-ground mask), so exercise the mechanism with a synthetic one.
+    const contracts = ALL_STYLE_CONTRACTS.map((c) =>
+      c === MOUNTAIN_STYLE_CONTRACT
+        ? [...c, { gid: "test-unpainted", mark: "fill", role: "accent", z: 993, unpainted: true } as BucketStyle]
+        : c
+    );
+    const ids = buildGeneratedLayers(HANDCRAFTED_THEMES.parchment, contracts).map((l) => l.id);
+    expect(ids).not.toContain("generated-test-unpainted");
+  });
+
+  it("city-block paints the opaque settlement-ground MASK (hillshade-under-city fix)", () => {
+    for (const theme of ALL_THEMES) {
+      const layers = buildGeneratedLayers(theme);
+      const roles = roleColorsForTheme(theme);
+      const mask = layers.find((l) => l.id === "generated-block");
+      expect(mask, `${theme.id}: city-block mask missing`).toBeDefined();
+      expect(mask!.type).toBe("fill");
+      // Painted the `ground` role at full opacity so it masks the relief below.
+      expect(paintKey(mask!, "fill-color")).toBe(roles.ground);
+      expect(paintKey(mask!, "fill-opacity")).toBe(1);
+      // First in the generated stack (contract z −1) so it lays UNDER every
+      // other city detail.
+      const cityDetailIdx = layers.findIndex((l) => l.id === "generated-footprint");
+      expect(layers.findIndex((l) => l.id === "generated-block")).toBeLessThan(cityDetailIdx);
+    }
   });
 });

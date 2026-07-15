@@ -323,6 +323,20 @@ const RECIPES: Record<string, Recipe> = {
   ],
 
   // City ──────────────────────────────────────────────────────────────────────
+  // Settlement-ground MASK: the block faces (which tile the built area between
+  // streets) painted as an opaque `ground` fill at the bottom of the generated
+  // group (contract z −1). This knocks out the hillshade/contour relief that
+  // otherwise smears across the street fabric, while the parcels/footprints/
+  // district washes/streets paint on top and keep the warm settlement tone.
+  // `fill-antialias:false` avoids hairline seams between adjacent block fills.
+  "city-block": (roles) => [
+    L({
+      id: "generated-block",
+      type: "fill",
+      filter: gidFilter("city-block"),
+      paint: { "fill-color": roles.ground, "fill-opacity": 1, "fill-antialias": false },
+    }),
+  ],
   "city-district": (roles) => [
     L({
       id: "generated-district",
