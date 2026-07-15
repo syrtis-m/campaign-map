@@ -2943,3 +2943,157 @@ describe("MapController — campaignElevationSnapshot composed terrain (036-C/03
     expect(s1.field(900, -900).v).toBe(s2.field(900, -900).v);
   });
 });
+
+describe("MapController — external Fabric.geojson reconcile (vault-as-source-of-truth)", () => {
+  /** A second district ring, inside the fixture bounds and clear of `RING` — a
+   * plausible external "Cradle emit" of a new city. */
+  const SECOND_RING: [number, number][] = [
+    [-40, -30],
+    [-24, -30],
+    [-24, -14],
+    [-40, -14],
+    [-40, -30],
+  ];
+
+  it("an external ADD of a region reloads + generates it + repaints (Cradle emit)", async () => {
+    const host = cityHost();
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "Old Town");
+    const runsBefore = host.controller.generatorRunCount;
+    const paintsBefore = host.repaintFabricCount;
+
+    // An out-of-process writer appends a second district carrying a (filled) city
+    // block — clone the existing region's persisted block so params are valid.
+    const disk = await host.fabric();
+    const clonedBlock = JSON.parse(JSON.stringify(disk.features[0].properties.procgen));
+    clonedBlock.seed = 918273; // its own identity
+    const added: FabricFeature = {
+      type: "Feature",
+      id: "ext-cradle-1",
+      geometry: { type: "Polygon", coordinates: [SECOND_RING] },
+      properties: { kind: "district", name: "Cradle Town", procgen: clonedBlock },
+    };
+    host.externalWriteFabric({ type: "FeatureCollection", features: [...disk.features, added] });
+
+    await host.controller.reloadFabricFromDisk();
+
+    // Adopted into memory, generated, and painted.
+    expect(host.controller.fabricFeature("ext-cradle-1")).toBeDefined();
+    expect(host.controller.regionFeatureIds("ext-cradle-1").length).toBeGreaterThan(0);
+    expect(host.controller.generatorRunCount).toBeGreaterThan(runsBefore);
+    expect(host.repaintFabricCount).toBeGreaterThan(paintsBefore);
+    // Persisted network cache exists for the new region (regen, not just paint).
+    expect((await host.cache()).has(regionNetworkKey("ext-cradle-1"))).toBe(true);
+  });
+
+  it("an external geometry edit regenerates the region + deselects it", async () => {
+    const host = cityHost();
+    const a = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "Old Town");
+    const bytesBefore = JSON.stringify((await host.cache()).get(regionNetworkKey(a.featureId))!.features);
+    const runsBefore = host.controller.generatorRunCount;
+
+    // Hand-edit: shrink the district ring in place (a fingerprint-changing edit).
+    const disk = await host.fabric();
+    const edited = JSON.parse(JSON.stringify(disk));
+    edited.features[0].geometry.coordinates = [
+      [
+        [12, -24],
+        [24, -24],
+        [24, -12],
+        [12, -12],
+        [12, -24],
+      ],
+    ];
+    host.externalWriteFabric(edited);
+
+    await host.controller.reloadFabricFromDisk();
+
+    expect(host.controller.generatorRunCount).toBeGreaterThan(runsBefore); // recomputed
+    const bytesAfter = JSON.stringify((await host.cache()).get(regionNetworkKey(a.featureId))!.features);
+    expect(bytesAfter).not.toBe(bytesBefore); // new geometry ⇒ new network bytes
+    expect(host.selectionInvalidations).toContain(a.featureId); // changed ⇒ deselect
+  });
+
+  it("a self-write does NOT reload (counter static)", async () => {
+    const host = cityHost();
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "Old Town");
+    // After a controller persist, disk == in-memory: the modify event the persist
+    // fired must no-op through the content-compare guard.
+    const runsAfter = host.controller.generatorRunCount;
+    const paintsAfter = host.repaintFabricCount;
+
+    await host.controller.reloadFabricFromDisk();
+    // And again after re-writing the controller's own bytes back verbatim.
+    host.externalWriteFabric(await host.fabric());
+    await host.controller.reloadFabricFromDisk();
+
+    expect(host.controller.generatorRunCount).toBe(runsAfter); // zero extra generator runs
+    expect(host.repaintFabricCount).toBe(paintsAfter); // no repaint — guard returned early
+  });
+
+  it("a malformed external write badges + retains the previous fabric", async () => {
+    const host = cityHost();
+    const a = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "Old Town");
+    const idsBefore = host.controller.fabric.features.map((f) => f.id);
+    const tilesBefore = host.controller.loadedTileCount;
+    const noticesBefore = host.notices.length;
+
+    host.externalWriteFabricRaw("{ this is not valid json —"); // truncated mid-sync
+
+    await host.controller.reloadFabricFromDisk();
+
+    // Previous fabric + generated city retained (never blank on a bad file).
+    expect(host.controller.fabric.features.map((f) => f.id)).toEqual(idsBefore);
+    expect(host.controller.regionFeatureIds(a.featureId).length).toBeGreaterThan(0);
+    expect(host.controller.loadedTileCount).toBe(tilesBefore);
+    // Badge surfaced.
+    expect(host.notices.slice(noticesBefore).some((n) => /invalid feature/i.test(n.message))).toBe(true);
+  });
+
+  it("an external DELETE of a region drops it from paint + cache + deselects", async () => {
+    const host = cityHost();
+    const a = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "Old Town");
+    expect(host.controller.loadedTileCount).toBeGreaterThan(0);
+    expect((await host.cache()).has(regionNetworkKey(a.featureId))).toBe(true);
+
+    host.externalWriteFabric({ type: "FeatureCollection", features: [] }); // removed externally
+
+    await host.controller.reloadFabricFromDisk();
+
+    expect(host.controller.fabricFeature(a.featureId)).toBeUndefined();
+    expect(host.controller.regionFeatureIds(a.featureId)).toEqual([]);
+    expect(host.controller.loadedTileCount).toBe(0);
+    expect((await host.cache()).has(regionNetworkKey(a.featureId))).toBe(false);
+    expect(host.selectionInvalidations).toContain(a.featureId);
+  });
+
+  it("N rapid modifies all arm, and one flush = one pass (debounce collapses the burst)", async () => {
+    const host = cityHost();
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "Old Town");
+
+    // A burst of external modify events: each ARMS the reload (the live host timer
+    // coalesces them into a single flush).
+    for (let i = 0; i < 5; i++) host.controller.noteExternalFabricChange();
+    expect(host.fabricReloadArmedCount).toBe(5);
+
+    // The single coalesced flush sees the FINAL disk state and does exactly one
+    // pass of work; a redundant second flush is a pure guard no-op.
+    const disk = await host.fabric();
+    const clonedBlock = JSON.parse(JSON.stringify(disk.features[0].properties.procgen));
+    clonedBlock.seed = 5150;
+    const added: FabricFeature = {
+      type: "Feature",
+      id: "ext-burst-1",
+      geometry: { type: "Polygon", coordinates: [SECOND_RING] },
+      properties: { kind: "district", procgen: clonedBlock },
+    };
+    host.externalWriteFabric({ type: "FeatureCollection", features: [...disk.features, added] });
+
+    const runsBefore = host.controller.generatorRunCount;
+    await host.controller.reloadFabricFromDisk();
+    const runsOnePass = host.controller.generatorRunCount - runsBefore;
+    expect(runsOnePass).toBeGreaterThan(0);
+
+    await host.controller.reloadFabricFromDisk(); // nothing changed since ⇒ no-op
+    expect(host.controller.generatorRunCount - runsBefore).toBe(runsOnePass);
+  });
+});

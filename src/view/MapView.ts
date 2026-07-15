@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Modal, Notice, TFile, setIcon, FuzzySuggestModal, App } from "obsidian";
+import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Modal, Notice, TFile, TAbstractFile, setIcon, FuzzySuggestModal, App } from "obsidian";
 import maplibregl, { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature, StyleSpecification } from "maplibre-gl";
 import type { CampaignConfig, ParsedCampaign } from "../model/campaignConfig";
 
@@ -23,7 +23,7 @@ import {
   type FabricGeometry,
   type FabricKind,
 } from "../model/fabric";
-import { loadFabric, saveFabric } from "../vault/fabricStore";
+import { loadFabric, saveFabric, fabricPath } from "../vault/fabricStore";
 import { loadGeneratedManifest, saveGeneratedManifest } from "../vault/generatedManifestStore";
 import { readCachedTiles, removeCachedTiles } from "../model/tileCache";
 import { FABRIC_LAYER_IDS } from "../map/themes/fabricLayers";
@@ -195,6 +195,12 @@ export class MapView extends ItemView {
    * TIMER lives here (MapView owns `window`); the queued work + flush logic
    * live on the controller (armed via the render sink's `armRegenFlush`). */
   private sketchAutoBuildTimer: number | null = null;
+  /** Debounce timer for the external-fabric reload (vault-as-source-of-truth):
+   * an out-of-process write to `Fabric.geojson` (sync / a script / a hand edit)
+   * fires a vault event → this coalesces a burst of sync writes into ONE
+   * `controller.reloadFabricFromDisk`. Cleared on onClose so it can never fire
+   * after teardown. */
+  private fabricReloadTimer: number | null = null;
   /** Debounce timer for the mid-drag region preview (plan 034-D). Cleared on a
    * commit (release) and on teardown so a trailing preview can never repaint
    * over committed bytes. */
@@ -288,6 +294,7 @@ export class MapView extends ItemView {
           }
         },
         armRegenFlush: () => this.armSketchRegen(),
+        armFabricReload: () => this.armFabricReload(),
       },
       viewport: {
         zoom: () => this.map?.getZoom() ?? 0,
@@ -840,6 +847,20 @@ export class MapView extends ItemView {
     this.map.on("mousedown", "canon-point", (e) => this.handleDragStart(e));
 
     this.registerEvent(this.app.workspace.on("css-change", () => this.rebuildTheme()));
+    // Vault-as-source-of-truth for sketch fabric (Cradle learning): an EXTERNAL
+    // write to the loaded campaign's `Fabric.geojson` (sync / a script / a hand
+    // edit) must reach the running map — location notes already reconcile via
+    // vault events; sketch fabric now does too. The controller's own persists
+    // fire these events as well, but its self-write guard (content compare)
+    // no-ops them, and the reload debounces bursts of sync writes into one pass.
+    const onFabricEvent = (file: TAbstractFile): void => {
+      if (this.campaign && file.path === fabricPath(this.campaign)) {
+        this.controller.noteExternalFabricChange();
+      }
+    };
+    this.registerEvent(this.app.vault.on("modify", onFabricEvent));
+    this.registerEvent(this.app.vault.on("create", onFabricEvent));
+    this.registerEvent(this.app.vault.on("delete", onFabricEvent));
     // No manual ResizeObserver: MapLibre's Map already observes its container
     // (trackResize, default on) with its own debounce — a second observer on the
     // same element caused the browser's ResizeObserver loop-detection warning.
@@ -971,6 +992,10 @@ export class MapView extends ItemView {
     if (this.sketchPreviewTimer !== null) {
       window.clearTimeout(this.sketchPreviewTimer);
       this.sketchPreviewTimer = null;
+    }
+    if (this.fabricReloadTimer !== null) {
+      window.clearTimeout(this.fabricReloadTimer);
+      this.fabricReloadTimer = null;
     }
     if (this.sketchKeyHandler) {
       window.removeEventListener("keydown", this.sketchKeyHandler, true);
@@ -2241,6 +2266,17 @@ export class MapView extends ItemView {
       this.sketchAutoBuildTimer = null;
       void this.controller.flushSketchRegen();
     }, 400);
+  }
+
+  /** Debounced external-fabric reload (vault-as-source-of-truth). Sync writes
+   * arrive in bursts, so a longer coalescing window than the sketch-regen timer
+   * lets a multi-file sync settle before one reconcile pass. Cleared on onClose. */
+  private armFabricReload(): void {
+    if (this.fabricReloadTimer !== null) window.clearTimeout(this.fabricReloadTimer);
+    this.fabricReloadTimer = window.setTimeout(() => {
+      this.fabricReloadTimer = null;
+      void this.controller.reloadFabricFromDisk();
+    }, 500);
   }
 
   private deleteSelectedFabric(): void {

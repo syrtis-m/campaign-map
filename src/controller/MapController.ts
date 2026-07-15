@@ -14,6 +14,7 @@
 import { z } from "zod";
 import type { ParsedCampaign } from "../model/campaignConfig";
 import {
+  FabricCollectionSchema,
   FabricFeatureSchema,
   ProcgenBlockSchema,
   canDeleteVertex,
@@ -245,6 +246,12 @@ export interface RenderSink {
   selectionInvalidated(featureId: string, opts?: { keepPanel?: boolean }): void;
   /** Arm the debounced constraint-regen flush (MapView owns the timer). */
   armRegenFlush(): void;
+  /** Arm the debounced external-fabric reload (MapView owns the timer). Fired
+   * when the loaded campaign's `Fabric.geojson` is modified/deleted OUTSIDE the
+   * controller (sync, a script, a hand edit); the flush is
+   * `reloadFabricFromDisk`. Sync writes land in bursts — the host timer collapses
+   * many events into one reload. */
+  armFabricReload(): void;
 }
 
 /** The live camera the "…here" actions read when no explicit point is given. */
@@ -2276,6 +2283,118 @@ export class MapController {
       );
     }
     this.host.render.repaintFabric();
+  }
+
+  // ─── External fabric reconcile (vault-as-source-of-truth) ──────────────
+
+  /** Host vault-event entry: the loaded campaign's `Fabric.geojson` was
+   * created / modified / deleted OUTSIDE the controller. Arms the debounced
+   * reload — the host owns the timer, so a burst of sync writes collapses to one
+   * `reloadFabricFromDisk`. A campaign-less view ignores it. */
+  noteExternalFabricChange(): void {
+    if (!this.campaign) return;
+    this.host.render.armFabricReload();
+  }
+
+  /**
+   * External-edit reconcile (Cradle learning): `loadFabric` early-returns once a
+   * campaign's fabric is in memory, so an EXTERNAL write to `Fabric.geojson`
+   * (vault sync, a script like the Cradle emitter, a hand edit) was invisible to
+   * a running map until a campaign switch / plugin reload — contradicting
+   * vault-as-source-of-truth (location notes already reconcile via vault events;
+   * sketch fabric didn't). This is the fabric twin of that note reconcile: re-read
+   * the file at the zod boundary and converge the map onto it.
+   *
+   * Self-write guard: the controller's OWN persists ALSO fire the vault modify
+   * event. We schema-normalize BOTH the freshly-read disk collection and the
+   * in-memory one through `FabricCollectionSchema` (zod reorders object keys, so a
+   * raw stringify of the in-memory object would never match the reparsed one) and
+   * compare. Byte-equal ⇒ a self-write (or a harmless byte-identical external
+   * write) ⇒ no reload, no regen.
+   *
+   * Malformed external write (unparseable JSON / not a FeatureCollection / every
+   * feature invalid ⇒ `invalidCount>0`): badge + RETAIN the last good fabric —
+   * never blank the map on a truncated mid-sync file.
+   *
+   * Otherwise diff before/after: deleted procgen regions drop-and-unpaint via the
+   * existing chokepoint (`dropRegionCacheAndUnpaint`) and dirty their footprint as
+   * a source (mirroring `deleteFabricFeature`'s `queueConstraintRegen`); changed /
+   * new regions become forward-pass roots; changed / new / deleted raw sketch
+   * features become sources. ONE forward pass runs — the fp-mismatch machinery
+   * (033-D) skips whatever is inert, and the terrain-refresh chokepoint picks up
+   * any stamp change automatically off the repaint signal. Selection on any
+   * changed / deleted feature is invalidated (MapView filters to the actually
+   * selected id and deselects gracefully).
+   */
+  async reloadFabricFromDisk(): Promise<void> {
+    if (!this.campaign) return;
+    const campaign = this.campaign;
+    await this.loadFabric(); // ensure an in-memory baseline to diff against
+    if (this.campaign?.id !== campaign.id) return;
+
+    const { fabric: loaded, invalidCount } = await this.host.vault.loadFabric(campaign);
+    if (this.campaign?.id !== campaign.id) return;
+
+    // Malformed external write: keep the last good fabric, surface a badge.
+    if (invalidCount > 0) {
+      this.host.notices.notify(
+        `Campaign Map: Fabric.geojson has ${invalidCount} invalid feature${invalidCount === 1 ? "" : "s"} — keeping the last valid version on the map`,
+        8000
+      );
+      return;
+    }
+
+    // Self-write / byte-identical guard — normalize both sides through the schema
+    // so top-level key order matches (zod reorders keys; `z.record` params keep
+    // insertion order, identical for a self-written-then-reparsed file).
+    const currentNorm = FabricCollectionSchema.safeParse(this.fabricCollection);
+    if (currentNorm.success && JSON.stringify(currentNorm.data) === JSON.stringify(loaded)) return;
+
+    const beforeById = new Map(this.fabricCollection.features.map((f) => [f.id, f] as const));
+    const afterById = new Map(loaded.features.map((f) => [f.id, f] as const));
+
+    const deletedRegions: FabricFeature[] = [];
+    const changedRegionRoots: string[] = [];
+    const sketchEdits: FabricFeature[] = [];
+    const selectionTouched: string[] = [];
+
+    // New / changed features.
+    for (const [id, after] of afterById) {
+      const prior = beforeById.get(id);
+      if (prior && JSON.stringify(prior) === JSON.stringify(after)) continue; // unchanged
+      if (prior) selectionTouched.push(id); // a NEW feature can't be selected yet
+      if (isProcgenRegion(after)) changedRegionRoots.push(id);
+      else sketchEdits.push(after); // raw sketch constraint added / changed
+    }
+    // Deleted features — a removed feature (region or raw) still dirties its
+    // footprint downstream, so the BEFORE feature rides along as a source exactly
+    // as `deleteFabricFeature` queues the removed feature as a constraint.
+    for (const [id, prior] of beforeById) {
+      if (afterById.has(id)) continue;
+      selectionTouched.push(id);
+      if (isProcgenRegion(prior)) deletedRegions.push(prior);
+      sketchEdits.push(prior);
+    }
+
+    // Adopt the reconciled collection (fabric stays flagged loaded — resetting
+    // the flag would let a concurrent loadFabric re-read and drop this diff).
+    this.fabricCollection = loaded;
+    this.host.render.repaintFabric();
+
+    // Deselect any touched / removed feature (the host filters to the selected id).
+    for (const id of selectionTouched) this.host.render.selectionInvalidated(id);
+
+    // Drop-and-unpaint deleted regions BEFORE the pass — their stale render tiles
+    // and cache records must be gone before downstream reconverges.
+    for (const region of deletedRegions) {
+      if (this.campaign?.id !== campaign.id) return;
+      await this.dropRegionCacheAndUnpaint(region);
+    }
+
+    // Regen is fictional-only; a real-CRS campaign just repaints its sketch layer.
+    if (campaign.config.crs !== "fictional") return;
+    if (changedRegionRoots.length === 0 && sketchEdits.length === 0) return;
+    await this.runForwardPass({ regionRoots: changedRegionRoots, sketchEdits });
   }
 
   // ─── Constraint / region regen debounce ────────────────────────────────

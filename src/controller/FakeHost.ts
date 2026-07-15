@@ -11,7 +11,7 @@
  */
 import type { App } from "obsidian";
 import type { ParsedCampaign, CampaignConfig } from "../model/campaignConfig";
-import { loadFabric, saveFabric } from "../vault/fabricStore";
+import { loadFabric, saveFabric, fabricPath } from "../vault/fabricStore";
 import { loadGeneratedManifest, saveGeneratedManifest } from "../vault/generatedManifestStore";
 import { cacheShardBasename, readCachedTiles, removeCachedTiles, type CachedTile } from "../model/tileCache";
 import {
@@ -135,6 +135,10 @@ export class FakeHost {
   readonly repaintGeneratedStages: (number | "all")[] = [];
   repaintFabricCount = 0;
   regenArmedCount = 0;
+  /** External-fabric reload arms (mirrors `regenArmedCount`): every
+   * `noteExternalFabricChange` bumps this, so a test can prove N burst modifies
+   * all arm while the live host timer collapses them into ONE `reloadFabricFromDisk`. */
+  fabricReloadArmedCount = 0;
   /** Gateway-level cache IO counters (031-B): count host.vault.readCached /
    * removeCached CALLS (not the adapter reads removeCached does internally), so
    * a test can assert a batch reads the shared cache view exactly once. */
@@ -216,6 +220,9 @@ export class FakeHost {
         armRegenFlush: () => {
           this.regenArmedCount++;
         },
+        armFabricReload: () => {
+          this.fabricReloadArmedCount++;
+        },
       },
       viewport: {
         zoom: () => this.zoom,
@@ -270,6 +277,20 @@ export class FakeHost {
    * `readCachedTiles` dedup would otherwise hide). */
   cacheShardText(key: string): string {
     return this.adapter.files.get(this.cacheShardPath(key)) ?? "";
+  }
+
+  /** Simulate an EXTERNAL write to `Fabric.geojson` (vault sync / a script / a
+   * hand edit) — writes the bytes straight into the adapter, bypassing the
+   * controller's `saveFabric` gateway, exactly as an out-of-process editor would.
+   * `pretty` matches the controller's own 2-space serialization so a genuine
+   * self-write can be reproduced byte-for-byte in a test. */
+  externalWriteFabric(fabric: unknown, pretty = true): void {
+    this.externalWriteFabricRaw(JSON.stringify(fabric, null, pretty ? 2 : undefined));
+  }
+
+  /** Raw-bytes external write (malformed-file / truncated-sync tests). */
+  externalWriteFabricRaw(raw: string): void {
+    this.adapter.files.set(fabricPath(this.campaign), raw);
   }
 
   /** Delete every cache shard on disk (plan 032-A replacement for removing the
