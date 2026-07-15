@@ -1011,7 +1011,7 @@
         "procgen": {
           "algorithm": "wall",
           "seed": 1430791985,
-          "version": 3,
+          "version": 4,
           "params": {
             "style": "curtain-wall",
             "towerSpacing": 70,
@@ -1080,7 +1080,7 @@
         "procgen": {
           "algorithm": "wall",
           "seed": 1064446841,
-          "version": 3,
+          "version": 4,
           "params": {
             "style": "bastioned",
             "towerSpacing": 90,
@@ -1117,7 +1117,7 @@
         "procgen": {
           "algorithm": "wall",
           "seed": 729752373,
-          "version": 3,
+          "version": 4,
           "params": {
             "style": "curtain-wall",
             "towerSpacing": 60,
@@ -1762,7 +1762,7 @@
         "procgen": {
           "algorithm": "farmland",
           "seed": 3132347469,
-          "version": 5,
+          "version": 6,
           "params": {
             "fieldType": "enclosed-patchwork",
             "fieldSize": 0.5,
@@ -1826,7 +1826,7 @@
         "procgen": {
           "algorithm": "farmland",
           "seed": 2308941765,
-          "version": 5,
+          "version": 6,
           "params": {
             "fieldType": "enclosed-patchwork",
             "fieldSize": 0.5,
@@ -1906,7 +1906,7 @@
         "procgen": {
           "algorithm": "farmland",
           "seed": 907816403,
-          "version": 5,
+          "version": 6,
           "params": {
             "fieldType": "open-field-strips",
             "fieldSize": 0.55,
@@ -1986,7 +1986,7 @@
         "procgen": {
           "algorithm": "farmland",
           "seed": 3093552059,
-          "version": 5,
+          "version": 6,
           "params": {
             "fieldType": "enclosed-patchwork",
             "fieldSize": 0.45,
@@ -2058,7 +2058,7 @@
         "procgen": {
           "algorithm": "farmland",
           "seed": 468494651,
-          "version": 5,
+          "version": 6,
           "params": {
             "fieldType": "paddy-terraces",
             "fieldSize": 0.35,
@@ -2122,7 +2122,7 @@
         "procgen": {
           "algorithm": "farmland",
           "seed": 3455007032,
-          "version": 5,
+          "version": 6,
           "params": {
             "fieldType": "open-field-strips",
             "fieldSize": 0.5,
