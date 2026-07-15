@@ -170,14 +170,14 @@ describe("cycle guard — settlement consumers produce nothing the city consumes
 });
 
 describe("farmland peri-urban (plan 035-C) — stage 4, wired settlement + elevation", () => {
-  it("farmland is at contract version 2 (the settlement coupling is byte-visible beside a city)", () => {
-    expect(algorithmById("farmland")!.currentVersion).toBe(2);
+  it("farmland is at contract version 3 (plan 037 added the river channel exclusion)", () => {
+    expect(algorithmById("farmland")!.currentVersion).toBe(3);
   });
 
-  it("farmland sits at stage 4, consumes elevation (terrain litmus) AND settlement (wired), produces NOTHING", () => {
+  it("farmland sits at stage 4, consumes elevation + settlement + water (plan 037), produces NOTHING", () => {
     const farmland = algorithmById("farmland")!;
     expect(farmland.stage).toBe(4);
-    expect([...farmland.consumes].sort()).toEqual(["elevation", "settlement"]);
+    expect([...farmland.consumes].sort()).toEqual(["elevation", "settlement", "water"]);
     expect(farmland.produces).toEqual([]);
   });
 
@@ -197,15 +197,15 @@ describe("farmland peri-urban (plan 035-C) — stage 4, wired settlement + eleva
 });
 
 describe("park split (plan 035) — variety drives the stage", () => {
-  it("park is at contract version 3 (urban-park joined the schema/varieties)", () => {
-    expect(algorithmById("park")!.currentVersion).toBe(3);
+  it("park is at contract version 4 (plan 037 added the river channel exclusion)", () => {
+    expect(algorithmById("park")!.currentVersion).toBe(4);
   });
 
-  it("urban-park resolves to stage 4, consumes settlement, produces NOTHING", () => {
+  it("urban-park resolves to stage 4, consumes settlement + water (plan 037), produces NOTHING", () => {
     const park = algorithmById("park")!;
     const role = dagRoleFor(park, { variety: "urban-park", pathDensity: 0.5, pond: true });
     expect(role.stage).toBe(4);
-    expect(role.consumes).toEqual(["settlement"]);
+    expect(role.consumes).toEqual(["settlement", "water"]);
     expect(role.produces).toEqual([]);
   });
 

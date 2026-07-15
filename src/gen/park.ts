@@ -66,7 +66,7 @@ import { hashSeed, mulberry32 } from "./rng";
 import { distanceToBoundary, insetRing, clipPolylineToRegion, type ProcgenRegion } from "./region";
 import { q, harmonicBlobRing, blobFeature, spanQuad } from "./waterEmit";
 import { indexFabricConstraints } from "./fabricConstraints";
-import { buildUpstreamConstraints } from "./upstream";
+import { buildUpstreamConstraints, buildUpstreamWaterField, insideUpstreamChannel, splitLineOutsideChannel } from "./upstream";
 import { fractalNoise2D } from "./world/noise";
 import {
   signedDistancePolygon,
@@ -334,7 +334,8 @@ function buildOrganic(
   anchors: Pt[],
   radius: number,
   warpAmp: number,
-  lattice: number
+  lattice: number,
+  exclude: Field | null = null
 ): { polys: Pt[][][]; rings: Pt[][] } {
   if (anchors.length === 0 || !(radius > 0)) return { polys: [], rings: [] };
   const meta = metaballField(anchors, radius, 1);
@@ -346,10 +347,13 @@ function buildOrganic(
   // F(p): (warped metaball − 0.5) capped by the containment floor. Where the
   // floor governs (near/outside the inset) it returns ≤0 so the blob can't spill;
   // deeper in, the warped potential shapes the organic outline (sd is LOCAL, so a
-  // rim edit stays local — edit-locality preserved).
+  // rim edit stays local — edit-locality preserved). `exclude` (plan 037 river
+  // channel, positive inside) forces the field negative inside the channel so no
+  // canopy/pond fill sits in the water; null ⇒ byte-identical uncoupled shape.
   const field: Field = (x, y) => {
     const contain = signedDistancePolygon(ring, x, y) - ORGANIC_CONTAIN_M;
     if (contain <= 0) return contain;
+    if (exclude && exclude(x, y) >= 0) return -ORGANIC_CONTAIN_M - 1;
     return Math.min(warped(x, y) - 0.5, contain);
   };
   let minX = Infinity;
@@ -439,6 +443,12 @@ export function generatePark(
   const [cx, cy] = region.interiorPole; // stable anchor (lattice argmax)
   const maxD = region.maxInteriorDistance;
   const roadLines = indexFabricConstraints(constraints.fabricFeatures).roadLines;
+  // River channel (plan 037): the generated meandered channel as an SDF
+  // (positive inside). null with no upstream water ⇒ every coupled path below is
+  // a no-op and the park is byte-identical to the uncoupled generator. No park
+  // canopy/tree/path/pond geometry sits in the channel; a pond anchored in the
+  // channel is dropped. A stage-0 OUTPUT edge, never a raw sketch read.
+  const channel = buildUpstreamWaterField(constraints.upstream);
   // urban-park (plan 035): the GENERATED city street network arrives as data
   // (`constraints.upstream.settlement`, stage-3 output a stage-4 consumer may
   // read). Its polylines join the sketched roads as entrance candidates, so
@@ -467,10 +477,14 @@ export function generatePark(
   // Clip a polyline to the region and emit each contained run (endpoints on the
   // ring where the line crosses it — the entrance-connects contract).
   const emitClipped = (line: Pt[], cls: string, extra: Record<string, unknown> = {}): void => {
-    for (const runRaw of clipPolylineToRegion(region, line)) emitLine(runRaw, cls, extra);
+    for (const runRaw of clipPolylineToRegion(region, line))
+      // Truncate at the river channel (plan 037): a path never runs through the
+      // water. `channel === null` returns the run unchanged (byte-identity).
+      for (const run of splitLineOutsideChannel(runRaw, channel)) emitLine(run, cls, extra);
   };
   const emitPoint = (px: number, py: number, kind: string, salt: string, ...ks: number[]): void => {
     if (!clearOf(region, px, py, MARGIN_M)) return;
+    if (insideUpstreamChannel(channel, px, py)) return; // no dressing in the channel
     out.push({
       type: "Feature",
       id: hashSeed(seed, salt, ...ks),
@@ -539,7 +553,12 @@ export function generatePark(
   // marching-squares containment floor guarantees the pond stays inside the ring.
   const emitOrganicPond = (salt: string, center: Pt, effR: number, warpAmp: number): Pt[] | null => {
     if (effR < ORGANIC_LATTICE_M * 1.5) return null;
-    const { polys, rings } = buildOrganic(seed, salt, region, [center], effR / 0.54, warpAmp, ORGANIC_LATTICE_M);
+    // Pond avoids the channel (plan 037): a pond whose anchor sits in the river
+    // is dropped whole (a second water body inside the channel reads wrong); the
+    // channel is also passed as the organic exclusion so a pond beside the bank
+    // never bleeds into the water. No upstream ⇒ null ⇒ unchanged.
+    if (insideUpstreamChannel(channel, center[0], center[1])) return null;
+    const { polys, rings } = buildOrganic(seed, salt, region, [center], effR / 0.54, warpAmp, ORGANIC_LATTICE_M, channel);
     if (polys.length === 0) return null;
     out.push({
       type: "Feature",
@@ -585,7 +604,7 @@ export function generatePark(
       }
     }
     const warpAmp = CANOPY_METABALL_RADIUS_M * 0.3;
-    const { polys, rings } = buildOrganic(seed, "park-canopy", region, anchors, CANOPY_METABALL_RADIUS_M, warpAmp, CANOPY_CANOPY_LATTICE_M);
+    const { polys, rings } = buildOrganic(seed, "park-canopy", region, anchors, CANOPY_METABALL_RADIUS_M, warpAmp, CANOPY_CANOPY_LATTICE_M, channel);
     if (polys.length > 0) {
       out.push({
         type: "Feature",
@@ -922,6 +941,7 @@ export function generatePark(
   // that call emitTreeAt run before this point in source order).
   function emitTreeAt(px: number, py: number, salt: string, ...ks: number[]): void {
     if (!clearOf(region, px, py, MARGIN_M)) return;
+    if (insideUpstreamChannel(channel, px, py)) return; // no trees in the channel
     const id = hashSeed(seed, salt, ...ks);
     out.push({
       type: "Feature",

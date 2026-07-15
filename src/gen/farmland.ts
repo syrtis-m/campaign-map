@@ -71,9 +71,10 @@ import {
   clipPolylineToRegion,
   type ProcgenRegion,
 } from "./region";
-import { marchingSquares, sdfPolygon } from "./fields";
+import { marchingSquares, sdfPolygon, type Field } from "./fields";
 import { macroTerrainField } from "./fields/terrain";
 import { q, blobFeature } from "./waterEmit";
+import { buildUpstreamWaterField, insideUpstreamChannel, splitLineOutsideChannel } from "./upstream";
 import type { GenerationConstraints } from "./types";
 
 type Pt = [number, number];
@@ -191,6 +192,44 @@ function rectContained(region: ProcgenRegion, rect: Pt[], margin: number): boole
   return true;
 }
 
+/** Does a world-axis rectangle touch the generated river channel (plan 037)?
+ * Samples the four corners, the center, and the four edge midpoints — a field
+ * (44–150 m) that straddles a ~20–50 m channel has at least one of these inside.
+ * `channel === null` (no upstream water) ⇒ always false ⇒ byte-identical to the
+ * uncoupled generator. */
+function rectHitsChannel(rect: Pt[], channel: Field | null): boolean {
+  if (channel === null) return false;
+  let cx = 0;
+  let cy = 0;
+  for (const [x, y] of rect) {
+    if (channel(x, y) >= 0) return true;
+    cx += x;
+    cy += y;
+  }
+  if (channel(cx / rect.length, cy / rect.length) >= 0) return true;
+  for (let i = 0; i < rect.length; i++) {
+    const a = rect[i];
+    const b = rect[(i + 1) % rect.length];
+    if (channel((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) >= 0) return true;
+  }
+  return false;
+}
+
+/** Resample a polyline to ≤ `step` m segments (so a vertex-granular channel
+ * split catches a crossing between far-apart lane endpoints). Endpoints
+ * preserved. Used only on the coupled (upstream-present) path. */
+function resampleLine(pts: Pt[], step: number): Pt[] {
+  const out: Pt[] = [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+    for (let k = 0; k < n; k++) out.push([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]);
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
 /** A closed, mm-quantized field polygon from an OPEN rect corner list. */
 function fieldFeature(seed: number, rect: Pt[], props: Record<string, unknown>): GeoJSON.Feature {
   const ring: Pt[] = rect.map(([x, y]) => [q(x), q(y)] as Pt);
@@ -277,6 +316,23 @@ export function generateFarmland(
   const out: GeoJSON.Feature[] = [];
   const bbox = region.bbox;
   const cell = fieldCellM(fieldSize);
+  // River channel (plan 037): the generated meandered channel as an SDF
+  // (positive inside). null with no upstream water ⇒ every coupled path below is
+  // a no-op and the farmland is byte-identical to the uncoupled generator. No
+  // field/lane/bank geometry crosses the channel. A stage-0 OUTPUT edge (added
+  // to `consumes`), never a raw sketch read.
+  const channel = buildUpstreamWaterField(constraints.upstream);
+  const LANE_STEP_M = 8; // resample step for lane channel-splitting (coupled path only)
+  /** Emit a lane run, truncated at the channel when there is upstream water. */
+  const emitLaneRun = (run: Pt[]): void => {
+    if (channel === null) {
+      if (run.length >= 2) out.push(laneLine(seed, run, fieldType));
+      return;
+    }
+    for (const piece of splitLineOutsideChannel(resampleLine(run, LANE_STEP_M), channel)) {
+      if (piece.length >= 2) out.push(laneLine(seed, piece, fieldType));
+    }
+  };
 
   // ── Peri-urban read (plan 035): the generated city street network as DATA.
   //    `streetSegs` drive the field-size gradient; `arterials` mint the gate
@@ -342,6 +398,7 @@ export function generateFarmland(
 
   const emitField = (ix: number, iy: number, sub: number, rect: Pt[]): void => {
     if (!rectContained(region, rect, FIELD_MARGIN_M)) return;
+    if (rectHitsChannel(rect, channel)) return; // no field across the channel (plan 037)
     out.push(fieldFeature(seed, rect, { crop: cropAt(seed, ix, iy, sub), fieldType }));
     for (let i = 0; i < rect.length; i++) emitHedge(rect[i], rect[(i + 1) % rect.length]);
   };
@@ -468,7 +525,10 @@ export function generateFarmland(
         // Position-derived ids (never emission order): the level (dm) + the
         // clipped run's mm first vertex at 0.1 m resolution.
         const levelKey = Math.round(c.level * 10);
-        for (const run of clipPolylineToRegion(region, c.points)) {
+        for (const clipped of clipPolylineToRegion(region, c.points)) {
+          // No terrace bank runs through the channel (plan 037); the contour
+          // lattice is already dense (10 m) so a vertex-granular split suffices.
+          for (const run of splitLineOutsideChannel(clipped, channel)) {
           if (run.length < 2) continue;
           const coords = run.map(([x, y]) => [q(x), q(y)] as Pt);
           const [fx, fy] = coords[0];
@@ -485,6 +545,7 @@ export function generateFarmland(
               elevation: Math.round(c.level),
             },
           });
+          }
         }
       }
     }
@@ -501,7 +562,7 @@ export function generateFarmland(
     const x = ix * cell;
     laneXs.push(x);
     for (const run of clipPolylineToRegion(region, [[x, bbox.minY - cell], [x, bbox.maxY + cell]])) {
-      if (run.length >= 2) out.push(laneLine(seed, run, fieldType));
+      emitLaneRun(run);
     }
   }
   for (let iy = iy0; iy <= iy1; iy++) {
@@ -509,7 +570,7 @@ export function generateFarmland(
     const y = iy * cell;
     laneYs.push(y);
     for (const run of clipPolylineToRegion(region, [[bbox.minX - cell, y], [bbox.maxX + cell, y]])) {
-      if (run.length >= 2) out.push(laneLine(seed, run, fieldType));
+      emitLaneRun(run);
     }
   }
 
@@ -559,9 +620,7 @@ export function generateFarmland(
           .map((j) => ({ j, d: Math.hypot(j[0] - e[0], j[1] - e[1]) }))
           .sort((a, b) => a.d - b.d || a.j[0] - b.j[0] || a.j[1] - b.j[1]);
         for (const { j } of ranked.slice(0, GATE_LANE_FAN)) {
-          for (const run of clipPolylineToRegion(region, [e, j])) {
-            if (run.length >= 2) out.push(laneLine(seed, run, fieldType));
-          }
+          for (const run of clipPolylineToRegion(region, [e, j])) emitLaneRun(run);
         }
       }
     }
@@ -587,6 +646,7 @@ export function generateFarmland(
           const half = FARMSTEAD_M / 2;
           const rect = rectOf(cx - half, cy - half, cx + half, cy + half);
           if (!rectContained(region, rect, FIELD_MARGIN_M)) continue;
+          if (rectHitsChannel(rect, channel)) continue; // no farmstead in the channel
           const ring: Pt[] = rect.map(([px, py]) => [q(px), q(py)] as Pt);
           ring.push([ring[0][0], ring[0][1]]);
           out.push({
@@ -612,6 +672,7 @@ export function generateFarmland(
         const px = ix * ORCHARD_ROW_M;
         const py = iy * ORCHARD_ROW_M;
         if (distanceToBoundary(region, px, py) < FIELD_MARGIN_M) continue;
+        if (insideUpstreamChannel(channel, px, py)) continue; // no orchard tree in the channel
         // Skip trees sitting on a lane (leave the section roads clear).
         if (nearLane(px, py, laneXs, laneYs, LANE_HALF_M + 1)) continue;
         out.push({

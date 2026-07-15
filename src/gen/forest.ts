@@ -67,6 +67,7 @@ import {
   marchingSquares,
   type Field,
 } from "./fields";
+import { buildUpstreamWaterField, insideUpstreamChannel } from "./upstream";
 import type { GenerationConstraints } from "./types";
 
 type Pt = [number, number];
@@ -106,6 +107,17 @@ const LONER_JITTER_FRAC = 0.65; // high jitter (~0.65 of spacing)
 const LONER_REJECT_M = 15; // loner min distance to any raw clump tree
 const SIZE_NOISE_CELL_M = 230; // low-freq size field (neighbours correlated)
 const TREE_MARGIN_M = 1; // containment slack for a tree point
+
+// ── River channel exclusion + riparian ramp (plan 037, river → forest) ───────
+// The GENERATED meandered channel (`constraints.upstream.water`) is read as an
+// SDF (positive inside). No canopy/tree geometry sits inside it, and within a
+// fixed band of the bank the canopy density ramps UP toward the water (a
+// riparian buffer: lush growth hugging the river). ~4–6 channel widths for a
+// typical ~20 m river ⇒ a fixed 100 m band. All keyed on absolute world
+// position (seam-safe); with NO upstream water the field is null and every path
+// below is skipped ⇒ byte-identical to the uncoupled forest.
+const RIPARIAN_BAND_M = 100; // riparian ramp reach from the bank (≈4–6 widths)
+const RIPARIAN_STRENGTH = 0.22; // canopy-density bump at the bank (fades to 0 at band edge)
 
 /** Per-variety Thomas-cluster shape. `clumpThreshold` is the
  * fBm mask cutoff for a parent to exist (higher ⇒ fewer clumps); `clumpsEnabled`
@@ -311,7 +323,8 @@ function buildCanopy(
   seed: number,
   region: ProcgenRegion,
   params: ForestParams,
-  clumpThreshold: number
+  clumpThreshold: number,
+  channel: Field | null
 ): Pt[][][] {
   const { variety, density, clearings, edgeRaggedness } = params;
   const ring = region.ring;
@@ -342,7 +355,22 @@ function buildCanopy(
     const sd = signedDistancePolygon(ring, x, y);
     const contain = sd - CANOPY_CONTAIN_M;
     if (contain <= 0) return contain; // rim band / outside — containment governs
+    // River channel exclusion (plan 037): no canopy inside the generated
+    // channel — force the field strictly negative there (< the −CONTAIN rim
+    // band so the traced boundary hugs the bank). `channel === null` (no
+    // upstream water) skips this entirely ⇒ byte-identical uncoupled canopy.
+    let cd = -Infinity;
+    if (channel) {
+      cd = channel(x, y);
+      if (cd >= 0) return -CANOPY_CONTAIN_M - 1;
+    }
     let v = warped(x, y) + meta(x, y);
+    // Riparian ramp: within RIPARIAN_BAND of the bank (cd is the NEGATIVE
+    // signed distance outside the channel; nearer the bank ⇒ nearer 0), add
+    // density ∝ proximity — a lush buffer that fades to 0 at the band edge.
+    if (channel && cd > -RIPARIAN_BAND_M) {
+      v += RIPARIAN_STRENGTH * (cd + RIPARIAN_BAND_M) / RIPARIAN_BAND_M;
+    }
     // Torn inset edge: fade the canopy toward the rim ∝ edgeRaggedness (local sd).
     if (sd < CANOPY_EDGE_BAND_M) {
       const e = (CANOPY_EDGE_BAND_M - sd) / CANOPY_EDGE_BAND_M; // 0 at band → 1 at rim
@@ -391,11 +419,17 @@ export function generateForest(
   seed: number,
   region: ProcgenRegion,
   params: ForestParams,
-  _constraints: GenerationConstraints
+  constraints: GenerationConstraints
 ): GeoJSON.Feature[] {
   const { variety, density } = params;
   const out: GeoJSON.Feature[] = [];
   const bbox = region.bbox;
+  // River channel (plan 037): the generated meandered channel as an SDF
+  // (positive inside). null when there is no upstream water ⇒ every coupled
+  // path below is a no-op and the forest is byte-identical to the uncoupled
+  // generator. The one upstream read forest makes — a stage-0 OUTPUT edge, not
+  // a raw sketch (`consumesSketch` stays []).
+  const channel = buildUpstreamWaterField(constraints.upstream);
 
   const cfg = PLACEMENT[variety];
   const countScale = 0.55 + 0.6 * density; // more offspring in denser forests
@@ -405,7 +439,7 @@ export function generateForest(
   // ── Canopy: ONE organic MultiPolygon. dead-wood = bare stand, no leaf mass →
   //    no canopy (instant variety differentiation). ──────────────────────────
   if (variety !== "dead-wood") {
-    const coords = buildCanopy(seed, region, params, clumpThreshold);
+    const coords = buildCanopy(seed, region, params, clumpThreshold, channel);
     if (coords.length > 0) {
       out.push({
         type: "Feature",
@@ -449,6 +483,7 @@ export function generateForest(
         for (let k = 0; k < kids.length; k++) {
           const { px, py, rNorm } = kids[k];
           if (distanceToBoundary(region, px, py) < TREE_MARGIN_M) continue;
+          if (insideUpstreamChannel(channel, px, py)) continue; // no trees in the channel
           // Rim bias (swamp): keep interior trees with rising probability toward
           // the boundary. Per-tree hashed roll — independent of emission order.
           if (cfg.edgeBias > 0) {
@@ -480,6 +515,7 @@ export function generateForest(
       const px = (lix + 0.5) * LONER_CELL_M + jx;
       const py = (liy + 0.5) * LONER_CELL_M + jy;
       if (distanceToBoundary(region, px, py) < TREE_MARGIN_M) continue;
+      if (insideUpstreamChannel(channel, px, py)) continue; // no loners in the channel
       if (cfg.clumpsEnabled && nearClumpTree(seed, variety, cfg, countScale, clumpThreshold, px, py)) continue;
       if (cfg.edgeBias > 0) {
         const edgeT = clamp01(interiorT(region, px, py));

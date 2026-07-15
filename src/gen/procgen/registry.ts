@@ -423,19 +423,26 @@ export const FOREST_TILE_GENERATOR_IDS: readonly string[] = contractGids(FOREST_
 const forestAlgorithm: ProcgenAlgorithm = {
   id: "forest",
   label: "Forest",
-  currentVersion: 1,
+  // Version 2 (plan 037, river → forest): the declared `water` consumption is
+  // now WIRED — no canopy/tree inside the generated channel + a riparian density
+  // ramp within ~4–6 channel widths of the bank. A forest with NO upstream water
+  // is byte-identical to v1 (the golden is unchanged); one over a river channel
+  // changes bytes, so the bump gates adoption of the coupled read.
+  currentVersion: 2,
   appliesTo: ["forest"],
-  // Stage 2 (vegetation): no canopy in the river → consumes `water`. Produces
-  // `vegetation` for the city's growth-cost bump. NEVER consumes `settlement` —
-  // the reverse (city clips canopy) is rejected outright (it breaks
-  // cycle-freedom); the town reads as a clearing because city fabric paints
-  // above canopy within layer 1.
+  // Stage 2 (vegetation): no canopy in the river → consumes `water` (WIRED, plan
+  // 037). Produces `vegetation` for the city's growth-cost bump. NEVER consumes
+  // `settlement` — the reverse (city clips canopy) is rejected outright (it
+  // breaks cycle-freedom); the town reads as a clearing because city fabric
+  // paints above canopy within layer 1.
   stage: 2,
   produces: ["vegetation"],
   consumes: ["water"],
   // generateForest reads no raw sketch constraints — masked noise over its own
-  // ring only. The `consumes: ["water"]` above is a declared-but-inert DAG
-  // OUTPUT edge, not a raw-sketch read.
+  // ring only. The `consumes: ["water"]` above is a DAG OUTPUT edge
+  // (`constraints.upstream.water`), not a raw-sketch read, so `consumesSketch`
+  // stays [] and the 033-A harness (which injects only SKETCH features) proves
+  // byte-inertness to every sketch kind.
   consumesSketch: [],
   influenceMargin: 0,
   costClass: "cheap",
@@ -488,6 +495,11 @@ export const PARK_TILE_GENERATOR_IDS: readonly string[] = contractGids(PARK_STYL
 const parkAlgorithm: ProcgenAlgorithm = {
   id: "park",
   label: "Park",
+  // Version 4 (plan 037, river → park): the declared `water` consumption is now
+  // WIRED — no canopy/tree/path/lawn-dressing inside the generated channel, and
+  // a pond anchored in the channel is dropped (pond placement avoids the water).
+  // A park with NO upstream water is byte-identical to v3 (golden unchanged); one
+  // over a river channel changes bytes ⇒ the bump gates adoption.
   // Version 3 (plan 035, park split): the `urban-park` variety joined the
   // schema/varieties. Rural varieties are byte-identical to v2 (the golden is
   // unchanged — bump is bookkeeping for the schema/variety surface); one
@@ -495,11 +507,13 @@ const parkAlgorithm: ProcgenAlgorithm = {
   // pressure for a second id).
   // Version 2: blobFeature mm-quantizes its ring (D5), snapping the
   // formal-garden bed / japanese bridge / court coordinates to sub-mm.
-  currentVersion: 3,
+  currentVersion: 4,
   appliesTo: ["park"],
   // Rural varieties: stage 2 (vegetation), same band as forest — a park pond
-  // sits away from a river channel → consumes `water`; produces `vegetation`.
-  // The `urban-park` variety re-homes to stage 4 via `dagRole` below.
+  // sits away from a river channel → consumes `water` (WIRED, plan 037);
+  // produces `vegetation`. The `urban-park` variety re-homes to stage 4 via
+  // `dagRole` below (and still consumes `water` — a river crossing an urban park
+  // is excluded exactly as for a rural one).
   stage: 2,
   produces: ["vegetation"],
   consumes: ["water"],
@@ -520,7 +534,7 @@ const parkAlgorithm: ProcgenAlgorithm = {
   // die on a corrupt block; the schema rejects it loudly at the IO boundary).
   dagRole(params: Record<string, unknown>): DagRole {
     return params.variety === "urban-park"
-      ? { stage: 4, produces: [], consumes: ["settlement"] }
+      ? { stage: 4, produces: [], consumes: ["settlement", "water"] }
       : { stage: this.stage, produces: this.produces, consumes: this.consumes };
   },
   paramsSchema: parkParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
@@ -642,25 +656,30 @@ export const FARMLAND_TILE_GENERATOR_IDS: readonly string[] = contractGids(FARML
 const farmlandAlgorithm: ProcgenAlgorithm = {
   id: "farmland",
   label: "Farmland",
+  // Version 3 (plan 037, river → farmland): `water` joins the consumed set —
+  // no field/lane/bank/farmstead geometry crosses the generated channel. A
+  // farmland with NO upstream water is byte-identical to v2 (golden unchanged);
+  // one the river crosses changes bytes ⇒ the bump gates adoption.
   // Version 2 (plan 035, peri-urban move): farmland reads the generated city
   // street network (`upstream.settlement`) — gate lanes radiate from the
   // arterial exits, a field-size gradient runs toward the wall line. A farmland
   // beside a city changes bytes; one with NO upstream is byte-identical to v1
   // through the same arithmetic (the golden is unchanged).
-  currentVersion: 2,
+  currentVersion: 3,
   appliesTo: ["farmland"],
   // Stage 4 (PERI-URBAN, plan 035): farmland is the city's apron, generated
   // AFTER it. Consumes `settlement` (WIRED: lanes orient to the generated
-  // gates/arterials, field size grades toward the wall line) and `elevation`
+  // gates/arterials, field size grades toward the wall line), `elevation`
   // (paddy-terraces follow the mountain contours — Jonah's litmus: a terrain
-  // edit reaches farmland, never a river). Produces NOTHING downstream — the
+  // edit reaches farmland, never a river) and `water` (plan 037: fields/lanes
+  // stop at the generated river channel). Produces NOTHING downstream — the
   // city reads a raw farmland SKETCH (`fabricConstraints.farmlandRings`) to
   // suppress its outskirts ("ring = land claim, output = interior dressing"),
   // not farmland's generated OUTPUT, so there is no farmland → city edge and
   // the cycle guard holds.
   stage: 4,
   produces: [],
-  consumes: ["elevation", "settlement"],
+  consumes: ["elevation", "settlement", "water"],
   // Farmland reads the sketched mountains' elevation field (paddy-terraces
   // contours). The field is zero outside the mountain ring (compact support)
   // and gates on in-region relief, so a disjoint mountain is byte-inert: margin

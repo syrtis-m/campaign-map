@@ -104,3 +104,39 @@ export function buildUpstreamWaterField(upstream: UpstreamArtifacts | undefined)
     return max;
   };
 }
+
+/**
+ * Plan 037 channel-exclusion helper: (x,y) is inside the generated river
+ * channel iff the upstream water field is POSITIVE there (the `sdfPolygon`
+ * convention, unioned by MAX in `buildUpstreamWaterField`). `field === null`
+ * (no upstream channel) ⇒ ALWAYS false, so a consumer with no upstream water
+ * stays on its uncoupled path byte-for-byte (the 23-E no-field discipline).
+ */
+export function insideUpstreamChannel(field: Field | null, x: number, y: number): boolean {
+  return field !== null && field(x, y) >= 0;
+}
+
+/**
+ * Split a polyline into the maximal sub-runs whose vertices sit OUTSIDE the
+ * generated channel (river channel exclusion — plan 037). A vertex-granular cut
+ * (drop vertices with `field(p) >= 0`, break the run there), so a caller whose
+ * line is already finely resampled needs no extra machinery; a caller with long
+ * straight segments (farm lanes) resamples first. `field === null` ⇒ the whole
+ * line is returned unchanged (byte-identity with no upstream). Runs shorter than
+ * two points are dropped.
+ */
+export function splitLineOutsideChannel(pts: Pt[], field: Field | null): Pt[][] {
+  if (field === null) return pts.length >= 2 ? [pts] : [];
+  const runs: Pt[][] = [];
+  let cur: Pt[] = [];
+  for (const p of pts) {
+    if (field(p[0], p[1]) >= 0) {
+      if (cur.length >= 2) runs.push(cur);
+      cur = [];
+    } else {
+      cur.push(p);
+    }
+  }
+  if (cur.length >= 2) runs.push(cur);
+  return runs;
+}
