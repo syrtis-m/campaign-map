@@ -23,6 +23,8 @@ import { loadFabric, saveFabric } from "../vault/fabricStore";
 import { loadGeneratedManifest, saveGeneratedManifest } from "../vault/generatedManifestStore";
 import { readCachedTiles, removeCachedTiles } from "../model/tileCache";
 import { FABRIC_LAYER_IDS } from "../map/themes/fabricLayers";
+import { polygonNetArea } from "../gen/metricsGeom";
+import { resolveFabricClick, orderFabricCandidates, type FabricCandidate, type FabricCycleState } from "./fabricSelect";
 import {
   decorateCanonWaterAvoidance,
   waterPolylinesFromFabric,
@@ -163,6 +165,11 @@ export class MapView extends ItemView {
   /** Floating HUD readout shown while a height handle is being dragged. */
   private heightReadoutEl: HTMLDivElement | null = null;
   private selectedFabricId: string | null = null;
+  /** Stacked-select cycle anchor: a repeated select-click at the same spot over
+   * the same overlapping fabric stack advances to the next candidate (farmland →
+   * plateau beneath). Reset whenever the click lands elsewhere or on empty
+   * ground. */
+  private fabricCycle: FabricCycleState | null = null;
   /** Which sketch tool is armed: the Select arrow (edit an
    * existing shape) or the draw palette (add a new one). */
   private sketchTool: "draw" | "select" = "draw";
@@ -1831,7 +1838,10 @@ export class MapView extends ItemView {
 
     if (this.sketchTool === "select") {
       // Select tool: click a shape to edit it; click empty ground to deselect.
-      const hitId = this.fabricFeatureIdAt(e.point);
+      // A repeated click at the same spot cycles down through the overlapping
+      // stack (farmland first, the plateau beneath on the next click) so a big
+      // terrain stamp never traps the detail region on top of it.
+      const hitId = this.pickFabricForSelect(e.point);
       if (hitId) this.selectFabricFeature(hitId);
       else this.deselectFabric();
       return;
@@ -1841,14 +1851,15 @@ export class MapView extends ItemView {
     c.addVertex([e.lngLat.lng, e.lngLat.lat]);
   }
 
-  /** Hit-test the rendered fabric layers near a screen point, resolving to the
-   * FabricFeature id via the mirrored `properties.id` (refreshFabric mirrors
-   * the feature id there because queryRenderedFeatures doesn't reliably
-   * surface string feature ids from a geojson source). */
-  private fabricFeatureIdAt(point: maplibregl.Point): string | null {
-    if (!this.map) return null;
+  /** Every overlapping fabric feature under the click box, resolved to real
+   * FabricFeatures (kind + ring area) via the mirrored `properties.id`
+   * (refreshFabric mirrors the feature id there because queryRenderedFeatures
+   * doesn't reliably surface string feature ids from a geojson source). Deduped
+   * by id, preserving first-seen render order as each candidate's `rank`. */
+  private fabricCandidatesAt(point: maplibregl.Point): FabricCandidate[] {
+    if (!this.map) return [];
     const layers = FABRIC_LAYER_IDS.filter((l) => this.map!.getLayer(l));
-    if (layers.length === 0) return null;
+    if (layers.length === 0) return [];
     const hits = this.map.queryRenderedFeatures(
       [
         [point.x - 6, point.y - 6],
@@ -1856,14 +1867,54 @@ export class MapView extends ItemView {
       ],
       { layers }
     );
-    const hitId = hits[0]?.properties?.id as string | undefined;
-    if (hitId) return this.controller.fabricFeature(hitId) ? hitId : null;
+    const seen = new Set<string>();
+    const candidates: FabricCandidate[] = [];
+    for (const h of hits) {
+      const id = h.properties?.id as string | undefined;
+      if (!id || seen.has(id)) continue;
+      const feature = this.controller.fabricFeature(id);
+      if (!feature) continue;
+      seen.add(id);
+      candidates.push({
+        id,
+        kind: feature.properties.kind,
+        area: polygonNetArea(feature as unknown as GeoJSON.Feature),
+        rank: candidates.length,
+      });
+    }
+    return candidates;
+  }
+
+  /** Best single fabric id under a screen point (topmost-detail rule, no
+   * cycling) — used by the right-click grammar. Resolves overlapping polygons
+   * the same way a select-click does, minus the repeated-click cycling. */
+  private fabricFeatureIdAt(point: maplibregl.Point): string | null {
+    if (!this.map) return null;
+    const ordered = orderFabricCandidates(this.fabricCandidatesAt(point));
+    if (ordered.length > 0) return ordered[0].id;
     // Fallback: a spine region's sketch line paints invisible under its
     // generated channel (fabricLayers), and a meandered channel can sit
     // farther from the spine than the 6px box — clicking the WATER should
     // still select the river. Corridor-exact resolution on the controller.
     const lngLat = this.map.unproject(point);
     return this.controller.spineRegionIdAtDisplayPoint(lngLat.lng, lngLat.lat);
+  }
+
+  /** Select-click resolution WITH stacked cycling: the first click at a spot
+   * picks the topmost detail (smallest polygon; terrain stamps sink), a repeated
+   * click at the same spot advances to the next candidate beneath. Falls back to
+   * the spine-region corridor when nothing paints under the box. */
+  private pickFabricForSelect(point: maplibregl.Point): string | null {
+    if (!this.map) return null;
+    const candidates = this.fabricCandidatesAt(point);
+    if (candidates.length === 0) {
+      this.fabricCycle = null;
+      const lngLat = this.map.unproject(point);
+      return this.controller.spineRegionIdAtDisplayPoint(lngLat.lng, lngLat.lat);
+    }
+    const { id, state } = resolveFabricClick(candidates, { x: point.x, y: point.y }, this.fabricCycle);
+    this.fabricCycle = state;
+    return id;
   }
 
   /** Select a fabric feature for editing (Select tool): arm the controller's
@@ -1912,6 +1963,7 @@ export class MapView extends ItemView {
   /** Clear any Select-tool selection + its panel. */
   private deselectFabric(): void {
     this.selectedFabricId = null;
+    this.fabricCycle = null;
     this.sketchController?.clearSelection();
     this.selectionPanelEl?.remove();
     this.selectionPanelEl = null;
