@@ -414,6 +414,91 @@ const CARVE_BANK_SLOPE = 2.2; // gorge-wall rise (meters up per meter out past t
 const CARVE_SMIN_K = 40; // smooth-min blend radius (soft banks, no hard crease)
 const CARVE_RESAMPLE_M = 40; // densify the spine so the bed follows terrain finely
 
+/** TEST SEAM ONLY: disable the carve fast-reject (bbox + occupancy grid) so every
+ * sample runs the full nearest-spiral + smin. The reject is engineered to be
+ * byte-identical to full evaluation (it only short-circuits where the full path
+ * ALSO returns `s`); the property test flips this off to PROVE that on a dense
+ * lattice. Default ON — production never touches it. */
+let carveFastReject = true;
+export function __setCarveFastReject(enabled: boolean): void {
+  carveFastReject = enabled;
+}
+
+/**
+ * Per-river coarse OCCUPANCY GRID + Chebyshev clearance transform — the
+ * inside-bbox half of the far-field reject. The bbox reject only bites OUTSIDE the
+ * spine's bounding box; a sample INSIDE a large meandering river's bbox but far
+ * from the spine still paid the O(dist²) `nearest` spiral (measured ~79% of a
+ * dense-terrain DEM-tile fill). Every cell any spine segment's BBOX overlaps is
+ * marked (a conservative SUPERSET — an unmarked cell provably contains no spine
+ * point), then a two-pass chessboard distance transform gives each cell its
+ * Chebyshev clearance to the nearest marked cell. A query in a cell whose nearest
+ * marked cell is `D` cells away has an empty `(D−1)`-ring neighbourhood, so the
+ * nearest spine point is ≥ `(D−1)·cellSize` metres away — a strictly-better lower
+ * bound than the bbox one, folded into the SAME byte-exact reject. */
+interface SpineClearance {
+  c: number; // cell size (m)
+  gx0: number;
+  gy0: number; // min cell indices (absolute `floor(coord/c)`)
+  w: number;
+  h: number;
+  dist: Int32Array; // Chebyshev cells to the nearest marked (spine) cell; 0 = marked
+}
+
+function buildSpineClearance(spine: Pt[], bnd: BBox): SpineClearance | null {
+  if (spine.length < 2 || !Number.isFinite(bnd.minX)) return null;
+  // Cell size = the carve-hash cell, coarsened so the grid stays ≤ CAP² cells
+  // (bounds the one-time transform + memory). A coarser cell is still a valid —
+  // just grainier — lower bound, so correctness never depends on CAP.
+  const CAP = 256;
+  const span = Math.max(bnd.maxX - bnd.minX, bnd.maxY - bnd.minY);
+  const c = Math.max(64, Math.ceil(span / CAP) || 1);
+  const gx0 = Math.floor(bnd.minX / c);
+  const gy0 = Math.floor(bnd.minY / c);
+  const w = Math.floor(bnd.maxX / c) - gx0 + 1;
+  const h = Math.floor(bnd.maxY / c) - gy0 + 1;
+  const BIG = 1 << 29;
+  const dist = new Int32Array(w * h).fill(BIG);
+  for (let i = 0; i < spine.length - 1; i++) {
+    const ax = spine[i][0];
+    const ay = spine[i][1];
+    const bx = spine[i + 1][0];
+    const by = spine[i + 1][1];
+    const cx0 = Math.floor(Math.min(ax, bx) / c) - gx0;
+    const cx1 = Math.floor(Math.max(ax, bx) / c) - gx0;
+    const cy0 = Math.floor(Math.min(ay, by) / c) - gy0;
+    const cy1 = Math.floor(Math.max(ay, by) / c) - gy0;
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) dist[cx + cy * w] = 0;
+  }
+  // Forward pass: min over the 4 already-visited chessboard neighbours + 1.
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = x + y * w;
+      let d = dist[idx];
+      if (d === 0) continue;
+      if (x > 0) d = Math.min(d, dist[idx - 1] + 1);
+      if (y > 0) d = Math.min(d, dist[idx - w] + 1);
+      if (x > 0 && y > 0) d = Math.min(d, dist[idx - w - 1] + 1);
+      if (x < w - 1 && y > 0) d = Math.min(d, dist[idx - w + 1] + 1);
+      dist[idx] = d;
+    }
+  }
+  // Backward pass: the other 4 neighbours.
+  for (let y = h - 1; y >= 0; y--) {
+    for (let x = w - 1; x >= 0; x--) {
+      const idx = x + y * w;
+      let d = dist[idx];
+      if (d === 0) continue;
+      if (x < w - 1) d = Math.min(d, dist[idx + 1] + 1);
+      if (y < h - 1) d = Math.min(d, dist[idx + w] + 1);
+      if (x < w - 1 && y < h - 1) d = Math.min(d, dist[idx + w + 1] + 1);
+      if (x > 0 && y < h - 1) d = Math.min(d, dist[idx + w - 1] + 1);
+      dist[idx] = d;
+    }
+  }
+  return { c, gx0, gy0, w, h, dist };
+}
+
 /** Resample a polyline so no segment exceeds `maxStep` meters — the bed floor is
  * sampled per vertex, so a coarse GM spine (km between clicks) would let the
  * incision drift off the terrain between vertices. Deterministic (pure geometry).
@@ -516,6 +601,7 @@ function buildRiverCarve(carve: RiverCarve, pre: ElevationField): (s: HeightSamp
   const bedMin = spine.length > 0 ? bedVert[spine.length - 1] : Infinity;
   const hw = carve.halfWidth;
   const bnd = hash.bounds;
+  const clearance = buildSpineClearance(spine, bnd);
   return (s: HeightSample, x: number, y: number): HeightSample => {
     // FAR-FIELD FAST REJECT (compact support, BYTE-EXACT). The segment hash's
     // nearest-query spirals cells outward, so a point far from THIS river's spine
@@ -529,10 +615,26 @@ function buildRiverCarve(carve: RiverCarve, pre: ElevationField): (s: HeightSamp
     // lower bound already clears `pre+k`, the full carve is provably inert here —
     // return `s` and skip the hash query. Only short-circuits where the full path
     // would ALSO return `s` (h≥1), so it is byte-identical to evaluating the carve.
+    // `dLB` = max of two valid lower bounds on the nearest-spine distance: the
+    // distance to the spine's BBOX (bites outside it), and the OCCUPANCY-GRID
+    // clearance `(D−1)·cellSize` (bites INSIDE the bbox but far from the spine —
+    // the ~79% the bbox reject missed). Both under-estimate the true distance, so
+    // their max still does ⇒ the reject stays byte-exact.
     const dLBx = x < bnd.minX ? bnd.minX - x : x > bnd.maxX ? x - bnd.maxX : 0;
     const dLBy = y < bnd.minY ? bnd.minY - y : y > bnd.maxY ? y - bnd.maxY : 0;
-    const dLB = Math.hypot(dLBx, dLBy);
-    if (bedMin + CARVE_BANK_SLOPE * Math.max(0, dLB - hw) >= s.v + CARVE_SMIN_K) return s;
+    let dLB = Math.hypot(dLBx, dLBy);
+    if (clearance) {
+      const gx = Math.floor(x / clearance.c) - clearance.gx0;
+      const gy = Math.floor(y / clearance.c) - clearance.gy0;
+      if (gx >= 0 && gx < clearance.w && gy >= 0 && gy < clearance.h) {
+        const d = clearance.dist[gx + gy * clearance.w]; // Chebyshev cells to nearest spine cell
+        if (d >= 1) {
+          const gridLB = (d - 1) * clearance.c;
+          if (gridLB > dLB) dLB = gridLB;
+        }
+      }
+    }
+    if (carveFastReject && bedMin + CARVE_BANK_SLOPE * Math.max(0, dLB - hw) >= s.v + CARVE_SMIN_K) return s;
     const near = hash.nearest(x, y);
     if (near.segIndex < 0) return s;
     const i = near.segIndex;

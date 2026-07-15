@@ -88,6 +88,9 @@ export {
   // Per-tile terrain digest — scoped DEM cache invalidation so an extrude
   // re-derives only the tiles the edited stamp reaches (not the whole viewport).
   perTileTerrainDigest,
+  // TEST SEAM: disable the carve fast-reject to prove it is byte-identical to a
+  // full nearest-spiral evaluation.
+  __setCarveFastReject,
   DEFAULT_TERRAIN_BASE,
   RELIEF_POLARITIES,
   RELIEF_DEFAULTS,
