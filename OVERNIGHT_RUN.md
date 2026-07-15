@@ -365,3 +365,27 @@ _(none yet)_
 - Farmland streaks: riverine rang long-lots were cell-scaled (166 m ≈ 6× strip depth ⇒ 39%
   region coverage, fan ribbons); now frontage-anchored (74 m, 19%), farmland v6, regression
   guard fails on pre-fix code.
+
+## ROUND 5 (2026-07-15 evening, all pushed): Cradle island + recreation enablers
+- **The Cradle (Deathmatch Island map 1) recreated** at dev-vault/Campaigns/Cradle via 4
+  judge-and-iterate rounds (screenshot: review/cradle-final.png). 14 locations + 20 point-crawl
+  connections (note frontmatter), 8 relief highlands, island-from-coastline sea, scrublands,
+  4 generated settlements incl. the walled Compound. Regenerate:
+  `npx tsx scripts/emit-cradle-campaign.ts`. Optional: switch theme to ink-soot for the
+  grayscale player-map feel.
+- **Plan 041 landed** (the "make recreation easy" answer): reference-image UNDERLAY (trace
+  mode — Campaign settings → Reference underlay; live opacity; toggle command) +
+  island-from-coastline (`invert:true` sea landform; "island" preset). The Cradle emitter
+  became invert's first consumer, deleting its donut/winding/priority machinery.
+- **Engine findings from the iterations** (journaled for design): (1) REPLACE landforms fold
+  AFTER ADD stamps — a big plateau silently flattens ridges inside it (the invert mechanism
+  avoids the pattern; consider a lint/warning when a replace covers add-stamps); (2) landform
+  elevation masks read only the OUTER ring — polygon holes are paint-only; (3)
+  `MapController.loadFabric` early-returns for a loaded campaign, so EXTERNAL Fabric.geojson
+  edits (sync, scripts, hand edits) aren't picked up without campaign switch/reload — sits
+  oddly with vault-as-source-of-truth, flagged as a product gap.
+- Also this round: selection priority + click-cycling over stacked shapes (9bc90fb), riverine
+  rang coherence v7 (44.9°→2.4° spread, zero overlaps — 81e59b7), terrain-refresh chokepoint
+  (delete flattens immediately — 21a46d2), create-campaign GUI overhaul incl. the
+  scaleMetersPerUnit-hardcoded-to-1 catch (1eccc4f), band ghosts 040-P2 (01fa709), labels
+  dry-side + region names (dc5f0eb), wall glacis v4 (cc0dcfc).
