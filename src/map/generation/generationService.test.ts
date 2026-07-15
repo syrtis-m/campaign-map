@@ -208,14 +208,24 @@ describe("generateRegionTile", () => {
     expect(shared.has(regionNetworkKey(region.id))).toBe(true);
   });
 
-  it("force recomputes the network and overwrites the records", async () => {
-    const { app } = fakeApp();
+  it("force re-clips per-tile records but reuses a still-cached network (031-A: network once)", async () => {
+    const { app, files } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
     const compute = vi.fn(directCompute);
     const first = await generateRegionTile(ctx, region, gids, 0, 0, compute);
+    // A forced pass re-derives the per-tile clips (skips the fast path) but does
+    // NOT recompute the whole-region network while it is still cached fresh —
+    // the network is computed ONCE per regen (plan 031-A / research P1). The
+    // caller (MapController.generateRegion) is what clears the stale network
+    // under force to make a true recompute happen.
     const again = await generateRegionTile(ctx, region, gids, 0, 0, compute, { force: true });
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(again).toEqual(first); // same constraints → same bytes
+    // Once the network is cleared, a forced pass recomputes it (still byte-identical).
+    files.delete("Campaigns/Ashfall/.mapcache/generated.jsonl");
+    const third = await generateRegionTile(ctx, region, gids, 0, 0, compute, { force: true });
     expect(compute).toHaveBeenCalledTimes(2);
-    expect(again).toEqual(first); // same constraints → same bytes, even forced
+    expect(third).toEqual(first);
   });
 });
 

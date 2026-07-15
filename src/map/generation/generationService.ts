@@ -169,10 +169,19 @@ export async function generateRegionTile(
     }
   }
 
-  // Network record: cache-or-compute once per region.
+  // Network record: cache-or-compute ONCE per region regen. Even under force
+  // we consult the (preloaded) cache — the FIRST tile of a forced pass computes
+  // the network and writes its record, and every SUBSEQUENT tile of the SAME
+  // pass reads that record back and skips recompute. Previously `force` skipped
+  // this read INSIDE the tile loop, so a T-tile region ran the full generator T
+  // times for byte-identical output and appended T duplicate network records
+  // (plan 031-A / research P1). The caller clears this region's stale network
+  // from the shared map before a forced pass (MapController.generateRegion), so
+  // the first tile always recomputes fresh bytes rather than reusing pre-edit
+  // ones.
   const netKey = regionNetworkKey(region.id);
   let network: GeoJSON.Feature[];
-  const cachedNet = opts.force ? undefined : await readCached(netKey);
+  const cachedNet = await readCached(netKey);
   if (cachedNet) {
     network = cachedNet.features as unknown as GeoJSON.Feature[];
   } else {

@@ -609,6 +609,11 @@ export class MapController {
       await this.host.vault.removeCached(folder, keys);
       const renderPrefix = `region:${region.id}:`;
       for (const k of [...this.loadedTiles.keys()]) if (k.startsWith(renderPrefix)) this.loadedTiles.delete(k);
+      // A shared cache view threaded through a batch (flush/cascade, 031-B) still
+      // holds this region's PRE-edit network + per-tile records; drop them so the
+      // forced pass recomputes fresh bytes instead of reading its own stale cache
+      // (would otherwise defeat 031-A's network-once read under a shared map).
+      if (preloaded) for (const k of keys) preloaded.delete(k);
       preloaded = preloaded ?? new Map();
     } else if (!preloaded) {
       preloaded = await this.host.vault.readCached(folder);

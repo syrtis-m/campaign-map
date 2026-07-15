@@ -913,3 +913,60 @@ describe("MapController — cross-layer cascade", () => {
     expect(host.controller.regionFeatureIds(river.featureId).slice().sort()).toEqual(riverBefore);
   });
 });
+
+// ─── Plan 031-A — network computed once per forced regen (P1) ────────────────
+// A forced regen of a multi-tile region previously recomputed the whole-region
+// network once PER TILE (byte-identical waste) and appended one duplicate
+// network record per tile. RING spans ~9 generation tiles (500–1300 m over a
+// 600 m grid), so the buggy path ran the generator ~9× and wrote ~9 network
+// records; the fix reads the network back after the first tile writes it.
+describe("MapController — network once per forced regen (031-A)", () => {
+  /** How many raw JSONL lines carry `key`. `readCachedTiles` dedups on read
+   * (last-wins), so the deduped Map hides duplicate appends — the raw line
+   * count is what actually catches P1's per-tile duplicate network records. */
+  function rawRecordCount(host: FakeHost, key: string): number {
+    const text = host.adapter.files.get(host.cachePath()) ?? "";
+    let n = 0;
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        if ((JSON.parse(line) as { key?: string }).key === key) n++;
+      } catch {
+        /* ignore non-JSON */
+      }
+    }
+    return n;
+  }
+
+  it("runs the generator exactly once and writes one network record per forced regen", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const netKey = regionNetworkKey(featureId);
+    // Sanity: the region genuinely spans multiple generation tiles (else the
+    // "once per tile" bug is invisible and the test proves nothing).
+    expect(host.controller.regionFeatureIds(featureId).length).toBeGreaterThan(0);
+
+    const runsBefore = host.controller.generatorRunCount;
+    await host.controller.regenerateRegionById(featureId); // one forced regen
+    expect(host.controller.generatorRunCount - runsBefore).toBe(1);
+    // Exactly one network record survives the forced pass — no per-tile duplicates.
+    expect(rawRecordCount(host, netKey)).toBe(1);
+  });
+
+  it("a forced regen leaves the region output byte-identical (P1 fix changes nothing)", async () => {
+    const host = cityHost();
+    const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
+    const before = new Map<string, string>();
+    for (const [k, rec] of await host.cache())
+      if (k.startsWith(`region:${featureId}:`)) before.set(k, JSON.stringify(rec.features));
+    expect(before.size).toBeGreaterThan(1);
+
+    await host.controller.regenerateRegionById(featureId);
+
+    const after = new Map<string, string>();
+    for (const [k, rec] of await host.cache())
+      if (k.startsWith(`region:${featureId}:`)) after.set(k, JSON.stringify(rec.features));
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [k, bytes] of before) expect(after.get(k)).toBe(bytes);
+  });
+});
