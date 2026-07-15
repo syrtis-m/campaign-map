@@ -30,7 +30,7 @@ import {
   waterPolylinesFromFabric,
   WATER_AVOIDANCE_METERS,
 } from "../map/themes/labelPlacement";
-import { REGION_LABEL_LAYER_ID, regionLabelOpacityRamp } from "../map/themes/regionLabels";
+import { REGION_LABEL_LAYER_ID, REGION_LABEL_SOURCE_ID, regionLabelOpacityRamp, regionLabelPointFeatures } from "../map/themes/regionLabels";
 import { SketchController } from "./SketchController";
 import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
 import { smoothPolyline } from "../map/fabricSmooth";
@@ -1583,6 +1583,12 @@ export class MapView extends ItemView {
       return { ...f, geometry, properties: props };
     });
     source.setData({ type: "FeatureCollection", features } as GeoJSON.FeatureCollection);
+    // Rederive the one-centroid-point-per-region overview-label source from the
+    // SAME durable fabric (never the giant polygons, which repeat the symbol
+    // per-tile). Derived from the raw collection so region names/geometry stay
+    // authoritative; skipped silently if the style has no such source.
+    const labelSource = this.map.getSource(REGION_LABEL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (labelSource) labelSource.setData(regionLabelPointFeatures(this.controller.fabric.features));
   }
 
   /** Draft-preview accent for the sketch controller — the same accent token

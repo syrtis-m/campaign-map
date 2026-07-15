@@ -3,11 +3,14 @@ import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import {
   regionLabelLayers,
   regionLabelOpacityRamp,
+  regionLabelPointFeatures,
   REGION_LABEL_LAYER_ID,
+  REGION_LABEL_SOURCE_ID,
   REGION_LABEL_OPACITY,
 } from "./regionLabels";
 import { PARCHMENT } from "./tokens";
 import { layerGroupOf } from "./layerOrder";
+import type { FabricFeature } from "../../model/fabric";
 
 describe("regionLabelLayers — named-region overview label", () => {
   const layers = regionLabelLayers(PARCHMENT);
@@ -20,21 +23,23 @@ describe("regionLabelLayers — named-region overview label", () => {
     paint: Record<string, unknown>;
   };
 
-  it("emits a single symbol layer on the fabric source", () => {
+  it("emits a single symbol layer on the dedicated region-labels point source", () => {
     expect(layers).toHaveLength(1);
     expect(layer.id).toBe(REGION_LABEL_LAYER_ID);
     expect(layer.type).toBe("symbol");
-    expect(layer.source).toBe("fabric");
+    // NOT the giant `fabric` polygon source — a canvas-filling region would
+    // repeat the symbol per-tile there; one centroid point avoids it.
+    expect(layer.source).toBe(REGION_LABEL_SOURCE_ID);
+    expect(layer.source).not.toBe("fabric");
   });
 
   it("classifies into the fabric z-order group (below locations)", () => {
     expect(layerGroupOf(REGION_LABEL_LAYER_ID)).toBe("fabric");
   });
 
-  it("filters to NAMED polygon regions only — never gates existence by zoom", () => {
+  it("filters to NAMED features — never gates existence by zoom", () => {
     const f = JSON.stringify(layer.filter);
     expect(f).toContain('"name"'); // has name
-    expect(f).toContain("Polygon"); // area regions only
     // Zoom in a filter silently invalidates the whole style — never here.
     expect(f).not.toContain('"zoom"');
   });
@@ -54,11 +59,72 @@ describe("regionLabelLayers — named-region overview label", () => {
     const style = {
       version: 8 as const,
       glyphs: "http://localhost/{fontstack}/{range}.pbf",
-      sources: { fabric: { type: "geojson" as const, data: { type: "FeatureCollection" as const, features: [] } } },
+      sources: {
+        [REGION_LABEL_SOURCE_ID]: { type: "geojson" as const, data: { type: "FeatureCollection" as const, features: [] } },
+      },
       layers,
     };
     const errors = validateStyleMin(style as unknown as Parameters<typeof validateStyleMin>[0]);
     expect(errors.map((e) => e.message)).toEqual([]);
+  });
+});
+
+describe("regionLabelPointFeatures — one centroid point per named region", () => {
+  const poly = (
+    id: string,
+    name: string | undefined,
+    coordinates: number[][][]
+  ): FabricFeature =>
+    ({
+      type: "Feature",
+      id,
+      geometry: { type: "Polygon", coordinates },
+      properties: { kind: "district", ...(name !== undefined ? { name } : {}) },
+    }) as unknown as FabricFeature;
+
+  const line = (id: string, name: string): FabricFeature =>
+    ({
+      type: "Feature",
+      id,
+      geometry: { type: "LineString", coordinates: [[0, 0], [10, 0]] },
+      properties: { kind: "river", name },
+    }) as unknown as FabricFeature;
+
+  const unitSquare = [[[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]]];
+
+  it("emits exactly one POINT per named polygon at its centroid", () => {
+    const fc = regionLabelPointFeatures([poly("a", "Alpha", unitSquare)]);
+    expect(fc.features).toHaveLength(1);
+    const f = fc.features[0];
+    expect(f.geometry.type).toBe("Point");
+    expect((f.geometry as GeoJSON.Point).coordinates).toEqual([2, 2]);
+    expect(f.properties?.name).toBe("Alpha");
+  });
+
+  it("skips unnamed polygons and line kinds (only named area regions get a label)", () => {
+    const fc = regionLabelPointFeatures([
+      poly("named", "Kept", unitSquare),
+      poly("unnamed", undefined, unitSquare),
+      line("river", "Ignored River"),
+    ]);
+    expect(fc.features.map((f) => f.properties?.name)).toEqual(["Kept"]);
+  });
+
+  it("area-weights a donut (holes) so the label lands OFF the enclosed island", () => {
+    // A big square sea with a central square island hole (opposite winding).
+    // A naive vertex-average would sit at the shared center (ON the island); the
+    // area-weighted centroid of a SYMMETRIC donut also sits at center, so offset
+    // the hole to prove holes are subtracted, not averaged in.
+    const outer = [[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]];
+    // Hole in the RIGHT half, wound opposite (clockwise) to the CCW outer ring.
+    const hole = [[60, 40], [60, 60], [80, 60], [80, 40], [60, 40]];
+    const fc = regionLabelPointFeatures([poly("sea", "The Deep", [outer, hole])]);
+    expect(fc.features).toHaveLength(1);
+    const [x, y] = (fc.features[0].geometry as GeoJSON.Point).coordinates;
+    // Removing right-side area pulls the centroid LEFT of the plate center (50).
+    expect(x).toBeLessThan(50);
+    // The hole is vertically centered, so y stays ~50.
+    expect(y).toBeCloseTo(50, 0);
   });
 });
 

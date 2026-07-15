@@ -140,6 +140,28 @@ function scaledTowardCentroid(open: Pt[], factor: number): Pt[] {
 }
 const WALL_TRACE_INSET = 0.94;
 
+/** Shoelace signed area of a closed ring (map units). Sign encodes winding:
+ * used to force a donut's HOLE rings to the opposite winding of the outer ring —
+ * MapLibre's `classifyRings` only treats a ring as a hole when its signed-area
+ * sign is opposite the exterior's (same sign ⇒ a NEW filled polygon, which would
+ * re-fill the island with water). */
+function signedArea(ring: Pt[]): number {
+  let a = 0;
+  for (let i = 0; i + 1 < ring.length; i++) {
+    a += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+  }
+  return a / 2;
+}
+
+/** Return `ring` wound OPPOSITE to `outerSign` (reversing preserves closure — a
+ * closed ring's first === last, so a full reverse keeps it closed and flips the
+ * winding). Same boundary vertices either way, so a hole butts EXACTLY against
+ * the island/islet feature's own coast ring (no gap, no overlap). */
+function oppositeWinding(ring: Pt[], outerSign: number): Pt[] {
+  const s = signedArea(ring);
+  return s !== 0 && Math.sign(s) === Math.sign(outerSign) ? [...ring].reverse() : ring;
+}
+
 // ─── Named geometry (NORMALIZED reference coords; easy to tweak) ──────────────
 // The island silhouette, traced clockwise in screen space from the north point:
 // rounded N shore, NE shoulder → E bulge (Industrial Port), the deep inlet, the
@@ -200,8 +222,13 @@ const ISLET_COAST: NPt[] = [
   [8, 83],
   [5, 82.5],
 ];
-/** Sea plate: covers the whole canvas (with margin) at the sea datum; the island
- * + islet plateaus sit ON TOP at higher priority and win inside their masks. */
+/** Sea plate OUTER ring: covers the whole canvas (with margin) at the sea datum.
+ * The island + islet coast rings are cut as POLYGON HOLES (a donut) so the water
+ * FILL never paints over land — the island/islet feature fills show through and
+ * their coast rings draw. (For the ELEVATION field the sea landform's mask reads
+ * only the OUTER ring — `landformStampsFromFabric` uses `coordinates[0]` — so the
+ * sea replace-stamp still covers the whole canvas and the island plateau's higher
+ * `priority` still wins inside its ring: the terrain is unchanged by the holes.) */
 const SEA_RECT: NPt[] = [
   [-3, -3],
   [103, -3],
@@ -237,6 +264,9 @@ interface RegionDef {
   coords: NPt[];
   /** Skip edge-jitter (used for the big sea rectangle). */
   raw?: boolean;
+  /** Poly ids to cut as HOLES in this poly (a donut) — the sea cuts the island
+   * + islet coast rings so its water fill never covers land. */
+  holes?: string[];
   /** A wall that TRACES another region's ring. */
   traces?: string;
   algorithm?: string;
@@ -253,6 +283,8 @@ const DEFS: RegionDef[] = [
     shape: "poly",
     coords: SEA_RECT,
     raw: true,
+    // Cut the island + islet coasts as holes → water fill covers only open sea.
+    holes: ["cradle-landform-island", "cradle-landform-islet"],
     algorithm: "landform",
     params: { mode: "sea", target: -40, band: 80, priority: 0 },
     presetId: "sea",
@@ -436,12 +468,26 @@ function procgenBlock(def: RegionDef): ProcgenBlock {
   };
 }
 
+/** The closed MAP-UNIT ring a poly def emits (identical bytes to its own feature's
+ * outer ring) — the sea's holes reuse this so a hole boundary is exactly the
+ * island/islet coast. */
+function closedUnitRing(id: string): Pt[] {
+  return closed(metersOf(id)).map(toUnits);
+}
+
 function fabricFeatureOf(def: RegionDef): FabricFeature {
   const meters = metersOf(def.id);
-  const geometry: FabricFeature["geometry"] =
-    def.shape === "poly"
-      ? { type: "Polygon", coordinates: [closed(meters).map(toUnits)] }
-      : { type: "LineString", coordinates: meters.map(toUnits) };
+  let geometry: FabricFeature["geometry"];
+  if (def.shape === "poly") {
+    const rings: Pt[][] = [closed(meters).map(toUnits)];
+    if (def.holes && def.holes.length > 0) {
+      const outerSign = signedArea(rings[0]);
+      for (const holeId of def.holes) rings.push(oppositeWinding(closedUnitRing(holeId), outerSign));
+    }
+    geometry = { type: "Polygon", coordinates: rings };
+  } else {
+    geometry = { type: "LineString", coordinates: meters.map(toUnits) };
+  }
   return {
     type: "Feature",
     id: def.id,

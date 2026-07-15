@@ -148,6 +148,9 @@ export function obsidianNativeStyle(
       connections: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       "session-path": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       fabric: { ...FABRIC_SOURCE_SPEC },
+      // One centroid POINT per named region — keeps the overview label from
+      // repeating per-tile on a canvas-filling polygon (see regionLabels.ts).
+      "region-labels": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       ...(basemap ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } } : {}),
       ...(dem ? { [dem.sourceId]: hillshadeSourceSpec(dem.url) } : {}),
       // The global terrain-contour surface is fictional-campaign-only (it derives
@@ -165,7 +168,8 @@ export function obsidianNativeStyle(
       ...(dem ? [terrainContourLayer(t)] : []),
       ...generatedLayers(t),
       ...fabricLayers(t),
-      // Named-region overview labels (same fabric source, fabric z-group).
+      // Named-region overview labels (dedicated region-labels point source,
+      // fabric z-group).
       ...regionLabelLayers(t),
       ...connectionLayers({ lineColor: t.accent }),
       ...sessionPathLayers({ lineColor: t.poi }),

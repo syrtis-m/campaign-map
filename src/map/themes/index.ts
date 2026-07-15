@@ -43,6 +43,9 @@ export function buildThemeStyle(
       connections: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       "session-path": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       fabric: { ...FABRIC_SOURCE_SPEC },
+      // One centroid POINT per named region — keeps the overview label from
+      // repeating per-tile on a canvas-filling polygon (see regionLabels.ts).
+      "region-labels": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       ...(basemap
         ? { [basemap.sourceId]: { type: "vector" as const, url: basemap.url } }
         : {}),
@@ -61,8 +64,9 @@ export function buildThemeStyle(
       ...(dem ? [terrainContourLayer(tokens)] : []),
       ...generatedLayers(tokens),
       ...fabricLayers(tokens),
-      // Named-region overview labels ride the fabric source, above the sketch
-      // fills/lines but still within the fabric z-group (below locations).
+      // Named-region overview labels ride the dedicated region-labels point
+      // source, above the sketch fills/lines but still within the fabric z-group
+      // (below locations).
       ...regionLabelLayers(tokens),
       ...connectionLayers({ lineColor: tokens.accent }),
       ...sessionPathLayers({ lineColor: tokens.poi }),
