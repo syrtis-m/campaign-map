@@ -28,6 +28,20 @@ eyes lands HERE. Newest items at the top of each section.
   faubourg reading). Flag if plan-037 gate work wants a cleaner separation fixture instead.
 
 ## Landed
+- **Plan 031 COMPLETE** (`cebb66f`, `02f0e07`, `5557ba6`, `a42cace`, `c111ec2`): network-once
+  under force (P1), batching parity (one fp pass + one shared cache read + ≤1 repaint per batch),
+  stage-ordered raw channel (P2/P3 correctness — ordering assertion verified to fail with the
+  sort disabled), river/wall regen through the worker (spine across the boundary). 895→924 tests;
+  independently re-verified (tsc+suite+build) before push. Judgment calls for Jonah:
+  1. **Force semantics moved** from "always recompute network" to "recompute-if-absent" (caller
+     clears the cache to force a true recompute) — an existing test's contract was updated.
+  2. **Worker zod scope**: only the new `spine` field got a schema (`JobSpineSchema`); the rest of
+     the job payload stays plain TS interfaces per pre-existing convention. Extending validation
+     to the whole payload would be a follow-up.
+  3. **P2 test note**: a water sketch edit can't byte-move a city (water only toggles river
+     estuary dressing; the channel the city consumes is spine/params/elevation-driven) — the P2
+     discriminator is the regen-order assertion + fingerprint-fresh⇒bytes-fresh property. Worth
+     knowing if a later plan wants water→channel coupling.
 - **Overlap test map** (`41f5790`): `src/gen/testkit/overlapMap.ts` — 9 deterministic scenario
   builders (S1 river×district, S2 wall-on-ring, S3 forest×river, S4 farmland shared-edge +
   downstream river, S5 park-in-district, S6 ε=0 adjacent districts, S7 mountain/farmland/river
