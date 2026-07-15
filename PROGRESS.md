@@ -2,7 +2,66 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 + 034 + 035 + 037 COMPLETE (2026-07-15). Plan 036 (global terrain) 36-A/B/D + item 5 COMPLETE, 36-C engine landed (live paint-wiring deferred to a Jonah-eyeball session) — 2026-07-15. Plans 020–028 complete. Next: finish 036-C live wiring; 038.
+## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plans 031 + 032 + 033 + 034 + 035 + 037 COMPLETE (2026-07-15). Plan 036 (global terrain) 36-A/B/D + item 5 COMPLETE, 36-C engine landed (live paint-wiring deferred to a Jonah-eyeball session) — 2026-07-15. Plan 038 (coupling edges wave 2: flavor) river/farmland/forest/park/wall cluster (items 2/3/4/7/8) COMPLETE (2026-07-15); city cluster (items 1/5/6) landed in parallel. Plans 020–028 complete. Next: finish 036-C live wiring.
+
+## Plan 038 — coupling edges wave 2: flavor & quality couplings (2026-07-15, headless-only per Jonah 2026-07-14)
+Wave 2 buys legibility ("one world, not independent stamps"). Every item: read an
+upstream (channel / terrain field / settlement payload / sketch adjacency),
+version-bump the consumer, prove BYTE-IDENTITY when the upstream/adjacency is
+absent (23-E), keep the 033 harness green. Two independent clusters ran in
+parallel: the **river/farmland/forest/park/wall cluster (items 2/3/4/7/8)** below,
+and the **city cluster (items 1/5/6)** — waterfront bank-tangent streets, road-
+sketch arterial promotion, adjacent-district hashed stubs — landed by the parallel
+agent (`b08668c` plan038.6, `14f8503` plan038.5, + the waterfront commit).
+Per-algorithm cumulative bumps: river 2→3, farmland 3→4, forest 2→4, park 4→5,
+wall 2→3. No-upstream goldens BYTE-IDENTICAL (`.snap` tripwires pass unchanged —
+the bumps are adoption gates). suite (my 13 files) 243/243 · fuzz 38/38 · tsc +
+build clean.
+- **[x] 038-8 — WALL WATER refinements** (`390522d`): a `wall-gate` with
+  `waterGate: true` (sluice marker) where the spine crosses the GENERATED channel
+  (resample + bisect the water-SDF sign transition) or a city canal (segment
+  intersection); the moat SNAPS to the bank (a `leat: true` junction quad) instead
+  of ending a step short. CANAL PAYLOAD wired WITHOUT editing citynet:
+  `MapController.buildRegionUpstream` collects `city-landmark` type=canal lines
+  into `upstream.settlement`; `buildSettlementPayload` splits `canalLines`;
+  farmland + urban-park skip `type:"canal"` in their raw settlement parse
+  (byte-neutral). No water in reach ⇒ byte-identical (wallWaterGate 5/5).
+- **[x] 038-2 — RIVERINE FARMLAND** (`9951351`): near a generated river bank the
+  fields become Quebec rang long-lots run PERPENDICULAR to the water (`bankLot`),
+  the near end tagged `waterMeadow`; the normal lattice fields there are
+  suppressed. Bank walked by arc length, inland dir = channel SDF −∇, zero rng.
+  Non-paddy only, channel-gated ⇒ byte-identical otherwise. Metric: >80% of lot
+  long-axes align with the inland normal (farmlandRiverine 6/6).
+- **[x] 038-3 — RIVER TRIBUTARY RANK** (`286642d`): Strahler-ish width from the
+  sketched spine topology (other river sketches within CONFLUENCE_SNAP_M —
+  consumesSketch/margin unchanged). Main half-width steps UP below each junction
+  (W ∝ √Q), CAPPED at maxHalfWidth so the params-only corridor holds (junction
+  width monotonicity); a tributary mouth clamps to a narrower main. No topology ⇒
+  `halfWidthAt` verbatim (byte-identical). DEFERRED: rule 3 junction-angle nudge
+  (would deform the centerline, risking the corridor/weld invariants). (riverTributaryRank 6/6)
+- **[x] 038-4 — TERRAIN-READING veg + agriculture** (`65e58b7`): forest timberline
+  (canopy thins + trees drop above the treeline) + conifer-upslope `standConifer`
+  + contour-sag; farmland slope-gating (steep ⇒ `pasture`). Reads
+  `macroTerrainField` (mountains + base); flat campaign / flat region ⇒
+  byte-identical. forest consumesSketch []→["mountain"] (compact support, margin
+  0). DEFERRED: park pond-at-low-point (radial-composition/containment
+  entanglement); farmland contour-ORIENTED strips (world-aligned edit-locality
+  invariant). (forestTerrain 6/6; farmland constraint-ignore test split)
+- **[x] 038-7 — FOREST↔FARMLAND↔PARK sketch adjacency** (`307c8e9`): a shared-
+  boundary hedgerow/woodland-bank line via a new SYMMETRIC operator
+  `sharedBoundary.ts` (3 consumers ⇒ shared home) — the lower-id ring is the
+  canonical source, so both neighbours derive the SAME line BIT-EXACTLY (2×2 seam
+  contract, proved: forest & farmland agree on the x=100 seam). Symmetric
+  consumesSketch: forest/farmland ["mountain",…]→+the two other kinds (margin 8 =
+  HEDGE_ADJ_EPS); park +forest/farmland (30 m covers 8). No adjacency ⇒
+  byte-identical. registry.test reconciled for the plan-038 bumps + table.
+  (sketchAdjacency 5/5; 033 under-invalidation 38/38)
+
+**Handoff / needs Jonah's eyes:** `MapController.test.ts` version fixtures hardcode
+pre-038 currentVersions (river/forest/wall `toBe(2)`, city adopt-all count) — NOT
+my writable surface, actively edited by the city agent, so left for a
+reconciliation pass (city 3, river 3, forest 4, wall 3, farmland 4, park 5). The
+city agent already left it red for city v3; the 038 bumps extend that set.
 
 ## Plan 037 — coupling edges wave 1 (correctness) (2026-07-15, 37-A/B/C/D COMPLETE — headless-only per Jonah 2026-07-14)
 Wired the declared/correctness cross-layer edges. Each item: its own algorithm
