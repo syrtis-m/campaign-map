@@ -65,6 +65,7 @@ import {
   DEPTH_HANDLE_MIN,
   DEPTH_HANDLE_MAX,
 } from "./heightHandle";
+import { bandValuesFromParams, formatBandReadout } from "./bandGhost";
 import { normalizeTerrainBlock, type TerrainBlock } from "./terrainSettings";
 import { addConnection, removeConnection, setLocationVisibility } from "../vault/locationOps";
 import { importNotes } from "../vault/importOps";
@@ -1659,6 +1660,18 @@ export class MapView extends ItemView {
         const live = feature.properties.procgen?.params ?? {};
         void this.setRegionParams(featureId, { ...live, ...depthParamsFromValues(values) });
       },
+      // Band-edge grips (plan 040 Phase 2): live readout during the drag (the
+      // ghost outline re-offsets in the controller, no regen); on release, merge
+      // the single edited band param into the live params and run the normal
+      // setRegionParams path (validate/log/cascade).
+      onBandDrag: (_featureId, param, value) => this.showBandReadout(param, value),
+      onBandCommit: (featureId, params) => {
+        this.hideHeightReadout();
+        const feature = this.controller.fabricFeature(featureId);
+        if (!feature) return;
+        const live = feature.properties.procgen?.params ?? {};
+        void this.setRegionParams(featureId, { ...live, ...params });
+      },
       onGeometryPreview: (featureId, geometry) => {
         // Preview mode (plan 034-D): per debounce PAUSE of the drag, repaint
         // only the ROOT region as ephemeral render state (no cache, no
@@ -1877,6 +1890,14 @@ export class MapView extends ItemView {
     const vertexCount =
       feature.geometry.type === "LineString" ? feature.geometry.coordinates.length : 0;
     const depthVals = params ? riverDepthValues(feature.properties.kind, params, vertexCount) : null;
+    // Band ghost (plan 040 Phase 2): the effective ground band a relief/landform
+    // reaches, editable on the map. Values are the live param metres; the
+    // controller converts them into the geometry's planar units via metersPerUnit.
+    const kind = feature.properties.kind;
+    const band =
+      params && (kind === "relief" || kind === "landform")
+        ? { values: bandValuesFromParams(kind, params), metersPerUnit: this.campaign?.config.scaleMetersPerUnit ?? 1 }
+        : null;
     this.sketchController?.select({
       id: feature.id,
       geometry: feature.geometry,
@@ -1884,6 +1905,7 @@ export class MapView extends ItemView {
       center,
       height: desc ? { value: desc.value, min: desc.min, max: desc.max } : null,
       depths: depthVals ? { values: depthVals, min: DEPTH_HANDLE_MIN, max: DEPTH_HANDLE_MAX } : null,
+      band,
     });
   }
 
@@ -1960,6 +1982,15 @@ export class MapView extends ItemView {
       this.heightReadoutEl = this.contentEl.createDiv({ cls: "campaign-map-height-readout" });
     }
     this.heightReadoutEl.setText(formatDepthReadout(value));
+  }
+
+  /** Live drag readout for a band-edge grip (plan 040 Phase 2) — reuses the
+   * height readout HUD (only one band grip drags at a time). */
+  private showBandReadout(param: string, value: number): void {
+    if (!this.heightReadoutEl) {
+      this.heightReadoutEl = this.contentEl.createDiv({ cls: "campaign-map-height-readout" });
+    }
+    this.heightReadoutEl.setText(formatBandReadout(param as "halfWidth" | "apron" | "band", value));
   }
 
   /** Arms the debounced constraint/region regen ("sketch a river, streets

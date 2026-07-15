@@ -11,11 +11,24 @@ import {
   clampDepthsMonotone,
   clampHeight,
 } from "./heightHandle";
+import {
+  bandEdges,
+  bandParamFromOffset,
+  offsetFromBandDrag,
+  offsetPolyline,
+  insetRing,
+  safeInsetDistance,
+  polylineMidNormal,
+  ringInsetNormal,
+  type Pt as PlanarPt,
+} from "./bandGhost";
 
 const DRAFT_SOURCE = "fabric-draft";
 const DRAFT_LAYERS = [
   "fabric-draft-fill",
   "fabric-draft-line",
+  "fabric-draft-band",
+  "fabric-draft-band-faint",
   "fabric-draft-midpoint",
   "fabric-draft-vertex",
   "fabric-draft-center",
@@ -37,6 +50,14 @@ const HEIGHT_GRIP_OUTER_PX = HEIGHT_GRIP_CORE_PX + HEIGHT_GRIP_RING_PX * 2;
  * one PER vertex, so they read as a row of small handles, not one big target. */
 const DEPTH_GRIP_CORE_PX = 14;
 const DEPTH_GRIP_OUTER_PX = DEPTH_GRIP_CORE_PX + HEIGHT_GRIP_RING_PX * 2;
+/** Band-edge grips (plan 040 Phase 2): small hollow handles that sit ON the
+ * ghost footprint outline (the ground band a relief/landform reaches), dragged
+ * perpendicular to the outline to resize `halfWidth`/`apron`/`band`. */
+const BAND_GRIP_CORE_PX = 13;
+const BAND_GRIP_OUTER_PX = BAND_GRIP_CORE_PX + HEIGHT_GRIP_RING_PX * 2;
+/** Below this many metres of offset change a band-grip release is a click, not a
+ * resize — no commit (mirrors the height/depth deadzone). */
+const BAND_DRAG_DEADZONE_M = HEIGHT_DRAG_DEADZONE_M;
 
 type Pt = [number, number];
 
@@ -71,6 +92,14 @@ export interface SketchControllerHandlers {
    * (`depthParamsFromValues`) and runs the normal `setRegionParams` path. Only a
    * past-deadzone drag reports here. */
   onDepthCommit?(featureId: string, values: number[]): void;
+  /** Live param value (m) during a band-edge grip drag (plan 040 Phase 2) — the
+   * host updates a readout HUD; no terrain recompute (that waits for release).
+   * `param` is the zod key the edge sets (`halfWidth`/`apron`/`band`). */
+  onBandDrag?(featureId: string, param: string, value: number): void;
+  /** Release-commit of a band-edge grip: the single param the edge sets, merged
+   * into the live params by the host and run through the normal `setRegionParams`
+   * path (validate → log → cascade → undo). Only a past-deadzone drag reports. */
+  onBandCommit?(featureId: string, params: Record<string, unknown>): void;
   /** Mid-drag geometry (fired on every move of a grabbed handle; the host
    * debounces). Plan 034-D preview mode: the host paints an EPHEMERAL
    * root-only regen per pause — never cached, never fingerprinted; the full
@@ -96,6 +125,12 @@ interface EditState {
    * per spine vertex, aligned to `vertices`; null for kinds without depth grips
    * (everything but a river). */
   depths: { values: number[]; min: number; max: number } | null;
+  /** Band-edge grips (plan 040 Phase 2) — the effective ground band a
+   * relief/landform reaches, editable on the map. `values` are the LIVE param
+   * metres the ghost outline + grips are computed from (`halfWidth`+`apron` for
+   * relief; `band` for landform); `metersPerUnit` converts them into the base
+   * geometry's planar units for the offset. Null for kinds without a band. */
+  band: { values: Record<string, number>; metersPerUnit: number } | null;
 }
 
 /**
@@ -167,6 +202,33 @@ export class SketchController {
   /** Per-grip pointerdown closures (each captures its vertex index), kept for
    * teardown. */
   private depthDownHandlers: ((e: PointerEvent) => void)[] = [];
+
+  // ── Band-edge grips (plan 040 Phase 2) ────────────────────────────────────
+  // One grip per draggable band edge (relief: halfWidth + apron; landform:
+  // band). Unlike the height/depth grips (a fixed screen-Y axis, decoupled from
+  // the map surface), a band edge IS a ground footprint, so its grip lives on
+  // the ghost outline via a TRUE `project`, and its drag is measured along the
+  // outline's screen normal with metres/pixel folded from the live map scale.
+  private bandGrips: HTMLElement[] = [];
+  /** Active band-drag bookkeeping: which edge + its param, the pointer client
+   * position at grab, the outline's unit screen normal + metres/pixel captured
+   * at grab, and the offset baseline. Null when no band drag is in flight. */
+  private bandDrag: {
+    index: number;
+    param: "halfWidth" | "apron" | "band";
+    startClientX: number;
+    startClientY: number;
+    screenNormal: PlanarPt;
+    metresPerPixel: number;
+    startOffset: number;
+    startValues: Record<string, number>;
+  } | null = null;
+  /** Camera-move reposition hook for the band grips, registered only while they
+   * exist. */
+  private bandMoveHook: (() => void) | null = null;
+  /** Per-grip pointerdown closures (each captures its edge index), kept for
+   * teardown. */
+  private bandDownHandlers: ((e: PointerEvent) => void)[] = [];
   /** Set true when a mousedown grabs a handle, so the trailing `click`
    * MapLibre may fire is suppressed (see `consumeInteraction`). Cleared at the
    * start of every mousedown so a stale flag can never silently eat the next
@@ -409,6 +471,7 @@ export class SketchController {
     this.hoverVertexIndex = null;
     this.removeHeightGrip();
     this.removeDepthGrips();
+    this.removeBandGrips();
     this.map.off("mousemove", this.moveHandler);
     this.map.off("mousemove", this.hoverHandler);
     this.map.off("mousedown", this.downHandler);
@@ -473,6 +536,7 @@ export class SketchController {
     center?: Pt | null;
     height?: { value: number; min: number; max: number } | null;
     depths?: { values: number[]; min: number; max: number } | null;
+    band?: { values: Record<string, number>; metersPerUnit: number } | null;
   }): void {
     this.vertices = [];
     this.cursor = null;
@@ -481,6 +545,7 @@ export class SketchController {
     this.draggingCenter = false;
     this.heightDrag = null;
     this.depthDrag = null;
+    this.bandDrag = null;
     const vertices = openVertices(feature.geometry);
     // Depth grips align to the spine vertices; a mismatched persisted array is
     // ignored upstream (`riverDepthValues`), but guard here too.
@@ -493,6 +558,7 @@ export class SketchController {
       center: feature.center ?? null,
       height: feature.height ?? null,
       depths,
+      band: feature.band ?? null,
     };
     this.renderDraft();
   }
@@ -517,6 +583,7 @@ export class SketchController {
     this.draggingCenter = false;
     this.heightDrag = null;
     this.depthDrag = null;
+    this.bandDrag = null;
     this.renderDraft();
   }
 
@@ -617,12 +684,44 @@ export class SketchController {
         id: "fabric-draft-line",
         type: "line",
         source: DRAFT_SOURCE,
-        filter: ["!=", ["geometry-type"], "Point"],
+        // Exclude the band ghost lines — they have their own fainter layers.
+        filter: ["all", ["!=", ["geometry-type"], "Point"], ["!", ["has", "ghost"]]],
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": this.accent,
           "line-width": 2,
           "line-dasharray": [2, 2],
+        },
+      } as unknown as LayerSpecification,
+      {
+        // Band ghost — the effective footprint edge (halfWidth corridor / band
+        // ring). Dashed accent, drawn UNDER the handles; a fainter dash than the
+        // edit outline so the reach reads as a guide, not the shape itself.
+        id: "fabric-draft-band",
+        type: "line",
+        source: DRAFT_SOURCE,
+        filter: ["==", ["get", "ghost"], "band"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": this.accent,
+          "line-width": 1.5,
+          "line-opacity": 0.55,
+          "line-dasharray": [3, 3],
+        },
+      } as unknown as LayerSpecification,
+      {
+        // Fainter apron-skirt ghost (halfWidth + apron): the foothill reach,
+        // fainter still so it reads as the outer feather.
+        id: "fabric-draft-band-faint",
+        type: "line",
+        source: DRAFT_SOURCE,
+        filter: ["==", ["get", "ghost"], "band-faint"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": this.accent,
+          "line-width": 1,
+          "line-opacity": 0.28,
+          "line-dasharray": [2, 4],
         },
       } as unknown as LayerSpecification,
       {
@@ -717,6 +816,7 @@ export class SketchController {
           properties: { handle: "center", index: 0 },
         });
       }
+      for (const f of this.bandGhostFeatures()) features.push(f);
     }
 
     if (this.isDrawing) {
@@ -745,6 +845,45 @@ export class SketchController {
     source?.setData({ type: "FeatureCollection", features });
     this.syncHeightGrip();
     this.syncDepthGrips();
+    this.syncBandGrips();
+  }
+
+  /** Display-only ghost outlines of the effective band a relief/landform stamp
+   * reaches (plan 040 Phase 2): relief → the ±halfWidth corridor (solid ghost)
+   * + the fainter ±(halfWidth+apron) skirt; landform → the inset band ring.
+   * Offset in the base geometry's planar units (metres ÷ metresPerUnit); pure
+   * `offsetPolyline`/`insetRing`. Draping onto terrain is fine — the band IS a
+   * ground footprint. */
+  private bandGhostFeatures(): GeoJSON.Feature[] {
+    if (!this.edit?.band) return [];
+    const { values, metersPerUnit } = this.edit.band;
+    const toUnits = (m: number): number => m / metersPerUnit;
+    const out: GeoJSON.Feature[] = [];
+    if (this.edit.kind === "relief") {
+      const hw = toUnits(bandEdges("relief", values)[0].offsetMeters);
+      const outer = toUnits(bandEdges("relief", values)[1].offsetMeters);
+      const line = (coords: PlanarPt[], ghost: string): GeoJSON.Feature => ({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: coords },
+        properties: { ghost },
+      });
+      out.push(line(offsetPolyline(this.edit.vertices, hw), "band"));
+      out.push(line(offsetPolyline(this.edit.vertices, -hw), "band"));
+      if (outer > hw + 1e-9) {
+        out.push(line(offsetPolyline(this.edit.vertices, outer), "band-faint"));
+        out.push(line(offsetPolyline(this.edit.vertices, -outer), "band-faint"));
+      }
+    } else if (this.edit.kind === "landform") {
+      const d = safeInsetDistance(this.edit.vertices, toUnits(values.band ?? 0));
+      if (d > 1e-9) {
+        out.push({
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: insetRing(this.edit.vertices, d) },
+          properties: { ghost: "band" },
+        });
+      }
+    }
+    return out;
   }
 
   // ── Extrude-grip overlay lifecycle ───────────────────────────────────────
@@ -777,22 +916,32 @@ export class SketchController {
     stem.style.pointerEvents = "none";
     stem.style.zIndex = "5";
 
-    const grip = doc.createElement("div");
-    grip.className = `campaign-map-${cls}-grip`;
-    grip.style.position = "absolute";
-    grip.style.width = `${HEIGHT_GRIP_CORE_PX}px`;
-    grip.style.height = `${HEIGHT_GRIP_CORE_PX}px`;
-    grip.style.borderRadius = "50%";
-    grip.style.background = this.accent;
-    grip.style.border = `${HEIGHT_GRIP_RING_PX}px solid #ffffff`;
-    grip.style.boxSizing = "content-box"; // core stays 22px; ring adds outside
-    grip.style.cursor = "ns-resize"; // the vertical-drag cue, grip-owned
-    grip.style.zIndex = "6";
-    grip.style.touchAction = "none"; // pointer capture owns the gesture
+    const grip = this.makeGripCore(cls, HEIGHT_GRIP_CORE_PX, this.accent, "ns-resize");
 
     container.appendChild(stem);
     container.appendChild(grip);
     return { grip, stem };
+  }
+
+  /** One grip element (no stem) — the shared circular DOM target the height,
+   * depth, and band grips are all built from: `corePx` core, white ring,
+   * `background` fill, `cursor` cue. `cls` distinguishes it in the DOM / tests.
+   * Not yet parented — the caller appends it. */
+  private makeGripCore(cls: string, corePx: number, background: string, cursor: string): HTMLElement {
+    const doc = this.map.getCanvasContainer().ownerDocument;
+    const grip = doc.createElement("div");
+    grip.className = `campaign-map-${cls}-grip`;
+    grip.style.position = "absolute";
+    grip.style.width = `${corePx}px`;
+    grip.style.height = `${corePx}px`;
+    grip.style.borderRadius = "50%";
+    grip.style.background = background;
+    grip.style.border = `${HEIGHT_GRIP_RING_PX}px solid #ffffff`;
+    grip.style.boxSizing = "content-box"; // core stays corePx; ring adds outside
+    grip.style.cursor = cursor;
+    grip.style.zIndex = "6";
+    grip.style.touchAction = "none"; // pointer capture owns the gesture
+    return grip;
   }
 
   /** Lazily build the height grip + dashed stem, and start tracking camera moves
@@ -1038,6 +1187,198 @@ export class SketchController {
   /** Current per-vertex depth values (or null) — test/readout seam. */
   get depthValues(): number[] | null {
     return this.edit?.depths?.values ?? null;
+  }
+
+  // ── Band-edge grip overlay lifecycle (plan 040 Phase 2) ───────────────────
+  // One grip per draggable band edge. The grip sits ON the ghost footprint (a
+  // TRUE `project` of the offset outline point), and its drag is measured along
+  // the outline's SCREEN normal with metres/pixel folded from the live map
+  // scale — so the grip tracks the true edge as it widens, and the ghost
+  // re-offsets live (`renderDraft`). No terrain recompute until release.
+
+  /** Create/position the band grips when a relief/landform with a band is
+   * selected; tear them down otherwise. Idempotent — safe every render. */
+  private syncBandGrips(): void {
+    const edgeCount = this.active && this.edit?.band ? bandEdges(this.edit.kind, this.edit.band.values).length : 0;
+    if (edgeCount > 0) {
+      // Rebuild when the edge count changed (e.g. re-selecting relief↔landform,
+      // 2 grips vs 1) — the lazy guard alone would keep the stale count.
+      if (this.bandGrips.length !== edgeCount) this.removeBandGrips();
+      this.ensureBandGrips();
+      this.repositionBandGrips();
+    } else {
+      this.removeBandGrips();
+    }
+  }
+
+  /** The base geometry's anchor + unit normal (planar/display units) the band
+   * grips ride out along: the relief spine's mid-segment left normal, or the
+   * landform ring's inward normal at edge 0. */
+  private bandAnchorNormal(): { anchor: PlanarPt; normal: PlanarPt } {
+    if (this.edit?.kind === "landform") return ringInsetNormal(this.edit.vertices);
+    return polylineMidNormal(this.edit?.vertices ?? []);
+  }
+
+  private ensureBandGrips(): void {
+    if (this.bandGrips.length > 0 || !this.edit?.band) return;
+    const edges = bandEdges(this.edit.kind, this.edit.band.values);
+    for (let i = 0; i < edges.length; i++) {
+      const grip = this.makeGripCore("band", BAND_GRIP_CORE_PX, "#ffffff", "move");
+      // Hollow (white core, accent ring) so a band grip reads distinctly from
+      // the filled vertex dots and the terrain-stamp height grip.
+      grip.style.border = `2px solid ${this.accent}`;
+      const down = (e: PointerEvent): void => this.onBandPointerDown(e, i);
+      this.bandDownHandlers[i] = down;
+      grip.addEventListener("pointerdown", down);
+      grip.addEventListener("mousedown", this.onGripMouseDown);
+      this.map.getCanvasContainer().appendChild(grip);
+      this.bandGrips[i] = grip;
+    }
+    this.bandMoveHook = () => this.repositionBandGrips();
+    this.map.on("move", this.bandMoveHook);
+    this.map.on("render", this.bandMoveHook);
+  }
+
+  private readonly onBandPointerDown = (e: PointerEvent, index: number): void => {
+    if (!this.edit?.band || !this.bandGrips[index]) return;
+    const edges = bandEdges(this.edit.kind, this.edit.band.values);
+    const edge = edges[index];
+    if (!edge) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const grip = this.bandGrips[index];
+    try {
+      grip.setPointerCapture(e.pointerId);
+    } catch {
+      /* headless mock has no capture — the delta math still runs */
+    }
+    // Capture the outline's screen normal + metres/pixel at grab (constant for
+    // the drag — the camera is fixed while dragging). project() is terrain-aware
+    // when terrain is on, so the grip tracks the ground band under a pitch.
+    const { anchor, normal } = this.bandAnchorNormal();
+    const a = this.map.project(anchor);
+    const b = this.map.project([anchor[0] + normal[0], anchor[1] + normal[1]]);
+    const rawX = b.x - a.x;
+    const rawY = b.y - a.y;
+    const pxPerUnit = Math.hypot(rawX, rawY) || 1;
+    this.bandDrag = {
+      index,
+      param: edge.param,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      screenNormal: [rawX / pxPerUnit, rawY / pxPerUnit],
+      metresPerPixel: this.edit.band.metersPerUnit / pxPerUnit,
+      startOffset: edge.offsetMeters,
+      startValues: { ...this.edit.band.values },
+    };
+    grip.addEventListener("pointermove", this.onBandPointerMove);
+    grip.addEventListener("pointerup", this.onBandPointerUp);
+    grip.addEventListener("pointercancel", this.onBandPointerUp);
+    this.map.dragPan.disable();
+  };
+
+  private readonly onBandPointerMove = (e: PointerEvent): void => {
+    if (!this.bandDrag || !this.edit?.band) return;
+    const { param, screenNormal, metresPerPixel, startOffset, startValues } = this.bandDrag;
+    // Signed pixel travel along the outward screen normal (widen = positive).
+    const deltaPx = (e.clientX - this.bandDrag.startClientX) * screenNormal[0] + (e.clientY - this.bandDrag.startClientY) * screenNormal[1];
+    // Bounds are stable against the drag's start params (halfWidth doesn't move
+    // under an apron drag).
+    const edge = bandEdges(this.edit.kind, startValues).find((x) => x.param === param);
+    if (!edge) return;
+    const offset = offsetFromBandDrag(startOffset, deltaPx, metresPerPixel, edge.minOffset, edge.maxOffset);
+    const upd = bandParamFromOffset(param, offset, startValues.halfWidth ?? 0);
+    this.edit.band.values[upd.key] = upd.value;
+    this.renderDraft(); // live ghost re-offset + grip reposition (no regen)
+    this.handlers.onBandDrag?.(this.edit.featureId, param, upd.value);
+  };
+
+  private readonly onBandPointerUp = (e: PointerEvent): void => {
+    if (!this.bandDrag) return;
+    const { index, param, startValues } = this.bandDrag;
+    this.bandDrag = null;
+    const grip = this.bandGrips[index];
+    if (grip) {
+      try {
+        grip.releasePointerCapture(e.pointerId);
+      } catch {
+        /* headless mock */
+      }
+      grip.removeEventListener("pointermove", this.onBandPointerMove);
+      grip.removeEventListener("pointerup", this.onBandPointerUp);
+      grip.removeEventListener("pointercancel", this.onBandPointerUp);
+    }
+    this.map.dragPan.enable();
+    if (this.edit?.band) {
+      const value = this.edit.band.values[param] ?? 0;
+      if (Math.abs(value - (startValues[param] ?? 0)) >= BAND_DRAG_DEADZONE_M) {
+        this.handlers.onBandCommit?.(this.edit.featureId, { [param]: value });
+      } else {
+        this.edit.band.values = { ...startValues }; // deadzone: treat as a click
+      }
+    }
+    this.renderDraft();
+  };
+
+  /** Place each band grip on its ghost outline: `project(anchor + normal ·
+   * offsetUnits)`. Recomputed every render from the live param values, so a
+   * halfWidth drag slides the apron grip out with it. */
+  private repositionBandGrips(): void {
+    if (!this.edit?.band || this.bandGrips.length === 0) return;
+    const edges = bandEdges(this.edit.kind, this.edit.band.values);
+    const { anchor, normal } = this.bandAnchorNormal();
+    const metersPerUnit = this.edit.band.metersPerUnit;
+    const half = BAND_GRIP_OUTER_PX / 2;
+    for (let i = 0; i < this.bandGrips.length; i++) {
+      const grip = this.bandGrips[i];
+      const edge = edges[i];
+      if (!grip || !edge) continue;
+      // Landform grips ride the CLAMPED inset ring (`safeInsetDistance`) so the
+      // grip stays on the drawn ghost even when the band exceeds the polygon —
+      // the readout still shows the true metres. Relief corridors never invert.
+      const rawUnits = edge.offsetMeters / metersPerUnit;
+      const offUnits = this.edit.kind === "landform" ? safeInsetDistance(this.edit.vertices, rawUnits) : rawUnits;
+      const p = this.map.project([anchor[0] + normal[0] * offUnits, anchor[1] + normal[1] * offUnits]);
+      grip.style.left = `${p.x - half}px`;
+      grip.style.top = `${p.y - half}px`;
+    }
+  }
+
+  /** Remove every band grip, unwire listeners, re-enable dragPan if a drag was
+   * mid-flight — no leaked DOM/handlers on deselect/teardown. */
+  private removeBandGrips(): void {
+    if (this.bandMoveHook) {
+      this.map.off("move", this.bandMoveHook);
+      this.map.off("render", this.bandMoveHook);
+      this.bandMoveHook = null;
+    }
+    if (this.bandDrag) {
+      this.map.dragPan.enable();
+      this.bandDrag = null;
+    }
+    for (let i = 0; i < this.bandGrips.length; i++) {
+      const grip = this.bandGrips[i];
+      if (!grip) continue;
+      const down = this.bandDownHandlers[i];
+      if (down) grip.removeEventListener("pointerdown", down);
+      grip.removeEventListener("mousedown", this.onGripMouseDown);
+      grip.removeEventListener("pointermove", this.onBandPointerMove);
+      grip.removeEventListener("pointerup", this.onBandPointerUp);
+      grip.removeEventListener("pointercancel", this.onBandPointerUp);
+      grip.remove();
+    }
+    this.bandGrips = [];
+    this.bandDownHandlers = [];
+  }
+
+  /** The band-grip DOM elements — headless-test seam (relief: 2, landform: 1). */
+  get bandGripElements(): HTMLElement[] {
+    return this.bandGrips;
+  }
+
+  /** Current live band param values (or null) — test/readout seam. */
+  get bandParamValues(): Record<string, number> | null {
+    return this.edit?.band?.values ?? null;
   }
 }
 

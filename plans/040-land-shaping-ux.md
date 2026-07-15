@@ -91,11 +91,26 @@ readout** ("height 300 m"), both view-only (no regen). On release: one
 `setRegionParams({ ...live, [key]: value })` (validate → log → cascade). A too-small drag (below a
 noise threshold) is a no-op, not a commit.
 
-**Phase 2 — visual band editing.** While a `relief`/`landform` is selected, render its reach as
-**ghost outlines**: `relief` → the `halfWidth` (+ `apron` skirt) corridor around the spine;
-`landform` → the `band` transition ring outside the polygon. A **band handle** on that outline drags
-to resize → `setRegionParams` on release. Read-only viz is the floor; the draggable handle is the
-goal for this phase.
+**Phase 2 — visual band editing. LANDED (2026-07-15).** While a `relief`/`landform` is selected,
+its effective band renders as **ghost outlines** in the `fabric-draft` source: `relief` → the
+±`halfWidth` corridor (solid ghost) + the fainter ±(`halfWidth`+`apron`) skirt, as per-segment
+normal-offset polylines around the spine; `landform` → the `band` transition ring **inset inside**
+the polygon. Each band edge grows a **small screen-space DOM grip** (the height/depth grip idiom,
+`makeGripCore`) sitting ON the ghost outline via a true `project`; dragging it perpendicular to the
+outline resizes `halfWidth`/`apron`/`band` live (metres readout, Shift is NOT wired here — the drag
+is scale-true, see §4), the ghost re-offsets every move with no regen, and release commits exactly
+once through `setRegionParams` (validate → log → cascade → undo). Sub-deadzone grab = no commit.
+- Offset math is a pure, deterministic module (`src/view/bandGhost.ts`): `offsetPolyline` (miter
+  joins, bevel fallback, butt caps), `insetRing` (winding-aware, `safeInsetDistance`-clamped so a
+  large band never inverts on screen), the grip anchors/normals, and the drag value map — all
+  unit-tested (`bandGhost.test.ts`, 22 tests). Display-only ghost geometry; never persisted, never
+  fed to a generator, so determinism (D1–D6) is untouched — the drag only WRITES an existing zod
+  param. Controller twins in `SketchController.test.ts` (grab/drag/release per grip, clamp,
+  deadzone, teardown).
+- The drag maps pixels→metres via the **live map scale** (metres/pixel folded from `project` at
+  grab), not a fixed sensitivity, so the grip tracks the true ghost edge as it widens (the band is a
+  ground footprint). The relief spine also still carries the Phase-1 vertical height grip — both
+  coexist (height floats at the centroid; band grips sit on the footprint edges).
 
 **Phase 3 — live readout + type-to-refine.** The drag readout is a first-class HUD element (value +
 unit, updates every move). While a handle is armed, **typing digits** sets the exact value (Enter
@@ -165,3 +180,12 @@ per green phase, explicit pathspecs.
 - **Auto-commit on tool/kind switch (Phase 0, already landed):** switching kind now COMMITS the
   old-kind draft instead of discarding it (you keep the road, start a river). Confirm that's the
   wanted behavior; the alternative is commit only on Select/✕-done and keep kind-switch a discard.
+- **Band grip feel (Phase 2, landed):** (1) the band drag is scale-true (drag the edge, it follows
+  the ground 1:1), so Shift-fine was left OUT — unlike the height grip, a band widen already reads
+  precisely; add Shift-fine if you want sub-metre nudging. (2) A relief shows THREE grips at once
+  (one vertical height grip at the centroid + two band grips on the corridor edges) — potentially
+  busy; if it's cluttered we can gate the band grips behind a mode toggle or only show them on
+  hover. (3) The band grip glyph is a small hollow dot (white core, accent ring) distinct from the
+  filled vertices and the big height grip — icon is an eyeball call. (4) A landform `band` larger
+  than the polygon's inradius caps the DRAWN ghost ring (never inverts) while the readout shows the
+  true metres — confirm that's the right "the number keeps going but the ring stops" behaviour.
