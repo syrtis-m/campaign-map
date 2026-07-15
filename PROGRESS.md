@@ -2,7 +2,27 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: plan 029 COMPLETE (2026-07-14); plan 030 rearchitecture waves NEXT (A sweep → B gate shrink → D declarative paint → E docs; C standing convention). Plans 020–028 complete.
+## Status: plan 030 IN PROGRESS — A+B DONE, C active, D in flight, E next. Plan 029 COMPLETE (2026-07-14). Plans 020–028 complete.
+
+## Plan 030 — rearchitecture waves (2026-07-14, IN PROGRESS)
+- **030-A DONE** (docs slice `9bb4328` + 4-agent sweep integrated, close `c3f77e6`):
+  ~630 comment plan-citations → 0 across 126 src files (19 justified string
+  survivors: snapshot-key test names + 1 runtime error string — deviation
+  ruling in DECISIONS); docs/02 + the 3 procgen design docs deleted (folded
+  into ARCHITECTURE.md + docs/procgen-design.md); ARCHITECTURE §12 = single
+  invariants home w/ enforcement pointers; 030-C operators+data rule in
+  CLAUDE.md; PROGRESS archived; DECISIONS indexed. Zero golden changes.
+- **030-B DONE** (`c54bc2c` smoke gates + audit, `3416f93` shrink): 31 live
+  gates → 5-gate smoke board (smokeBoot/phase1/smokeProcgen/version29/phase5);
+  perceptual golden runner (scripts/perceptual.ts, zero deps, 8 pinned tuples,
+  byte-deterministic); every deleted gate has a prove-by-breaking record
+  (review/030B-break-proofs.md) — 3 real net holes found at the
+  controller/paint seam, repaired + re-proven BEFORE deletion (strengthened
+  vertex-edit test, river→city consumption test, styleGolden theme digests).
+  Board 2198s → 308s GREEN 9/9.
+- **030-C** standing convention active (CLAUDE.md + ARCHITECTURE §12.19).
+- **030-D** in flight (declarative paint — worktree agent; byte-identity
+  proof = styleGolden digests must not move).
 
 ## Plan 029 — versioned determinism (2026-07-14, COMPLETE)
 - **29-A DONE** (`612cfd2`): `ProcgenAlgorithm.currentVersion` (all 7 at 1) +
