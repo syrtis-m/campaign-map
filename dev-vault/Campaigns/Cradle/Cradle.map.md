@@ -19,9 +19,11 @@ point-crawl of 14 numbered locations wired by 20 trails. Two safe LANDINGS
 peninsula), a walled COMPOUND and a STADIUM in the northern uplands, a
 SANCTUARY at the heart, and a lone LIGHTHOUSE on its own rock off the SW tip.
 
-Terrain is GLOBAL: a sea plate at the datum, the island a low ~30 m plateau
-bounded by an organic coast ring on top of it (higher priority ⇒ it wins inside
-the shore), the islet a smaller plateau, and eight highland RELIEF ridge stamps
+Terrain is GLOBAL: an island-from-coastline sea (the shore is drawn, everything
+outside it is ocean at the datum) so the island INTERIOR carries no replace stamp,
+a gentle rolling ~30–60 m FLOOR (the continental base fBm itself) the highland
+relief rises out of, a small ~20 m plateau for the lighthouse islet, and eight
+highland RELIEF ridge stamps
 (the tall, wide North Heights dominating the NE quarter with its shoulder spur,
 the Portside and central Spine ridges, the North Downs, the SW Ridgeback, the
 West Hills, and House Hill) lifting bold local relief. There are

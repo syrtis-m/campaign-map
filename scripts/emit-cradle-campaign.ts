@@ -60,8 +60,9 @@ const CRADLE_THEME = "modern-clean";
  * ±(50·90/500)=±9 units on both axes; a hair of margin encloses the sea plate. */
 const CRADLE_BOUNDS: readonly [number, number, number, number] = [-9.2, -9.2, 9.2, 9.2];
 /** Base-terrain params (plan 036-D). `campAmp > 0` ⇒ the continental fBm is ON;
- * on top of it the sea/island/islet landform stamps + the highland relief stamps
- * build the terrain. */
+ * it IS the island floor (a gentle rolling ADD, ~30–60 m); on top of it the
+ * island-from-coastline sea (replaces the coast's EXTERIOR to the datum), the
+ * islet plateau, and the highland relief stamps build the terrain. */
 const CRADLE_BASE = { campAmp: 140, seaDatum: 0 } as const;
 
 // ─── Coordinate conversion ───────────────────────────────────────────────────
@@ -263,20 +264,6 @@ const ISLET_COAST: NPt[] = [
   [8, 83],
   [5, 82.5],
 ];
-/** Sea plate OUTER ring: covers the whole canvas (with margin) at the sea datum.
- * The island + islet coast rings are cut as POLYGON HOLES (a donut) so the water
- * FILL never paints over land — the island/islet feature fills show through and
- * their coast rings draw. (For the ELEVATION field the sea landform's mask reads
- * only the OUTER ring — `landformStampsFromFabric` uses `coordinates[0]` — so the
- * sea replace-stamp still covers the whole canvas and the island plateau's higher
- * `priority` still wins inside its ring: the terrain is unchanged by the holes.) */
-const SEA_RECT: NPt[] = [
-  [-3, -3],
-  [103, -3],
-  [103, 103],
-  [-3, 103],
-];
-
 // Highland relief spines (ridge add-stamps over the island plateau). Heights and
 // half-widths are deliberately large: the reference reads as BOLD contour texture
 // across every highland, and the NE mass DOMINATES the island's NE quarter — so
@@ -328,34 +315,43 @@ const DEFS: RegionDef[] = [
     kind: "landform",
     name: "The Deep",
     shape: "poly",
-    coords: SEA_RECT,
-    raw: true,
-    // Cut the island + islet coasts as holes → water fill covers only open sea.
-    holes: ["cradle-landform-island", "cradle-landform-islet"],
-    algorithm: "landform",
-    params: { mode: "sea", target: -40, band: 80, priority: 0 },
-    presetId: "sea",
-  },
-  {
-    id: "cradle-landform-island",
-    kind: "landform",
-    name: "Island One",
-    shape: "poly",
+    // Island-from-coastline (plan 041, `invert: true`): the drawn ring is the
+    // ISLAND COAST and the sea REPLACES its EXTERIOR to the datum. This is what
+    // leaves the island INTERIOR free of any replace stamp, so the relief-ridge
+    // ADDs survive. (A whole-canvas sea replace can't do this: the landform mask
+    // reads only `coordinates[0]` — polygon HOLES are ignored for elevation — so a
+    // canvas-sized outer ring flattens every ADD inside it, the exact bug that hid
+    // the highlands. Verified: dropping the old island plateau flattened the whole
+    // island to the sea target.) MapView paints the ring's exterior as water via
+    // `invertedSeaDonut`, so the water fill + selection still just work; `target`
+    // omitted ⇒ tracks the campaign `seaDatum` (0). Same COAST_JITTER ring as the
+    // island floor below ⇒ shore and floor coincide exactly.
     coords: ISLAND_COAST,
-    // priority 1 > the sea's 0 ⇒ folded LAST, wins inside the coast ring: a low
-    // ~30 m plateau bounded by the organic shoreline.
     algorithm: "landform",
-    params: { mode: "plateau", target: 30, band: 150, priority: 1 },
-    presetId: "plateau",
+    params: { mode: "sea", band: 60, priority: 0, invert: true },
+    presetId: "island",
   },
+  // Island FLOOR: the campaign CONTINENTAL BASE fBm (campAmp 140) IS the floor —
+  // a gentle rolling ADD that sits at ~30–60 m across the open interior (fBm is
+  // normalized to [0,1] ⇒ base ∈ [seaDatum, seaDatum+campAmp], always ≥ the datum,
+  // so the island never dips below sea). The highland RELIEF spines ADD on top of
+  // it. (A `mountain` polygon floor was tried but overshoots: the mountain relief
+  // envelope floors at ~200 m·noise even at amplitude 0, lifting the lowland to
+  // ~150 m — well past the 30–60 m target — so the base fBm, already the intended
+  // continental floor, is the right ADD here. No replace stamp covers the island
+  // interior, which is the whole point of the fix.)
   {
     id: "cradle-landform-islet",
     kind: "landform",
     name: "Lighthouse Rock",
     shape: "poly",
     coords: ISLET_COAST,
+    // The islet lies in the inverted sea's EXTERIOR (⇒ replaced to the datum), so
+    // a mountain ADD here would be flattened. It is instead RE-LIFTED by a small
+    // plateau folded AFTER the sea (priority 1 > 0): a ~20 m rock for the
+    // lighthouse. It carries no relief, so a replace stamp is the right tool.
     algorithm: "landform",
-    params: { mode: "plateau", target: 20, band: 60, priority: 1 },
+    params: { mode: "plateau", target: 20, band: 40, priority: 1 },
     presetId: "plateau",
   },
   // ── TERRAIN: highland relief ridge stamps ───────────────────────────────────
@@ -775,9 +771,11 @@ point-crawl of ${PINS.length} numbered locations wired by ${20} trails. Two safe
 peninsula), a walled COMPOUND and a STADIUM in the northern uplands, a
 SANCTUARY at the heart, and a lone LIGHTHOUSE on its own rock off the SW tip.
 
-Terrain is GLOBAL: a sea plate at the datum, the island a low ~30 m plateau
-bounded by an organic coast ring on top of it (higher priority ⇒ it wins inside
-the shore), the islet a smaller plateau, and eight highland RELIEF ridge stamps
+Terrain is GLOBAL: an island-from-coastline sea (the shore is drawn, everything
+outside it is ocean at the datum) so the island INTERIOR carries no replace stamp,
+a gentle rolling ~30–60 m FLOOR (the continental base fBm itself) the highland
+relief rises out of, a small ~20 m plateau for the lighthouse islet, and eight
+highland RELIEF ridge stamps
 (the tall, wide North Heights dominating the NE quarter with its shoulder spur,
 the Portside and central Spine ridges, the North Downs, the SW Ridgeback, the
 West Hills, and House Hill) lifting bold local relief. There are
