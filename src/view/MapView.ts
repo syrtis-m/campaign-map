@@ -1697,19 +1697,28 @@ export class MapView extends ItemView {
       //  - `landformMode` lifts the landform's procgen `mode` (plateau/basin/sea)
       //    to a top-level filterable key so the fabric layer can paint a sea as
       //    theme water while plateau/basin keep the subtle wash.
+      let invertedSea = false;
       if (f.properties.kind === "landform") {
-        const mode = (f.properties.procgen?.params as { mode?: unknown } | undefined)?.mode;
-        if (typeof mode === "string") props.landformMode = mode;
+        const params = f.properties.procgen?.params as { mode?: unknown; invert?: unknown } | undefined;
+        if (typeof params?.mode === "string") props.landformMode = params.mode;
+        invertedSea = params?.mode === "sea" && params?.invert === true;
       }
-      // Smooth rural sketched roads at paint time (centripetal Catmull-Rom):
-      // dead-straight faint strokes become gentle curves that still pass through
-      // the clicked vertices. Persisted geometry is untouched and selection reads
-      // the RAW feature (controller.fabricFeature → reselectController), so
-      // vertex-edit handles map to the true vertices, not the smoothed mirror.
-      const geometry =
-        f.properties.kind === "road" && f.geometry.type === "LineString"
-          ? { ...f.geometry, coordinates: smoothPolyline(f.geometry.coordinates as [number, number][]) }
-          : f.geometry;
+      // Geometry mirrors (persisted bytes untouched; selection reads the RAW
+      // feature via controller.fabricFeature, so vertex handles map to the true
+      // vertices, not these display forms):
+      //  - rural roads: centripetal Catmull-Rom smoothing (straight strokes → gentle
+      //    curves through the clicked vertices).
+      //  - inverted sea (plan 041 island-from-coastline): the drawn ring is the
+      //    COAST, so paint the ring's EXTERIOR as water by emitting a bounds-DONUT
+      //    (outer = campaign box, hole = the coast). The water fill + selection then
+      //    just work; the composed terrain field is the arithmetic source of truth.
+      let geometry: GeoJSON.Geometry = f.geometry;
+      if (f.properties.kind === "road" && f.geometry.type === "LineString") {
+        geometry = { ...f.geometry, coordinates: smoothPolyline(f.geometry.coordinates as [number, number][]) };
+      } else if (invertedSea && f.geometry.type === "Polygon") {
+        const coast = f.geometry.coordinates[0] as number[][];
+        geometry = { type: "Polygon", coordinates: this.invertedSeaDonut(coast) };
+      }
       return { ...f, geometry, properties: props };
     });
     source.setData({ type: "FeatureCollection", features } as GeoJSON.FeatureCollection);
@@ -1719,6 +1728,47 @@ export class MapView extends ItemView {
     // authoritative; skipped silently if the style has no such source.
     const labelSource = this.map.getSource(REGION_LABEL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     if (labelSource) labelSource.setData(regionLabelPointFeatures(this.controller.fabric.features));
+  }
+
+  /**
+   * Bounds-donut display geometry for an inverted sea (plan 041): outer ring =
+   * campaign box, hole = the drawn coast ring, so the fabric water fill paints
+   * everything OUTSIDE the coast. Bounded by the campaign box (config.bounds, else
+   * the fictional default, else a generous expansion of the coast bbox for a real
+   * campaign). Winding-agnostic: MapLibre's earcut fill treats ring[0] as the outer
+   * boundary and the rest as holes. Display-only — persisted geometry stays the
+   * drawn coast ring. */
+  private invertedSeaDonut(coast: number[][]): number[][][] {
+    const cfg = this.campaign?.config;
+    let b: [number, number, number, number];
+    if (cfg?.bounds) {
+      b = cfg.bounds;
+    } else if (cfg?.crs !== "real") {
+      b = defaultFictionalBounds();
+    } else {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const [x, y] of coast) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+      const dx = maxX - minX || 1;
+      const dy = maxY - minY || 1;
+      b = [minX - dx * 5, minY - dy * 5, maxX + dx * 5, maxY + dy * 5];
+    }
+    const [minX, minY, maxX, maxY] = b;
+    const outer: number[][] = [
+      [minX, minY],
+      [maxX, minY],
+      [maxX, maxY],
+      [minX, maxY],
+      [minX, minY],
+    ];
+    return [outer, coast];
   }
 
   /** Draft-preview accent for the sketch controller — the same accent token

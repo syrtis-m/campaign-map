@@ -974,12 +974,20 @@ const landformParamsSchema = z.object({
   target: z.number().finite().optional(),
   band: z.number().min(0).max(20000).default(LANDFORM_DEFAULTS.band),
   priority: z.number().int().default(LANDFORM_DEFAULTS.priority),
+  /** Island-from-coastline (plan 041): on a `sea` stamp, draw the COAST (the land
+   * boundary) and treat the ring's EXTERIOR as sea instead of its interior — the
+   * natural gesture for an island. OPTIONAL — absent/false ⇒ the drawn ring's
+   * interior is the sea (the pre-041 behavior), byte-identical (no version bump).
+   * Ignored for plateau/basin (only sea inverts). */
+  invert: z.boolean().optional(),
 });
 
 const LANDFORM_PRESETS: readonly ProcgenPreset[] = [
   { id: "plateau", label: "Plateau — flat tableland raised to a target", params: { mode: "plateau", band: 120, priority: 0 } },
   { id: "basin", label: "Basin — a lowered depression", params: { mode: "basin", band: 120, priority: 0 } },
   { id: "sea", label: "Sea — dropped to the sea datum", params: { mode: "sea", band: 60, priority: 0 } },
+  // Draw the COAST; everything outside becomes ocean (plan 041 island-from-coastline).
+  { id: "island", label: "Island coast — draw the shore, outside is sea", params: { mode: "sea", band: 60, priority: 0, invert: true } },
 ];
 
 const landformAlgorithm: ProcgenAlgorithm = {

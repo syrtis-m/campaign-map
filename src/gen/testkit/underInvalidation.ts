@@ -218,7 +218,14 @@ function bboxOf(coords: Pt[]): BBox {
  * carries a foothill apron so the harness exercises the WIDENED support — a
  * skirt'd relief must be proven inert only past halfWidth+apron), mountain/
  * landform → 0 (compact support). Every other kind uses the algorithm's scalar
- * `marginMeters`. */
+ * `marginMeters`.
+ *
+ * CARVE-OUT (plan 041 island-from-coastline): an INVERTED sea landform has GLOBAL
+ * support (`terrainStampSupport` → Infinity — its exterior mask is nonzero across
+ * the whole campaign box, campaign-wide dirty like the base params). The harness's
+ * injected landform is a compact PLATEAU (reach 0), so this reach-0 assertion is
+ * unaffected; an inverted sea is never "inert outside a reach" and so is out of
+ * this compact-support harness's scope. */
 const INJECTED_RELIEF_HALFWIDTH = 180; // MUST equal featureFrom's relief `halfWidth`
 const INJECTED_RELIEF_APRON = 140; // MUST equal featureFrom's relief `apron`
 const INJECTED_RELIEF_REACH = INJECTED_RELIEF_HALFWIDTH + INJECTED_RELIEF_APRON;

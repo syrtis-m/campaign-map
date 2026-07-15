@@ -157,6 +157,13 @@ export function reliefMaxOffset(params: ReliefParams): number {
  *   - landform → 0: `ringMaskField`'s replace mask is nonzero only strictly
  *                INSIDE the ring, so the ring bbox already bounds the support —
  *                a landform disjoint from the region is byte-inert.
+ *                EXCEPT an INVERTED sea (plan 041 island-from-coastline), whose
+ *                mask is `1 − ringMask`: nonzero EVERYWHERE outside the ring, so
+ *                its support is the whole campaign box → `Infinity` (campaign-wide
+ *                dirty, like the base params). Every consumer that folds this in
+ *                (DEM per-tile digest, DAG source→region edge, fingerprint scoping)
+ *                then treats an inverted sea as global — the byte-exact reflection
+ *                of its global reach.
  *   - mountain → 0: `elevationFieldFromFabric` is compact-support inside the
  *                mountain ring (bbox-bounded) — disjoint ⇒ byte-inert.
  * Returns `null` for any non-terrain-stamp feature: those keep the consumer's
@@ -172,7 +179,14 @@ export function terrainStampSupport(feature: FabricFeature): number | null {
     const apron = typeof p.apron === "number" && Number.isFinite(p.apron) ? p.apron : 0;
     return Math.max(0, hw) + Math.max(0, apron);
   }
-  if (alg === "landform" || alg === "mountain") return 0;
+  if (alg === "landform") {
+    // An inverted sea replaces the ring's EXTERIOR — global support. Every other
+    // landform is compact-support inside its ring bbox (reach 0). Absent invert ⇒
+    // 0 ⇒ byte-identical to the pre-041 reach.
+    const p = feature.properties.procgen!.params as Record<string, unknown>;
+    return p.mode === "sea" && p.invert === true ? Infinity : 0;
+  }
+  if (alg === "mountain") return 0;
   return null;
 }
 
@@ -234,7 +248,10 @@ function stampFingerprint(f: FabricFeature): string {
  * cannot move the field over this tile, so omitting it is a true no-op):
  *   - relief   → `terrainStampSupport` (halfWidth + apron; reliefField is exactly
  *                0 past it).
- *   - mountain / landform → 0 (compact-support inside their ring bbox).
+ *   - mountain / landform → 0 (compact-support inside their ring bbox), EXCEPT an
+ *                inverted sea (plan 041) → `terrainStampSupport` returns Infinity,
+ *                so `bboxTouches(..., Infinity)` is always true and the inverted
+ *                sea folds into every tile's digest (its exterior reach is global).
  *   - graded district → the grade band (a safe over-estimate; grade fades to
  *                natural ground by the rim, so it is really bbox-bounded).
  *   - river carve → ALWAYS included (global). The carve's horizontal reach is
@@ -360,6 +377,13 @@ export interface LandformParams {
   /** Later-applied stamp wins where masks overlap. Integer; id order breaks
    * ties (ratified Q4). */
   priority: number;
+  /** Island-from-coastline (plan 041): on a `sea` stamp, the drawn ring is the
+   * LAND boundary (the coast) and the effective sea is the ring's EXTERIOR. The
+   * mask becomes `1 − ringMask` — 1 (full sea) everywhere outside the ring, fading
+   * across `band` INWARD from the coast to 0 deep inland. Absent/false ⇒ the
+   * interior is the sea (pre-041 behavior), byte-identical. Only meaningful for
+   * `mode === "sea"`. */
+  invert?: boolean;
 }
 
 export const LANDFORM_DEFAULTS: Omit<LandformParams, "target"> = { mode: "plateau", band: 120, priority: 0 };
@@ -404,6 +428,23 @@ function ringMaskField(ring: Pt[], band: number): (x: number, y: number) => Mask
     // for an interior query).
     const f = (6 * t * (1 - t)) / b;
     return { m, dmx: f * near.gradX, dmy: f * near.gradY };
+  };
+}
+
+/**
+ * Island-from-coastline exterior mask (plan 041): `1 − ringMask`. The drawn ring
+ * is the COAST (land boundary); the sea replaces its EXTERIOR. So the mask is 1
+ * (full sea) everywhere outside the ring, fades across `band` INWARD from the coast
+ * to 0 deep inland — the byte-exact complement of the interior mask, gradient
+ * negated. The far-field reject flips for free: `ringMaskField` returns m=0 outside
+ * the bbox (⇒ this returns m=1, full sea) WITHOUT the nearest-spiral, so a sample
+ * far out in the ocean is O(1). Support is therefore GLOBAL (see
+ * `terrainStampSupport` → Infinity for an inverted sea). */
+function exteriorMaskField(ring: Pt[], band: number): (x: number, y: number) => MaskSample {
+  const inner = ringMaskField(ring, band);
+  return (x, y): MaskSample => {
+    const s = inner(x, y);
+    return { m: 1 - s.m, dmx: -s.dmx, dmy: -s.dmy };
   };
 }
 
@@ -894,6 +935,9 @@ function landformStampsFromFabric(features: FabricFeature[]): LandformStamp[] {
         target: typeof p.target === "number" && Number.isFinite(p.target) ? p.target : undefined,
         band: Math.max(0, num(p.band, LANDFORM_DEFAULTS.band)),
         priority: Math.trunc(num(p.priority, LANDFORM_DEFAULTS.priority)),
+        // Island-from-coastline (plan 041): only sea inverts; absent/false ⇒ the
+        // interior-is-sea path, byte-identical to pre-041.
+        invert: p.invert === true,
       },
     });
   }
@@ -946,10 +990,16 @@ export function terrainAt(features: FabricFeature[] | undefined, opts: TerrainOp
   const mountain = elevationFieldFromFabric(feats);
   const reliefs = inc.relief ? reliefStampsFromFabric(feats).map((s) => reliefField(s.spine, s.params)) : [];
 
-  // REPLACE: landform lerp stamps, folded in (priority, id) order.
+  // REPLACE: landform lerp stamps, folded in (priority, id) order. An inverted sea
+  // (plan 041 island-from-coastline) uses the ring's EXTERIOR mask so the drawn
+  // coast bounds LAND and the sea fills outside; every other landform keeps the
+  // interior mask (absent invert ⇒ byte-identical).
   const landforms = inc.landform
     ? landformStampsFromFabric(feats).map((s) => ({
-        mask: ringMaskField(s.ring, s.params.band),
+        mask:
+          s.params.mode === "sea" && s.params.invert
+            ? exteriorMaskField(s.ring, s.params.band)
+            : ringMaskField(s.ring, s.params.band),
         target: landformTarget(s.params, base.seaDatum),
       }))
     : [];

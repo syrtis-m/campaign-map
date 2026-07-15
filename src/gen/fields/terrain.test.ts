@@ -380,3 +380,67 @@ describe("macroTerrainField — bit-exact drop-in for elevationFieldFromFabric",
     expect(Number.isFinite(s.v)).toBe(true);
   });
 });
+
+describe("terrainAt — island-from-coastline (plan 041 inverted sea)", () => {
+  // A small coast ring; land inside, sea outside. An explicit sea target (-500)
+  // distinguishes sea from the flat datum-0 land so the flip is observable.
+  const COAST: Pt[] = [
+    [400, 400],
+    [800, 400],
+    [800, 800],
+    [400, 800],
+    [400, 400],
+  ];
+
+  it("inverts the mask: sea OUTSIDE the drawn coast, land deep INSIDE", () => {
+    const t = terrainAt([landform("island", COAST, { mode: "sea", target: -500, band: 60, invert: true })]);
+    // Deep interior (>band from every edge) → mask 0 → land unchanged (base 0).
+    expect(t(600, 600).v).toBe(0);
+    // Far exterior (outside the ring bbox) → mask 1 → sea target.
+    expect(t(3000, 3000).v).toBe(-500);
+    // Just outside a coast edge is still sea (mask 1 once past the band).
+    expect(t(1000, 600).v).toBe(-500);
+  });
+
+  it("is the exact opposite of a non-inverted sea (interior IS the sea)", () => {
+    const inside: Pt = [600, 600];
+    const outside: Pt = [3000, 3000];
+    const plain = terrainAt([landform("sea", COAST, { mode: "sea", target: -500, band: 60 })]);
+    const inv = terrainAt([landform("island", COAST, { mode: "sea", target: -500, band: 60, invert: true })]);
+    // Plain sea: interior is sea, exterior is land. Inverted: mirror image.
+    expect(plain(inside[0], inside[1]).v).toBe(-500);
+    expect(plain(outside[0], outside[1]).v).toBe(0);
+    expect(inv(inside[0], inside[1]).v).toBe(0);
+    expect(inv(outside[0], outside[1]).v).toBe(-500);
+  });
+
+  it("invert absent ⇒ byte-identical to invert:false (no version bump)", () => {
+    const absent = terrainAt([landform("s", COAST, { mode: "sea", target: -500, band: 60 })]);
+    const explicitFalse = terrainAt([landform("s", COAST, { mode: "sea", target: -500, band: 60, invert: false })]);
+    for (let x = 0; x <= 1200; x += 137) {
+      for (let y = 0; y <= 1200; y += 149) {
+        expect(explicitFalse(x, y)).toEqual(absent(x, y));
+      }
+    }
+  });
+
+  it("gradient is exactly flat deep inside (land) and far outside (open sea)", () => {
+    const t = terrainAt([landform("island", COAST, { mode: "sea", target: -500, band: 60, invert: true })]);
+    // Deep interior: constant land ⇒ zero gradient.
+    const deep = t(600, 600);
+    expect(deep.dx).toBe(0);
+    expect(deep.dy).toBe(0);
+    // Far ocean: constant sea ⇒ zero gradient (the flipped far-field reject).
+    const ocean = t(5000, 5000);
+    expect(ocean.dx).toBe(0);
+    expect(ocean.dy).toBe(0);
+  });
+
+  it("terrainStampSupport: an inverted sea is GLOBAL (Infinity); every other landform is compact (0)", () => {
+    expect(terrainStampSupport(landform("i", COAST, { mode: "sea", band: 60, invert: true }))).toBe(Infinity);
+    expect(terrainStampSupport(landform("s", COAST, { mode: "sea", band: 60 }))).toBe(0);
+    // invert only inverts the SEA mode — a plateau with invert:true stays compact.
+    expect(terrainStampSupport(landform("p", COAST, { mode: "plateau", band: 60, invert: true }))).toBe(0);
+    expect(terrainStampSupport(landform("i-false", COAST, { mode: "sea", band: 60, invert: false }))).toBe(0);
+  });
+});
