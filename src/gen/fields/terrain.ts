@@ -104,17 +104,37 @@ export interface ReliefParams {
   polarity: ReliefPolarity;
   /** Peak height (ridge) or depth (valley) at the spine, meters. */
   height: number;
-  /** Cross-profile half-width, meters — the relief fades to 0 by this distance
-   * from the spine. Also the corridor bound the host builds for this line kind. */
+  /** Cross-profile half-width, meters — the relief's INNER band. Without an
+   * apron the profile fades to 0 by this distance from the spine. Also the base
+   * corridor bound the host builds for this line kind. */
   halfWidth: number;
+  /** Optional FOOTHILL APRON (meters, default 0/absent): a skirt that extends the
+   * cross-profile so the relief decays to 0 over `halfWidth + apron` from the
+   * spine instead of hitting 0 at `halfWidth`. In 3D a compact-support stamp
+   * rises as a vertical-walled mesa off flat ground (make-it-look-real shortlist
+   * item 2); a positive apron spreads the toe into foothills so peaks rise out of
+   * a skirt rather than a wall. DEFAULT 0 ⇒ `reach === halfWidth` ⇒ the profile,
+   * far-field reject, gradient, and support reach are ALL byte-identical to the
+   * pre-apron stamp (no version bump — the absent-param-reproduces-old-bytes
+   * discipline, 029). */
+  apron?: number;
 }
 
-export const RELIEF_DEFAULTS: ReliefParams = { polarity: "ridge", height: 200, halfWidth: 150 };
+export const RELIEF_DEFAULTS: ReliefParams = { polarity: "ridge", height: 200, halfWidth: 150, apron: 0 };
+
+/** A relief stamp's total cross-profile reach from the spine: `halfWidth + apron`
+ * (apron default 0). The single source of truth for the compact-support radius —
+ * the field is EXACTLY 0 beyond it, so it is simultaneously the corridor
+ * half-width, the far-field-reject bound, and the variable-support invalidation
+ * reach. */
+export function reliefReach(params: ReliefParams): number {
+  return Math.max(0, params.halfWidth) + Math.max(0, params.apron ?? 0);
+}
 
 /** The corridor half-width a relief stamp needs (host corridor + influence
- * margin): its full cross-profile band. */
+ * margin): its full cross-profile band, apron included. */
 export function reliefMaxOffset(params: ReliefParams): number {
-  return Math.max(0, params.halfWidth);
+  return reliefReach(params);
 }
 
 /**
@@ -123,10 +143,13 @@ export function reliefMaxOffset(params: ReliefParams): number {
  * bbox the stamp can still move the composed terrain field a consumer reads —
  * the per-FEATURE reach that replaces a fixed per-consumer margin for the
  * terrain kinds.
- *   - relief   → `params.halfWidth`: `reliefField` is EXACTLY 0 past the spine's
- *                cross-profile half-width, but a relief's spine bbox does NOT
- *                include that band, so a consumer within halfWidth of the spine
- *                still reads it. The reach IS the half-width.
+ *   - relief   → `params.halfWidth + params.apron` (apron default 0): `reliefField`
+ *                is EXACTLY 0 past the spine's cross-profile reach, but a relief's
+ *                spine bbox does NOT include that band, so a consumer within the
+ *                reach of the spine still reads it. The reach IS `halfWidth + apron`
+ *                (a foothill skirt extends the compact support, so the
+ *                invalidation reach must extend with it — an apron'd relief past
+ *                halfWidth but within the skirt still moves the field).
  *   - landform → 0: `ringMaskField`'s replace mask is nonzero only strictly
  *                INSIDE the ring, so the ring bbox already bounds the support —
  *                a landform disjoint from the region is byte-inert.
@@ -142,42 +165,55 @@ export function terrainStampSupport(feature: FabricFeature): number | null {
   if (alg === "relief") {
     const p = feature.properties.procgen!.params as Record<string, unknown>;
     const hw = typeof p.halfWidth === "number" && Number.isFinite(p.halfWidth) ? p.halfWidth : RELIEF_DEFAULTS.halfWidth;
-    return Math.max(0, hw);
+    const apron = typeof p.apron === "number" && Number.isFinite(p.apron) ? p.apron : 0;
+    return Math.max(0, hw) + Math.max(0, apron);
   }
   if (alg === "landform" || alg === "mountain") return 0;
   return null;
 }
 
-/** A relief stamp's ADD contribution: `sign·height·bump(d/halfWidth)` where `d`
- * is the distance to the sketched spine (via the segment hash — the plan's
- * polyline binding) and `bump` is the smoothstep hump (1 at the spine, 0 at the
- * half-width). Compact support: EXACTLY 0 beyond `halfWidth` (so a disjoint relief
- * stamp is byte-inert — the compact-support margin-0 property the 033 harness
- * rides on). Analytic gradient by chain rule: ∇v = sign·height·bump'(t)·(1/hw)·∇d,
- * ∇d the unit away-from-line direction the hash returns. */
+/** A relief stamp's ADD contribution: `sign·height·bump(d/reach)` where `d` is
+ * the distance to the sketched spine (via the segment hash — the plan's polyline
+ * binding), `reach = halfWidth + apron` (apron default 0), and `bump` is the
+ * smoothstep hump (1 at the spine, 0 at the reach). The apron WIDENS the same
+ * C1 smoothstep hump so the zero-crossing moves from `halfWidth` to
+ * `halfWidth + apron` — the peak still tops out at the spine (`bump(0) === 1`),
+ * the toe spreads into a foothill skirt (make-it-look-real shortlist item 2).
+ * With apron 0 (default) `reach === halfWidth` and EVERY line below is the exact
+ * pre-apron computation ⇒ byte-identical (no bump). Compact support: EXACTLY 0
+ * beyond `reach` (so a disjoint relief stamp is byte-inert — the compact-support
+ * property the 033 harness + `terrainStampSupport` ride on). Analytic gradient by
+ * chain rule: ∇v = sign·height·bump'(t)·(1/reach)·∇d, ∇d the unit away-from-line
+ * direction the hash returns. */
 function reliefField(spine: Pt[], params: ReliefParams): ElevationField {
   const sign = params.polarity === "valley" ? -1 : 1;
   const H = params.height;
   const hw = Math.max(1e-6, params.halfWidth);
+  // reach = hw + apron. apron 0 ⇒ reach === hw ⇒ byte-identical to pre-apron.
+  const reach = hw + Math.max(0, params.apron ?? 0);
+  // cellSize keyed on hw (NOT reach) so an apron never perturbs the segment
+  // hash's bucketing — nearest() is exact regardless, but keeping the former
+  // cellSize keeps apron 0 bit-for-bit identical to the pre-apron hash.
   const hash = new SegmentHash(spine, { cellSize: Math.max(32, hw) });
   const bnd = hash.bounds;
   return (x, y): HeightSample => {
     // FAR-FIELD FAST REJECT (compact support, BYTE-EXACT — the carve's idiom):
     // the bbox distance is a lower bound on the true nearest distance, and the
-    // stamp is EXACTLY 0 at any dist ≥ halfWidth, so a sample past the bbox by
-    // ≥ hw takes the same zero branch without paying the O(dist²) spiral. This
-    // is what keeps a whole-map DEM fill from stalling on continental spines.
+    // stamp is EXACTLY 0 at any dist ≥ reach, so a sample past the bbox by
+    // ≥ reach takes the same zero branch without paying the O(dist²) spiral. The
+    // bound uses `reach` (= hw + apron), so it only fires where the full path is
+    // provably zero — the apron'd skirt is inside the reject band, never clipped.
     const dLBx = x < bnd.minX ? bnd.minX - x : x > bnd.maxX ? x - bnd.maxX : 0;
     const dLBy = y < bnd.minY ? bnd.minY - y : y > bnd.maxY ? y - bnd.maxY : 0;
-    if (dLBx * dLBx + dLBy * dLBy >= hw * hw) return { v: 0, dx: 0, dy: 0 };
+    if (dLBx * dLBx + dLBy * dLBy >= reach * reach) return { v: 0, dx: 0, dy: 0 };
     const near = hash.nearest(x, y);
-    if (near.dist >= hw) return { v: 0, dx: 0, dy: 0 };
-    const t = near.dist / hw; // 0 at spine, 1 at rim
+    if (near.dist >= reach) return { v: 0, dx: 0, dy: 0 };
+    const t = near.dist / reach; // 0 at spine, 1 at the (apron'd) rim
     const bump = 1 - t * t * (3 - 2 * t); // 1 → 0, C1 at both ends
     const v = sign * H * bump;
-    // bump'(t) = -6t(1-t); ∇v = sign·H·bump'(t)·(1/hw)·∇d.
+    // bump'(t) = -6t(1-t); ∇v = sign·H·bump'(t)·(1/reach)·∇d.
     const dbump = -6 * t * (1 - t);
-    const scale = (sign * H * dbump) / hw;
+    const scale = (sign * H * dbump) / reach;
     return { v, dx: scale * near.gradX, dy: scale * near.gradY };
   };
 }
@@ -499,6 +535,8 @@ function reliefStampsFromFabric(features: FabricFeature[]): ReliefStamp[] {
         polarity,
         height: num(p.height, RELIEF_DEFAULTS.height),
         halfWidth: Math.max(1e-6, num(p.halfWidth, RELIEF_DEFAULTS.halfWidth)),
+        // apron: absent/malformed ⇒ 0 ⇒ byte-identical to the pre-apron stamp.
+        apron: Math.max(0, num(p.apron, 0)),
       },
     });
   }

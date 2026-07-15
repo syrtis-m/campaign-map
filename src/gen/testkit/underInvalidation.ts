@@ -214,12 +214,16 @@ function bboxOf(coords: Pt[]): BBox {
 /** The per-feature invalidation reach the harness proves inertness OUTSIDE of
  * for a DECLARED kind (ruling 2026-07-15 variable support). For the terrain
  * STAMP kinds it is the INJECTED feature's own support (matching
- * `terrainStampSupport`): relief → the halfWidth `featureFrom` injects,
- * mountain/landform → 0 (compact support). Every other kind uses the
- * algorithm's scalar `marginMeters`. */
+ * `terrainStampSupport`): relief → `halfWidth + apron` (the injected relief
+ * carries a foothill apron so the harness exercises the WIDENED support — a
+ * skirt'd relief must be proven inert only past halfWidth+apron), mountain/
+ * landform → 0 (compact support). Every other kind uses the algorithm's scalar
+ * `marginMeters`. */
 const INJECTED_RELIEF_HALFWIDTH = 180; // MUST equal featureFrom's relief `halfWidth`
+const INJECTED_RELIEF_APRON = 140; // MUST equal featureFrom's relief `apron`
+const INJECTED_RELIEF_REACH = INJECTED_RELIEF_HALFWIDTH + INJECTED_RELIEF_APRON;
 function declaredReach(kind: FabricKind, declared: DeclaredConsumption): number {
-  if (kind === "relief") return INJECTED_RELIEF_HALFWIDTH;
+  if (kind === "relief") return INJECTED_RELIEF_REACH;
   if (kind === "mountain" || kind === "landform") return 0;
   return declared.marginMeters;
 }
@@ -253,7 +257,9 @@ function featureFrom(id: string, kind: FabricKind, coords: Pt[], isPolygon: bool
       algorithm: "relief",
       seed: hashSeed(7007, "ui-relief", id),
       version: 1,
-      params: { polarity: "ridge", height: 300, halfWidth: 180 },
+      // Carries a foothill apron: the support the harness proves inertness beyond
+      // is halfWidth + apron (INJECTED_RELIEF_REACH), matching terrainStampSupport.
+      params: { polarity: "ridge", height: 300, halfWidth: INJECTED_RELIEF_HALFWIDTH, apron: INJECTED_RELIEF_APRON },
     };
   } else if (kind === "landform") {
     procgen = {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { terrainAt, macroTerrainField, hasTerrainRelief } from "./terrain";
+import { terrainAt, macroTerrainField, hasTerrainRelief, terrainStampSupport, reliefReach } from "./terrain";
 import { SegmentHash } from "../segmentHash";
 import { elevationFieldFromFabric } from "./mountainField";
 import type { FabricFeature } from "../../model/fabric";
@@ -259,6 +259,67 @@ describe("terrainAt — compact support (disjoint stamps are exactly inert)", ()
     for (let j = 0; j < 32; j++) {
       for (let i = 0; i < 32; i++) {
         field(-30000 + i * 120, -30000 + j * 120); // all ≥ 20 km from every stamp
+      }
+    }
+    expect(SegmentHash.totalSegmentTests).toBe(0);
+  });
+});
+
+// ─── Foothill apron: skirt falloff past halfWidth (shortlist item 2) ─────────
+
+describe("relief apron — foothill skirt extends the compact support past halfWidth", () => {
+  const SPINE: Pt[] = [[-500, 0], [0, 0], [500, 0]];
+
+  it("apron 0 (or absent) is BYTE-IDENTICAL to the pre-apron stamp at every distance", () => {
+    const noApron = terrainAt([relief("r", SPINE, { polarity: "ridge", height: 300, halfWidth: 200 })]);
+    const apron0 = terrainAt([relief("r", SPINE, { polarity: "ridge", height: 300, halfWidth: 200, apron: 0 })]);
+    // Probe across the spine, inside the band, at the rim, and past it.
+    for (const [x, y] of [[0, 0], [0, 60], [120, 150], [0, 199], [0, 200], [0, 260], [0, 5000]] as Pt[]) {
+      const a = noApron(x, y);
+      const b = apron0(x, y);
+      expect(a.v).toBe(b.v);
+      expect(a.dx).toBe(b.dx);
+      expect(a.dy).toBe(b.dy);
+    }
+  });
+
+  it("a positive apron keeps the peak at the spine, spreads the toe, and is EXACTLY 0 only past halfWidth+apron", () => {
+    const hw = 200;
+    const apron = 300;
+    const withApron = terrainAt([relief("r", SPINE, { polarity: "ridge", height: 300, halfWidth: hw, apron })]);
+    const bare = terrainAt([relief("r", SPINE, { polarity: "ridge", height: 300, halfWidth: hw })]);
+    // Peak unchanged at the spine (bump(0) === 1 for both).
+    expect(withApron(0, 0).v).toBeCloseTo(bare(0, 0).v, 6);
+    // AT the old rim (d = hw) the bare stamp is 0, the apron'd one is still raised
+    // (the toe now spreads into a foothill instead of hitting 0).
+    expect(bare(0, hw).v).toBeCloseTo(0, 6);
+    expect(withApron(0, hw).v).toBeGreaterThan(20);
+    // In the skirt (hw < d < hw+apron) the field is positive; just past the reach
+    // it is EXACTLY 0 (compact support at the widened radius).
+    expect(withApron(0, hw + apron - 1).v).toBeGreaterThan(0);
+    expect(withApron(0, hw + apron).v).toBe(0);
+    expect(withApron(0, hw + apron + 500).v).toBe(0);
+  });
+
+  it("reliefReach and terrainStampSupport both fold the apron into the reach", () => {
+    expect(reliefReach({ polarity: "ridge", height: 300, halfWidth: 180 })).toBe(180);
+    expect(reliefReach({ polarity: "ridge", height: 300, halfWidth: 180, apron: 220 })).toBe(400);
+    const stamp = relief("r", SPINE, { polarity: "ridge", height: 300, halfWidth: 180, apron: 220 });
+    expect(terrainStampSupport(stamp)).toBe(400);
+    // Absent apron ⇒ reach is exactly the half-width (byte-stable invalidation).
+    expect(terrainStampSupport(relief("r2", SPINE, { polarity: "ridge", height: 300, halfWidth: 180 }))).toBe(180);
+  });
+
+  it("the far-field reject still fires ZERO segment tests past the APRON'd reach", () => {
+    // A whole-map apron'd spine, then a lattice of samples far beyond halfWidth+apron:
+    // the byte-exact reject uses `reach`, so no sample pays the nearest-spiral.
+    SegmentHash.totalSegmentTests = 0;
+    const field = terrainAt([
+      relief("spine", [[-4000, 4000], [0, 4400], [4000, 4200]], { polarity: "ridge", height: 400, halfWidth: 500, apron: 900 }),
+    ]);
+    for (let j = 0; j < 24; j++) {
+      for (let i = 0; i < 24; i++) {
+        field(-30000 + i * 140, -30000 + j * 140); // all ≫ (500+900) m from the spine
       }
     }
     expect(SegmentHash.totalSegmentTests).toBe(0);

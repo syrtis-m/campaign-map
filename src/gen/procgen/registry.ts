@@ -394,7 +394,7 @@ const riverAlgorithm: ProcgenAlgorithm = {
   // `macroTerrainField`; ruling 2026-07-15 — DEFAULT OFF as of v2, but the opt-in
   // path reads it, so the declaration stays honest for the most-consuming params
   // the 033-A harness probes). VARIABLE SUPPORT: the terrain kinds use a
-  // PER-FEATURE reach (`terrainStampSupport`: relief → halfWidth, mountain/
+  // PER-FEATURE reach (`terrainStampSupport`: relief → halfWidth+apron, mountain/
   // landform → 0), so the 30 m scalar governs only water/river (confluence snap).
   // Because terrain sits ABOVE the river in the stage order, a terrain edit never
   // cascades DOWN via a currency; it can only reach the river through the
@@ -485,7 +485,7 @@ const forestAlgorithm: ProcgenAlgorithm = {
   // `consumes: ["water"]` above is a DAG OUTPUT edge, not a raw-sketch read.
   consumesSketch: ["mountain", "relief", "landform", "farmland", "park"],
   // VARIABLE SUPPORT (ruling 2026-07-15): the terrain-stamp kinds use a
-  // PER-FEATURE reach (`terrainStampSupport`: relief → its halfWidth, mountain/
+  // PER-FEATURE reach (`terrainStampSupport`: relief → its halfWidth+apron, mountain/
   // landform → 0, all compact-support) wherever invalidation is computed
   // (fingerprint scope + DAG source→region edge), so this scalar governs only the
   // NON-terrain kinds. 8 = HEDGE_ADJ_EPS (farmland/park adjacency reach): a region
@@ -761,7 +761,7 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   // SKETCH, but that is the CITY's consumesSketch, not farmland's.
   consumesSketch: ["mountain", "relief", "landform", "forest", "park"],
   // VARIABLE SUPPORT (ruling 2026-07-15): the terrain-stamp kinds use a
-  // PER-FEATURE reach (`terrainStampSupport`: relief → halfWidth, mountain/
+  // PER-FEATURE reach (`terrainStampSupport`: relief → halfWidth+apron, mountain/
   // landform → 0), so this scalar governs only the NON-terrain kinds. 8 =
   // HEDGE_ADJ_EPS (item 7 forest/park adjacency reach); beyond it, byte-inert.
   influenceMargin: 8,
@@ -864,11 +864,21 @@ const reliefParamsSchema = z.object({
   polarity: z.enum(RELIEF_POLARITIES).default(RELIEF_DEFAULTS.polarity),
   height: z.number().positive().max(4000).default(RELIEF_DEFAULTS.height),
   halfWidth: z.number().positive().max(20000).default(RELIEF_DEFAULTS.halfWidth),
+  /** Foothill apron (meters): a skirt that decays the cross-profile to 0 over
+   * `halfWidth + apron` instead of hitting 0 at `halfWidth`, so a stamp rises out
+   * of foothills rather than as a vertical-walled mesa in 3D. OPTIONAL — absent ⇒
+   * 0 ⇒ byte-identical to the pre-apron stamp (no version bump; the
+   * absent-param-reproduces-old-bytes discipline). The `reliefReach`/corridor/
+   * support all fold it in. */
+  apron: z.number().min(0).max(20000).optional(),
 });
 
 const RELIEF_PRESETS: readonly ProcgenPreset[] = [
-  { id: "ridge", label: "Ridge — a raised spine", params: { polarity: "ridge", height: 300, halfWidth: 180 } },
-  { id: "valley", label: "Valley — an incised trough", params: { polarity: "valley", height: 200, halfWidth: 220 } },
+  // Presets carry a modest apron so a FRESH relief stamp reads as a foothill
+  // skirt by default (the make-it-look-real goal); an existing stamp with no
+  // persisted `apron` key stays byte-identical.
+  { id: "ridge", label: "Ridge — a raised spine over foothills", params: { polarity: "ridge", height: 300, halfWidth: 180, apron: 220 } },
+  { id: "valley", label: "Valley — an incised trough", params: { polarity: "valley", height: 200, halfWidth: 220, apron: 180 } },
 ];
 
 const reliefAlgorithm: ProcgenAlgorithm = {
