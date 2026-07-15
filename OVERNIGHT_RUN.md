@@ -19,6 +19,18 @@ eyes lands HERE. Newest items at the top of each section.
    alone". Temple/gate variants stay deferred.
 
 ## NEEDS JONAH'S EYES
+- **036 follow-ups (deliberate deferrals — live/host-side, unverifiable headlessly this arc):**
+  1. Finish 36-C: retire the baked `mountain-contour` (mountain version bump + re-golden) and
+     wire `TerrainContourLeaves` into the live worker/paint path — needs a session that can
+     eyeball paint. The lazy-leaf ENGINE is landed and tested; the map still paints the old
+     baked contours meanwhile (no visual regression).
+  2. 36-D host plumbing: map-settings base-params (campAmp/seaDatum) Apply UI + cost notice +
+     headless test-API twin. The grading/base engine is landed, default-inert.
+  3. Variable-support stamp invalidation: relief stamps reach up to their param halfWidth
+     (~20 km), which the fixed per-algorithm influenceMargin model can't express — needed
+     before relief/landform can couple INTO river/farmland. Design decision for a future plan.
+  4. Two-oceans problem (sketched `landform sea` vs frozen world-tier ocean paint) noted and
+     left out of scope per plan.
 - **Playground eyeball (035)**: farmland gate-lanes radiating from generated arterials +
   field-size gradient toward the wall; urban-park street-aligned entrances.
 - **River v2 fingerprint side effect (035)**: a v1-pinned river whose fingerprint folded a
@@ -36,6 +48,17 @@ eyes lands HERE. Newest items at the top of each section.
   faubourg reading). Flag if plan-037 gate work wants a cleaner separation fixture instead.
 
 ## Landed
+- **Plan 036 COMPLETE (engine)** (`0a5afa4`, `77b41ca`, `7f69968`, `e32b8a8`, `d26c3f1`):
+  `terrainAt(x,y)` = grade(carve(replace(add(B)))), base default-flat ⇒ every campaign
+  byte-stable until opted in. **Mountain migration BIT-EXACT to the float incl. signed zeros**
+  (the add-term IS elevationFieldFromFabric; verbatim fast path avoids the (+0)+(−0) trap) —
+  no existing mountain re-rolls, STOP condition never approached. Two new sketch kinds
+  (`relief` line add-stamp, `landform` polygon replace-stamp w/ Q4 priority), threaded through
+  zod/registry/harness/themes with zero new theme tokens; river carve via smin + segment
+  spatial hash (<120 segment tests/sample on a 2000-segment spine — hard constant); chunked
+  Float32Array lattices + LRU with laziness/eviction counters; 2×2 contour seams green;
+  grading default-off; consumers (river opt-in slope, farmland paddy) reconnected to terrainAt
+  bit-exactly. 1004→1050 tests, fuzz 38/38. Live paint wiring + Apply UI deferred (see eyes).
 - **Plan 035 COMPLETE** (`ed259c1`, `00d2c71`, `a3fb09b`): stage order is now −1 sources ·
   0 hydrology · 1 terrain · 2 vegetation · 3 settlement · 4 peri-urban · 5 detail; river v2
   (slopeSensitivity default 0 — Jonah's litmus holds: mountain edit ⇒ zero river runs, zero
