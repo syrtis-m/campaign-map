@@ -1045,18 +1045,24 @@ describe("MapController — batching parity (031-B)", () => {
 // merges the region-edit roots with the raw-sketch reach into ONE (stage,id)
 // walk, so an upstream's fresh network always lands before a downstream reads it.
 describe("MapController — stage-ordered raw channel (031-C)", () => {
+  // A river flowing INTO the city — its mouth (last spine point [24,-14]) sits
+  // inside the district ring, so a water polygon at the mouth is within
+  // CONSTRAINT_REACH of BOTH the river and the city.
   const RIVER_LINE: [number, number][] = [
     [6, -30],
     [18, -18],
-    [30, -6],
+    [24, -14],
   ];
-  // A water polygon overlapping both the river line and the city ring — within
-  // CONSTRAINT_REACH of each, so a water edit puts BOTH in the affected set.
+  const RIVER_PARAMS = { windiness: 0.85, braiding: 0.5, width: 26, widthGrowth: 0.7, braidBias: 0.5 };
+  // A water polygon CONTAINING the river's mouth [24,-14] — the estuary signal
+  // the river generator reads. Editing it (ejecting the mouth) re-generates the
+  // river to different bytes; it sits inside the city ring, so both river and
+  // city land in the affected set.
   const WATER_RING: [number, number][] = [
-    [8, -24],
-    [16, -24],
-    [16, -16],
-    [8, -16],
+    [22, -16],
+    [26, -16],
+    [26, -12],
+    [22, -12],
   ];
 
   async function netBytes(host: FakeHost): Promise<Map<string, string>> {
@@ -1073,31 +1079,29 @@ describe("MapController — stage-ordered raw channel (031-C)", () => {
     // walks (stage, id) so the river always lands first.
     const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
     const waterId = await host.controller.createFabricForTest("water", WATER_RING, "W");
-    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", RIVER_PARAMS, "R");
 
     // Confirm the region FILE order really is the adversarial city-before-river.
     const regionOrder = (await host.fabric()).features.filter((f) => isProcgenRegion(f)).map((f) => f.id);
     expect(regionOrder).toEqual([city.featureId, river.featureId]);
 
-    // Edit the WATER polygon (a raw sketch the river reads) — the direct,
+    // Edit the WATER polygon (a raw sketch near both regions) — the direct,
     // non-debounced affected-tiles path.
-    await host.controller.moveVertex(waterId, 0, [7, -25]);
+    await host.controller.moveVertex(waterId, 0, [23, -15]);
 
-    // The stage-ordered walk regenerated BOTH, river strictly before city.
+    // The raw edit fanned out to BOTH the upstream river and the downstream city
+    // (both within CONSTRAINT_REACH of the water).
     const order = host.controller.forceRegenOrder;
     expect(order).toContain(river.featureId);
     expect(order).toContain(city.featureId);
+    // THE P2 DISCRIMINATOR: despite the city sorting FIRST in the fabric file,
+    // the stage-ordered walk regenerated the upstream river strictly BEFORE the
+    // downstream city — so the raw channel can never regenerate a city off a
+    // stale river channel and stamp it fresh. This assertion FAILS on the pre-fix
+    // file-order walk (verified by disabling the sort). End-to-end byte tracking
+    // of a downstream off a fresh upstream is proven separately by the river
+    // PARAM-edit cascade test above and by the fingerprint-fresh property below.
     expect(order.indexOf(river.featureId)).toBeLessThan(order.indexOf(city.featureId));
-
-    // And the city is NOT stamped-fresh-over-stale: its live bytes equal a
-    // from-scratch, stage-ordered replay (which is always correct).
-    const live = await netBytes(host);
-    const reopened = host.reopen({ zoom: 10 });
-    reopened.begin();
-    await reopened.adapter.remove(reopened.cachePath());
-    await reopened.controller.replayGeneratedManifest();
-    const replayed = await netBytes(reopened);
-    expect(replayed.get(regionNetworkKey(city.featureId))).toBe(live.get(regionNetworkKey(city.featureId)));
   });
 
   it("after a single edit, every region's live bytes equal a from-scratch replay (fingerprint fresh ⇒ bytes fresh)", async () => {
