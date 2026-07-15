@@ -693,16 +693,20 @@ export const FARMLAND_TILE_GENERATOR_IDS: readonly string[] = contractGids(FARML
 const farmlandAlgorithm: ProcgenAlgorithm = {
   id: "farmland",
   label: "Farmland",
+  // Version 4 (plan 038): riverine long-lots (item 2) — near a generated river
+  // bank the fields become narrow rang holdings PERPENDICULAR to the water, the
+  // near end tagged `waterMeadow`; the normal lattice fields in that band are
+  // suppressed. A farmland with NO upstream channel is byte-identical to v3
+  // (golden unchanged); one the river borders changes bytes ⇒ the bump gates
+  // adoption. (Plan 038 items 3/4 — terrain slope-gating / contour strips and
+  // forest sketch-adjacency hedgerows — ride this same v4 bump; each stays
+  // byte-identical to v3 when its upstream/adjacency is absent.)
   // Version 3 (plan 037, river → farmland): `water` joins the consumed set —
-  // no field/lane/bank/farmstead geometry crosses the generated channel. A
-  // farmland with NO upstream water is byte-identical to v2 (golden unchanged);
-  // one the river crosses changes bytes ⇒ the bump gates adoption.
+  // no field/lane/bank/farmstead geometry crosses the generated channel.
   // Version 2 (plan 035, peri-urban move): farmland reads the generated city
   // street network (`upstream.settlement`) — gate lanes radiate from the
-  // arterial exits, a field-size gradient runs toward the wall line. A farmland
-  // beside a city changes bytes; one with NO upstream is byte-identical to v1
-  // through the same arithmetic (the golden is unchanged).
-  currentVersion: 3,
+  // arterial exits, a field-size gradient runs toward the wall line.
+  currentVersion: 4,
   appliesTo: ["farmland"],
   // Stage 4 (PERI-URBAN, plan 035): farmland is the city's apron, generated
   // AFTER it. Consumes `settlement` (WIRED: lanes orient to the generated

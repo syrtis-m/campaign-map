@@ -74,7 +74,7 @@ import {
 import { marchingSquares, sdfPolygon, type Field } from "./fields";
 import { macroTerrainField } from "./fields/terrain";
 import { q, blobFeature } from "./waterEmit";
-import { buildUpstreamWaterField, insideUpstreamChannel, splitLineOutsideChannel } from "./upstream";
+import { buildUpstreamConstraints, buildUpstreamWaterField, insideUpstreamChannel, splitLineOutsideChannel } from "./upstream";
 import type { GenerationConstraints } from "./types";
 
 type Pt = [number, number];
@@ -163,6 +163,20 @@ const PADDY_MIN_RELIEF_M = 8;
 // means more terraces.
 const PADDY_TARGET_BANDS = 14;
 const PADDY_INTERVAL_LADDER = [1, 2, 5, 10, 20, 25] as const;
+// ── Riverine long-lots (Quebec rang / arpent — plan 038 item 2) ──────────────
+// Where the GENERATED river channel is present, the fields WITHIN ~1–2 field
+// depths of the bank become long, narrow lots run PERPENDICULAR to the water
+// (the rang pattern): each holding fronts the river and stretches inland. The
+// wettest riparian sub-band (the near end of each lot) carries a `waterMeadow`
+// tag (a theme-painted property — flood-meadow / grazing marsh). All keyed on
+// the bank geometry + absolute position (no rng); `channel === null` (no
+// upstream water) ⇒ the whole path is skipped and farmland is byte-identical to
+// the uncoupled generator. paddy-terraces is excluded (its riverine culture is
+// terraced paddies, not rangs — the wash/contour banks own that band).
+const RANG_ARPENT_MIN_M = 12; // narrowest long-lot width (river frontage)
+const RANG_LEN_CAP_M = 180; // deepest a long-lot reaches inland (≈1–2 field depths)
+const RANG_WM_FRAC = 0.42; // near fraction of each lot tagged `waterMeadow`
+const RANG_BASE_OFFSET_M = 2; // start the lot just inland of the bank (field < 0)
 
 /** Nice-round bank interval for a scanned range `maxV`. Smallest ladder step
  * giving ≤ PADDY_TARGET_BANDS bands; the coarsest as a floor. */
@@ -322,6 +336,18 @@ export function generateFarmland(
   // field/lane/bank geometry crosses the channel. A stage-0 OUTPUT edge (added
   // to `consumes`), never a raw sketch read.
   const channel = buildUpstreamWaterField(constraints.upstream);
+  // Riverine long-lot band (plan 038 item 2): a lot reaches ~1.6 cells inland,
+  // capped. Non-paddy field types near the bank become rang lots — the normal
+  // lattice fields there are suppressed (below) so the two never double-paint.
+  const rangEnabled = channel !== null && fieldType !== "paddy-terraces";
+  const rangLen = Math.min(1.6 * cell, RANG_LEN_CAP_M);
+  /** A point in the riparian band: outside the channel but within `rangLen` of
+   * the bank. Always false with no channel (byte-identity). */
+  const inRangBand = (x: number, y: number): boolean => {
+    if (channel === null) return false;
+    const v = channel(x, y);
+    return v < 0 && v > -rangLen;
+  };
   const LANE_STEP_M = 8; // resample step for lane channel-splitting (coupled path only)
   /** Emit a lane run, truncated at the channel when there is upstream water. */
   const emitLaneRun = (run: Pt[]): void => {
@@ -404,6 +430,11 @@ export function generateFarmland(
   const emitField = (ix: number, iy: number, sub: number, rect: Pt[]): void => {
     if (!rectContained(region, rect, FIELD_MARGIN_M)) return;
     if (rectHitsChannel(rect, channel)) return; // no field across the channel (plan 037)
+    // Riverine long-lots (plan 038 item 2): a lattice field whose CENTER sits in
+    // the riparian band is replaced by the perpendicular rang lots emitted below
+    // — suppress it here so they don't overlap. Gated on `rangEnabled` ⇒ no-op
+    // (byte-identical) with no upstream channel.
+    if (rangEnabled && inRangBand((rect[0][0] + rect[2][0]) / 2, (rect[0][1] + rect[2][1]) / 2)) return;
     out.push(fieldFeature(seed, rect, { crop: cropAt(seed, ix, iy, sub), fieldType }));
     for (let i = 0; i < rect.length; i++) emitHedge(rect[i], rect[(i + 1) % rect.length]);
   };
@@ -476,6 +507,86 @@ export function generateFarmland(
         } else {
           emitField(ix, iy, 0, rectOf(x0, y0, x1, y1));
         }
+      }
+    }
+  }
+
+  // ── Riverine long-lots (Quebec rang / arpent — plan 038 item 2): along each
+  //    generated river bank, narrow holdings run PERPENDICULAR to the water and
+  //    stretch ~rangLen inland (fronting the river). Each lot splits into a near
+  //    `waterMeadow` cell (flood meadow) + a far tilled cell. Determinism: the
+  //    bank ring is walked by arc length (pure geometry), the inland direction is
+  //    the channel SDF's downhill gradient (pure f(channel)), the crop keys on
+  //    the quantized base position — zero rng. Only non-paddy types, only with an
+  //    upstream channel ⇒ byte-identical to the uncoupled generator otherwise. ──
+  if (rangEnabled) {
+    const banks = buildUpstreamConstraints(constraints.upstream).waterRings;
+    const arpentW = Math.max(RANG_ARPENT_MIN_M, cell * 0.18);
+    const halfW = arpentW / 2;
+    const wmLen = rangLen * RANG_WM_FRAC;
+    // Inland unit direction at (x,y): the channel SDF (positive inside) DECREASES
+    // away from the water, so −∇channel points inland. Central differences.
+    const inward = (x: number, y: number): Pt => {
+      const e = 1;
+      const gx = channel!(x + e, y) - channel!(x - e, y);
+      const gy = channel!(x, y + e) - channel!(x, y - e);
+      const l = Math.hypot(gx, gy) || 1;
+      return [-gx / l, -gy / l];
+    };
+    const emitLotCell = (p0: Pt, p1: Pt, t: Pt, sub: number, waterMeadow: boolean): void => {
+      const corners: Pt[] = [
+        [p0[0] - t[0] * halfW, p0[1] - t[1] * halfW],
+        [p1[0] - t[0] * halfW, p1[1] - t[1] * halfW],
+        [p1[0] + t[0] * halfW, p1[1] + t[1] * halfW],
+        [p0[0] + t[0] * halfW, p0[1] + t[1] * halfW],
+      ];
+      if (!rectContained(region, corners, FIELD_MARGIN_M)) return;
+      if (rectHitsChannel(corners, channel)) return;
+      const ci = Math.round(p0[0] / cell);
+      const cj = Math.round(p0[1] / cell);
+      const props: Record<string, unknown> = {
+        crop: waterMeadow ? "water-meadow" : cropAt(seed, ci, cj, sub),
+        fieldType,
+        bankLot: true,
+      };
+      if (waterMeadow) props.waterMeadow = true;
+      out.push(fieldFeature(seed, corners, props));
+    };
+    const grow = rangLen + arpentW;
+    for (const ring of banks) {
+      // Arc-length carry so lots are spaced `arpentW` continuously across the
+      // whole bank (not restarted per segment).
+      let carry = 0;
+      for (let i = 0; i + 1 < ring.length; i++) {
+        const a = ring[i];
+        const b = ring[i + 1];
+        // Skip bank segments far from this farmland region (perf; correctness is
+        // still guarded by rectContained).
+        if (
+          Math.max(a[0], b[0]) < bbox.minX - grow ||
+          Math.min(a[0], b[0]) > bbox.maxX + grow ||
+          Math.max(a[1], b[1]) < bbox.minY - grow ||
+          Math.min(a[1], b[1]) > bbox.maxY + grow
+        ) {
+          carry = 0;
+          continue;
+        }
+        const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (segLen <= 0) continue;
+        const tx = (b[0] - a[0]) / segLen;
+        const ty = (b[1] - a[1]) / segLen;
+        for (let s = arpentW - carry; s < segLen; s += arpentW) {
+          const bx = a[0] + tx * s;
+          const by = a[1] + ty * s;
+          const d = inward(bx, by);
+          const base: Pt = [bx + d[0] * RANG_BASE_OFFSET_M, by + d[1] * RANG_BASE_OFFSET_M];
+          const mid: Pt = [base[0] + d[0] * wmLen, base[1] + d[1] * wmLen];
+          const tip: Pt = [base[0] + d[0] * rangLen, base[1] + d[1] * rangLen];
+          const t: Pt = [tx, ty];
+          emitLotCell(base, mid, t, 0, true); // riparian water-meadow (near)
+          emitLotCell(mid, tip, t, 1, false); // tilled long-lot (far)
+        }
+        carry = (carry + segLen) % arpentW;
       }
     }
   }
