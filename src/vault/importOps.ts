@@ -6,8 +6,8 @@ import { sanitizeNoteName } from "../model/importGeojson";
 import { createLocationNote, createLocationNoteWithSidecar } from "./locationOps";
 
 /**
- * Writes imported notes into the vault (plan 011). Reuses the same
- * write paths as the rest of the app: point notes go through
+ * Writes imported notes into the vault. Reuses the same write paths as the
+ * rest of the app: point notes go through
  * `createLocationNote` (the quick-add flow's path); Line/Polygon notes go
  * through `createLocationNoteWithSidecar` (the complex-geometry path),
  * which writes a `<name>.geojson` sidecar and a note whose

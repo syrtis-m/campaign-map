@@ -2,8 +2,8 @@ import { z } from "zod";
 import { GENERATION_TIERS } from "../gen/cache/tileGrid";
 
 /**
- * Durable generation manifest (plan 019, D1): the record of "areas the GM
- * explicitly asked to generate." What persists is the REQUEST, not the
+ * Durable generation manifest: the record of "areas the GM explicitly asked to
+ * generate." What persists is the REQUEST, not the
  * output — feature output stays regenerable JSONL in `.mapcache/`, so
  * deleting the cache remains harmless (the manifest replays on map open:
  * cache hit or deterministic regenerate). Lives at `<campaign>/Generated.json`
@@ -16,19 +16,18 @@ export const ManifestEntrySchema = z.object({
   tileX: z.number().int(),
   tileY: z.number().int(),
   createdAt: z.number(),
-  /** Procgen v3: city-tier entries created inside a city domain carry the
-   * domain's id so replay can compute each domain network once and clip all
-   * of its tiles from that single artifact. Optional — pre-v3 entries (and
-   * world-tier entries) simply have none. */
+  /** City-tier entries created inside a city domain carry the domain's id so
+   * replay can compute each domain network once and clip all of its tiles from
+   * that single artifact. Optional — entries without one (and world-tier
+   * entries) simply have none. */
   domainId: z.string().optional(),
 });
 export type ManifestEntry = z.infer<typeof ManifestEntrySchema>;
 
 /**
- * A city domain (procgen v3, design §3.1): the GM-requested disc a whole
- * city network is generated for. Persisted as part of the request — the
- * network itself stays regenerable cache. `createdAt` is host-side metadata
- * and is never read by generators (design rule D6).
+ * A city domain: the GM-requested disc a whole city network is generated for.
+ * Persisted as part of the request — the network itself stays regenerable
+ * cache. `createdAt` is host-side metadata and is never read by generators.
  */
 export const CityDomainSchema = z.object({
   id: z.string().min(1),
@@ -42,7 +41,8 @@ export type ManifestCityDomain = z.infer<typeof CityDomainSchema>;
 
 export const GeneratedManifestSchema = z.object({
   entries: z.array(ManifestEntrySchema),
-  /** `.default([])` keeps every pre-v3 Generated.json parsing unchanged. */
+  /** `.default([])` keeps Generated.json files without a domains array parsing
+   * unchanged. */
   domains: z.array(CityDomainSchema).default([]),
 });
 export type GeneratedManifest = z.infer<typeof GeneratedManifestSchema>;

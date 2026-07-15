@@ -7,7 +7,7 @@ import {
   defaultVisibilityForType,
 } from "./locationNote";
 
-describe("explicit visibility field (plan 015 — decoupled from type)", () => {
+describe("explicit visibility field (decoupled from type)", () => {
   it("gates on the explicit `visibility` field, mapped 1:1 to the focus bucket", () => {
     const wide = parseLocationNote("L/A.md", "A", { map: "a", geometry: [0, 0], type: "custom", visibility: "wide" });
     const mid = parseLocationNote("L/B.md", "B", { map: "a", geometry: [0, 0], type: "custom", visibility: "mid" });

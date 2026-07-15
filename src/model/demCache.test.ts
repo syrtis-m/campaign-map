@@ -11,8 +11,8 @@ import {
 } from "./demCache";
 
 /**
- * Raw-lattice DEM cache round-trip (plan 023 §4.2): heights (quantized ints)
- * are the durable determinism record — this suite proves the JSONL log stores
+ * Raw-lattice DEM cache round-trip: heights (quantized ints) are the durable
+ * determinism record — this suite proves the JSONL log stores
  * and replays them byte-faithfully, last-write-wins, and that deleting the
  * cache file is harmless (the read path just reports empty → recompute).
  */

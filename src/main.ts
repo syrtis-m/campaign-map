@@ -66,7 +66,7 @@ export default class CampaignMapPlugin extends Plugin {
   get generated(): GeoJSON.Feature[] {
     return this.activeMapView()?.generated ?? [];
   }
-  // Web Worker smoke-test surface (docs/02 §5) — see DECISIONS.md for scope.
+  // Web Worker smoke-test surface.
   get workerLastResult(): GeoJSON.Feature[] | null {
     return this.workerLastResultValue;
   }
@@ -76,19 +76,19 @@ export default class CampaignMapPlugin extends Plugin {
     return this.lastRescanMs;
   }
   // Render-store surface: how many tile entries the active view holds
-  // (bounded by what the GM explicitly generated — plan 019).
+  // (bounded by what the GM explicitly generated).
   get loadedTileCount(): number {
     return this.activeMapView()?.loadedTileCount ?? 0;
   }
-  // Plan 019 Phase 2 gate surface: actual generator executions in the active
-  // view — pan/zoom aggressively and this must stay put.
+  // Gate surface: actual generator executions in the active view — pan/zoom
+  // aggressively and this must stay put.
   get generatorRunCount(): number {
     return this.activeMapView()?.generatorRunCount ?? 0;
   }
 
-  /** Lazily created, shared across the session; the Phase 4 viewport
-   * dispatcher (MapView) and the smoke-test command both go through this
-   * so there's exactly one worker instance. Returns null (rather than
+  /** Lazily created, shared across the session; the viewport dispatcher
+   * (MapView) and the smoke-test command both go through this so there's
+   * exactly one worker instance. Returns null (rather than
    * throwing) on creation failure so callers can fall back to direct
    * main-thread generation instead of breaking the map. */
   async getGenerationWorker(): Promise<GenerationWorkerClient | null> {
@@ -319,7 +319,7 @@ export default class CampaignMapPlugin extends Plugin {
           const worker = await this.getGenerationWorker();
           if (!worker) throw new Error("worker unavailable");
           // World tier: the last per-tile generators (city tier went
-          // domain-scoped in procgen v3.4) — still a real worker round-trip.
+          // domain-scoped) — still a real worker round-trip.
           const features = await worker.generate(
             "world-region",
             4181,

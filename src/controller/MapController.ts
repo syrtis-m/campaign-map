@@ -1,17 +1,15 @@
 /**
- * MapController (plan 021 §2.4) — the host-agnostic lifecycle brain extracted
- * from MapView. Owns generation / regen / clear / undo / replay / migration /
- * region-procgen / sketch-commit orchestration and the state those touch
- * (render store, manifest, fabric collection, gate counters). It talks to the
- * outside world ONLY through the narrow interfaces below (vault gateway, gen
- * gateway, canon gateway, note-ops, notice sink, render sink, viewport) — so
- * it has NO DOM / MapLibre / Obsidian imports and is fully testable against a
- * FakeHost with an in-memory vault (same purity rule as src/gen/, CLAUDE.md).
+ * MapController — the host-agnostic lifecycle brain. Owns generation / regen /
+ * clear / undo / replay / migration / region-procgen / sketch-commit
+ * orchestration and the state those touch (render store, manifest, fabric
+ * collection, gate counters). It talks to the outside world ONLY through the
+ * narrow interfaces below (vault gateway, gen gateway, canon gateway, note-ops,
+ * notice sink, render sink, viewport) — so it has NO DOM / MapLibre / Obsidian
+ * imports and is fully testable against a FakeHost with an in-memory vault
+ * (same purity rule as src/gen/, CLAUDE.md).
  *
  * MapView constructs one of these with Obsidian-backed gateways and becomes
  * wiring + paint; every gate-facing test API method on MapView forwards here.
- * This is a REFACTOR — behavior is byte-identical to the pre-extraction
- * MapView (plan 021 §2.4: zero behavior change).
  */
 import { z } from "zod";
 import type { ParsedCampaign } from "../model/campaignConfig";
@@ -117,10 +115,10 @@ import {
 } from "./units";
 import { generateWorldRegions, generateRoutes } from "../gen/world";
 
-/** Data shape of a `sketch-procgen-set` / `sketch-procgen-clear` log entry
- * (plan 020 §8.4): the region's before/after procgen block + the post-op
- * feature, so undo can strip a block (dropping its cache) or re-attach one
- * (regenerating). Parsed at the undo IO boundary. */
+/** Data shape of a `sketch-procgen-set` / `sketch-procgen-clear` log entry:
+ * the region's before/after procgen block + the post-op feature, so undo can
+ * strip a block (dropping its cache) or re-attach one (regenerating). Parsed at
+ * the undo IO boundary. */
 const ProcgenLogDataSchema = z.object({
   featureId: z.string(),
   before: ProcgenBlockSchema.nullable(),
@@ -128,9 +126,9 @@ const ProcgenLogDataSchema = z.object({
   feature: FabricFeatureSchema,
 });
 
-/** Data shape of a `sketch-edit` log entry (plan 020 §9): the full
- * FabricFeature before and after a geometry/property edit. Zod-validated at
- * the undo IO boundary (bad entry → Notice, never a crash). */
+/** Data shape of a `sketch-edit` log entry: the full FabricFeature before and
+ * after a geometry/property edit. Zod-validated at the undo IO boundary (bad
+ * entry → Notice, never a crash). */
 const SketchEditDataSchema = z.object({
   featureId: z.string(),
   before: FabricFeatureSchema,
@@ -183,7 +181,7 @@ export interface GenGateway {
 }
 
 /** Read-only canon (location index) access — the generators take canon pins as
- * constraints (plan 019 Phase 3). */
+ * constraints. */
 export interface CanonGateway {
   canonFeatureCollection(campaignId: string): GeoJSON.FeatureCollection;
 }
@@ -254,28 +252,28 @@ export class MapController {
    * Render store for generated fabric, keyed `${tier}:${tileX}:${tileY}` —
    * generation-space (meters), same as `.mapcache/` itself. Fed ONLY by
    * (a) manifest replay on campaign open and (b) explicit generate actions
-   * (plan 019: no viewport dispatch, no generate-on-pan, ever). Sketch-
-   * corridor elaborations live under their own `sketch:<id>:` key namespace.
+   * (no viewport dispatch, no generate-on-pan, ever). Sketch-corridor
+   * elaborations live under their own `sketch:<id>:` key namespace.
    */
   private loadedTiles = new Map<string, GeoJSON.Feature[]>();
-  /** In-memory mirror of `<campaign>/Generated.json` (plan 019, D1). */
+  /** In-memory mirror of `<campaign>/Generated.json`. */
   private manifest: GeneratedManifest = emptyManifest();
   private manifestLoadedFor: string | null = null;
   /** Guards manifest replay so it runs once per campaign open. */
   private manifestReplayedFor: string | null = null;
-  /** In-memory mirror of `<campaign>/Fabric.geojson` (plan 013). */
+  /** In-memory mirror of `<campaign>/Fabric.geojson`. */
   private fabricCollection: FabricCollection = emptyFabric();
   private fabricLoadedFor: string | null = null;
   /** Explicit generate/replay runs in flight — drives the loading badge. */
   private pendingGenerations = 0;
-  /** Gate counter (plan 019 Phase 2): actual generator EXECUTIONS. */
+  /** Gate counter: actual generator EXECUTIONS. */
   private generatorRunCounter = 0;
   /** Sketch edits accumulated while the regen debounce is pending. */
   private pendingConstraintFeatures: FabricFeature[] = [];
   /** Region ids whose OWN geometry changed and need a force-regen next flush. */
   private pendingRegionRegen = new Set<string>();
 
-  /** World tier only since v3.4 — city fabric is domain-scoped (citynet). */
+  /** World tier only — city fabric is domain-scoped (citynet). */
   private readonly directGenerators: Record<string, TileGenerator> = {
     "world-region": generateWorldRegions,
     "world-route": generateRoutes,
@@ -310,7 +308,7 @@ export class MapController {
     return this.loadedTiles.size;
   }
 
-  /** Gate surface (plan 019 Phase 2): actual generator executions this session. */
+  /** Gate surface: actual generator executions this session. */
   get generatorRunCount(): number {
     return this.generatorRunCounter;
   }
@@ -350,8 +348,8 @@ export class MapController {
   // ─── "Generate fabric here" and world/region generation ────────────────
 
   /**
-   * "Generate fabric here" (plan 019/020). World tier: paints the clicked tile
-   * and appends a durable manifest entry. City tier: a click inside a region
+   * "Generate fabric here". World tier: paints the clicked tile and appends a
+   * durable manifest entry. City tier: a click inside a region
    * re-clips/repaints it (cache path); outside any region points the GM at the
    * district tool.
    */
@@ -410,7 +408,7 @@ export class MapController {
     return features.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
 
-  // ─── Procgen regions (plan 020) ────────────────────────────────────────
+  // ─── Procgen regions ───────────────────────────────────────────────────
 
   /** Fabric features that carry a procgen block. */
   private regionFeatures(): FabricFeature[] {
@@ -418,9 +416,9 @@ export class MapController {
   }
 
   /** Build a ProcgenRegion (generation-space meters) from a fabric feature
-   * (display units). Polygon → a sketched region (plan 020). LineString WITH a
-   * procgen block → a spine CORRIDOR (plan 022 §2): the corridor half-width is
-   * the algorithm's pure `corridorMaxOffset(params)`, so the generator reads
+   * (display units). Polygon → a sketched region. LineString WITH a procgen
+   * block → a spine CORRIDOR: the corridor half-width is the algorithm's pure
+   * `corridorMaxOffset(params)`, so the generator reads
    * `region.spine` and containment is spine-aware. A block-less line is not a
    * region (a plain inert river) → null. */
   buildRegionFromFeature(feature: FabricFeature): ProcgenRegion | null {
@@ -473,7 +471,7 @@ export class MapController {
     return null;
   }
 
-  /** Render-store key for a region-clipped tile (plan 020 §3.3). */
+  /** Render-store key for a region-clipped tile. */
   private regionRenderKey(regionId: string, tileX: number, tileY: number): string {
     return `region:${regionId}:${tileX}:${tileY}`;
   }
@@ -512,7 +510,7 @@ export class MapController {
     return false;
   }
 
-  /** Do two regions overlap? (Same-algorithm regions may not — plan 020 §6.) */
+  /** Do two regions overlap? (Same-algorithm regions may not overlap.) */
   private regionsOverlap(a: ProcgenRegion, b: ProcgenRegion): boolean {
     if (a.bbox.maxX < b.bbox.minX || b.bbox.maxX < a.bbox.minX) return false;
     if (a.bbox.maxY < b.bbox.minY || b.bbox.maxY < a.bbox.minY) return false;
@@ -558,17 +556,16 @@ export class MapController {
     return [metersToUnits(centerMeters[0], scale), metersToUnits(centerMeters[1], scale)];
   }
 
-  /** Whole-region network computation closure (plan 020 §5). */
+  /** Whole-region network computation closure. */
   private regionCompute(worker: GenerationWorkerClient | null, feature: FabricFeature): RegionNetworkCompute {
     const block = feature.properties.procgen!;
     const algorithm = algorithmById(block.algorithm);
     return (region, constraints) => {
       this.generatorRunCounter++;
       // Spine (line-kind) regions run on the MAIN thread: the worker protocol
-      // reconstructs a region from `region.ring` via makeRegion (plan 020) and
-      // would lose `region.spine` — and rivers are geometry-light, so the
-      // direct path is both correct and cheap (plan 022 §2 deviation, logged in
-      // DECISIONS). Polygon regions keep the worker path unchanged.
+      // reconstructs a region from `region.ring` via makeRegion and would lose
+      // `region.spine` — and rivers are geometry-light, so the direct path is
+      // both correct and cheap. Polygon regions keep the worker path unchanged.
       if (worker && !region.spine) {
         return worker.generateRegion(block.algorithm, block.seed, region.id, region.ring, block.params, constraints);
       }
@@ -618,19 +615,19 @@ export class MapController {
     }
     if (this.campaign?.id !== campaign.id) return [];
     const ctx = this.generationContext();
-    // Plan 024 §3 (24-C): thread this region's fresh lower-stage upstream (the
-    // meandered river channel the city consumes) as DATA. Built from the shared
-    // cache when present (replay/flush) or a one-shot vault read (cascade).
+    // Thread this region's fresh lower-stage upstream (the meandered river
+    // channel the city consumes) as DATA. Built from the shared cache when
+    // present (replay/flush) or a one-shot vault read (cascade).
     ctx.upstream = await this.buildRegionUpstream(feature, region, algorithm, preloaded, folder);
     const worker = await this.host.gen.getWorker();
     const compute = this.regionCompute(worker, feature);
-    // Plan 024 §5.1 + 24-B: the durable-input fingerprint stamped on every
-    // record this run writes, compared on replay to catch an external edit.
-    // Now DAG-aware — it folds in this region's strictly-lower-stage upstream
-    // fingerprints (`computeRegionFingerprints`), so an upstream edit (e.g. a
-    // mountain a river's slope reads) invalidates this region on replay too.
-    // Fallback to a no-upstream fingerprint if the region isn't in the current
-    // collection yet (a just-built feature mid-attach).
+    // The durable-input fingerprint stamped on every record this run writes,
+    // compared on replay to catch an external edit. DAG-aware — it folds in
+    // this region's strictly-lower-stage upstream fingerprints
+    // (`computeRegionFingerprints`), so an upstream edit (e.g. a mountain a
+    // river's slope reads) invalidates this region on replay too. Fallback to a
+    // no-upstream fingerprint if the region isn't in the current collection yet
+    // (a just-built feature mid-attach).
     const fingerprint =
       (opts.fingerprints ?? this.computeRegionFingerprints(ctx)).get(feature.id) ??
       regionFingerprint({
@@ -687,28 +684,28 @@ export class MapController {
     return all;
   }
 
-  // ─── Cross-layer regen cascade (plan 024 §2/§4) ────────────────────────
+  // ─── Cross-layer regen cascade ─────────────────────────────────────────
 
   /**
-   * Plan 024 §3 (24-C) — build this region's UPSTREAM artifacts: the fresh
-   * GENERATED output of strictly-lower-stage regions whose `produces` this
-   * region `consumes` and whose bbox (grown by the influence reach) overlaps it.
-   * Today the sole WIRED consumption is `water` — the meandered river channel
-   * (`river-channel` polygons) the city bridges/quays track (`indexConstraints`
-   * folds it in). Vegetation stays declared-but-inert (a forest edit still
-   * recomputes the city byte-identically — 24-B's accepted over-invalidation).
+   * Build this region's UPSTREAM artifacts: the fresh GENERATED output of
+   * strictly-lower-stage regions whose `produces` this region `consumes` and
+   * whose bbox (grown by the influence reach) overlaps it. Today the sole WIRED
+   * consumption is `water` — the meandered river channel (`river-channel`
+   * polygons) the city bridges/quays track (`indexConstraints` folds it in).
+   * Vegetation stays declared-but-inert (a forest edit still recomputes the
+   * city byte-identically — an accepted over-invalidation).
    *
    * The channel is read from the upstream region's NETWORK cache record: in the
    * replay/flush path it is already in the shared `cache` map (no extra IO); in
    * the cascade path (each region regenerated in `(stage, regionId)` order,
    * upstream before downstream) the upstream network was just written to the
    * vault, so a one-shot read backfills it. Returns `undefined` when there is no
-   * upstream water — the generator then runs byte-identically to pre-24-C.
+   * upstream water — the generator then runs with no upstream water folded in.
    *
    * Determinism/replay: a city cache HIT returns cached bytes without ever
    * calling the generator, so this upstream is built but unused on a hit (the
-   * bytes are already right — plan 024 §5); only a MISS consumes it, and by then
-   * the lower stage has landed. Feature order is `(stage, id)`-deterministic.
+   * bytes are already right); only a MISS consumes it, and by then the lower
+   * stage has landed. Feature order is `(stage, id)`-deterministic.
    */
   private async buildRegionUpstream(
     feature: FabricFeature,
@@ -720,9 +717,9 @@ export class MapController {
     if (!algorithm.consumes.includes("water")) return undefined;
     const reach = MapController.CONSTRAINT_REACH;
     const rb = region.bbox;
-    // Lower-stage water producers overlapping this region (the §4 edge rule,
-    // computed directly so it holds even for a just-attached feature not yet in
-    // the DAG node set). Sorted by id for deterministic feature order.
+    // Lower-stage water producers overlapping this region (computed directly so
+    // it holds even for a just-attached feature not yet in the DAG node set).
+    // Sorted by id for deterministic feature order.
     const upstreamFeatures = this.regionFeatures()
       .filter((f) => {
         const b = f.properties.procgen;
@@ -770,11 +767,11 @@ export class MapController {
   }
 
   /**
-   * Every region's staleness fingerprint (plan 024 §5.1), computed in
-   * `(stage, regionId)` order so an upstream's fingerprint is in hand before a
-   * downstream folds it in (`upstreamFingerprints`). A pure function of the
-   * durable data (blocks + geometry + raw constraints + the DAG), independent
-   * of feature enumeration order (D2). Callers doing a batch (replay, cascade,
+   * Every region's staleness fingerprint, computed in `(stage, regionId)`
+   * order so an upstream's fingerprint is in hand before a downstream folds it
+   * in (`upstreamFingerprints`). A pure function of the durable data (blocks +
+   * geometry + raw constraints + the DAG), independent of feature enumeration
+   * order. Callers doing a batch (replay, cascade,
    * flush) compute it once and thread it through `generateRegion` to avoid the
    * O(n²) recompute.
    */
@@ -815,8 +812,8 @@ export class MapController {
     return fpMap;
   }
 
-  /** Threshold above which a cascade asks before regenerating (plan 024 §4 cost
-   * control — a continental river's knob must not silently redraw 100 cities).
+  /** Threshold above which a cascade asks before regenerating (cost control —
+   * a continental river's knob must not silently redraw 100 cities).
    * Non-modal: a Notice + the `applyPendingCascade` command/test-API (no modal —
    * they hang CLI automation, docs/05). */
   private static readonly CASCADE_CONFIRM_THRESHOLD = 10;
@@ -837,8 +834,8 @@ export class MapController {
   cascadeAutoConfirm = false;
 
   /**
-   * The cascade proper (plan 024 §4): after the edited region(s) `rootIds` are
-   * regenerated, regenerate their transitive DOWNSTREAM closure in
+   * The cascade proper: after the edited region(s) `rootIds` are regenerated,
+   * regenerate their transitive DOWNSTREAM closure in
    * `(stage, regionId)` order — upstream before downstream, each once. `done`
    * carries the roots (and anything already regenerated this pass) so nothing
    * runs twice. Returns the ids it regenerated (for the summary Notice). A
@@ -876,7 +873,7 @@ export class MapController {
   }
 
   /** One summary Notice for a cascade ("River updated — regenerated 1 city,
-   * 2 forests", plan 024 §4). Counts by algorithm label. */
+   * 2 forests"). Counts by algorithm label. */
   private notifyCascade(regeneratedIds: string[]): void {
     const counts = new Map<string, number>();
     for (const id of regeneratedIds) {
@@ -889,8 +886,8 @@ export class MapController {
     this.host.notices.notify(`Campaign Map: cascade regenerated ${parts.join(", ")}`);
   }
 
-  /** Apply a cascade the confirm cap deferred (plan 024 §4). Command + test API
-   * (the non-modal "confirm above N" affordance). */
+  /** Apply a cascade the confirm cap deferred. Command + test API (the
+   * non-modal "confirm above N" affordance). */
   async applyPendingCascade(): Promise<void> {
     if (!this.pendingCascadeRoots) {
       this.host.notices.notify("Campaign Map: no pending cascade to apply");
@@ -914,8 +911,8 @@ export class MapController {
   }
 
   /**
-   * "Regenerate fabric here" (plan 019/020, D4): re-runs generation at this
-   * spot against CURRENT constraints.
+   * "Regenerate fabric here": re-runs generation at this spot against CURRENT
+   * constraints.
    */
   async regenerateFabricHere(point?: [number, number]): Promise<GeoJSON.Feature[]> {
     if (!this.campaign || this.campaign.config.crs !== "fictional") return [];
@@ -947,7 +944,7 @@ export class MapController {
     return all.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
   }
 
-  /** "Clear generated fabric here" (plan 019, D4). */
+  /** "Clear generated fabric here". */
   async clearGeneratedHere(point?: [number, number]): Promise<number> {
     if (!this.campaign || this.campaign.config.crs !== "fictional") return 0;
     const campaign = this.campaign;
@@ -968,7 +965,7 @@ export class MapController {
     return entries.length;
   }
 
-  /** "Clear all generated fabric" (plan 019/020, D4). */
+  /** "Clear all generated fabric". */
   async clearAllGenerated(): Promise<number> {
     if (!this.campaign || this.campaign.config.crs !== "fictional") return 0;
     const campaign = this.campaign;
@@ -1221,7 +1218,7 @@ export class MapController {
     return this.adoptAllRegions();
   }
 
-  // ─── Region procgen lifecycle (plan 020 §8.1/§8.4) ────────────────────
+  // ─── Region procgen lifecycle ──────────────────────────────────────────
 
   /** Attach a procgen block to a district shape and generate it. */
   private async setRegionProcgen(
@@ -1248,8 +1245,8 @@ export class MapController {
       });
     }
     const feats = await this.generateRegion(updated, { force });
-    // Cross-layer cascade (plan 024 §4): a param/re-roll/center/attach edit to an
-    // UPSTREAM region regenerates its downstream dependents. `force` marks a
+    // Cross-layer cascade: a param/re-roll/center/attach edit to an UPSTREAM
+    // region regenerates its downstream dependents. `force` marks a
     // GM-driven edit (setRegionParams/rerollRegion/setRegionCenter/undo pass
     // true) vs. a first-attach on create — but creating a new upstream over an
     // existing downstream should also adapt it, so cascade in both cases (a
@@ -1310,7 +1307,7 @@ export class MapController {
     this.host.render.repaintGenerated();
   }
 
-  /** "Remove generated city here" (plan 020 §8.4). */
+  /** "Remove generated city here". */
   async removeGeneratedCityHere(point?: [number, number]): Promise<number> {
     if (!this.campaign || this.campaign.config.crs !== "fictional") return 0;
     const campaign = this.campaign;
@@ -1329,7 +1326,7 @@ export class MapController {
   }
 
   /** Validate params at the IO boundary, mint the persisted seed, attach the
-   * block, and generate (plan 020 §3.1). */
+   * block, and generate. */
   async attachProcgenAndGenerate(
     feature: FabricFeature,
     algorithm: ProcgenAlgorithm,
@@ -1394,11 +1391,11 @@ export class MapController {
     return { featureId: feature.id, count: feats.length, outside };
   }
 
-  /** Kind-aware pre-generate validation for the modal path (plan 020 §8.1 /
-   * plan 022 §2) — keeps all display→meters unit math on the controller. A
-   * polygon must be a valid ring and not overlap a same-algorithm region; a
-   * spine (line) must be a valid polyline. Spines MAY cross (tributaries are
-   * legal, plan 022 §3.1) so a line NEVER fails on overlap. `overlap` marks the
+  /** Kind-aware pre-generate validation for the modal path — keeps all
+   * display→meters unit math on the controller. A polygon must be a valid ring
+   * and not overlap a same-algorithm region; a spine (line) must be a valid
+   * polyline. Spines MAY cross (tributaries are legal) so a line NEVER fails on
+   * overlap. `overlap` marks the
    * polygon-clash case so the host can word its Notice. */
   validateForProcgen(feature: FabricFeature, algorithmId: string): RingValidation & { overlap?: boolean } {
     if (!this.campaign) return { ok: false, reason: "no campaign" };
@@ -1419,7 +1416,7 @@ export class MapController {
   }
 
   /** Headless spine (line-kind) creation — the gate/test twin of
-   * `createRegionForTest` for rivers (plan 022 §2). Sketches a line of `kind`,
+   * `createRegionForTest` for rivers. Sketches a line of `kind`,
    * attaches a procgen block, generates, and returns the corridor containment
    * summary (all output within `corridorMaxOffset` of the spine). Runs the FULL
    * commit path (validate, log, persist, regen) — modals hang CLI. */
@@ -1464,8 +1461,8 @@ export class MapController {
     return { featureId: feature.id, count: feats.length, outside };
   }
 
-  /** One-way migration (plan 020 §3.2): pre-v4 disc domains become sketched
-   * district features carrying the city procgen block. */
+  /** One-way migration: legacy disc domains become sketched district features
+   * carrying the city procgen block. */
   private async migrateDomainsIfNeeded(): Promise<void> {
     if (!this.campaign) return;
     const campaign = this.campaign;
@@ -1548,7 +1545,7 @@ export class MapController {
     }
   }
 
-  /** Replay on campaign open (plan 020 §8.2). */
+  /** Replay on campaign open. */
   async replayGeneratedManifest(): Promise<void> {
     if (!this.campaign || this.campaign.config.crs !== "fictional") return;
     const campaign = this.campaign;
@@ -1587,11 +1584,10 @@ export class MapController {
       }
       // Region tier: regenerate each region from the sketch layer, sharing the
       // one cache read (cache-hit per-tile clips, else recompute network once).
-      // Plan 024 §5: walk in `(stage, regionId)` order — one fixed,
-      // data-independent sequence — so a stage-1 recompute lands before a
-      // stage-3 read of its output (byte-neutral until a consumer wires upstream
-      // in 24-C, but correct-by-construction now). Fingerprints (incl. upstream
-      // DAG deps) precomputed ONCE and threaded, avoiding an O(n²) recompute.
+      // Walk in `(stage, regionId)` order — one fixed, data-independent
+      // sequence — so a stage-1 recompute lands before a stage-3 read of its
+      // output. Fingerprints (incl. upstream DAG deps) precomputed ONCE and
+      // threaded, avoiding an O(n²) recompute.
       const fpMap = this.computeRegionFingerprints(ctx);
       const stageOf = (f: FabricFeature): number =>
         algorithmById(f.properties.procgen?.algorithm ?? "")?.stage ?? 99;
@@ -1626,7 +1622,7 @@ export class MapController {
     this.host.render.repaintFabric();
   }
 
-  // ─── Constraint / region regen debounce (plan 019/020 §8.3) ────────────
+  // ─── Constraint / region regen debounce ────────────────────────────────
 
   queueConstraintRegen(feature: FabricFeature): void {
     if (!this.campaign || this.campaign.config.crs !== "fictional") return;
@@ -1643,7 +1639,7 @@ export class MapController {
   /** How far (in meters) a sketched feature can influence generated output. */
   private static readonly CONSTRAINT_REACH = 200;
 
-  /** One debounce flush (plan 020 §8.3). Called by the host's regen timer. */
+  /** One debounce flush. Called by the host's regen timer. */
   async flushSketchRegen(): Promise<void> {
     const regionIds = [...this.pendingRegionRegen];
     this.pendingRegionRegen.clear();
@@ -1664,8 +1660,8 @@ export class MapController {
       if (this.campaign?.id !== campaign.id) return;
     }
     if (edited.length > 0) await this.regenerateAffectedTiles(edited, done);
-    // Cross-layer cascade (plan 024 §4): ONE coalesced walk downstream of every
-    // region regenerated by a queued procgen-region edit this flush (a drag
+    // Cross-layer cascade: ONE coalesced walk downstream of every region
+    // regenerated by a queued procgen-region edit this flush (a drag
     // storm coalesced into one cascade). Raw-sketch constraint edits already
     // fan out to their direct consumers via bbox reach above.
     if (roots.length > 0 && this.campaign?.id === campaign.id) {
@@ -1722,7 +1718,7 @@ export class MapController {
     }
   }
 
-  // ─── Sketch persistence + edit commit (plan 013 / 020 §9) ──────────────
+  // ─── Sketch persistence + edit commit ──────────────────────────────────
 
   private async persistFabric(logType: "sketch-add" | "sketch-remove", feature: FabricFeature): Promise<void> {
     if (!this.campaign) return;
@@ -1740,10 +1736,10 @@ export class MapController {
     }
   }
 
-  /** Add a just-finished sketch draft (plan 013): stash it in the collection,
-   * repaint, persist (`sketch-add` log), and queue the constraint regen a new
-   * shape triggers. The host handles the toast + any procgen offer. Sync (the
-   * persist fires-and-forgets, matching the pre-extraction finalizeSketchDraft). */
+  /** Add a just-finished sketch draft: stash it in the collection, repaint,
+   * persist (`sketch-add` log), and queue the constraint regen a new shape
+   * triggers. The host handles the toast + any procgen offer. Sync (the persist
+   * fires-and-forgets). */
   addSketchedFeature(feature: FabricFeature): void {
     this.fabricCollection = withFeature(this.fabricCollection, feature);
     this.host.render.repaintFabric();
@@ -1752,7 +1748,7 @@ export class MapController {
   }
 
   /** Remove a fabric feature (select→delete lifecycle) — a region takes its
-   * generated city + cache records with it (plan 020 §8.4). */
+   * generated city + cache records with it. */
   deleteFabricFeature(id: string): void {
     if (!this.campaign) return;
     const feature = this.fabricCollection.features.find((f) => f.id === id);
@@ -1793,8 +1789,8 @@ export class MapController {
     if (geomChanged && isProcgenRegion(after)) {
       const algoId = after.properties.procgen!.algorithm;
       if (after.geometry.type === "LineString") {
-        // Spine (line-kind) region (plan 022 §2): validate the reshaped line;
-        // spines MAY cross (tributaries are legal) so there is NO overlap
+        // Spine (line-kind) region: validate the reshaped line; spines MAY
+        // cross (tributaries are legal) so there is NO overlap
         // rejection — do not treat a crossing like an overlapping polygon.
         const scale = this.campaign.config.scaleMetersPerUnit;
         const line = after.geometry.coordinates.map(
@@ -1875,7 +1871,7 @@ export class MapController {
       if (opts.debounce) this.queueRegionRegen(after.id);
       else {
         await this.generateRegion(after, { force: true });
-        await this.cascadeFromRoot(after.id); // plan 024 §4: geometry edit → cascade
+        await this.cascadeFromRoot(after.id); // geometry edit → cascade
       }
     } else {
       if (opts.debounce) this.queueConstraintRegen(after);
@@ -1891,7 +1887,7 @@ export class MapController {
     this.host.render.featureChanged(before.id, { reselect: true });
   }
 
-  // ─── Region param actions (panel + test API, plan 020 §9 item 4/7) ─────
+  // ─── Region param actions (panel + test API) ───────────────────────────
 
   /** Change a region's procgen params (v1: profile). */
   async setRegionParams(featureId: string, params: Record<string, unknown>): Promise<void> {
@@ -1910,8 +1906,8 @@ export class MapController {
     this.host.render.featureChanged(featureId);
   }
 
-  /** Apply a template (preset) to a region (plan 022 §1): resolve the preset →
-   * params (merged over the existing params so orthogonal keys like `center`
+  /** Apply a template (preset) to a region: resolve the preset → params
+   * (merged over the existing params so orthogonal keys like `center`
    * survive a template change) and run the setRegionParams commit path. City
    * presets carry no `presetId`, so the block stays `{ profile }`-shaped. */
   async setRegionPreset(featureId: string, presetId: string): Promise<void> {
@@ -2047,12 +2043,12 @@ export class MapController {
   }
 
   /**
-   * Numeric elevation samples for a mountain region (plan 023 §3 gate) — the
-   * point-evaluable height field rebuilt from the persisted seed + params, then
-   * sampled at a deterministic set of gen-space points derived from the region
-   * bbox. Returns `{h, dx, dy}` per contained sample (mm/rounded), NEVER
-   * rendered bytes (plan 023 §4.2 DEM-determinism trap: compare heights, not
-   * PNGs). Two calls across a regenerate MUST be identical — the field is a pure
+   * Numeric elevation samples for a mountain region — the point-evaluable
+   * height field rebuilt from the persisted seed + params, then sampled at a
+   * deterministic set of gen-space points derived from the region bbox. Returns
+   * `{h, dx, dy}` per contained sample (mm/rounded), NEVER rendered bytes
+   * (compare heights, not PNGs). Two calls across a regenerate MUST be
+   * identical — the field is a pure
    * function of (seed, position), so this proves the elevation model is
    * deterministic and correctly wired. Empty for a non-mountain region.
    */
@@ -2086,8 +2082,8 @@ export class MapController {
 
   /**
    * Per-campaign DEM vertical scale K (encoded-terrarium-meters per campaign-
-   * meter) — the fictional-CRS reconciliation for hillshade (plan 023 §4.2).
-   * A pure function of `scaleMetersPerUnit`, so it is constant across tiles
+   * meter) — the fictional-CRS reconciliation for hillshade. A pure function of
+   * `scaleMetersPerUnit`, so it is constant across tiles
    * (seam-safe). 0 when no campaign is loaded.
    */
   demVerticalScale(): number {
@@ -2096,11 +2092,11 @@ export class MapController {
   }
 
   /**
-   * Campaign-wide elevation field for the DEM (plan 023 §4.2): the UNION of every
-   * sketched mountain region's height field (masked to its ring), rebuilt from
-   * persisted seeds/params — so it is a pure function of the durable sketch layer
+   * Campaign-wide elevation field for the DEM: the UNION of every sketched
+   * mountain region's height field (masked to its ring), rebuilt from persisted
+   * seeds/params — so it is a pure function of the durable sketch layer
    * (point-evaluable, deterministic). Base continental terrain + water carve are
-   * plan 024 (§3); `heightAt` stays untouched (§3 compatibility rule). Returns
+   * out of scope here; `heightAt` stays untouched. Returns
    * the field plus a `digest` fingerprinting the mountain set (id + seed + params
    * + ring geometry): the DEM cache treats a record with a different digest as a
    * stale miss, so a mountain edit/re-roll is picked up without reactive tile
@@ -2170,7 +2166,7 @@ export class MapController {
     return true;
   }
 
-  // ─── Undo (plan 013/019/020) ───────────────────────────────────────────
+  // ─── Undo ───────────────────────────────────────────────────────────────
 
   async undoLastEdit(): Promise<void> {
     if (!this.campaign) return;
@@ -2251,7 +2247,7 @@ export class MapController {
       this.host.render.repaintFabric();
       this.host.render.featureChanged(before.id, { reselect: true });
       if (isProcgenRegion(before)) {
-        // Undo re-runs the SAME cascade with the restored inputs (plan 024 §4):
+        // Undo re-runs the SAME cascade with the restored inputs:
         // deterministic → the downstream output is restored byte-identically.
         await this.generateRegion(before, { force: true });
         await this.cascadeFromRoot(before.id);
@@ -2281,8 +2277,8 @@ export class MapController {
     }
   }
 
-  /** Sketch-mode undo (plan 016): removes the most-recently-added, still-live
-   * sketched feature (mutation-log-derived). */
+  /** Sketch-mode undo: removes the most-recently-added, still-live sketched
+   * feature (mutation-log-derived). */
   async undoLastSketch(): Promise<void> {
     if (!this.campaign) return;
     const entries = await this.host.vault.readLog(this.campaign.id);

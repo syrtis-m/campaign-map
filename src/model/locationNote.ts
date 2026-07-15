@@ -33,10 +33,9 @@ export function typeDefaults(type: string): TypeDefaults {
 }
 
 /**
- * Depth-of-field label buckets (the whole zoom-legibility model — replaces the
- * former per-type continuous zoomMin/zoomMax label gating, which was too fiddly
- * to reason about; see docs/06 §3 + DECISIONS). The map has three fixed "focus
- * levels" (Wide / Mid / Close, computed per-campaign from its overview zoom);
+ * Depth-of-field label buckets — the zoom-legibility model. The map has three
+ * fixed "focus levels" (Wide / Mid / Close, computed per-campaign from its
+ * overview zoom);
  * a location's DOT is always drawn at every zoom (the always-present "bokeh"),
  * and this bucket decides at how many focus levels its NAME is legible:
  *   deep    — named at all three focus levels (the big anchors; deep field)
@@ -49,7 +48,7 @@ export const FOCUS_DEPTHS = ["deep", "medium", "shallow"] as const;
 export type FocusDepth = (typeof FOCUS_DEPTHS)[number];
 
 /**
- * GM-facing visibility vocabulary (plan 015). Label visibility is an EXPLICIT,
+ * GM-facing visibility vocabulary. Label visibility is an EXPLICIT,
  * first-class note field — `visibility:` in frontmatter — fully decoupled from
  * `type`. The three values name the focus level at which a location's NAME first
  * appears (matching the +/- focus stepper's Wide/Mid/Close readout), so the GM
@@ -66,8 +65,7 @@ export const VISIBILITY_VALUES = ["wide", "mid", "close"] as const;
 export type Visibility = (typeof VISIBILITY_VALUES)[number];
 
 /** The single global fallback for a note with no explicit visibility — NOT
- * type-derived (that derivation was exactly the invisible mental model plan 015
- * removes). */
+ * type-derived. */
 export const DEFAULT_VISIBILITY: Visibility = "mid";
 
 const VISIBILITY_TO_FOCUS: Record<Visibility, FocusDepth> = {
@@ -104,17 +102,17 @@ const TYPE_FOCUS: Record<string, FocusDepth> = {
 };
 
 /**
- * Type → depth bucket. Since plan 015 this is ONLY a convenience: it pre-selects
- * a sensible default in the QuickAdd picker and seeds an explicit value for
- * generated/imported features. It is NEVER read as the runtime visibility gate —
- * the stored `visibility`/`focus` field is the sole source of truth.
+ * Type → depth bucket. ONLY a convenience: it pre-selects a sensible default in
+ * the QuickAdd picker and seeds an explicit value for generated/imported
+ * features. It is NEVER read as the runtime visibility gate — the stored
+ * `visibility`/`focus` field is the sole source of truth.
  */
 export function focusForType(type: string): FocusDepth {
   return TYPE_FOCUS[type] ?? "medium";
 }
 
-/** Type-hinted pre-selection for the QuickAdd/place-card visibility picker
- * (plan 015). A hint only — the chosen value is always written explicitly. */
+/** Type-hinted pre-selection for the QuickAdd/place-card visibility picker.
+ * A hint only — the chosen value is always written explicitly. */
 export function defaultVisibilityForType(type: string): Visibility {
   return FOCUS_TO_VISIBILITY[focusForType(type)];
 }
@@ -133,7 +131,7 @@ export const LocationFrontmatterSchema = z.object({
   aliases: z.array(z.string()).optional(),
   importance: z.number().int().min(1).max(9).optional(),
   "zoom-range": z.tuple([z.number(), z.number()]).optional(), // legacy; no longer gates labels
-  visibility: z.enum(VISIBILITY_VALUES).optional(), // plan 015: explicit label-visibility field (wide/mid/close)
+  visibility: z.enum(VISIBILITY_VALUES).optional(), // explicit label-visibility field (wide/mid/close)
   focus: z.enum(FOCUS_DEPTHS).optional(), // back-compat: legacy raw depth bucket (deep/medium/shallow)
   icon: z.string().optional(),
   connections: z.array(ConnectionSchema).optional(),
@@ -189,9 +187,9 @@ export function parseLocationNote(
   const point = Array.isArray(fm.geometry) ? (fm.geometry as [number, number]) : null;
   const geometryRef = typeof fm.geometry === "string" ? fm.geometry : null;
 
-  // Plan 015: label visibility is decoupled from `type`. Explicit `visibility`
-  // wins; else legacy `focus:`; else the single global default (medium/mid) —
-  // NEVER type-derived. `type` no longer gates what's visible.
+  // Label visibility is decoupled from `type`. Explicit `visibility` wins; else
+  // legacy `focus:`; else the single global default (medium/mid) — NEVER
+  // type-derived. `type` does not gate what's visible.
   const focus: FocusDepth = fm.visibility
     ? VISIBILITY_TO_FOCUS[fm.visibility]
     : fm.focus ?? VISIBILITY_TO_FOCUS[DEFAULT_VISIBILITY];

@@ -11,10 +11,10 @@ import {
 } from "../model/fabric";
 
 /**
- * Sketched-fabric store (plan 013): ONE per-campaign `<campaign>/Fabric.geojson`
- * — durable, synced, NOT under `.mapcache/` — read/written via the Vault
- * adapter only (CLAUDE.md: never Node fs). Fabric is background geometry
- * ("things on the map", plan 019); it never becomes a location note.
+ * Sketched-fabric store: ONE per-campaign `<campaign>/Fabric.geojson` —
+ * durable, synced, NOT under `.mapcache/` — read/written via the Vault adapter
+ * only (CLAUDE.md: never Node fs). Fabric is background geometry ("things on
+ * the map"); it never becomes a location note.
  */
 export function fabricPath(campaign: ParsedCampaign): string {
   return `${campaignFolderFromConfigPath(campaign.path)}/Fabric.geojson`;

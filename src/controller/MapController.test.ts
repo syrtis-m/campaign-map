@@ -1,6 +1,6 @@
 /**
- * Headless MapController integration tests (plan 021 §2.4) — the whole
- * lifecycle surface the live gates phase1–phase5 / procgen40–43 assert, driven
+ * Headless MapController integration tests — the whole lifecycle surface the
+ * live gates phase1–phase5 / procgen40–43 assert, driven
  * against the in-memory FakeHost with NO Obsidian / MapLibre / renderer. These
  * run in the FAST tier (`npm test`), seconds not minutes, parallel-safe (each
  * FakeHost owns a unique campaign folder). See the phase report for the
@@ -164,7 +164,7 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
     expect((await host.log()).at(-1)?.type).toBe("sketch-procgen-set");
   });
 
-  it("applies a template via setRegionPreset (plan 022 §1) — full commit path, no presetId persisted", async () => {
+  it("applies a template via setRegionPreset — full commit path, no presetId persisted", async () => {
     const host = cityHost();
     const { featureId } = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" });
     const runsBefore = host.controller.generatorRunCount;
@@ -194,7 +194,7 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
     expect(params?.center).toEqual([18, -18]); // placement survives the template swap
   });
 
-  it("a legacy block (no presetId) validates and regenerates byte-identically after a presetId is stamped on (plan 022 §1 additive)", async () => {
+  it("a legacy block (no presetId) validates and regenerates byte-identically after a presetId is stamped on", async () => {
     // presetId is DISPLAY ONLY — a generator never reads it. Prove it on the
     // SAME region: generate → persist a display-only presetId onto the block →
     // reopen (forces a fresh fabric load, which validates the now-presetId'd
@@ -532,7 +532,7 @@ describe("MapController — world tier generate / regen / clear (phase3/phase4)"
   });
 });
 
-describe("MapController — spine (river) line-kind procgen (plan 022 §2)", () => {
+describe("MapController — spine (river) line-kind procgen", () => {
   // A kinked river line in display units (1 unit = 50 m), well inside bounds.
   const RIVER: [number, number][] = [
     [6, -30],
@@ -658,7 +658,7 @@ describe("MapController — spine (river) line-kind procgen (plan 022 §2)", () 
   });
 });
 
-describe("MapController — forest polygon-kind procgen (plan 022 §3.2)", () => {
+describe("MapController — forest polygon-kind procgen", () => {
   // An 800 m square forest region in display units (1 unit = 50 m).
   const FOREST_RING: [number, number][] = [
     [10, -26],
@@ -738,13 +738,13 @@ describe("MapController — forest polygon-kind procgen (plan 022 §3.2)", () =>
   });
 });
 
-// ─── Cross-layer regen cascade (plan 024-B §4) ──────────────────────────────
+// ─── Cross-layer regen cascade ──────────────────────────────────────────────
 // The suite feels like one world: editing an UPSTREAM procgen region (a
 // mountain, stage 0) regenerates the DOWNSTREAM regions that read its output
-// (a river's slope coupling, stage 1 — box 23-E), and leaves non-dependents
+// (a river's slope coupling, stage 1), and leaves non-dependents
 // byte-identical. Fabric is in display units (1 unit = 50 m); worldBounds are
 // [-48,-36,48,36] so every fixture must fit inside.
-describe("MapController — cross-layer cascade (plan 024-B)", () => {
+describe("MapController — cross-layer cascade", () => {
   // A mountain, lower-left; a river spine crossing its interior; a city far
   // top-right (no shared field, no bbox overlap → a clean non-dependent).
   const MTN_RING: [number, number][] = [
@@ -795,12 +795,12 @@ describe("MapController — cross-layer cascade (plan 024-B)", () => {
     const cityBefore = host.controller.regionFeatureIds(city.featureId);
     const runsBefore = host.controller.generatorRunCount;
 
-    // Edit the UPSTREAM mountain's relief (amplitude) — pre-024-B this only
-    // regenerated the mountain; the cascade now re-runs the river too.
+    // Edit the UPSTREAM mountain's relief (amplitude) — the cascade regenerates
+    // the mountain and re-runs the river that reads it.
     await host.controller.setRegionParams(mtn.featureId, { terrain: "alpine", amplitude: 0.95, roughness: 0.6 });
 
     // The cascade regenerated exactly the DEPENDENTS (the river reads the
-    // mountain's elevation field, box 23-E) — a DAG-deterministic, seed-
+    // mountain's elevation field) — a DAG-deterministic, seed-
     // independent claim (an output-byte-diff would be seed-flaky: mm
     // quantization can round a small meander shift away). The mountain itself is
     // the edited ROOT (regenerated separately, not part of the downstream set).
@@ -870,7 +870,7 @@ describe("MapController — cross-layer cascade (plan 024-B)", () => {
     expect(host.controller.cascadeRegeneratedIds).toContain(river.featureId);
 
     // Undo re-runs the same cascade with the restored inputs → deterministic →
-    // the river returns byte-identically (plan 024 §4).
+    // the river returns byte-identically.
     await host.controller.undoLastEdit();
     expect(host.controller.cascadeRegeneratedIds).toContain(river.featureId);
     expect(host.controller.regionFeatureIds(river.featureId).slice().sort()).toEqual(riverBefore);

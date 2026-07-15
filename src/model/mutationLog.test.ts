@@ -18,7 +18,7 @@ function sketchAddEntry(id: string): LogEntry {
   };
 }
 
-describe("mutation-log round-trip (plan 016 undo relies on this)", () => {
+describe("mutation-log round-trip (undo relies on this)", () => {
   it("serializes a sketch-add entry to JSONL and parses it back unchanged", () => {
     const entry = sketchAddEntry("fabric-x");
     // The append format is exactly `JSON.stringify(entry) + "\n"` (mutationLog).

@@ -1,9 +1,8 @@
 /**
  * Pure unit/geometry helpers shared by the host-agnostic MapController and the
- * Obsidian-bound MapView (plan 021 §2.4). Extracted from MapView so the
- * controller can convert between a fictional campaign's own coordinates (fake
- * units, 1 unit = `scaleMetersPerUnit` meters — fictionalCRS.ts) and the
- * generators' meter-space (docs/06 §3 tuning ranges) WITHOUT importing MapView
+ * Obsidian-bound MapView. Convert between a fictional campaign's own
+ * coordinates (fake units, 1 unit = `scaleMetersPerUnit` meters —
+ * fictionalCRS.ts) and the generators' meter-space WITHOUT importing MapView
  * (which pulls in MapLibre + Obsidian). No DOM/map/Obsidian imports here — same
  * purity rule as src/gen/ (CLAUDE.md).
  */

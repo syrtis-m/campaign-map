@@ -1,13 +1,12 @@
 import { z } from "zod";
 
 /**
- * Sketched fabric (plans 013/019) — "things on the map": background geometry
- * the GM draws directly (roads, walls, rivers, water, districts, parks),
- * stored in ONE per-campaign `Fabric.geojson` (no note-per-feature clutter).
- * Fabric is a separate layer from Locations (note-backed places) and never
- * promotes to one — the two-layer model of plan 019. This file is pure (zod
- * only — no DOM/map/Obsidian imports) so generators can read fabric features
- * as constraints headlessly.
+ * Sketched fabric — "things on the map": background geometry the GM draws
+ * directly (roads, walls, rivers, water, districts, parks), stored in ONE
+ * per-campaign `Fabric.geojson` (no note-per-feature clutter). Fabric is a
+ * separate layer from Locations (note-backed places) and never promotes to
+ * one. This file is pure (zod only — no DOM/map/Obsidian imports) so
+ * generators can read fabric features as constraints headlessly.
  */
 export const FABRIC_KINDS = ["road", "wall", "river", "water", "district", "park", "forest", "farmland", "mountain"] as const;
 export type FabricKind = (typeof FABRIC_KINDS)[number];
@@ -37,15 +36,14 @@ const PolygonGeom = z.object({
 });
 
 /**
- * Procgen block (plan 020 §3.1): a fabric feature WITH this block is a
- * procgen region — its polygon is the container a registry algorithm
- * generates inside (district → city). Without one it is an inert overlay
- * shape. `seed` is computed once at creation and persisted — vertex edits
- * never change it (the city keeps its identity while its boundary adapts);
- * only an explicit re-roll replaces it. `params` is validated by the
- * algorithm's own zod schema (src/gen/procgen/registry.ts), not here.
- * The whole block is optional so pre-020 Fabric.geojson files parse
- * unchanged.
+ * Procgen block: a fabric feature WITH this block is a procgen region — its
+ * polygon is the container a registry algorithm generates inside
+ * (district → city). Without one it is an inert overlay shape. `seed` is
+ * computed once at creation and persisted — vertex edits never change it (the
+ * city keeps its identity while its boundary adapts); only an explicit re-roll
+ * replaces it. `params` is validated by the algorithm's own zod schema
+ * (src/gen/procgen/registry.ts), not here. The whole block is optional so
+ * Fabric.geojson files without one still parse.
  */
 export const ProcgenBlockSchema = z.object({
   algorithm: z.string().min(1), // registry id, e.g. "city"
@@ -57,10 +55,10 @@ export const ProcgenBlockSchema = z.object({
    * current generator code). */
   version: z.number().int().default(1),
   params: z.record(z.string(), z.unknown()),
-  /** Plan 022 §1: the "template" the params were seeded from — DISPLAY ONLY.
-   * Optional so legacy blocks (and city blocks, whose params always match a
-   * preset) parse and persist unchanged; a generator NEVER reads it (params
-   * are the whole truth for determinism). Written solely on an explicit GM
+  /** The "template" the params were seeded from — DISPLAY ONLY. Optional so
+   * blocks without it (and city blocks, whose params always match a preset)
+   * parse and persist unchanged; a generator NEVER reads it (params are the
+   * whole truth for determinism). Written solely on an explicit GM
    * template-pick, never back-filled on load/render/regen. */
   presetId: z.string().optional(),
 });
@@ -74,12 +72,10 @@ export const FabricFeatureSchema = z.object({
     kind: z.enum(FABRIC_KINDS),
     name: z.string().optional(),
     minZoom: z.number().optional(), // per-feature override; else per-kind default
-    /** DEPRECATED (plan 019): every sketched feature now feeds the
-     * generators as a constraint, so the plan-014 literal/generate split is
-     * gone. Kept in the schema only so pre-019 Fabric.geojson files still
-     * parse; nothing reads it. */
+    /** DEPRECATED: nothing reads it. Kept in the schema only so older
+     * Fabric.geojson files that still carry it parse. */
     mode: z.enum(["literal", "generate"]).optional(),
-    /** Plan 020 §3.1: present ⇔ this shape drives a procgen algorithm. */
+    /** Present ⇔ this shape drives a procgen algorithm. */
     procgen: ProcgenBlockSchema.optional(),
   }),
 });
@@ -93,10 +89,8 @@ export const FabricCollectionSchema = z.object({
   features: z.array(FabricFeatureSchema),
 });
 export type FabricCollection = z.infer<typeof FabricCollectionSchema>;
-// NOTE: fabric has NO zoom-based LOD — every kind renders at every zoom
-// (Jonah's decision after the Kanto test: "LOD should only impact visibility of
-// location names"). The former per-kind `DEFAULT_FABRIC_MINZOOM` /
-// `FABRIC_REVEAL_OFFSET` machinery is gone; the fabric layers carry no `minzoom`.
+// Fabric carries no zoom-based LOD: every kind renders at every zoom, so the
+// fabric layers set no `minzoom`.
 
 export function emptyFabric(): FabricCollection {
   return { type: "FeatureCollection", features: [] };
@@ -123,8 +117,8 @@ export function withoutFeature(fabric: FabricCollection, id: string): FabricColl
   return { type: "FeatureCollection", features: fabric.features.filter((f) => f.id !== id) };
 }
 
-/** Pure copy of `feature` with the procgen block attached (plan 020 §3.1 —
- * the host's `sketch-procgen-set` path). Never mutates its input. */
+/** Pure copy of `feature` with the procgen block attached (the host's
+ * `sketch-procgen-set` path). Never mutates its input. */
 export function withProcgen(feature: FabricFeature, block: ProcgenBlock): FabricFeature {
   return { ...feature, properties: { ...feature.properties, procgen: block } };
 }
@@ -136,12 +130,12 @@ export function withoutProcgen(feature: FabricFeature): FabricFeature {
   return { ...feature, properties: rest };
 }
 
-/** A feature with a procgen block IS a procgen region (plan 020 §3.1). */
+/** A feature with a procgen block IS a procgen region. */
 export function isProcgenRegion(feature: FabricFeature): boolean {
   return feature.properties.procgen !== undefined;
 }
 
-// ─── Pure vertex-edit geometry ops (plan 020 §9) ──────────────────────────
+// ─── Pure vertex-edit geometry ops ────────────────────────────────────────
 // The single source of truth for how the PowerPoint-style edit tool and the
 // gate's programmatic test API move/insert/delete vertices — so an interactive
 // drag and `moveVertex(id, i, pt)` produce byte-identical geometry. All pure:
@@ -270,8 +264,8 @@ export interface SketchLogEntryLike {
 }
 
 /**
- * Undo target for sketch mode (plan 016): the most-recently-added sketch
- * feature that is still "live" — i.e. netting each `sketch-add` against any
+ * Undo target for sketch mode: the most-recently-added sketch feature that is
+ * still "live" — i.e. netting each `sketch-add` against any
  * later `sketch-remove` of the same id. The mutation log is the source of
  * truth (CLAUDE.md), so undo is derived from it rather than in-memory state,
  * and it survives a view reopen. Returns null when nothing is left to undo.

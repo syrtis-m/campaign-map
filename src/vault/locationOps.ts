@@ -23,7 +23,7 @@ async function uniquePath(app: App, folder: string, name: string, ext = "md"): P
 }
 
 /** The ≤5s yes-and flow's write path: quick-add confirm → vault note → mutation log.
- * `visibility` (plan 015) is written EXPLICITLY so label visibility is a visible,
+ * `visibility` is written EXPLICITLY so label visibility is a visible,
  * editable field and never re-derived from `type`; callers that don't set it get a
  * type-hinted default (a convenience, still written explicitly). */
 export async function createLocationNote(
@@ -126,8 +126,8 @@ export async function moveLocationNote(
   });
 }
 
-/** Plan 015 place-card edit: retune a note's label visibility mid-session with
- * one control. Writes the explicit `visibility` field and drops any legacy
+/** Place-card edit: retune a note's label visibility mid-session with one
+ * control. Writes the explicit `visibility` field and drops any legacy
  * `focus` key so the note never carries two conflicting sources of truth. The
  * metadataCache `changed` event re-reconciles and re-dispatches the map. */
 export async function setLocationVisibility(
@@ -144,8 +144,8 @@ export async function setLocationVisibility(
 }
 
 /**
- * Point-crawl connections (plan 004's `connections:` frontmatter schema — a
- * bare string or `{to,type?,label?}`) — the "Connect to..." place-card gesture
+ * Point-crawl connections (the `connections:` frontmatter schema — a bare
+ * string or `{to,type?,label?}`) — the "Connect to..." place-card gesture
  * writes here. Idempotent: connecting to the same target twice is a no-op.
  * Target is stored by basename (matches how `buildConnectionFeatures`'s
  * resolver looks up `byName`), not by full vault path.

@@ -137,7 +137,7 @@ describe("parseFabric (IO boundary)", () => {
   });
 });
 
-describe("sketchUndoTarget (plan 016 log-driven undo)", () => {
+describe("sketchUndoTarget (log-driven undo)", () => {
   const add = (f: FabricFeature): SketchLogEntryLike => ({ type: "sketch-add", data: f as unknown as Record<string, unknown> });
   const remove = (f: FabricFeature): SketchLogEntryLike => ({ type: "sketch-remove", data: f as unknown as Record<string, unknown> });
 
@@ -180,7 +180,7 @@ describe("sketchUndoTarget (plan 016 log-driven undo)", () => {
   });
 });
 
-describe("procgen block (plan 020 §3.1)", () => {
+describe("procgen block", () => {
   const block: ProcgenBlock = {
     algorithm: "city",
     seed: 123456,
@@ -195,7 +195,7 @@ describe("procgen block (plan 020 §3.1)", () => {
     expect(FabricFeatureSchema.safeParse(districtFeature()).success).toBe(true);
   });
 
-  it("legacy block (no presetId, plan 022 §1 additive) validates unchanged; presetId is optional", () => {
+  it("legacy block (no presetId) validates unchanged; presetId is optional", () => {
     // A pre-022 block — exactly the shape Jonah's migrated Vespergate districts
     // carry — has NO presetId. It must parse, and parsing must not inject one.
     const legacy = withProcgen(districtFeature(), block);
@@ -267,7 +267,7 @@ describe("makeFabricId", () => {
   });
 });
 
-describe("vertex-edit geometry ops (plan 020 §9)", () => {
+describe("vertex-edit geometry ops", () => {
   const line: FabricGeometry = { type: "LineString", coordinates: [[0, 0], [10, 0], [20, 0]] };
   // Square, closed (first === last).
   const poly: FabricGeometry = {

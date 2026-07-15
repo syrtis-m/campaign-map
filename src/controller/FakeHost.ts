@@ -1,6 +1,6 @@
 /**
- * FakeHost (plan 021 §2.4) — an in-memory ControllerHost for headless
- * MapController integration tests. It backs the vault gateway with an
+ * FakeHost — an in-memory ControllerHost for headless MapController
+ * integration tests. It backs the vault gateway with an
  * in-memory DataAdapter (a `Map<string,string>`) wrapped as a synthetic
  * Obsidian `App`, so the REAL store / generation-service / tileCache functions
  * run unchanged against in-memory bytes — no Obsidian, no MapLibre, no DOM,

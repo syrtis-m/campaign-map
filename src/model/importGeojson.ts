@@ -1,13 +1,13 @@
 /**
- * Generic GeoJSON importer (plan 011): Azgaar's Fantasy Map Generator and
+ * Generic GeoJSON importer: Azgaar's Fantasy Map Generator and
  * Watabou's generators both export GeoJSON, and a generic importer covers
  * both plus anything else that speaks the format. Point features become
  * point-note specs (reusing the quick-add write path); Line/Polygon
  * features become sidecar-geojson note specs ("complex geometry → sidecar
  * .geojson", CLAUDE.md conventions).
  *
- * Out of scope (see plan 011): Azgaar's native `.map` binary format and
- * coordinate reprojection — this assumes the GeoJSON's coordinates are
+ * Out of scope: Azgaar's native `.map` binary format and coordinate
+ * reprojection — this assumes the GeoJSON's coordinates are
  * already in the campaign's own space (fictional units or lng/lat).
  */
 export interface ImportedNote {

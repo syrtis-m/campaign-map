@@ -11,8 +11,8 @@ import {
 } from "../model/generatedManifest";
 
 /**
- * Generation-manifest store (plan 019, D1): ONE per-campaign
- * `<campaign>/Generated.json` — durable + synced (it's the GM's *requests*,
+ * Generation-manifest store: ONE per-campaign `<campaign>/Generated.json` —
+ * durable + synced (it's the GM's *requests*,
  * not regenerable output, which stays in `.mapcache/`). Vault adapter only
  * (CLAUDE.md: never Node fs). Mirrors fabricStore's load/save/add/remove
  * shape, including per-entry salvage on parse.

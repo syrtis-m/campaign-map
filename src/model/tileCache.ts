@@ -19,14 +19,14 @@ export const CachedTileSchema = z.object({
   campaignSeed: z.number(),
   features: z.array(z.record(z.string(), z.unknown())),
   generatedAt: z.number(),
-  /** Plan 024 §5.1: canonical hash of the durable inputs that produced this
-   * record (region seed/version/params + quantized ring/spine + raw-sketch
+  /** Canonical hash of the durable inputs that produced this record (region
+   * seed/version/params + quantized ring/spine + raw-sketch
    * constraints — see `src/gen/cache/fingerprint.ts`). Replay treats a key hit
    * whose fingerprint ≠ the current one as a MISS and recomputes, catching an
    * external `Fabric.geojson` edit that no in-app commit path observed.
-   * OPTIONAL for back-compat: pre-024 records carry none and are grandfathered
-   * as fresh (`isCacheRecordFresh`), so opening an existing campaign never
-   * triggers a regen storm and deleting `.mapcache/` stays harmless. */
+   * OPTIONAL for back-compat: records without one are grandfathered as fresh
+   * (`isCacheRecordFresh`), so opening an existing campaign never triggers a
+   * regen storm and deleting `.mapcache/` stays harmless. */
   fingerprint: z.string().optional(),
 });
 export type CachedTile = z.infer<typeof CachedTileSchema>;
@@ -86,8 +86,8 @@ export async function getCachedTile(app: App, campaignFolder: string, key: strin
 }
 
 /**
- * Removes specific tile records (plan 019 "Clear generated fabric here"):
- * rewrites the log without the given keys, so a later generate on the same
+ * Removes specific tile records ("Clear generated fabric here"): rewrites the
+ * log without the given keys, so a later generate on the same
  * tile is a true cache MISS and regenerates — an empty-features tombstone
  * append would instead read back as "cached: nothing", silently blanking
  * future generates. Compacts last-write-wins duplicates as a side effect.

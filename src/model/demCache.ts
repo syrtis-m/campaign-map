@@ -2,15 +2,15 @@ import { z } from "zod";
 import type { App } from "obsidian";
 
 /**
- * Raw-lattice DEM cache (plan 023 §4.2) — the DURABLE determinism record behind
- * hillshade + 3D terrain. Same log-structured `.mapcache/` discipline as
+ * Raw-lattice DEM cache — the DURABLE determinism record behind hillshade + 3D
+ * terrain. Same log-structured `.mapcache/` discipline as
  * `tileCache.ts` (append = logical overwrite by key; last write wins on replay;
  * deleting the file is harmless — it regenerates identically). SEPARATE file
  * (`dem.jsonl`) from the vector `generated.jsonl` so the two never interleave.
  *
  * We cache the QUANTIZED INTEGER TERRARIUM-ELEVATION LATTICE (`demTileLattice`),
  * NOT the served PNG: PNG bytes vary across canvas/zlib versions and are not a
- * determinism surface (§4.2 DEM-determinism trap). The handler re-encodes the
+ * determinism surface. The handler re-encodes the
  * lattice to a terrarium PNG at serve time; determinism gates compare these
  * height arrays, never PNGs.
  *

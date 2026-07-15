@@ -70,7 +70,7 @@ describe("parseManifest", () => {
   });
 });
 
-// Procgen v3 (design §3.2): domains are additive — old vaults must open clean.
+// Domains are additive — old vaults must open clean.
 describe("city domains", () => {
   const dom: ManifestCityDomain = {
     id: "dom:10:20",
@@ -81,7 +81,7 @@ describe("city domains", () => {
     createdAt: 1720000000000,
   };
 
-  it("pre-v3 Generated.json (no domains key) parses unchanged with domains defaulted []", () => {
+  it("Generated.json without a domains key parses unchanged with domains defaulted []", () => {
     const raw = JSON.stringify({ entries: [entry("city", 3, -2)] });
     const { manifest, invalidCount } = parseManifest(raw);
     expect(invalidCount).toBe(0);

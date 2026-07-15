@@ -2,10 +2,10 @@ import { z } from "zod";
 import type { App } from "obsidian";
 
 /**
- * Append-only mutation log (architecture §3, "Mutation log"): powers undo/redo and
- * the Phase 5 campaign-replay keepsake. Only *map-originated* writes are logged
- * (quick-add creation, drag-to-move) — canon truth is the notes themselves; editing
- * a note directly in the editor is not a "map mutation" and isn't logged here.
+ * Append-only mutation log: powers undo/redo and the campaign-replay keepsake.
+ * Only *map-originated* writes are logged (quick-add creation, drag-to-move) —
+ * canon truth is the notes themselves; editing a note directly in the editor is
+ * not a "map mutation" and isn't logged here.
  */
 export const LogEntrySchema = z.object({
   ts: z.number(),
@@ -23,17 +23,17 @@ export const LogEntrySchema = z.object({
   campaignId: z.string(),
   path: z.string(),
   // create: the full frontmatter written. move: {from:[x,y], to:[x,y]}.
-  // sketch-add/sketch-remove (plan 013): the full FabricFeature, so undo can
-  // remove a just-drawn feature or restore a just-deleted one.
-  // sketch-edit (plan 020 §9): { featureId, before, after } — the full
-  // FabricFeature before and after a geometry/property edit, so undo restores
-  // the prior shape (and, for a procgen region, regenerates the old ring).
-  // generate-area (plan 019): the ManifestEntry the GM requested.
-  // clear-area (plan 019): { entries: ManifestEntry[] } that were removed,
-  // so undo can restore them (output regenerates deterministically).
-  // sketch-procgen-set / sketch-procgen-clear (plan 020): the region's
-  // before/after procgen block + the post-op FabricFeature, so undo can strip
-  // a block (and drop its cache), or re-attach one and regenerate.
+  // sketch-add/sketch-remove: the full FabricFeature, so undo can remove a
+  // just-drawn feature or restore a just-deleted one.
+  // sketch-edit: { featureId, before, after } — the full FabricFeature before
+  // and after a geometry/property edit, so undo restores the prior shape (and,
+  // for a procgen region, regenerates the old ring).
+  // generate-area: the ManifestEntry the GM requested.
+  // clear-area: { entries: ManifestEntry[] } that were removed, so undo can
+  // restore them (output regenerates deterministically).
+  // sketch-procgen-set / sketch-procgen-clear: the region's before/after
+  // procgen block + the post-op FabricFeature, so undo can strip a block (and
+  // drop its cache), or re-attach one and regenerate.
   data: z.record(z.string(), z.unknown()),
 });
 export type LogEntry = z.infer<typeof LogEntrySchema>;
