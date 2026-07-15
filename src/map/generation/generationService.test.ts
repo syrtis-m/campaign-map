@@ -8,13 +8,14 @@ import {
   type GenerationContext,
   type RegionNetworkCompute,
 } from "./generationService";
-import { removeCachedTiles } from "../../model/tileCache";
-import { GENERATION_ZOOM, tileKey } from "../../gen/cache/tileGrid";
+import { readCachedTiles, removeCachedTiles } from "../../model/tileCache";
+import { GENERATION_ZOOM, tileBBox, tileKey } from "../../gen/cache/tileGrid";
 import { generateSettlements } from "../../gen/world";
 import {
   citySeedFor,
   discToRing,
   generateCityNetwork,
+  clipNetworkToTile,
   makeDomain,
   DOMAIN_TILE_GENERATOR_IDS,
 } from "../../gen/citynet";
@@ -181,7 +182,7 @@ describe("generateRegionTile", () => {
   const directCompute: RegionNetworkCompute = (r, constraints) =>
     generateCityNetwork(seed, r, "euro-medieval", constraints);
 
-  it("computes the network ONCE for two tiles of the same region, and per-tile records hit the cache after", async () => {
+  it("computes the network ONCE for two tiles of the same region; later tiles re-clip the cached network", async () => {
     const { app } = fakeApp();
     const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
     const compute = vi.fn(directCompute);
@@ -191,7 +192,7 @@ describe("generateRegionTile", () => {
     expect(compute).toHaveBeenCalledTimes(1); // second tile clips the cached network
 
     const a2 = await generateRegionTile(ctx, region, gids, 0, 0, compute);
-    expect(compute).toHaveBeenCalledTimes(1); // per-tile fast path, no re-clip
+    expect(compute).toHaveBeenCalledTimes(1); // cached-fresh network → re-clip, no recompute (032-C)
     expect(a2).toEqual(a1);
     expect(b1).not.toEqual(a1);
   });
@@ -214,6 +215,36 @@ describe("generateRegionTile", () => {
     await generateRegionTile(ctx, region, gids, -1, -1, compute, { preloadedCache: shared });
     expect(compute).toHaveBeenCalledTimes(1);
     expect(shared.has(regionNetworkKey(region.id))).toBe(true);
+  });
+
+  // ─── Plan 032-C — per-tile clip records are no longer persisted ────────────
+  it("032-C: persists ONLY the network record — per-tile clips are never written", async () => {
+    const { app } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    // Generate several overlapping tiles of the region.
+    for (const [tx, ty] of [
+      [0, 0],
+      [-1, 0],
+      [0, -1],
+    ] as const) {
+      await generateRegionTile(ctx, region, gids, tx, ty, directCompute);
+    }
+    const cache = await readCachedTiles(app, "Campaigns/Ashfall");
+    const regionKeys = [...cache.keys()].filter((k) => k.startsWith(`region:${region.id}:`));
+    expect(regionKeys).toEqual([regionNetworkKey(region.id)]); // ONE record, the network
+  });
+
+  it("032-C: a re-clipped tile is byte-identical to clipping the persisted network directly", async () => {
+    const { app } = fakeApp();
+    const ctx: GenerationContext = { app, campaign: campaign(), worldBounds: WORLD_BOUNDS, canonFeatures: [] };
+    const out = await generateRegionTile(ctx, region, gids, 0, 0, directCompute);
+    // What a persisted per-tile record WOULD have held: the network clipped to
+    // the tile bbox. The paint-time re-clip must equal it byte-for-byte.
+    const net = (await readCachedTiles(app, "Campaigns/Ashfall")).get(regionNetworkKey(region.id))!
+      .features as unknown as GeoJSON.Feature[];
+    const buckets = clipNetworkToTile(net, tileBBox(0, 0));
+    const expected = gids.flatMap((gid) => buckets[gid] ?? []);
+    expect(out).toEqual(expected);
   });
 
   it("force re-clips per-tile records but reuses a still-cached network (031-A: network once)", async () => {

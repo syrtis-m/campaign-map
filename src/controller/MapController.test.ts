@@ -54,10 +54,12 @@ describe("MapController — sketch-driven city procgen (procgen40)", () => {
     const log = await host.log();
     expect(log.map((e) => e.type)).toEqual(["sketch-add", "sketch-procgen-set"]);
 
-    // Cache holds the whole-network record + per-tile clips.
+    // Cache holds ONLY the whole-network record (plan 032-C: per-tile clips are
+    // re-derived from it at paint, never persisted).
     const cache = await host.cache();
     expect(cache.has(regionNetworkKey(res.featureId))).toBe(true);
-    expect([...cache.keys()].some((k) => k.startsWith(`region:${res.featureId}:`) && k !== regionNetworkKey(res.featureId))).toBe(true);
+    const regionKeys = [...cache.keys()].filter((k) => k.startsWith(`region:${res.featureId}:`));
+    expect(regionKeys).toEqual([regionNetworkKey(res.featureId)]);
   });
 
   it("re-clips byte-identically after the cache is deleted (determinism / acceptance §4)", async () => {
@@ -959,7 +961,8 @@ describe("MapController — network once per forced regen (031-A)", () => {
     const before = new Map<string, string>();
     for (const [k, rec] of await host.cache())
       if (k.startsWith(`region:${featureId}:`)) before.set(k, JSON.stringify(rec.features));
-    expect(before.size).toBeGreaterThan(1);
+    expect(before.size).toBe(1); // 032-C: only the whole-network record is persisted
+    const renderBefore = host.controller.regionFeatureIds(featureId).slice().sort();
 
     await host.controller.regenerateRegionById(featureId);
 
@@ -968,6 +971,9 @@ describe("MapController — network once per forced regen (031-A)", () => {
       if (k.startsWith(`region:${featureId}:`)) after.set(k, JSON.stringify(rec.features));
     expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
     for (const [k, bytes] of before) expect(after.get(k)).toBe(bytes);
+    // The re-clipped render is byte-stable too (per-tile clips come from the
+    // identical network, so nothing painted changes).
+    expect(host.controller.regionFeatureIds(featureId).slice().sort()).toEqual(renderBefore);
   });
 });
 

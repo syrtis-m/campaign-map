@@ -125,17 +125,23 @@ function regionConstraints(ctx: GenerationContext): GenerationConstraints {
  * Cache-or-compute one tile of a procgen region.
  * The whole-region network is computed ONCE per region — internally
  * sequential growth is legal because every tile that overlaps the region
- * reads the SAME artifact and clips its own bbox from it. Two cache record
- * kinds:
- *   1. the network record (`region:<id>:network`, the whole unclipped
- *      network), and
- *   2. per-tile records (`region:<id>:<x>:<y>:<gid>`), the clip of (1) to the
- *      tile bbox — one record per `tileGeneratorId`, EMPTY BUCKET OR NOT, so
- *      the fast-path present-check below can prove the tile is fully cached.
+ * reads the SAME artifact and clips its own bbox from it.
+ *
+ * ONE persisted record kind (plan 032-C): the network record
+ * (`region:<id>:network`, the whole unclipped network). The per-tile clips
+ * (`region:<id>:<x>:<y>:<gid>`) are NO LONGER stored — they duplicated the
+ * network's bytes verbatim (the ~10 MB/region figure) and clipping is a pure,
+ * deterministic, cheap function, so a tile is RE-CLIPPED from the in-memory
+ * network on demand rather than read back from a per-tile record. The network
+ * record is therefore both the freshness authority and the fast path: a
+ * cached-fresh network means no generator run, just a re-clip whose bytes are
+ * byte-identical to the per-tile record we used to persist. (World-tier tiles
+ * keep their own per-tile records via `generateTile` — this change is
+ * whole-artifact regions only.)
  *
  * Replay perf: callers replaying the sketch layer MUST pass
- * `opts.preloadedCache` (one file read shared across regions) — per-call
- * `getCachedTile` re-reads the whole JSONL each time.
+ * `opts.preloadedCache` (the persistent session view, 032-B) — a per-call
+ * `getCachedTile` would re-read the shard each time.
  */
 export async function generateRegionTile(
   ctx: GenerationContext,
@@ -148,7 +154,6 @@ export async function generateRegionTile(
 ): Promise<GeoJSON.Feature[]> {
   const campaignFolder = campaignFolderFromConfigPath(ctx.campaign.path);
   const seed = ctx.campaign.config.seed;
-  const tileKeys = tileGeneratorIds.map((gid) => regionTileKey(region.id, tileX, tileY, gid));
 
   // A key hit whose stored fingerprint ≠ the caller's current expected
   // fingerprint is STALE (an external `Fabric.geojson` edit no in-app commit
@@ -160,25 +165,14 @@ export async function generateRegionTile(
     return cached;
   };
 
-  // Fast path: every per-tile record already cached AND fresh (bytes are
-  // canonical — returning them as-is is what keeps delete-and-regen byte-identical).
-  if (!opts.force) {
-    const hits = await Promise.all(tileKeys.map(readCached));
-    if (hits.every((h) => h !== undefined)) {
-      return hits.flatMap((h) => h!.features as unknown as GeoJSON.Feature[]);
-    }
-  }
-
-  // Network record: cache-or-compute ONCE per region regen. Even under force
-  // we consult the (preloaded) cache — the FIRST tile of a forced pass computes
-  // the network and writes its record, and every SUBSEQUENT tile of the SAME
-  // pass reads that record back and skips recompute. Previously `force` skipped
-  // this read INSIDE the tile loop, so a T-tile region ran the full generator T
-  // times for byte-identical output and appended T duplicate network records
-  // (plan 031-A / research P1). The caller clears this region's stale network
-  // from the shared map before a forced pass (MapController.generateRegion), so
-  // the first tile always recomputes fresh bytes rather than reusing pre-edit
-  // ones.
+  // Network record: cache-or-compute ONCE per region regen, and the ONLY
+  // persisted region record (032-C). A cached-fresh network is the fast path —
+  // no generator run, we fall through to the re-clip. Even under force we
+  // consult the (preloaded) cache: the FIRST tile of a forced pass computes the
+  // network and writes its record, and every SUBSEQUENT tile of the SAME pass
+  // reads it back and re-clips (plan 031-A / research P1 — the caller clears
+  // this region's stale network from the session view before a forced pass, so
+  // the first tile recomputes fresh bytes rather than reusing pre-edit ones).
   const netKey = regionNetworkKey(region.id);
   let network: GeoJSON.Feature[];
   const cachedNet = await readCached(netKey);
@@ -201,27 +195,12 @@ export async function generateRegionTile(
     opts.preloadedCache?.set(netKey, record);
   }
 
-  // Clip to this tile and persist the per-tile records MapView paints.
+  // Re-clip the network to this tile (pure + deterministic → byte-identical to
+  // the per-tile record we used to persist). Returned for the render store; not
+  // written back to the cache.
   const buckets = clipNetworkToTile(network, tileBBox(tileX, tileY));
   const out: GeoJSON.Feature[] = [];
-  for (let i = 0; i < tileGeneratorIds.length; i++) {
-    const gid = tileGeneratorIds[i];
-    const features = buckets[gid] ?? [];
-    const record: CachedTile = {
-      key: tileKeys[i],
-      generatorId: gid,
-      tileX,
-      tileY,
-      zoom: GENERATION_ZOOM,
-      campaignSeed: seed,
-      features: features as unknown as Record<string, unknown>[],
-      generatedAt: Date.now(),
-      fingerprint: opts.fingerprint,
-    };
-    await appendCachedTile(ctx.app, campaignFolder, record);
-    opts.preloadedCache?.set(tileKeys[i], record);
-    out.push(...features);
-  }
+  for (const gid of tileGeneratorIds) out.push(...(buckets[gid] ?? []));
   return out;
 }
 
