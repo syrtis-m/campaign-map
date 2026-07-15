@@ -1036,3 +1036,107 @@ describe("MapController — batching parity (031-B)", () => {
     for (const [k, bytes] of live) expect(replayed.get(k)).toBe(bytes);
   });
 });
+
+// ─── Plan 031-C — stage-ordered raw-sketch channel (P2/P3 correctness) ───────
+// The raw-sketch reach previously force-regened affected regions in FABRIC FILE
+// ORDER, so a downstream city ordered before its upstream river read the river's
+// OLD channel, got stamped with a FRESH fingerprint, and survived reloads as
+// permanently-stale bytes (research P2; P3 is the same in queue order). The fix
+// merges the region-edit roots with the raw-sketch reach into ONE (stage,id)
+// walk, so an upstream's fresh network always lands before a downstream reads it.
+describe("MapController — stage-ordered raw channel (031-C)", () => {
+  const RIVER_LINE: [number, number][] = [
+    [6, -30],
+    [18, -18],
+    [30, -6],
+  ];
+  // A water polygon overlapping both the river line and the city ring — within
+  // CONSTRAINT_REACH of each, so a water edit puts BOTH in the affected set.
+  const WATER_RING: [number, number][] = [
+    [8, -24],
+    [16, -24],
+    [16, -16],
+    [8, -16],
+  ];
+
+  async function netBytes(host: FakeHost): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    for (const [k, rec] of await host.cache()) if (k.endsWith(":network")) out.set(k, JSON.stringify(rec.features));
+    return out;
+  }
+
+  it("regenerates an upstream river BEFORE the downstream city that reads it, despite adversarial file order (P2)", async () => {
+    const host = cityHost();
+    // Adversarial FABRIC FILE ORDER: the city (stage 3) is created — and written
+    // to Fabric.geojson — BEFORE the river (stage 1) it consumes. A file-order
+    // walk regenerates the city first off the river's STALE channel; the fix
+    // walks (stage, id) so the river always lands first.
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const waterId = await host.controller.createFabricForTest("water", WATER_RING, "W");
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+
+    // Confirm the region FILE order really is the adversarial city-before-river.
+    const regionOrder = (await host.fabric()).features.filter((f) => isProcgenRegion(f)).map((f) => f.id);
+    expect(regionOrder).toEqual([city.featureId, river.featureId]);
+
+    // Edit the WATER polygon (a raw sketch the river reads) — the direct,
+    // non-debounced affected-tiles path.
+    await host.controller.moveVertex(waterId, 0, [7, -25]);
+
+    // The stage-ordered walk regenerated BOTH, river strictly before city.
+    const order = host.controller.forceRegenOrder;
+    expect(order).toContain(river.featureId);
+    expect(order).toContain(city.featureId);
+    expect(order.indexOf(river.featureId)).toBeLessThan(order.indexOf(city.featureId));
+
+    // And the city is NOT stamped-fresh-over-stale: its live bytes equal a
+    // from-scratch, stage-ordered replay (which is always correct).
+    const live = await netBytes(host);
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    await reopened.adapter.remove(reopened.cachePath());
+    await reopened.controller.replayGeneratedManifest();
+    const replayed = await netBytes(reopened);
+    expect(replayed.get(regionNetworkKey(city.featureId))).toBe(live.get(regionNetworkKey(city.featureId)));
+  });
+
+  it("after a single edit, every region's live bytes equal a from-scratch replay (fingerprint fresh ⇒ bytes fresh)", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    // A river param edit genuinely cascades (the city consumes the channel).
+    await host.controller.setRegionParams(river.featureId, { windiness: 0.95 });
+
+    const live = await netBytes(host);
+    expect(live.size).toBe(2);
+
+    const reopened = host.reopen({ zoom: 10 });
+    reopened.begin();
+    await reopened.adapter.remove(reopened.cachePath());
+    await reopened.controller.replayGeneratedManifest();
+    const replayed = await netBytes(reopened);
+    expect([...replayed.keys()].sort()).toEqual([...live.keys()].sort());
+    for (const [k, bytes] of live) expect(replayed.get(k)).toBe(bytes);
+  });
+
+  it("region bytes are invariant to Fabric.geojson feature order (walk is (stage,id), never file order)", async () => {
+    const host = cityHost();
+    await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+    const inOrder = await netBytes(host);
+    expect(inOrder.size).toBe(2);
+
+    // Reverse the persisted feature order, wipe the cache, replay from scratch.
+    const reopened = host.reopen({ zoom: 10 });
+    const fabric = await reopened.fabric();
+    const shuffled = { ...fabric, features: [...fabric.features].reverse() };
+    await reopened.adapter.write(fabricPath(reopened.campaign), JSON.stringify(shuffled, null, 2));
+    await reopened.adapter.remove(reopened.cachePath());
+    reopened.begin();
+    await reopened.controller.replayGeneratedManifest();
+    const shuffledBytes = await netBytes(reopened);
+
+    expect([...shuffledBytes.keys()].sort()).toEqual([...inOrder.keys()].sort());
+    for (const [k, bytes] of inOrder) expect(shuffledBytes.get(k)).toBe(bytes);
+  });
+});
