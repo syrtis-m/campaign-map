@@ -16,7 +16,7 @@
  * function of the durable sketch layer, so a leaf is a pure memo.
  */
 import { marchingSquares } from "./marchingSquares";
-import { terrainAt, type TerrainBaseParams, type TerrainOptions } from "./terrain";
+import { terrainAt, DEFAULT_TERRAIN_BASE, type TerrainBaseParams, type TerrainOptions } from "./terrain";
 import type { BBox } from "../spatialHash";
 import type { FabricFeature } from "../../model/fabric";
 
@@ -25,6 +25,85 @@ type Pt = [number, number];
 /** The sketch kinds whose durable data drives `terrainAt` — the inputs a leaf's
  * cache key hashes (intersecting the tile). */
 const TERRAIN_INPUT_ALGORITHMS = new Set(["mountain", "relief", "landform", "river"]);
+
+// ─── Relief range (drives the contour-INTERVAL cap) ──────────────────────────
+// Why: the LOD picks a coarser contour interval as you zoom out, but a FIXED
+// interval ladder that climbs past the campaign's actual relief makes every iso-
+// level fall outside the terrain — the lines vanish at overview zoom (Jonah
+// 2026-07-15: "topographic lines should be visible at all zoom levels"). The fix
+// is to CAP the interval at `range / TARGET_LINES`, so the visible relief always
+// yields a cartographic line count. That cap needs the campaign's real relief
+// range, measured DETERMINISTICALLY from the durable terrain inputs (never the
+// viewport — a pan must not change the interval), so it fingerprints with the
+// same digest the leaves do.
+
+export interface ReliefRangeOptions {
+  base?: Partial<TerrainBaseParams>;
+  campaignSeed?: number;
+  include?: TerrainOptions["include"];
+  /** Grid samples per axis over the input union bbox (default 64). Only affects
+   * the interval CHOICE, never traced geometry — a coarse estimate is fine. */
+  samples?: number;
+}
+
+function reliefInputBBox(features: FabricFeature[]): BBox | null {
+  let any = false;
+  const b: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const f of features) {
+    if (!f.properties.procgen || !TERRAIN_INPUT_ALGORITHMS.has(f.properties.procgen.algorithm)) continue;
+    any = true;
+    const fb = bboxOf(f);
+    if (fb.minX < b.minX) b.minX = fb.minX;
+    if (fb.minY < b.minY) b.minY = fb.minY;
+    if (fb.maxX > b.maxX) b.maxX = fb.maxX;
+    if (fb.maxY > b.maxY) b.maxY = fb.maxY;
+  }
+  return any ? b : null;
+}
+
+/**
+ * The composed terrain field's approximate relief RANGE (max − min elevation, in
+ * meters) over the campaign — the durable input the contour-interval cap keys on.
+ * Deterministic and viewport-independent: a fixed lattice over the union bbox of
+ * every terrain-input feature, plus the input geometry vertices (ridge spines are
+ * the peaks a coarse grid can otherwise straddle), unioned with the base fBm's own
+ * peak-to-peak (~2·campAmp) so a stamp-free non-flat base still reports a sane
+ * range. Returns 0 for a wholly flat campaign (no stamps, flat base) — the caller
+ * then leaves the interval on its ladder (there are no contours to draw anyway).
+ */
+export function estimateReliefRange(features: FabricFeature[] | undefined, opts: ReliefRangeOptions = {}): number {
+  const feats = features ?? [];
+  const base = opts.base ?? {};
+  const campAmp = Math.abs(base.campAmp ?? DEFAULT_TERRAIN_BASE.campAmp);
+  const baseRange = 2 * campAmp; // fBm normalized ≈ [−1,1] ⇒ peak-to-peak ≈ 2·campAmp
+  const bbox = reliefInputBBox(feats);
+  if (!bbox) return baseRange; // no stamps ⇒ only the base contributes relief
+
+  const field = terrainAt(feats, { base, campaignSeed: opts.campaignSeed, include: opts.include });
+  let lo = Infinity;
+  let hi = -Infinity;
+  const sample = (x: number, y: number): void => {
+    const v = field(x, y).v;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  };
+  const n = Math.max(2, Math.trunc(opts.samples ?? 64));
+  for (let i = 0; i <= n; i++) {
+    const x = bbox.minX + ((bbox.maxX - bbox.minX) * i) / n;
+    for (let j = 0; j <= n; j++) {
+      sample(x, bbox.minY + ((bbox.maxY - bbox.minY) * j) / n);
+    }
+  }
+  // Sample the input vertices too — a ridge spine's peak sits ON the polyline, so
+  // a coarse grid can straddle it and under-read the range.
+  for (const f of feats) {
+    if (!f.properties.procgen || !TERRAIN_INPUT_ALGORITHMS.has(f.properties.procgen.algorithm)) continue;
+    const coords = f.geometry.type === "Polygon" ? f.geometry.coordinates[0] : f.geometry.coordinates;
+    for (const [x, y] of coords as Pt[]) sample(x, y);
+  }
+  const sampled = hi - lo;
+  return Math.max(sampled, baseRange);
+}
 
 export interface TerrainContourOptions {
   base?: Partial<TerrainBaseParams>;

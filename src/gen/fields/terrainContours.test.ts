@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { TerrainContourLeaves, type TerrainContourOptions } from "./terrainContours";
+import { TerrainContourLeaves, estimateReliefRange, type TerrainContourOptions } from "./terrainContours";
 import type { FabricFeature } from "../../model/fabric";
+import { buildVailmarchFabricMeters, VAILMARCH_BASE, VAILMARCH_CAMPAIGN_SEED } from "../testkit/vailmarch";
 
 type Pt = [number, number];
 
@@ -170,6 +171,40 @@ describe("TerrainContourLeaves — global field: relief stamp with NO mountain p
     const leaves = new TerrainContourLeaves([], RELIEF_OPTS);
     expect(leaves.leafFor(0, 0).features).toEqual([]);
     expect(leaves.leafFor(3, -2).features).toEqual([]);
+  });
+});
+
+describe("estimateReliefRange — the durable relief span that caps the contour interval", () => {
+  const include = { relief: true, landform: true, carve: true, grade: false };
+
+  it("measures the Vailmarch relief span (drives the interval cap)", () => {
+    const range = estimateReliefRange(buildVailmarchFabricMeters(), {
+      base: { ...VAILMARCH_BASE },
+      campaignSeed: VAILMARCH_CAMPAIGN_SEED,
+      include,
+    });
+    // Base ±220 + the Marchspine ridge (1000 m + apron) on top ⇒ ~2000 m of span.
+    // A wide band so the assertion tracks the fixture's intent, not exact bytes.
+    expect(range).toBeGreaterThan(1500);
+    expect(range).toBeLessThan(3000);
+  });
+
+  it("is deterministic (same inputs ⇒ same range)", () => {
+    const opts = { base: { ...VAILMARCH_BASE }, campaignSeed: VAILMARCH_CAMPAIGN_SEED, include };
+    expect(estimateReliefRange(buildVailmarchFabricMeters(), opts)).toBe(
+      estimateReliefRange(buildVailmarchFabricMeters(), opts)
+    );
+  });
+
+  it("a wholly flat campaign (no stamps, flat base) has zero range", () => {
+    expect(estimateReliefRange([], { base: { campAmp: 0, seaDatum: 0 }, include })).toBe(0);
+  });
+
+  it("a stamp-free but non-flat base reports ~2·campAmp (fBm peak-to-peak)", () => {
+    // No terrain inputs ⇒ the union bbox is empty; the base fBm still carries
+    // relief, so the range falls back to its peak-to-peak so contours (drawn off
+    // the base everywhere) still get a sane interval.
+    expect(estimateReliefRange([], { base: { campAmp: 300, seaDatum: 0 }, include })).toBe(600);
   });
 });
 

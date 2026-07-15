@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { TerrainContourManager } from "./terrainContourManager";
+import { TerrainContourManager, intervalFor, ladderInterval } from "./terrainContourManager";
 import type { SerializableTerrainInputs } from "../../gen/worker/generationWorker";
 import type { FabricFeature } from "../../model/fabric";
+import {
+  buildVailmarchFabricMeters,
+  VAILMARCH_BASE,
+  VAILMARCH_CAMPAIGN_SEED,
+} from "../../gen/testkit/vailmarch";
 
 /**
  * The viewport-keyed contour manager: on `update()` it fills the touched
@@ -92,6 +97,36 @@ describe("TerrainContourManager — global relief off the composed field", () =>
     expect(mgr.computedLeaves).toBe(afterFirst);
   });
 
+  it("still draws contours at overview zoom over the Vailmarch terrain (regression: relief lines don't vanish when zoomed out)", async () => {
+    // The bug: at overview the interval ladder climbed to 500 m while Vailmarch's
+    // relief spans ~2000 m, so the ±3000..6000 iso-levels crossed the terrain only
+    // 4 times over the whole viewport — the lines effectively vanished. A 200 km
+    // meter viewport (scale 1) lands on tileSpan 64000 / interval 500 pre-fix.
+    const feats = buildVailmarchFabricMeters();
+    const inputs: SerializableTerrainInputs = {
+      features: feats,
+      base: { ...VAILMARCH_BASE },
+      campaignSeed: VAILMARCH_CAMPAIGN_SEED,
+      include: { relief: true, landform: true, carve: true, grade: false },
+    };
+    const view = fakeMap({ west: -100000, east: 100000, south: -100000, north: 100000 });
+    const mgr = new TerrainContourManager({
+      sourceId: "terrain-contour",
+      scaleMetersPerUnit: 1, // features are already gen-space meters
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      getMap: () => view.map as any,
+      getSnapshot: () => ({ digest: "vailmarch", inputs }),
+      getWorker: () => Promise.resolve(null),
+    });
+    await mgr.update();
+    // Pre-fix this viewport produced ~4 lines (interval 500); the cap (interval
+    // 200) restores a healthy cartographic count. ≥10 separates fixed from broken.
+    expect(view.last!.features.length).toBeGreaterThanOrEqual(10);
+    for (const f of view.last!.features) {
+      expect((f.properties as { generatorId?: string }).generatorId).toBe("terrain-contour");
+    }
+  });
+
   it("emits coordinates in DISPLAY units (meters ÷ scale)", async () => {
     // Two managers over the IDENTICAL meter viewport [0,400] (so they tile the
     // field identically) but different scales: scale 1's display bounds are
@@ -135,5 +170,49 @@ describe("TerrainContourManager — global relief off the composed field", () =>
         expect(coordsB[i][1] * 2).toBeCloseTo(coordsA[i][1], 6);
       }
     }
+  });
+});
+
+describe("intervalFor — the range-derived interval cap (relief lines visible at every zoom)", () => {
+  // The zoomed-out ladder rungs that vanished the lines. `tileSpan/interval`:
+  const SPAN_INTERVAL_500_A = 32000; // ladder 500
+  const SPAN_INTERVAL_500_B = 64000; // ladder 500
+  const SPAN_INTERVAL_250 = 16000; // ladder 250
+  const VAILMARCH_RANGE = 2026; // measured relief span (see estimateReliefRange test)
+
+  it("caps the coarse (zoomed-out) rungs so they never exceed the relief range", () => {
+    // Old ladder handed back 500 m here — far past Vailmarch's ~2000 m relief, so
+    // only 0–2 iso-levels fell inside the terrain. The cap (range/10 ⇒ 200) keeps
+    // ~10 lines.
+    expect(ladderInterval(SPAN_INTERVAL_500_A)).toBe(500); // the broken pre-fix value
+    expect(intervalFor(SPAN_INTERVAL_500_A, VAILMARCH_RANGE)).toBe(200);
+    expect(intervalFor(SPAN_INTERVAL_500_B, VAILMARCH_RANGE)).toBe(200);
+    expect(intervalFor(SPAN_INTERVAL_250, VAILMARCH_RANGE)).toBe(200);
+    // The cap yields ≥ TARGET lines across the range (never a vanishing 0–2).
+    expect(VAILMARCH_RANGE / intervalFor(SPAN_INTERVAL_500_B, VAILMARCH_RANGE)).toBeGreaterThanOrEqual(10);
+  });
+
+  it("is byte-identical to the old ladder at close (zoomed-in) zoom — the cap only lowers coarse rungs", () => {
+    // cap ≥ floor (10) = ladder minimum, so every rung where the ladder is already
+    // ≤ cap is untouched ⇒ close-zoom output is byte-stable.
+    for (const span of [125, 250, 500, 1000, 2000, 4000]) {
+      expect(intervalFor(span, VAILMARCH_RANGE)).toBe(ladderInterval(span));
+    }
+    // In particular the finest rungs are exactly 10/20/25 — unchanged.
+    expect(intervalFor(125, VAILMARCH_RANGE)).toBe(10);
+    expect(intervalFor(250, VAILMARCH_RANGE)).toBe(10);
+  });
+
+  it("a flat campaign (range 0) leaves the interval on its ladder (no cap, no divide-by-zero)", () => {
+    for (const span of [125, 2000, 32000, 64000]) {
+      expect(intervalFor(span, 0)).toBe(ladderInterval(span));
+    }
+  });
+
+  it("a high-relief campaign keeps its coarse intervals (cap ≥ ladder ⇒ untouched)", () => {
+    // 6000 m of relief ⇒ cap 500, so the coarse 500 rung is unchanged — a dramatic
+    // campaign was never the one that vanished.
+    expect(intervalFor(64000, 6000)).toBe(500);
+    expect(intervalFor(64000, 6000)).toBe(ladderInterval(64000));
   });
 });

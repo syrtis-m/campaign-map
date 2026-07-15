@@ -1,6 +1,7 @@
 import type maplibregl from "maplibre-gl";
 import {
   TerrainContourLeaves,
+  estimateReliefRange,
   type ContourTileParams,
 } from "../../gen/fields/terrainContours";
 import type { SerializableTerrainInputs } from "../../gen/worker/generationWorker";
@@ -37,8 +38,10 @@ const TILES_ACROSS = 6;
 const NODES_PER_TILE = 25;
 /** Contour interval (meters of RELIEF between iso-lines) selected per LOD — the
  * ruling's "LOD via contour INTERVAL selection per zoom, never a minzoom gate":
- * far-out (big tiles) → coarse interval, close-in → fine. */
-function intervalForSpan(tileSpan: number): number {
+ * far-out (big tiles) → coarse interval, close-in → fine. This ladder alone is
+ * unaware of the campaign's actual relief, so its coarse rungs can exceed the
+ * relief range and vanish every line — `intervalFor` caps it (see below). */
+export function ladderInterval(tileSpan: number): number {
   if (tileSpan <= 250) return 10;
   if (tileSpan <= 500) return 20;
   if (tileSpan <= 1000) return 25;
@@ -47,6 +50,40 @@ function intervalForSpan(tileSpan: number): number {
   if (tileSpan <= 8000) return 200;
   if (tileSpan <= 16000) return 250;
   return 500;
+}
+
+/** Target contour-line count across the visible relief (cartographic ~10 lines —
+ * index + intermediate). The interval cap is `range / TARGET_CONTOUR_LINES`. */
+const TARGET_CONTOUR_LINES = 10;
+/** Finest interval (m) — the ladder's own minimum. The cap never goes below it,
+ * so close-zoom (`ladderInterval` already ≤ this) is ALWAYS `min(ladder, cap) ===
+ * ladder` ⇒ byte-identical to the pre-cap output. */
+const CONTOUR_INTERVAL_FLOOR = 10;
+/** Nice-number ladder (1 / 2 / 2.5 / 5 per decade) the range-derived cap snaps
+ * DOWN to, so an iso-interval reads as a round elevation step. */
+const NICE_INTERVALS = [10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000] as const;
+
+/** The largest nice interval that still yields ≥ `TARGET_CONTOUR_LINES` lines
+ * across `range` (snap `range/target` DOWN to a nice number), floored at
+ * `CONTOUR_INTERVAL_FLOOR`. `range ≤ 0` (flat campaign — no contours anyway) ⇒
+ * `Infinity`, i.e. no cap, so the interval stays on its ladder. */
+function reliefIntervalCap(range: number): number {
+  if (!(range > 0)) return Infinity;
+  const raw = range / TARGET_CONTOUR_LINES;
+  let cap = CONTOUR_INTERVAL_FLOOR;
+  for (const n of NICE_INTERVALS) {
+    if (n <= raw) cap = n;
+  }
+  return cap;
+}
+
+/** The contour interval for a LOD: the per-zoom ladder, CAPPED so the campaign's
+ * relief range always yields a cartographic line count. The cap only ever LOWERS
+ * the coarse (zoomed-out) rungs — where a fixed ladder would climb past the
+ * relief and vanish the lines — and never touches the fine rungs (cap ≥ floor =
+ * ladder min), keeping close-zoom output byte-stable. */
+export function intervalFor(tileSpan: number, reliefRange: number): number {
+  return Math.min(ladderInterval(tileSpan), reliefIntervalCap(reliefRange));
 }
 /** Plausible relief band traced (meters). Generous enough for mountains
  * (AMP_MAX 1200), relief spines (≤4000), landform basins (≤ −a few hundred) and a
@@ -61,7 +98,22 @@ const MAX_TILES_PER_UPDATE = 96;
 
 interface ContourLOD extends ContourTileParams {}
 
-function contourLOD(viewportMeters: number): ContourLOD {
+/**
+ * The LOD for a viewport, given the campaign's relief RANGE (from the durable
+ * terrain inputs — never the viewport, so a pan never re-intervals). `tileSpan`
+ * (and thus `step`) key on the viewport; `interval` keys on span AND range so the
+ * lines stay visible at every zoom.
+ *
+ * SAMPLING FLOOR (pane-independent, NOT a bug): `step = tileSpan/NODES_PER_TILE`
+ * and the ladder holds `tileSpan ≈ viewportMeters/TILES_ACROSS`, so `step ≈
+ * viewportMeters/150`. Marching-squares only resolves a feature spanning more than
+ * a few lattice cells, i.e. while the campaign occupies more than ~3% of the
+ * viewport. Zoomed out past that the campaign is a sub-~20px dot with no room to
+ * draw contours anyway — the interval cap keeps lines visible across the whole
+ * range where the campaign is actually legible; we deliberately do NOT shrink
+ * `step` there (it would re-golden the seam lattice for zero visible gain).
+ */
+function contourLOD(viewportMeters: number, reliefRange: number): ContourLOD {
   const target = Math.max(1, viewportMeters) / TILES_ACROSS;
   let tileSpan = TILE_SPAN_LADDER[TILE_SPAN_LADDER.length - 1];
   for (const s of TILE_SPAN_LADDER) {
@@ -73,7 +125,7 @@ function contourLOD(viewportMeters: number): ContourLOD {
   return {
     tileSpan,
     step: tileSpan / NODES_PER_TILE,
-    interval: intervalForSpan(tileSpan),
+    interval: intervalFor(tileSpan, reliefRange),
     levelMin: CONTOUR_LEVEL_MIN,
     levelMax: CONTOUR_LEVEL_MAX,
     majorEvery: MAJOR_EVERY,
@@ -96,6 +148,11 @@ export class TerrainContourManager {
   private engineKey: string | null = null; // digest + LOD signature the engine was built for
   private runId = 0;
   private readonly maxLeaves: number;
+  // Relief range drives the contour-interval cap; it keys on the DURABLE inputs
+  // (digest), never the viewport, so it's memoized per digest — recomputed only
+  // when the terrain is edited, never on a pan/zoom.
+  private rangeDigest: string | null = null;
+  private reliefRange = 0;
 
   constructor(private readonly opts: TerrainContourManagerOptions) {
     this.maxLeaves = Math.max(1, opts.maxLeaves ?? 256);
@@ -129,7 +186,17 @@ export class TerrainContourManager {
     const minYm = bounds.getSouth() * scale;
     const maxYm = bounds.getNorth() * scale;
     const viewportMeters = Math.max(maxXm - minXm, maxYm - minYm);
-    const lod = contourLOD(viewportMeters);
+    // Relief range for the interval cap — memoized per digest (durable inputs).
+    if (this.rangeDigest !== snapshot.digest) {
+      const t = snapshot.inputs;
+      this.reliefRange = estimateReliefRange(t.features, {
+        base: t.base,
+        campaignSeed: t.campaignSeed,
+        include: t.include,
+      });
+      this.rangeDigest = snapshot.digest;
+    }
+    const lod = contourLOD(viewportMeters, this.reliefRange);
 
     const engineKey = `${snapshot.digest}|span${lod.tileSpan}|int${lod.interval}`;
     if (!this.engine || this.engineKey !== engineKey) {
@@ -199,5 +266,7 @@ export class TerrainContourManager {
   reset(): void {
     this.engine = null;
     this.engineKey = null;
+    this.rangeDigest = null;
+    this.reliefRange = 0;
   }
 }
