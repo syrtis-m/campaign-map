@@ -132,21 +132,28 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       },
     },
     landform: {
-      // Inert sketched landform (plateau/basin/sea replace-stamp): a faint
-      // relief wash reusing the mountain token (both are terrain modifiers — a
-      // dedicated token would add nothing readable). Once a procgen block is
-      // attached its VISIBLE form is the composed-field contours/hillshade (plan
-      // 036-C), so the raw polygon drops to opacity 0 — same mechanism as the
-      // mountain/forest fill (fill stays rendered so queryRenderedFeatures still
-      // hit-tests it for selection).
+      // Sketched landform (plateau/basin/sea replace-stamp). A SEA reads as
+      // theme water (shortlist 5): the coast used to be blank parchment because
+      // sea-mode landforms only shape the DEM. `landformMode` is lifted to a
+      // filterable property by the fabric mirror (MapView.refreshFabric) from the
+      // procgen `mode` — persisted bytes untouched. Plateau/basin keep the subtle
+      // relief wash (mountain token) and, once a procgen block is attached, drop
+      // to opacity 0 since their visible form is the composed-field contours/
+      // hillshade (plan 036-C). Sea stays painted regardless so the water reads.
+      // Fill stays rendered in all cases so queryRenderedFeatures hit-tests it.
       id: "fabric-landform",
       type: "fill",
       source: "fabric",
       filter: kindFilter("landform"),
       paint: {
-        "fill-color": tokens.fabricMountain,
-        "fill-opacity": ["case", ["has", "procgen"], 0, 0.2],
-        "fill-outline-color": tokens.fabricMountain,
+        "fill-color": ["case", ["==", ["get", "landformMode"], "sea"], tokens.fabricWater, tokens.fabricMountain],
+        "fill-opacity": [
+          "case",
+          ["==", ["get", "landformMode"], "sea"], 0.7,
+          ["has", "procgen"], 0,
+          0.2,
+        ],
+        "fill-outline-color": ["case", ["==", ["get", "landformMode"], "sea"], tokens.fabricRiver, tokens.fabricMountain],
       },
     },
     // Lines

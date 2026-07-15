@@ -1507,10 +1507,18 @@ export class MapView extends ItemView {
     if (!this.map) return;
     const source = this.map.getSource("fabric") as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
-    const features = this.controller.fabric.features.map((f) => ({
-      ...f,
-      properties: { ...f.properties, id: f.id },
-    }));
+    const features = this.controller.fabric.features.map((f) => {
+      const props: Record<string, unknown> = { ...f.properties, id: f.id };
+      // Mirror-only paint properties (persisted bytes untouched):
+      //  - `landformMode` lifts the landform's procgen `mode` (plateau/basin/sea)
+      //    to a top-level filterable key so the fabric layer can paint a sea as
+      //    theme water while plateau/basin keep the subtle wash.
+      if (f.properties.kind === "landform") {
+        const mode = (f.properties.procgen?.params as { mode?: unknown } | undefined)?.mode;
+        if (typeof mode === "string") props.landformMode = mode;
+      }
+      return { ...f, properties: props };
+    });
     source.setData({ type: "FeatureCollection", features } as GeoJSON.FeatureCollection);
   }
 

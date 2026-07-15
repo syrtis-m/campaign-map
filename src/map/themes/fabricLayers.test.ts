@@ -55,6 +55,40 @@ describe("fabricLayers — always visible, no zoom LOD", () => {
   });
 });
 
+describe("sea-mode landform paints theme water (shortlist 5)", () => {
+  // The fabric mirror lifts the procgen `mode` to a `landformMode` property; the
+  // landform layer paints a SEA as theme water while plateau/basin keep the
+  // relief wash. Guard the case expressions resolve to the right tokens.
+  for (const [id, tokens] of Object.entries(HANDCRAFTED_THEMES)) {
+    it(`${id}: sea → water fill (nonzero opacity); plateau/basin → mountain wash`, () => {
+      const landform = fabricLayers(tokens).find((l) => l.id === "fabric-landform")!;
+      const paint = (landform as { paint: Record<string, unknown> }).paint;
+      const evalCase = (expr: unknown, mode: string | null, hasProcgen: boolean): unknown => {
+        // Minimal evaluator for the ["case", cond, out, ...default] shapes used.
+        const a = expr as unknown[];
+        if (!Array.isArray(a) || a[0] !== "case") return expr;
+        for (let i = 1; i + 1 < a.length; i += 2) {
+          const cond = a[i] as unknown[];
+          const op = cond[0];
+          const hit =
+            op === "==" ? mode === (cond[2] as string) : op === "has" ? hasProcgen : false;
+          if (hit) return a[i + 1];
+        }
+        return a[a.length - 1];
+      };
+      // Sea: water fill, water opacity 0.7, river-hued shore.
+      expect(evalCase(paint["fill-color"], "sea", true)).toBe(tokens.fabricWater);
+      expect(evalCase(paint["fill-opacity"], "sea", true)).toBe(0.7);
+      expect(evalCase(paint["fill-outline-color"], "sea", true)).toBe(tokens.fabricRiver);
+      // Plateau with a procgen block: inert (opacity 0), mountain hue.
+      expect(evalCase(paint["fill-color"], "plateau", true)).toBe(tokens.fabricMountain);
+      expect(evalCase(paint["fill-opacity"], "plateau", true)).toBe(0);
+      // Bare landform (no procgen, no mode): the subtle mountain wash.
+      expect(evalCase(paint["fill-opacity"], null, false)).toBe(0.2);
+    });
+  }
+});
+
 describe("fabric kinds are visibly distinct per theme", () => {
   // The user's #1 complaint: road/wall/river/water/district/park shared
   // colors (river == water; park borrowed a road color), so nothing read as
