@@ -371,8 +371,12 @@ export class MapView extends ItemView {
    * (terrarium-capped, `demVerticalScale`); the 3D mesh raises vertices in
    * mercator-meters, so a fictional mountain (tiny in campaign meters, huge on
    * the mercator canvas) needs a multiplier on top to read as relief when
-   * pitched. Tunable (default-off); verified by screenshot. */
-  private static readonly TERRAIN_EXAGGERATION = 6;
+   * pitched. Tunable (default-off); verified by screenshot. Dialled 6 → 3
+   * (shortlist 1, Jonah 2026-07-15): at 6 a massif rose as a vertical-walled
+   * mesa off flat ground; halving the vertical scale lets peaks read as relief
+   * without the sheer-cliff artifact (the foothill-apron falloff is the
+   * generator-side other half of the same fix). */
+  private static readonly TERRAIN_EXAGGERATION = 3;
   private terrainEnabled = false;
   private terrainPitchHandler: (() => void) | null = null;
 
