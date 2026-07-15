@@ -1,11 +1,11 @@
 /**
- * Metaball scalar field (plan 026-B) — a sum of smooth radial bumps around a set
+ * Metaball scalar field — a sum of smooth radial bumps around a set
  * of anchor points, the classic "blobby" potential. Adding it to a density field
  * before thresholding makes an iso-contour bulge OUT toward each anchor, so a
  * forest canopy scallops around its tree-clump parents (the fantasy-map cloud
  * edge) instead of tracing raw noise.
  *
- * Pure/headless, D1–D6: `f(x, y)` from the anchor list alone, no neighbourhood,
+ * Pure/headless: `f(x, y)` from the anchor list alone, no neighbourhood,
  * no order dependence (summation order is the caller's fixed anchor order). Each
  * anchor contributes `strength · (1 − d²/r²)²` within its radius `r` and 0
  * outside — C¹ at the radius (no crease), compactly supported so the field stays

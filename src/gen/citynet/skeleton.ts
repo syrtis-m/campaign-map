@@ -1,25 +1,22 @@
 /**
- * Stage A skeleton (procgen v3 §5.1, generalized to regions in plan 020 §6):
- * the deterministic bones of a city — radial arterials A*-routed from the
- * generation center to the region boundary, the bridges where they cross
- * sketched rivers, waterfront quay streets offset from those rivers, a
- * central plaza with landmark footprints facing it, and (profile-gated) the
- * wall: a ring road that TRACES the sketched region outline via
- * `insetRing` (the plan-020 payoff feature), with gates where the arterials
- * cross it and a wall band along it. Growth (v3.1) treats the wall as a
- * barrier passable only at gates.
+ * Stage A skeleton: the deterministic bones of a city — radial arterials
+ * A*-routed from the generation center to the region boundary, the bridges
+ * where they cross sketched rivers, waterfront quay streets offset from those
+ * rivers, a central plaza with landmark footprints facing it, and
+ * (profile-gated) the wall: a ring road that TRACES the sketched region outline
+ * via `insetRing`, with gates where the arterials cross it and a wall band
+ * along it. Growth treats the wall as a barrier passable only at gates.
  *
- * Region mapping (plan 020 §6): the center is `generationCenter` — the area
- * centroid, or the interior pole when a concave ring puts the centroid
- * outside (deterministic fallback, documented in region.ts). Arterial
- * endpoints come from `boundaryPointFrom(center, bearing)`. Every emitted
- * polyline is clipped to the region (`clipPolylineToRegion`) so no skeleton
- * geometry ever crosses the GM's line — a concave region can split an
- * arterial into several parts, each carrying a stable `key` for its feature
- * id. The wall is `insetRing(region, (1 − ringRadiusFrac) × effectiveRadius)`
- * with the arterial crossings inserted as ring VERTICES in ring-parameter
- * order (position-keyed, per plan-020 rulings), so every gate lies exactly
- * on both the emitted ring and its arterial.
+ * Region mapping: the center is `generationCenter` — the area centroid, or the
+ * interior pole when a concave ring puts the centroid outside (deterministic
+ * fallback, documented in region.ts). Arterial endpoints come from
+ * `boundaryPointFrom(center, bearing)`. Every emitted polyline is clipped to
+ * the region (`clipPolylineToRegion`) so no skeleton geometry ever crosses the
+ * GM's line — a concave region can split an arterial into several parts, each
+ * carrying a stable `key` for its feature id. The wall is
+ * `insetRing(region, (1 − ringRadiusFrac) × effectiveRadius)` with the arterial
+ * crossings inserted as ring VERTICES in ring-parameter order (position-keyed),
+ * so every gate lies exactly on both the emitted ring and its arterial.
  *
  * Determinism/seam argument: every routing decision lives on the integer
  * cost lattice (D1). Destinations come from `routeHints` or from
@@ -63,23 +60,22 @@ type Cell = { cx: number; cy: number };
 export const MAX_ASTAR_EXPANSIONS = 250000;
 /** How many arterials chaikin-smoothing passes (matches the corridor avenue). */
 export const ARTERIAL_SMOOTH_ITERATIONS = 2;
-/** Two river crossings closer than this share one bridge (§5.1.3). */
+/** Two river crossings closer than this share one bridge. */
 export const BRIDGE_SHARE_DIST_M = 40;
 
-/** Half-width of the emitted wall band, meters (§5.1.5 "thin band"). */
+/** Half-width of the emitted wall band, meters (a thin band). */
 export const WALL_HALF_WIDTH_M = 3;
 /** Wall-band gap either side of a gate point, meters (the door opening). */
 export const GATE_GAP_M = 10;
-/** Double-wall resolution (plan 022 §3.4): a city wall-band segment whose
- * midpoint runs within this distance of a RAW `wall`-kind sketch line is
- * suppressed — the GM's drawn wall (which stage-4 elaboration decorates with
- * towers/gates) owns that stretch, so the city never double-paints a second
- * wall alongside it. The signal is the raw sketch (readable by every stage),
- * NOT the stage-4 output (that would be the forbidden reverse cascade). A
- * strict no-op when there are no wall sketches — every existing city is
- * byte-identical. */
+/** Double-wall resolution: a city wall-band segment whose midpoint runs within
+ * this distance of a RAW `wall`-kind sketch line is suppressed — the GM's drawn
+ * wall (which stage-4 elaboration decorates with towers/gates) owns that
+ * stretch, so the city never double-paints a second wall alongside it. The
+ * signal is the raw sketch (readable by every stage), NOT the stage-4 output
+ * (that would be the forbidden reverse cascade). A no-op when there are no wall
+ * sketches. */
 export const SKETCHED_WALL_SUPPRESS_DIST_M = 28;
-/** Hashed chance a landmark beyond the first two places at all (v3.3 pass). */
+/** Hashed chance a landmark beyond the first two places at all. */
 export const EXTRA_LANDMARK_P = 0.7;
 
 export interface ArterialPath {
@@ -98,7 +94,7 @@ export interface WallOutput {
    * gate crossing inserted as a vertex. mm-quantized. */
   ring: Pt[];
   /** Gate points — exactly the ring×arterial crossings, and exactly ring
-   * vertices (§5.1.5, plan 020). mm-quantized. */
+   * vertices. mm-quantized. */
   gates: Pt[];
   /** Wall band as per-segment quads (closed rings): clean tile clipping, no
    * polygon holes, and water/gate gaps fall out as omitted segments. */
@@ -118,7 +114,7 @@ export interface SkeletonOutput {
   center: Pt;
 }
 
-// Fixed neighbor order N, E, S, W, NE, SE, SW, NW (y up) — §5.1.3.
+// Fixed neighbor order N, E, S, W, NE, SE, SW, NW (y up).
 const NEIGHBORS: [number, number][] = [
   [0, 1],
   [1, 0],
@@ -304,7 +300,7 @@ function destinationBearings(
 
 /** Consecutive bridge-span cells of a cell path — the cost field's `bridgeCell`
  * marks cells in the sketched-river crossing band OR inside the generated
- * meandered channel (24-C), so a bridge tracks the real water either way. */
+ * meandered channel, so a bridge tracks the real water either way. */
 function bridgeSpans(cells: Cell[], cost: CostField): Cell[][] {
   const spans: Cell[][] = [];
   let run: Cell[] = [];
@@ -324,7 +320,7 @@ function bridgeSpans(cells: Cell[], cost: CostField): Cell[][] {
 
 /** Offset a polyline by `dist` on `side` (+1/−1) along per-vertex normals.
  * Returns null when the result folds back on itself (a segment reverses) — the
- * area/length degeneracy test of §5.1.4. */
+ * area/length degeneracy test. */
 function offsetPolyline(line: Pt[], dist: number, side: number): Pt[] | null {
   if (line.length < 2) return null;
   const normals: Pt[] = [];
@@ -358,7 +354,7 @@ function offsetPolyline(line: Pt[], dist: number, side: number): Pt[] | null {
 }
 
 /**
- * Offset a CLOSED ring OUTWARD by `dist` along per-vertex outward normals (24-C
+ * Offset a CLOSED ring OUTWARD by `dist` along per-vertex outward normals (so
  * quays hug the generated channel's real bank). Winding is read from the signed
  * area so "outward" is unambiguous; unlike `offsetPolyline` this does NOT reject
  * folds — a meander ring inevitably folds on the inside of a bend, and the
@@ -402,7 +398,7 @@ function leftUnitNormal(a: Pt, b: Pt): Pt {
 }
 
 /** Split a polyline into maximal sub-runs of consecutive points that are NOT
- * water/channel (24-C): a quay derived from an outward ring offset keeps only
+ * water/channel: a quay derived from an outward ring offset keeps only
  * the dry stretches, so no quay vertex ever sits inside the channel. */
 function splitDryRuns(line: Pt[], idx: FabricConstraintIndex): Pt[][] {
   const runs: Pt[][] = [];
@@ -422,7 +418,7 @@ function splitDryRuns(line: Pt[], idx: FabricConstraintIndex): Pt[][] {
 // ── Plaza + landmarks ────────────────────────────────────────────────────
 
 /** Central plaza: an 8-gon around the generation center, radius `plazaRadius`
- * with per-vertex hash jitter (§5.1.6). Closed ring. */
+ * with per-vertex hash jitter. Closed ring. */
 function buildPlaza(citySeed: number, center: Pt, profile: CityProfile): Pt[] {
   const ring: Pt[] = [];
   const sides = 8;
@@ -445,9 +441,9 @@ const LANDMARK_HALVES: Record<import("./profiles").LandmarkKind, { w: number; d:
 };
 
 /** Landmark footprints adjacent to the plaza, each a rectangle offset outward
- * at a hashed bearing and oriented to face the plaza (§5.1.6). The first two
- * of `profile.landmarks` always place; extras (index ≥ 2, v3.3 landmark pass)
- * place with a hashed chance, one ring farther out, for per-domain variety. */
+ * at a hashed bearing and oriented to face the plaza. The first two
+ * of `profile.landmarks` always place; extras (index ≥ 2) place with a hashed
+ * chance, one ring farther out, for per-domain variety. */
 function buildLandmarks(citySeed: number, center: Pt, profile: CityProfile): LandmarkFootprint[] {
   const out: LandmarkFootprint[] = [];
   const kinds = profile.landmarks;
@@ -477,7 +473,7 @@ function buildLandmarks(citySeed: number, center: Pt, profile: CityProfile): Lan
   return out;
 }
 
-// ── Wall / ring / gates (§5.1.5, region form per plan 020 §6) ──────────────
+// ── Wall / ring / gates ────────────────────────────────────────────────────
 
 /** mm quantization for gate points (matches index.ts's emission q). */
 function qmm(v: number): number {
@@ -485,7 +481,7 @@ function qmm(v: number): number {
 }
 
 /**
- * The point plaza + arterials anchor to (plan 020 Addendum 2). A GM-placed
+ * The point plaza + arterials anchor to. A GM-placed
  * `centerOverride` wins when it lies inside the ring — mm-quantized so it's
  * byte-clean (D5). If it's absent OR a later boundary edit moved it outside the
  * ring, fall back to the computed `generationCenter(region)` deterministically
@@ -541,22 +537,21 @@ function firstRingCrossing(arterial: Pt[], ring: Pt[]): GateHit | null {
 }
 
 /**
- * Build the ring road, gates, and wall band (plan 020 §6): the ring is
+ * Build the ring road, gates, and wall band: the ring is
  * `insetRing(region, (1 − ringRadiusFrac) × effectiveRadius)` — it traces
- * the sketched outline; the profile's old center-distance fraction becomes a
+ * the sketched outline; the profile's center-distance fraction becomes a
  * boundary inset scaled off effectiveRadius. Gates are the first crossing of
  * each (clipped) arterial with that ring, INSERTED AS RING VERTICES in
- * ring-parameter order — position-keyed insertion (plan-020 ruling), so
- * every gate lies bit-exactly on the emitted ring polyline and exactly on
- * its arterial. The wall band is per-segment quads, omitted inside sketched
- * water and around gates — the ring POLYLINE stays topologically closed.
- * Degenerate insets (concave rings, oversized insets) come back [] from
- * insetRing and mean "no wall" — never a throw.
+ * ring-parameter order — position-keyed insertion, so every gate lies
+ * bit-exactly on the emitted ring polyline and exactly on its arterial. The
+ * wall band is per-segment quads, omitted inside sketched water and around
+ * gates — the ring POLYLINE stays topologically closed. Degenerate insets
+ * (concave rings, oversized insets) come back [] from insetRing and mean
+ * "no wall" — never a throw.
  */
-/** Does (x,y) run alongside a RAW `wall`-kind sketch line (plan 022 §3.4
- * double-wall resolution)? True ⇒ the city suppresses its own wall band here.
- * Strict `false` when there are no sketched walls, so cities without a hand-
- * drawn wall are byte-identical to before this feature. */
+/** Does (x,y) run alongside a RAW `wall`-kind sketch line (double-wall
+ * resolution)? True ⇒ the city suppresses its own wall band here. `false` when
+ * there are no sketched walls. */
 function suppressedBySketchedWall(idx: FabricConstraintIndex, x: number, y: number): boolean {
   for (const wall of idx.wallLines) {
     if (wall.length >= 2 && nearestOnLine(wall, x, y).dist < SKETCHED_WALL_SUPPRESS_DIST_M) return true;
@@ -621,7 +616,7 @@ function buildWall(
     const my = (a[1] + b[1]) / 2;
     if (gatePts.some(([gx, gy]) => Math.hypot(gx - mx, gy - my) < GATE_GAP_M)) continue; // gate opening
     if (blockedAt(mx, my)) continue; // wall band segmented at water (river gap)
-    if (suppressedAt(mx, my)) continue; // plan 022 §3.4: a raw wall sketch owns this stretch
+    if (suppressedAt(mx, my)) continue; // a raw wall sketch owns this stretch
     const dx = b[0] - a[0];
     const dy = b[1] - a[1];
     const len = Math.hypot(dx, dy) || 1;
@@ -706,7 +701,7 @@ export function buildSkeleton(
   if (profile.waterfrontOffsets.length > 0) {
     const idx = indexConstraints(constraints);
     if (idx.channelRings.length > 0) {
-      // 24-C: the generated meandered channel supersedes the sketched spine.
+      // The generated meandered channel supersedes the sketched spine.
       // Quays hug its real bank — offset each channel ring OUTWARD and keep the
       // dry stretches (folded/inner points fall in the channel and are dropped),
       // so quays track the channel and never sit in the water.
@@ -723,7 +718,7 @@ export function buildSkeleton(
       }
     } else {
       // No distance pre-filter: a river that never enters the region clips to
-      // nothing, which is the same answer the old disc pre-filter gave.
+      // nothing.
       for (const river of idx.riverLines) {
         for (const off of profile.waterfrontOffsets) {
           for (const side of [1, -1]) {
@@ -742,9 +737,9 @@ export function buildSkeleton(
   const plaza = buildPlaza(citySeed, center, profile);
   const landmarks = buildLandmarks(citySeed, center, profile);
 
-  // 4) Wall / ring / gates (plan 020 §6: the wall traces the sketch). Water
-  // test reuses the constraint index (incl. the generated channel, 24-C) so the
-  // wall band is segmented at rivers and the meandered channel alike.
+  // 4) Wall / ring / gates (the wall traces the sketch). Water test reuses the
+  // constraint index (incl. the generated channel) so the wall band is
+  // segmented at rivers and the meandered channel alike.
   const wallIdx = indexConstraints(constraints);
   const wall = buildWall(
     citySeed,

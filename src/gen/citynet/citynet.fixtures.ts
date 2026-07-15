@@ -1,10 +1,10 @@
 // Shared, non-test fixtures/helpers for the citynet suites.
 //
-// Extracted (plan 021 §2.1) so the fast unit suite (citynet.test.ts) and the
-// slow fuzz/stress tier (citynet.fuzz.test.ts) share ONE definition of these
-// helpers instead of duplicating them — the fuzz tier moved to its own file so
-// `npm test` stays <30 s while the ~50 s 200-region + ~19 s polygon fuzzes run
-// only at phase/pre-merge gates via `npm run test:fuzz`.
+// The fast unit suite (citynet.test.ts) and the slow fuzz/stress tier
+// (citynet.fuzz.test.ts) share ONE definition of these helpers instead of
+// duplicating them — the fuzz tier lives in its own file so `npm test` stays
+// <30 s while the ~50 s 200-region + ~19 s polygon fuzzes run only at
+// phase/pre-merge gates via `npm run test:fuzz`.
 //
 // This file is NOT collected by vitest (no `.test.ts` suffix); it is a plain
 // helper module imported by the two test files.
@@ -47,7 +47,7 @@ export function riverThrough(cy: number): FabricFeature {
 }
 
 /** Every coordinate of every feature is inside the region (≥ −eps signed
- * distance) — plan 020's "nothing spills past the GM's line". */
+ * distance) — nothing spills past the GM's line. */
 export function allCoordsInside(network: GeoJSON.Feature[], region: ProcgenRegion, eps = 0.01): boolean {
   const check = (x: number, y: number): boolean => distanceToBoundary(region, x, y) >= -eps;
   for (const f of network) {

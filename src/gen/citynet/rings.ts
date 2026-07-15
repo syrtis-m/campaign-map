@@ -1,11 +1,11 @@
 /**
- * Concentric-ring operators (plan 025 §2.7 canal-rings, §2.8 radial-star, and
- * the §2.10 euro-medieval growth-rings upgrade).
+ * Concentric-ring operators (canal-rings, radial-star, and the euro-medieval
+ * growth-rings upgrade).
  *
  * A family of deterministic post-/pre-growth passes that lay CONCENTRIC rings
  * around the generation center — the first-class "concentric grid" pattern the
- * Salat research names as distinct from both grid and organic (§1.3 Amsterdam
- * canal rings, Paris Étoile, the Scotland typology arcs).
+ * Salat research names as distinct from both grid and organic (Amsterdam canal
+ * rings, Paris Étoile, the Scotland typology arcs).
  *
  * Two consumers, one geometry primitive (`concentricRingRuns`):
  *  • `driveRingRoads` (radial-star, growth-ring) — splices the rings into the
@@ -13,13 +13,12 @@
  *    the same battle-tested planar insertion the axial operator uses), so the
  *    radial arterials + concentric rings box in wedge blocks that faces/parcels
  *    then subdivide. Runs INSIDE `generateCityNetwork` after growth and BEFORE
- *    faces, exactly like `driveBoulevards` (§3.2 stage order — no reflow pass).
+ *    faces, exactly like `driveBoulevards` (stage order — no reflow pass).
  *  • `concentricCanalRuns` (canal-rings) — returns the ring polylines for the
  *    caller to (a) emit as visible canal WATER features and (b) fold into the
  *    constraint system as `river` lines, so the existing citynet water machinery
  *    (bridges where radials cross, quays along banks, footprints kept out of the
- *    water) drives the canals with ZERO new water plumbing (§2.7 "the citynet
- *    machinery for this already exists").
+ *    water) drives the canals with ZERO new water plumbing.
  *
  * Determinism (D6): every ring is a fixed many-gon at a radius that is a pure
  * function of `region.maxInteriorDistance` and the ring index — no float ever
@@ -73,8 +72,8 @@ export function concentricRingRuns(region: ProcgenRegion, center: Pt, cfg: Conce
 }
 
 /**
- * Splice concentric ring ROADS into the grown graph (radial-star §2.8; the
- * euro-medieval growth-ring §2.10 uses `count: 1` for one older inner ring).
+ * Splice concentric ring ROADS into the grown graph (radial-star; the
+ * euro-medieval growth-ring uses `count: 1` for one older inner ring).
  * Each clipped ring run is resampled and inserted planar as a `ring`-class grown
  * edge — every crossing with the radial arterials becomes a node, so face
  * extraction boxes the wedge blocks. Mutates `graph`. Returns the spliced runs.
@@ -95,7 +94,7 @@ export function driveRingRoads(
 }
 
 /**
- * The concentric canal ring runs (canal-rings §2.7) — the caller emits these as
+ * The concentric canal ring runs (canal-rings) — the caller emits these as
  * visible canal WATER features AND folds them into the constraints as `river`
  * lines so the shared water machinery (bridges/quays/footprint-drop) drives
  * them. Kept as a thin alias of `concentricRingRuns` so the canal path and the

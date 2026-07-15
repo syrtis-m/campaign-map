@@ -1,8 +1,8 @@
 /**
- * Chaikin corner-cutting for CLOSED rings (plan 026-B) — the smoothing pass that
+ * Chaikin corner-cutting for CLOSED rings — the smoothing pass that
  * turns a marching-squares staircase into a hand-drawn-looking organic outline.
  *
- * Pure/headless, D1–D6 binding: a deterministic closed-form subdivision of the
+ * Pure/headless: a deterministic closed-form subdivision of the
  * ring, mm-quantized on the way out (D5). The Chaikin limit curve of a closed
  * polygon lies INSIDE the source polygon (each corner is cut toward the interior
  * of the edge fan), so smoothing a marching-squares canopy ring only pulls its

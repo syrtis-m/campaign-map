@@ -1,25 +1,24 @@
 /**
- * City domains — v3's disc-shaped generation request, RETIRING under plan
- * 020: the sketched district polygon (a ProcgenRegion) is now the unit of
- * city generation, and this module shrinks to what the v4.1 migration and
- * the transitional host shim still need — the lattice/seed helpers that give
- * an existing manifest domain its stable identity, plus `discToRing`, which
- * converts a disc to the 32-gon district polygon the migration writes into
- * Fabric.geojson.
+ * City domains — the legacy disc-shaped generation request. The sketched
+ * district polygon (a ProcgenRegion) is the unit of city generation now; this
+ * module holds only what the migration and the transitional host shim still
+ * need — the lattice/seed helpers that give an existing manifest domain its
+ * stable identity, plus `discToRing`, which converts a disc to the 32-gon
+ * district polygon the migration writes into Fabric.geojson.
  *
- * Determinism argument (unchanged): a domain's identity and seed derive only
- * from its center snapped to a fixed 30 m lattice (D1/D6 — no floating-point
- * center ever reaches the seed, no host-side field like `createdAt` ever
- * crosses into generation). `citySeedFor` is kept for migration so the
- * migrated region inherits the SAME seed its disc had — the city keeps its
- * identity across the plan-020 migration.
+ * Determinism argument: a domain's identity and seed derive only from its
+ * center snapped to a fixed 30 m lattice (D1/D6 — no floating-point center ever
+ * reaches the seed, no host-side field like `createdAt` ever crosses into
+ * generation). `citySeedFor` is kept for migration so the migrated region
+ * inherits the SAME seed its disc had — the city keeps its identity across the
+ * migration.
  */
 import { hashSeed } from "../rng";
 
 /** Center-snapping lattice for domains: a click is quantized to this grid so
  * near-identical clicks resolve to one domain (D1 — center is lattice-exact). */
 export const DOMAIN_LATTICE_M = 30;
-/** Sides of the polygon a disc migrates to (plan 020 §3.2). */
+/** Sides of the polygon a disc migrates to. */
 export const DISC_TO_RING_SEGMENTS = 32;
 
 export type ProfileId =
@@ -73,8 +72,8 @@ export function domainIdForCell(cellX: number, cellY: number): string {
  * snapped cell. `createdAt` is carried through untouched for the host — never
  * consulted by generation.
  *
- * @deprecated v4.1 removes the disc founding path (plan 020 §8.1) — kept for
- * the pre-migration host and disc-fixture tests.
+ * @deprecated the disc founding path is retired — kept for the pre-migration
+ * host and disc-fixture tests.
  */
 export function makeDomain(
   x: number,
@@ -96,9 +95,9 @@ export function makeDomain(
 
 /**
  * The domain's `citySeed`: `hashSeed(campaignSeed, "domain", cellX, cellY)`.
- * Derived from the lattice cell, not the float center. Kept for the v4.1
- * migration (plan 020 §3.2): the migrated district's persisted procgen seed
- * is this value, so the migrated city regenerates from the same seed.
+ * Derived from the lattice cell, not the float center. Kept for the migration:
+ * the migrated district's persisted procgen seed is this value, so the migrated
+ * city regenerates from the same seed.
  */
 export function citySeedFor(campaignSeed: number, domain: CityDomain): number {
   const { cellX, cellY } = anchorCellForPoint(domain.cx, domain.cy);
@@ -107,7 +106,7 @@ export function citySeedFor(campaignSeed: number, domain: CityDomain): number {
 
 /**
  * Convert a disc domain to the closed polygon ring its migrated district
- * sketch carries (plan 020 §3.2): a CCW `segments`-gon (default 32) around
+ * sketch carries: a CCW `segments`-gon (default 32) around
  * `(cx, cy)` at `radius`, mm-quantized, closed (first === last). The trig
  * samples fixed fractions of the circle (D4 sampling); the ring is then
  * mm-exact data.

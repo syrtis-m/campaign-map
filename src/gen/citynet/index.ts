@@ -1,13 +1,12 @@
 /**
- * City-network entry point (procgen v3 §3.4/§5, generalized to sketched
- * regions in plan 020 §6): `generateCityNetwork` computes the whole city
+ * City-network entry point: `generateCityNetwork` computes the whole city
  * network for a ProcgenRegion — Stage-A skeleton plus the Stage-B grown
  * street web plus Stage-C blocks/parcels/footprints, wards, and outskirts —
  * as a pure function of `(citySeed, region, profile, constraints)`, and
  * `clipNetworkToTile` cuts that one artifact into the per-tile,
  * per-generatorId buckets the cache stores and the map paints.
  *
- * Plan 020 contract: EVERY emitted coordinate lies inside (or exactly on)
+ * Containment contract: EVERY emitted coordinate lies inside (or exactly on)
  * the region polygon — the sketch is the outer limit of all output. Streets
  * and quays are clipped to the region upstream (skeleton/growth); the small
  * decorative rings built here from a center point (plaza, landmarks, court
@@ -16,8 +15,8 @@
  * counted implicitly by absence — never thrown).
  *
  * Determinism/seam argument: the network is computed once, not per tile, so
- * two tiles never need order-free math to agree — they clip the *same bytes*
- * (§3.1). D5 is enforced here: every emitted coordinate is quantized to the
+ * two tiles never need order-free math to agree — they clip the *same bytes*.
+ * D5 is enforced here: every emitted coordinate is quantized to the
  * millimeter, and every feature list (whole network and every clip bucket)
  * is canonically sorted by first coordinate then id — the id tiebreak is
  * load-bearing because all arterials share the center first coordinate.
@@ -53,11 +52,11 @@ export * from "./profiles";
 type Pt = [number, number];
 
 /**
- * Per-tile generator ids the region network clips into — all live as of v3.2:
+ * Per-tile generator ids the region network clips into:
  * streets (arterials/bridges/waterfront/grown), blocks (faces), parcels,
  * footprints, landmarks (plaza/church/market), and wards (`city-district` —
  * deliberately the legacy Voronoi district id so wards inherit its paint
- * layer; the legacy generator stops running on domain tiles from v3.2).
+ * layer).
  */
 export const DOMAIN_TILE_GENERATOR_IDS: readonly string[] = [
   "city-street",
@@ -68,11 +67,11 @@ export const DOMAIN_TILE_GENERATOR_IDS: readonly string[] = [
   "city-district",
 ];
 
-/** Form-based street width (plan 025 §3.3): the metre width emitted on a
+/** Form-based street width: the metre width emitted on a
  * `city-street` feature for its `roadClass`, read straight off the profile's
  * width table. Unknown classes fall back to `street` (the ordinary width).
  * Emitted as an explicit `width` property so themes ramp px from it and the
- * §3.1 metrics measure it directly instead of re-deriving from the class. */
+ * metrics measure it directly instead of re-deriving from the class. */
 function widthFor(profile: CityProfile, roadClass: string): number {
   const w = profile.streetWidths;
   switch (roadClass) {
@@ -150,18 +149,17 @@ function sortCanonical(features: GeoJSON.Feature[]): void {
 
 /**
  * Compute the whole (unclipped) network for a region: Stage-A skeleton, then
- * the Stage-B growth loop seeded from it (v3.1), then Stage-C. Pure — reads
+ * the Stage-B growth loop seeded from it, then Stage-C. Pure — reads
  * only its arguments (D6). `profileId` arrives separately because the region
- * carries geometry only; the registry's params schema owns profile choice
- * (plan 020 §5). Coordinates are quantized and the feature list is
- * canonically sorted before return.
+ * carries geometry only; the registry's params schema owns profile choice.
+ * Coordinates are quantized and the feature list is canonically sorted before
+ * return.
  */
 /**
- * Additive per-run city params (plan 025-E §2.9/§2.10). Supplied by the registry
- * from the persisted procgen block; OMITTED (undefined) for every pre-025-E
- * caller, so those runs are byte-identical. `seamBoulevard` promotes the na-grid
- * quadrant-collision seam into ONE diagonal boulevard; `growthRings` (1 or 2)
- * adds euro-medieval's older inner ring road.
+ * Additive per-run city params. Supplied by the registry from the persisted
+ * procgen block; OMITTED (undefined) for callers that don't opt in.
+ * `seamBoulevard` promotes the na-grid quadrant-collision seam into ONE diagonal
+ * boulevard; `growthRings` (1 or 2) adds euro-medieval's older inner ring road.
  */
 export interface CityParamOverrides {
   seamBoulevard?: boolean;
@@ -178,18 +176,18 @@ export function generateCityNetwork(
 ): GeoJSON.Feature[] {
   // Effective profile: the data-table profile plus the additive per-run params.
   // A fresh clone (never mutating PROFILES). Absent overrides ⇒ identical to
-  // the base profile, so every pre-025-E preset is byte-for-byte unchanged.
+  // the base profile.
   const profile: CityProfile = { ...PROFILES[profileId] };
   if (overrides?.seamBoulevard !== undefined) profile.seamBoulevard = overrides.seamBoulevard;
   if (overrides?.growthRings !== undefined) profile.growthRings = overrides.growthRings;
-  // Seam boulevard (§2.9): na-grid's collision seam becomes a single diagonal
+  // Seam boulevard: na-grid's collision seam becomes a single diagonal
   // breakthrough boulevard — reuse the axial operator (a lone hashed-bearing
   // chord reads diagonal across the cardinal grid — the Market-Street cut).
   if (!profile.axial && profile.seamBoulevard) {
     profile.axial = { count: 1, mode: "breakthrough", elbow: 0 } satisfies AxialConfig;
   }
 
-  // Canal rings (§2.7): build the concentric canals BEFORE the cost field /
+  // Canal rings: build the concentric canals BEFORE the cost field /
   // skeleton and fold them into the constraints as `river` lines, so the shared
   // citynet water machinery (bridges where radials cross, quays along banks,
   // footprints kept out of the water) drives them with no new plumbing. The
@@ -311,9 +309,8 @@ export function generateCityNetwork(
     });
   });
 
-  // Wall / ring / gates (v3.3, §5.1.5 — profile-gated, may be null). The
-  // ring traces the sketched outline via insetRing (plan 020 §6); gates are
-  // ring vertices by construction.
+  // Wall / ring / gates (profile-gated, may be null). The ring traces the
+  // sketched outline via insetRing; gates are ring vertices by construction.
   if (skel.wall) {
     features.push({
       type: "Feature",
@@ -357,26 +354,25 @@ export function generateCityNetwork(
     });
   }
 
-  // Stage B (v3.1): grow the street web off the skeleton, emit merged chains
-  // (roadClass "street" or "alley" — chains never mix classes, v3.4). Chain
+  // Stage B: grow the street web off the skeleton, emit merged chains
+  // (roadClass "street" or "alley" — chains never mix classes). Chain
   // keys are position-derived (endpoint node keys), never order-derived.
   const { graph } = growNetwork(citySeed, region, profile, effConstraints, skel);
-  // Axial breakthrough (plan 025 §3.2): profiles that opt in (haussmann,
-  // baroque-axial, and na-grid+seamBoulevard) cut wide boulevards THROUGH the
-  // grown fabric here — spliced planar into the graph as `boulevard`-class grown
-  // edges BEFORE faces/parcels, so the blocks they cross re-close and re-parcel
-  // fronting the cut with no reflow pass. A no-op for every profile without
-  // `axial` (and without the seam upgrade).
+  // Axial breakthrough: profiles that opt in (haussmann, baroque-axial, and
+  // na-grid+seamBoulevard) cut wide boulevards THROUGH the grown fabric here —
+  // spliced planar into the graph as `boulevard`-class grown edges BEFORE
+  // faces/parcels, so the blocks they cross re-close and re-parcel fronting the
+  // cut with no reflow pass. A no-op for every profile without `axial` (and
+  // without the seam upgrade).
   if (profile.axial) driveBoulevards(citySeed, graph, region, profile, skel);
-  // Concentric ring roads (plan 025 §2.8 radial-star): splice the connector
-  // rings into the graph as `ring`-class grown edges so the radial arterials ×
-  // rings box the wedge blocks (BEFORE faces, same stage order as the axial cut).
+  // Concentric ring roads (radial-star): splice the connector rings into the
+  // graph as `ring`-class grown edges so the radial arterials × rings box the
+  // wedge blocks (BEFORE faces, same stage order as the axial cut).
   if (profile.concentric?.mode === "roads") {
     driveRingRoads(graph, region, skel.center, profile.concentric);
   }
-  // Growth rings (plan 025 §2.10 euro-medieval `growthRings: 2`): one older
-  // inner ring road inside the outer wall — the Paris Châtelet reading. Byte-
-  // neutral for the default (`undefined`/1).
+  // Growth rings (euro-medieval `growthRings: 2`): one older inner ring road
+  // inside the outer wall — the Paris Châtelet reading.
   if ((profile.growthRings ?? 1) >= 2) {
     driveRingRoads(graph, region, skel.center, { count: 1, mode: "roads", innerFrac: 0.5, outerFrac: 0.5 });
   }
@@ -397,7 +393,7 @@ export function generateCityNetwork(
     });
   }
 
-  // Court bulbs (§5.2 na-suburb, v3.4): cul-de-sac profiles cap their
+  // Court bulbs (na-suburb): cul-de-sac profiles cap their
   // unsnapped street tips with small octagons — the suburb signature. A tip
   // close enough to the sketched boundary that its bulb would poke past it
   // keeps its street but loses the bulb (containment guard).
@@ -424,11 +420,11 @@ export function generateCityNetwork(
     }
   }
 
-  // Stage C (v3.2): faces → blocks → parcels → footprints, plus wards.
+  // Stage C: faces → blocks → parcels → footprints, plus wards.
   // Block identity is the face's sorted node keys (position-derived); parcel/
   // footprint identity is (blockKey, split path) — never emission order (D2).
-  // effConstraints folds in the canal rings (canal-rings §2.7) as water, so
-  // blocks that span a canal are dropped and footprints stay out of the water.
+  // effConstraints folds in the canal rings as water, so blocks that span a
+  // canal are dropped and footprints stay out of the water.
   const fabricIdx = indexConstraints(effConstraints);
   const { blocks } = extractBlocks(graph, region);
   const dryBlocks = blocks.filter((b) => {
@@ -442,11 +438,10 @@ export function generateCityNetwork(
     }
     return !blockedByWater(fabricIdx, sx / n, sy / n);
   });
-  // Corner treatment (plan 025 §3.4): chamfered profiles (eixample) cut every
-  // convex block corner back before emission AND before parcelling, so the
-  // octagonal blocks read on screen and footprints front the cut corner
-  // instead of poking into it. Byte-neutral for chamfer===0 (every other
-  // preset): `shapedBlocks` IS `dryBlocks`.
+  // Corner treatment: chamfered profiles (eixample) cut every convex block
+  // corner back before emission AND before parcelling, so the octagonal blocks
+  // read on screen and footprints front the cut corner instead of poking into
+  // it. For chamfer===0, `shapedBlocks` IS `dryBlocks`.
   const shapedBlocks =
     profile.chamfer > 0
       ? dryBlocks.map((b) => ({ ...b, ring: chamferRing(b.ring, profile.chamfer) }))
@@ -482,10 +477,10 @@ export function generateCityNetwork(
     });
   }
   for (const fp of footprints) {
-    // Buildings don't swim (plan 024-C): a footprint on a block that STRADDLES
-    // the water — dry centroid, but this sub-parcel falls in the river/channel —
-    // is dropped. Byte-neutral for a city with no water (blockedByWater is false
-    // everywhere ⇒ every footprint is kept, identical to before).
+    // Buildings don't swim: a footprint on a block that STRADDLES the water —
+    // dry centroid, but this sub-parcel falls in the river/channel — is dropped.
+    // No effect for a city with no water (blockedByWater is false everywhere ⇒
+    // every footprint is kept).
     let cx = 0;
     let cy = 0;
     for (let i = 0; i < fp.ring.length; i++) {
@@ -522,7 +517,7 @@ export function generateCityNetwork(
     });
   }
 
-  // Outskirts (v3.3, §5.3.3): ribbon houses along arterials beyond the growth
+  // Outskirts: ribbon houses along arterials beyond the growth
   // extent, then fields, then nothing toward the boundary. Containment is
   // enforced inside buildOutskirts (all quad corners in-region).
   const outskirts = buildOutskirts(citySeed, region, profile, skel, cityness, fabricIdx);
@@ -553,11 +548,11 @@ export function generateCityNetwork(
     });
   }
 
-  // Canal water (plan 025 §2.7 canal-rings): the concentric canal centerlines
-  // emit as WATER — a distinct `city-landmark` type=`canal` line the theme
-  // paints with the water hue (a fat blue casing ≈ RIVER_HALF_WIDTH×2 wide),
-  // rendered BELOW the streets so the radial bridges read OVER the canals.
-  // Empty (byte-neutral) for every non-canal preset.
+  // Canal water (canal-rings): the concentric canal centerlines emit as WATER —
+  // a distinct `city-landmark` type=`canal` line the theme paints with the
+  // water hue (a fat blue casing ≈ RIVER_HALF_WIDTH×2 wide), rendered BELOW the
+  // streets so the radial bridges read OVER the canals. Empty for every
+  // non-canal preset.
   canalRuns.forEach((run, i) => {
     if (run.length < 2) return;
     features.push({
@@ -606,7 +601,7 @@ export function clipNetworkToTile(
       const parts = clipPolylineToBBox(toVec2(g.coordinates as Pt[]), bbox);
       parts.forEach((part, partIndex) => {
         if (part.length < 2) return;
-        // Zero-length artifact guard (observed live in v3.0): a polyline
+        // Zero-length artifact guard (observed live): a polyline
         // grazing a tile corner can clip to a 2-point part of ~0 length.
         let len = 0;
         for (let i = 1; i < part.length; i++) len += Math.hypot(part[i].x - part[i - 1].x, part[i].y - part[i - 1].y);
@@ -630,7 +625,7 @@ export function clipNetworkToTile(
     } else if (g.type === "MultiPolygon") {
       // Clip each sub-polygon (outer + holes) to the tile; drop those that fall
       // entirely outside. One artifact → one MultiPolygon per tile, holes kept
-      // so forest clearings survive the tiling (plan 026-B).
+      // so forest clearings survive the tiling.
       const polys: Pt[][][] = [];
       for (const poly of g.coordinates as Pt[][][]) {
         const rings = clipRingsToBBox(poly, bbox);

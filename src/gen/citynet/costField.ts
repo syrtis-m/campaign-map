@@ -1,6 +1,6 @@
 /**
- * Cost lattice for the arterial A* (procgen v3 §5.1.1, regions since plan
- * 020 §6): a world-anchored 10 m grid over `region.bbox + 200 m` whose
+ * Cost lattice for the arterial A*: a world-anchored 10 m grid over
+ * `region.bbox + 200 m` whose
  * per-cell cost encodes where roads want to go — cheap on flat open ground,
  * expensive across a river (so crossings concentrate into bridges),
  * impassable through a lake, and steering clear of the GM's pinned Locations
@@ -13,7 +13,7 @@
  * costs the same everywhere and A* over it is reproducible byte-for-byte after
  * a cache delete (D1 — decisions live on the integer lattice; D6 — no hidden
  * inputs). `heightAt` uses `citySeed` because the pure contract exposes no
- * campaignSeed; the field is still fully deterministic (see DECISIONS.md).
+ * campaignSeed; the field is still fully deterministic.
  */
 import { bboxWithMargin, type ProcgenRegion } from "../region";
 import type { GenerationConstraints } from "../types";
@@ -53,8 +53,8 @@ export interface CostField {
    * cells as those within `RIVER_HALF_WIDTH + COST_CELL_M` (one cell of
    * approach past the crossing penalty band, matching the seam-test tolerance). */
   riverDist(cellX: number, cellY: number): number;
-  /** True iff the cell should count as part of a bridge span (plan 024 §3,
-   * 24-C): within the sketched-river crossing band (`riverDist <
+  /** True iff the cell should count as part of a bridge span: within the
+   * sketched-river crossing band (`riverDist <
    * RIVER_HALF_WIDTH + COST_CELL_M`) OR inside the GENERATED meandered channel
    * (`upstream.water`). `skeleton.ts`'s `bridgeSpans` keys on this so a bridge
    * tracks the channel, not the straight spine. */
@@ -89,9 +89,9 @@ function inWater(idx: FabricConstraintIndex, x: number, y: number): boolean {
   return false;
 }
 
-/** True inside the GENERATED meandered channel (plan 024 §3, 24-C). Passable
- * (arterials bridge it), so it adds BRIDGE_COST rather than blocking. Empty
- * when there is no upstream river ⇒ byte-identical to before. */
+/** True inside the GENERATED meandered channel. Passable (arterials bridge it),
+ * so it adds BRIDGE_COST rather than blocking. Empty when there is no upstream
+ * river. */
 function inChannel(idx: FabricConstraintIndex, x: number, y: number): boolean {
   for (const ring of idx.channelRings) {
     if (pointInRing(ring, x, y)) return true;
@@ -113,7 +113,7 @@ function distToRiver(idx: FabricConstraintIndex, x: number, y: number): number {
  * Build the cost field for a region. Everything the closures need is captured
  * once; `cellCost` then samples height noise and the sketched-fabric index
  * purely by position. Coasts (water-polygon boundaries) are handled only as
- * impassable interiors in v3.0 — they get no bridge penalty band.
+ * impassable interiors — they get no bridge penalty band.
  */
 export function makeCostField(
   citySeed: number,
@@ -131,10 +131,10 @@ export function makeCostField(
     maxY: Math.ceil(bbox.maxY / COST_CELL_M),
   };
 
-  // ── Lazy memoization (v3.1 perf, §8) ─────────────────────────────────────
+  // ── Lazy memoization (perf) ──────────────────────────────────────────────
   // A* touches a fraction of the field's cells, and the arterial searches
   // share it; per-cell height sampling (fractal noise ×4 finite-difference
-  // taps) dominated the v3.0 profile. Caching is invisible to determinism:
+  // taps) dominated the profile. Caching is invisible to determinism:
   // every cached value is a pure function of the integer cell address +
   // constraints, so first-touch and hundredth-touch return identical numbers
   // regardless of query order. Height is memoized at cell *centers* so
@@ -177,8 +177,8 @@ export function makeCostField(
     return v;
   };
 
-  /** A bridge-span cell (§3, 24-C): the sketched-river crossing band OR inside
-   * the generated meandered channel — so bridges cluster over the real water. */
+  /** A bridge-span cell: the sketched-river crossing band OR inside the
+   * generated meandered channel — so bridges cluster over the real water. */
   const bridgeCell = (cellX: number, cellY: number): boolean =>
     riverDist(cellX, cellY) < RIVER_HALF_WIDTH + COST_CELL_M || inChannelCell(cellX, cellY);
 
@@ -206,7 +206,7 @@ export function makeCostField(
       cost += Math.min(SLOPE_PENALTY_MAX, grad * SLOPE_PENALTY_SCALE);
 
       // River crossing: expensive but passable ⇒ crossings concentrate. The
-      // sketched-river band OR the generated meandered channel (24-C) both
+      // sketched-river band OR the generated meandered channel both
       // charge the bridge toll, so crossings cluster over the real water.
       if (riverDist(cellX, cellY) < RIVER_HALF_WIDTH || inChannelCell(cellX, cellY)) cost += BRIDGE_COST;
 

@@ -1,6 +1,6 @@
 /**
- * Cityness (procgen v3 §5.4, generalized to regions in plan 020 §6) — a
- * scalar density field that modulates the whole pipeline: branch priority/
+ * Cityness — a scalar density field that modulates the whole pipeline:
+ * branch priority/
  * probability and growth extent (growth.ts), snap distance (growth.ts),
  * parcel minArea and footprint depth/coverage (parcels.ts), and the
  * outskirts bands (outskirts.ts).
@@ -16,7 +16,7 @@
  * Determinism/seam argument: a pure function of (citySeed, region, canon
  * feature list, world position) — value noise is position-hashed
  * (`world/noise.ts`) and each bump's magnitude hashes on the pin's rounded
- * position, never on array order (D2/D6).
+ * position, never on array order.
  */
 import { hashSeed, mulberry32 } from "../rng";
 import { valueNoise2D } from "../world/noise";
@@ -30,7 +30,7 @@ export const BUMP_RADIUS_M = 180;
 export const BUMP_SETTLEMENT_MIN = 0.15;
 export const BUMP_SETTLEMENT_MAX = 0.3;
 /** Smaller fixed-range bump for canon Points without a settlement type — any
- * pin the GM dropped still pulls some density (per v3.3 brief fallback). */
+ * pin the GM dropped still pulls some density. */
 export const BUMP_OTHER_MIN = 0.05;
 export const BUMP_OTHER_MAX = 0.1;
 /** Location-note `type` values that read as settlements. */

@@ -1,7 +1,7 @@
-// Slow fuzz/stress tier for citynet — split out of citynet.test.ts (plan 021
-// §2.1) so the fast unit suite (`npm test`) stays <30 s. These two describes
-// dominated the old ~125 s suite (~50 s + ~19 s); they run only at phase and
-// pre-merge gates via `npm run test:fuzz`. Not deleted, not weakened — moved.
+// Slow fuzz/stress tier for citynet, kept out of citynet.test.ts so the fast
+// unit suite (`npm test`) stays <30 s. These two describes are the heavy ones
+// (~50 s + ~19 s); they run only at phase and pre-merge gates via
+// `npm run test:fuzz`.
 import { describe, expect, it } from "vitest";
 import { generateCityNetwork, type ProfileId } from "./index";
 import { makeRegion, type ProcgenRegion } from "../region";
@@ -9,12 +9,12 @@ import { hashSeed, mulberry32 } from "../rng";
 import type { FabricFeature } from "../../model/fabric";
 import { WORLD_BOUNDS, net, riverThrough, allCoordsInside } from "./citynet.fixtures";
 
-describe("v3.1/v3.4 200-region fuzz (gate e, anti-Watabou — all five profiles)", () => {
+describe("200-region fuzz (anti-Watabou — all profiles)", () => {
   it("200 hashed disc regions generate without throwing, each within budget", () => {
-    // All profiles incl. plan 025-B superblock + 025-C tartan-grid/ward-grid/
-    // eixample + 025-D haussmann/baroque-axial (the axial-breakthrough operator
-    // must survive the same no-throw / within-budget / in-region fuzz — a
-    // boulevard cut through arbitrary hashed regions never throws).
+    // Every profile incl. superblock, tartan-grid/ward-grid/eixample, and
+    // haussmann/baroque-axial (the axial-breakthrough operator must survive the
+    // same no-throw / within-budget / in-region fuzz — a boulevard cut through
+    // arbitrary hashed regions never throws).
     const fuzzProfiles: ProfileId[] = [
       "euro-medieval",
       "euro-continental",
@@ -60,7 +60,7 @@ describe("v3.1/v3.4 200-region fuzz (gate e, anti-Watabou — all five profiles)
   }, 240000);
 });
 
-describe("v4.0 4-profile polygon fuzz (plan 020 gate f)", () => {
+describe("4-profile polygon fuzz", () => {
   /** Deterministic random SIMPLE polygon: radial-monotone star (angles
    * ascending ⇒ no self-intersection), scaled to an exact target
    * effectiveRadius. 5–10 vertices. */

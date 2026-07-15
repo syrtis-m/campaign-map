@@ -1,14 +1,14 @@
 /**
- * DEM (digital-elevation-model) raster support for hillshade + 3D terrain
- * (plan 023 §4.2). PURE / headless (no DOM/canvas/Obsidian imports, D1–D6
- * binding): this module owns the *numeric* half of the DEM path — composing the
- * campaign elevation field, mapping slippy tiles → gen-space samples, and the
- * raw-lattice quantization + terrarium RGBA packing. The *encoding* half (int
- * lattice → PNG bytes via a canvas) lives in the view layer
- * (`campaignDemProtocol.ts`), because canvas is a host API and PNG bytes are NOT
- * a determinism surface (zlib/canvas encoders vary across platforms/versions —
- * §4.2 DEM-determinism trap). The DURABLE record is the quantized int lattice
- * here; the PNG is re-encoded from it at serve time and never byte-compared.
+ * DEM (digital-elevation-model) raster support for hillshade + 3D terrain.
+ * PURE / headless (no DOM/canvas/Obsidian imports): this module owns the
+ * *numeric* half of the DEM path — composing the campaign elevation field,
+ * mapping slippy tiles → gen-space samples, and the raw-lattice quantization +
+ * terrarium RGBA packing. The *encoding* half (int lattice → PNG bytes via a
+ * canvas) lives in the view layer (`campaignDemProtocol.ts`), because canvas is
+ * a host API and PNG bytes are NOT a determinism surface (zlib/canvas encoders
+ * vary across platforms/versions). The DURABLE record is the quantized int
+ * lattice here; the PNG is re-encoded from it at serve time and never
+ * byte-compared.
  *
  * Point-evaluability is preserved: every height is `field(x,y)` at an ABSOLUTE
  * gen-space position derived purely from the tile's geography, so two tiles that
@@ -28,7 +28,7 @@ export const TERRARIUM_BASE = 32768;
 const TERRARIUM_MAX = 32767; // 65535 − 32768
 
 /**
- * VERTICAL SCALE (the fictional-CRS reconciliation, §4.2). MapLibre's hillshade
+ * VERTICAL SCALE (the fictional-CRS reconciliation). MapLibre's hillshade
  * derives slope from elevation deltas normalized by web-mercator meters-per-
  * pixel at the tile's zoom (`deriv = Sobel(elev)/pow(2, …−zoom)`), assuming the
  * DEM is georeferenced in real mercator meters. A fictional campaign packs many
@@ -77,8 +77,8 @@ export function tileLngLatBounds(
  * mountain field is masked to its own ring (0 outside), so `max` is the natural
  * "any mountain here wins" combinator and outside every ring the campaign is
  * flat (height 0). Empty campaign → constant-0 field (a legal flat DEM: hillshade
- * shows nothing, no crash). Base continental terrain + water carve are plan 024
- * (§3 composition); `heightAt` stays untouched (§3 compatibility rule).
+ * shows nothing, no crash). Base continental terrain + water carve compose on
+ * top of this; `heightAt` stays untouched.
  */
 export function unionFields(fields: ElevationField[]): ElevationField {
   if (fields.length === 0) return () => ({ v: 0, dx: 0, dy: 0 });
@@ -94,8 +94,8 @@ export function unionFields(fields: ElevationField[]): ElevationField {
 }
 
 /**
- * Quantized raw-height lattice for one DEM tile — the DURABLE determinism record
- * (§4.2). `res × res` row-major integer terrarium elevations `E = round(clamp(
+ * Quantized raw-height lattice for one DEM tile — the DURABLE determinism
+ * record. `res × res` row-major integer terrarium elevations `E = round(clamp(
  * K·field, −base, max))`. Each pixel samples the field at the ABSOLUTE gen-space
  * point under that pixel (`lng·scale, lat·scale` — display units are the fake
  * lng/lat, gen-space meters = unit·scaleMetersPerUnit, matching

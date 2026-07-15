@@ -1,25 +1,22 @@
 /**
- * Signed distance fields over generation space (plan 023 §2).
+ * Signed distance fields over generation space.
  *
  * A field answers `f(x, y)` from durable inputs alone — no neighborhood, no
  * global pass — which is the property that makes tiles seam-free and
- * determinism cheap (plan 023 §0). An SDF is signed: **positive inside**,
- * negative outside, meters. This is the common currency between sketches,
- * procgen output, and the elevation layers to come.
+ * determinism cheap. An SDF is signed: **positive inside**, negative outside,
+ * meters. This is the common currency between sketches, procgen output, and the
+ * elevation layers.
  *
- * BIT-EXACTNESS (adversarial review 2026-07-12, plan 023 §2): the leaf
- * primitives here — `distanceToRingBoundary`, the even-odd containment loops,
- * and `distanceToPolyline` — were MOVED VERBATIM out of `region.ts` /
- * `fabricConstraints.ts`, not reimplemented. `region.ts` and
- * `fabricConstraints.ts` now import them back (one-way: region/fabric →
- * fields, acyclic). Because the arithmetic is the identical code in the
- * identical order, `interiorT`/`distanceToBoundary`/`pointInRing` produce
- * byte-identical output — proven by the `.snap` goldens (forest/farmland/park/
- * river/wall) and the city digest golden (`cityGolden.test.ts`). Do not
- * "clean up" the float expressions here; a single reassociated add re-rolls
- * every existing city on upgrade.
+ * BIT-EXACTNESS: the leaf primitives here — `distanceToRingBoundary`, the
+ * even-odd containment loops, and `distanceToPolyline` — are the shared
+ * source of truth also imported back by `region.ts` and `fabricConstraints.ts`
+ * (one-way: region/fabric → fields, acyclic). Their arithmetic must stay
+ * character-identical wherever it is consumed so that
+ * `interiorT`/`distanceToBoundary`/`pointInRing` produce byte-identical output.
+ * Do not "clean up" the float expressions here; a single reassociated add
+ * re-rolls every existing city on upgrade.
  *
- * Determinism rules D1–D6 binding; pure/headless (no DOM/map/Obsidian).
+ * Pure/headless (no DOM/map/Obsidian).
  */
 
 export type Pt = [number, number];
@@ -27,11 +24,11 @@ export type Pt = [number, number];
 /** A scalar field over generation space: meters in, scalar out. */
 export type Field = (x: number, y: number) => number;
 
-// ─── Leaf primitives (moved verbatim — see BIT-EXACTNESS note) ───────────────
+// ─── Leaf primitives (bit-exact twins — see BIT-EXACTNESS note) ──────────────
 
 /**
  * Min distance from a point to any boundary segment of a CLOSED ring
- * (first === last). Moved verbatim from `region.ts#distanceToRingBoundary`.
+ * (first === last). Bit-exact twin of `region.ts#distanceToRingBoundary`.
  */
 export function distanceToRingBoundary(closed: Pt[], x: number, y: number): number {
   let best = Infinity;
@@ -50,9 +47,10 @@ export function distanceToRingBoundary(closed: Pt[], x: number, y: number): numb
 
 /**
  * Even-odd ray cast over a CLOSED region ring (iterates the open portion:
- * `ring` is closed, so it stops before the closure). Moved verbatim from
+ * `ring` is closed, so it stops before the closure). Bit-exact twin of
  * `region.ts#regionContains`. NOTE the closure convention differs from
- * `pointInRingClosed` below — do NOT unify them (plan 023 §2: same bytes).
+ * `pointInRingClosed` below — do NOT unify them: they must stay byte-identical
+ * to their respective consumers.
  */
 export function ringContainsEvenOdd(ring: Pt[], x: number, y: number): boolean {
   let inside = false;
@@ -67,7 +65,7 @@ export function ringContainsEvenOdd(ring: Pt[], x: number, y: number): boolean {
 
 /**
  * Ray-cast point-in-polygon over a ring, iterating EVERY vertex (the geojson
- * closure convention). Moved verbatim from `fabricConstraints.ts#pointInRing`
+ * closure convention). Bit-exact twin of `fabricConstraints.ts#pointInRing`
  * — pure arithmetic on the ring, deterministic. Distinct loop from
  * `ringContainsEvenOdd` (different closure handling); kept separate on purpose.
  */
@@ -82,8 +80,8 @@ export function pointInRingClosed(ring: Pt[], x: number, y: number): boolean {
 }
 
 /**
- * Min distance from a point to any segment of an OPEN polyline. Moved verbatim
- * from `region.ts#distanceToSpine` (body). Degenerate handling preserved:
+ * Min distance from a point to any segment of an OPEN polyline. Bit-exact twin
+ * of `region.ts#distanceToSpine` (body). Degenerate handling preserved:
  * empty → Infinity, single point → distance to that point.
  */
 export function distanceToPolyline(pts: Pt[], x: number, y: number): number {

@@ -1,5 +1,5 @@
 /**
- * Stage C2 — OBB parcelling + footprints (procgen v3 §5.3.2–3, Evans's Lots):
+ * Stage C2 — OBB parcelling + footprints (Evans's Lots):
  * each block is recursively sliced across its oriented-bounding-box long axis
  * until lots reach profile targets; each lot with street frontage gets one
  * building footprint inset toward — and aligned to — its frontage edge, so
@@ -7,13 +7,12 @@
  * deep blocks).
  *
  * Determinism argument: recursion is keyed `hashSeed(citySeed, blockId, path)`
- * (same discipline as the legacy blocks.ts) — a parcel's RNG stream depends
- * only on its block identity and its split path, never on sibling order (D2/
- * D6). The OBB search iterates ring-edge directions in ring order with strict
- * `<` (first of ties wins). Rotation trig is FP but only *shapes* geometry;
- * no topology gate compares FP for equality (D4). Everything here is
- * per-block pure — a future per-tile parcel derivation (§3.3 size valve) can
- * call it with any subset of blocks.
+ * — a parcel's RNG stream depends only on its block identity and its split
+ * path, never on sibling order (D2/D6). The OBB search iterates ring-edge
+ * directions in ring order with strict `<` (first of ties wins). Rotation trig
+ * is FP but only *shapes* geometry; no topology gate compares FP for equality
+ * (D4). Everything here is per-block pure — a future per-tile parcel derivation
+ * can call it with any subset of blocks.
  *
  * Anti-Watabou: degenerate slices (sub-3-vertex, near-zero area — possible
  * when Sutherland-Hodgman cuts a concave face) are dropped and counted,
@@ -30,7 +29,7 @@ type Pt = [number, number];
 /** Recursion depth cap (D3 — a budget, not a convergence test). */
 export const MAX_SPLIT_DEPTH = 14;
 /** Hashed chance a splittable lot stops early anyway — oversized lots are the
- * "violation chances" of §5.3.2, and they read as manors/warehouses. */
+ * "violation chances", and they read as manors/warehouses. */
 export const STOP_VIOLATION_P = 0.07;
 /** Both endpoints AND midpoint of a parcel edge must be this close (m) to the
  * block boundary to count as frontage (midpoint excludes interior cut edges
@@ -173,7 +172,7 @@ export function subdivideBlocks(
       stats.degenerate++;
       continue;
     }
-    // §5.4 (v3.3): cityness modulates parcel minArea — small dense lots in
+    // Cityness modulates parcel minArea — small dense lots in
     // the core, broader lots toward the rim. Sampled once at the block
     // centroid so the whole recursion shares one scale (per-block purity).
     const [bcx, bcy] = centroid(blockRing);

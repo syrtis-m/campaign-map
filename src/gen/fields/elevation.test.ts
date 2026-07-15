@@ -1,9 +1,9 @@
 /**
- * Unit tests for the elevation noise (plan 023 §1.1): analytic-derivative value
+ * Unit tests for the elevation noise: analytic-derivative value
  * noise + gradient-damped fBm. The load-bearing check is the FINITE-DIFFERENCE
  * gradient verification — a snapshot proves the value is stable, only the FD
  * cross-check catches a wrong chain-rule / `1/cell` factor / sign flip in the
- * analytic derivative (the whole reason the derivative lands this phase).
+ * analytic derivative.
  */
 import { describe, expect, it } from "vitest";
 import { valueNoise2DWithDeriv, fbmEroded } from "./elevation";

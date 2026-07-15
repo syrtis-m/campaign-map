@@ -28,12 +28,12 @@ function mountainFeature(
   } as FabricFeature;
 }
 
-describe("fields/mountainField — the 23-E verbatim move (bit-exactness by construction)", () => {
+describe("fields/mountainField — bit-exact reuse by construction", () => {
   it("mountain.ts re-exports the SAME function (no fork, no drift)", () => {
     expect(reExported).toBe(mountainHeightField);
   });
 
-  it("field values match the pre-move behavior shape: positive relief inside, exact zero far outside", () => {
+  it("field values have the right shape: positive relief inside, exact zero far outside", () => {
     const region = makeRegion("m", RING);
     const f = mountainHeightField(777, region, { terrain: "alpine", amplitude: 0.8, roughness: 0.5 });
     const inside = f(750, 750);
@@ -49,7 +49,7 @@ describe("fields/mountainField — the 23-E verbatim move (bit-exactness by cons
   });
 });
 
-describe("fields/elevationFieldFromFabric — the cross-KIND elevation surface (box 23-E)", () => {
+describe("fields/elevationFieldFromFabric — the cross-KIND elevation surface", () => {
   it("returns null with no fabric, empty fabric, or no mountain features", () => {
     expect(elevationFieldFromFabric(undefined)).toBeNull();
     expect(elevationFieldFromFabric([])).toBeNull();
@@ -61,7 +61,7 @@ describe("fields/elevationFieldFromFabric — the cross-KIND elevation surface (
     } as unknown as FabricFeature;
     expect(elevationFieldFromFabric([road])).toBeNull();
     // A mountain-KIND sketch without a procgen block is inert — not a request,
-    // not an elevation source (plan 020: cancel leaves an inert shape).
+    // not an elevation source (cancel leaves an inert shape).
     const inert = {
       type: "Feature",
       id: "m0",

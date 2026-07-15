@@ -1,8 +1,7 @@
 /**
- * Unit tests for the `src/gen/fields/` module (plan 023 §2): SDF builders,
+ * Unit tests for the `src/gen/fields/` module: SDF builders,
  * combinators, transforms — value correctness, determinism, seam behavior, and
- * the bit-exact equivalence to the `region.ts` code the primitives were moved
- * out of (the retrofit's contract).
+ * the bit-exact equivalence to the `region.ts` twins of these primitives.
  */
 import { describe, expect, it } from "vitest";
 import {

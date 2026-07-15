@@ -1,20 +1,17 @@
 /**
- * Elevation noise + the point-evaluable mountain height field (plan 023 §1.1 /
- * §3). These are the field entries §2 deferred out of 23-A — they land NOW with
- * their first consumer, the `mountain` region generator (DECISIONS 2026-07-14
- * "23-A"). Pure/headless, D1–D6 binding: every function answers from `(seed,
- * position)` alone — no neighborhood, no global pass — which is the property
- * (plan 023 §0) that makes tiles seam-free and determinism cheap.
+ * Elevation noise + the point-evaluable mountain height field, consumed by the
+ * `mountain` region generator. Pure/headless: every function answers from
+ * `(seed, position)` alone — no neighborhood, no global pass — which is the
+ * property that makes tiles seam-free and determinism cheap.
  *
- * ADDITIVE, NOT a refactor of `world/noise.ts`: the existing `valueNoise2D`/
- * `fractalNoise2D` use CUBIC smoothstep (C0 derivative — fine for a plain
- * value field). The analytic-derivative noise here uses QUINTIC easing (iq
- * morenoise) so the derivative is C1-continuous — a genuinely different
- * function. `world/heightmap.ts#heightAt` (world-tier regions/biomes) keeps its
- * cubic noise UNTOUCHED (plan 023 §3 compatibility rule); a single reassociated
- * add there re-rolls every existing campaign's world tier (the 23-A bit-exact
- * lesson, now a release blocker). Nothing existing is rerouted through this
- * module — it is consumed only by NEW features.
+ * Distinct from `world/noise.ts`: the existing `valueNoise2D`/`fractalNoise2D`
+ * use CUBIC smoothstep (C0 derivative — fine for a plain value field). The
+ * analytic-derivative noise here uses QUINTIC easing (iq morenoise) so the
+ * derivative is C1-continuous — a genuinely different function.
+ * `world/heightmap.ts#heightAt` (world-tier regions/biomes) keeps its cubic
+ * noise untouched; a single reassociated add there re-rolls every existing
+ * campaign's world tier (a release blocker). Nothing existing is rerouted
+ * through this module — it is consumed only by new features.
  */
 import { hashSeed, mulberry32 } from "../rng";
 
@@ -99,7 +96,7 @@ export interface FbmErodedOptions {
   baseCell: number;
   /** Salt disambiguating this fBm from others on the same seed. */
   salt: string;
-  /** Gradient-damping strength (iq's erosion trick, §1.1): each octave's
+  /** Gradient-damping strength (iq's erosion trick): each octave's
    * amplitude is scaled by `1/(1 + damping·|Σ prior octave gradients|²)`, so
    * steep areas suppress fine detail (smooth steep slopes, detailed flats /
    * ridgelines). `0` disables damping ⇒ a plain fBm whose returned gradient is
@@ -122,7 +119,7 @@ const DEFAULT_FBM: FbmErodedOptions = {
 };
 
 /**
- * Gradient-damped fractional Brownian motion (iq's erosion-like sum, §1.1) —
+ * Gradient-damped fractional Brownian motion (iq's erosion-like sum) —
  * the chosen point-evaluable base for elevation. Accumulates per-octave
  * analytic derivatives into a running vector; each octave's amplitude is damped
  * by `1/(1 + damping·|d|²)` so steep terrain loses fine octaves.
@@ -180,9 +177,7 @@ export function fbmEroded(
 }
 
 /** A height field over gen-space meters: value + analytic gradient at a point.
- * This is the `elevationWithGrad(x,y)` shape plan 023 §3 names — rivers/routes
- * (plan 024) need the gradient for slope queries, and it is already computed
- * inside the fBm loop. In 23-B one field is built per sketched mountain region;
- * plan 024 stage 0 composes several (+ a campaign base, + water carve) into the
- * campaign-wide field. */
+ * Rivers/routes need the gradient for slope queries, and it is already computed
+ * inside the fBm loop. One field is built per sketched mountain region; several
+ * (+ a campaign base, + water carve) compose into the campaign-wide field. */
 export type ElevationField = (x: number, y: number) => HeightSample;

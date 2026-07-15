@@ -1,15 +1,15 @@
-// Plan 024-C — the city consumes the GENERATED upstream river CHANNEL
-// (`constraints.upstream.water`), the byte-changing consumer 24-B deferred.
+// The city consumes the GENERATED upstream river CHANNEL
+// (`constraints.upstream.water`).
 //
-// §6's windiness acceptance, made a pinned-seed unit proof (no Obsidian): a
-// district with a meandered river channel crossing it must (1) regenerate
-// DIFFERENTLY than the same district reading only the straight sketched spine
-// (consumption is wired), (2) keep every building footprint OUT of the channel
-// ("nothing swims" — the blockedByWater path now folds `channelRings`), (3)
-// bridge the channel (arterials cross it as bridges tracking the real water),
-// (4) TRACK the channel — a windier channel relocates the bridges/quays — and
-// (5) stay byte-identical to pre-24-C when there is no upstream (the 23-A
-// digest golden + sketched-river citynet tests are protected).
+// Windiness acceptance as a pinned-seed unit proof (no Obsidian): a district
+// with a meandered river channel crossing it must (1) regenerate DIFFERENTLY
+// than the same district reading only the straight sketched spine (consumption
+// is wired), (2) keep every building footprint OUT of the channel ("nothing
+// swims" — the blockedByWater path folds `channelRings`), (3) bridge the channel
+// (arterials cross it as bridges tracking the real water), (4) TRACK the channel
+// — a windier channel relocates the bridges/quays — and (5) stay byte-identical
+// when there is no upstream (the digest golden + sketched-river citynet tests
+// are protected).
 //
 // Seeds are PINNED (`citySeedFor(CAMPAIGN_SEED, domain)` + fixed river seeds),
 // so every assertion is a within-file relative comparison — no cross-run
@@ -92,7 +92,7 @@ function anyVertexInChannel(f: GeoJSON.Feature, rings: Pt[][]): boolean {
   return false;
 }
 
-describe("citynet consumes upstream.water (plan 024-C windiness acceptance)", () => {
+describe("citynet consumes upstream.water (windiness acceptance)", () => {
   const water = channelWater(0.85);
   const rings = channelRings(water);
   const withChannel: Partial<GenerationConstraints> = {
@@ -117,7 +117,7 @@ describe("citynet consumes upstream.water (plan 024-C windiness acceptance)", ()
     const net = city(withChannel);
     const footprints = net.filter((f) => (f.properties as { generatorId?: string } | null)?.generatorId === "city-footprint");
     expect(footprints.length).toBeGreaterThan(0);
-    // Every footprint's centroid is dry — the 24-C "buildings don't swim"
+    // Every footprint's centroid is dry — the "buildings don't swim"
     // guarantee (a block may straddle the channel; its footprints in the water
     // are dropped). Arterials legitimately CROSS as bridges, so streets are not
     // asserted here — that is the (3) bridge check.
@@ -149,7 +149,7 @@ describe("citynet consumes upstream.water (plan 024-C windiness acceptance)", ()
     expect(JSON.stringify(a)).not.toBe(JSON.stringify(b));
   });
 
-  it("(5) no upstream ⇒ byte-identical to pre-24-C (empty and absent both no-op)", () => {
+  it("(5) no upstream ⇒ byte-identical with no channel (empty and absent both no-op)", () => {
     const base = JSON.stringify(city({ fabricFeatures: [RIVER_SKETCH] }));
     expect(JSON.stringify(city({ fabricFeatures: [RIVER_SKETCH], upstream: undefined }))).toBe(base);
     expect(JSON.stringify(city({ fabricFeatures: [RIVER_SKETCH], upstream: { water: [] } }))).toBe(base);

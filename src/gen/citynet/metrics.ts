@@ -1,23 +1,22 @@
 /**
- * City-network metrics (plan 025 §3.1): a PURE measurement pass over the
- * feature set `generateCityNetwork` emits, turning a chunk of the docs/04
- * "screenshot test" from vibes into numbers. It reads features only — it never
- * generates, never mutates, and imposes NO determinism obligations of its own
- * beyond being a deterministic function of its inputs (D6). Because it is pure
- * measurement, adding it changes ZERO generator bytes: goldens are untouched.
+ * City-network metrics: a PURE measurement pass over the feature set
+ * `generateCityNetwork` emits, turning a chunk of the docs/04 "screenshot test"
+ * from vibes into numbers. It reads features only — it never generates, never
+ * mutates, and imposes NO determinism obligations of its own beyond being a
+ * deterministic function of its inputs (D6).
  *
- * The numbers are calibrated against Serge Salat's figure-ground studies
- * (§1.2): intersection density (Venice 688 · Manhattan ~112–192 · Chongqing
+ * The numbers are calibrated against Serge Salat's figure-ground studies:
+ * intersection density (Venice 688 · Manhattan ~112–192 · Chongqing
  * superblocks ~49–66 /km²), street linear density (≥18 km/km² guideline floor;
  * Amsterdam 30.7, Manhattan 22.7), and street land share (25–30 %).
  *
- * WIDTH (phase 025-B): the §3.3 form-based width system now emits an explicit
- * `width` (metres) on every `city-street` feature (`profiles.ts` width table →
- * `index.ts`), so the width-derived metrics (`streetLandShare`,
- * `widthHistogram`) read it directly and are exact for generated cities. The
- * class→width table (`WIDTH_BY_CLASS`) survives ONLY as the fallback for a
- * feature that carries no `width` (synthetic test fixtures, pre-025 cached
- * tiles) — see `widthOf`. Every metric is exact for real generator output.
+ * WIDTH: the form-based width system emits an explicit `width` (metres) on every
+ * `city-street` feature (`profiles.ts` width table → `index.ts`), so the
+ * width-derived metrics (`streetLandShare`, `widthHistogram`) read it directly
+ * and are exact for generated cities. The class→width table (`WIDTH_BY_CLASS`)
+ * survives ONLY as the fallback for a feature that carries no `width` (synthetic
+ * test fixtures) — see `widthOf`. Every metric is exact for real generator
+ * output.
  */
 import type { ProcgenRegion } from "../region";
 
@@ -62,15 +61,14 @@ export interface NetworkMetrics {
   areaKm2: number;
 }
 
-/** A benchmark band for one preset: closed ranges every metric must fall in
- * (per plan 025 §3.1), plus the Salat §1.2 figure-ground `anchor` the preset is
- * calibrated toward. Ranges are deliberately GENEROUS windows, not exact
- * values: the output is deterministic per pinned seed, so a range that current
- * output satisfies both documents intent and tolerates future minor tuning
- * while still catching a real regression (a halved intersection density, a
- * blown-up land share). Per §5 OQ#1: these distribution bands WARN in the live
- * gallery gate (they encode taste — Jonah calibrates from review/gallery) and
- * are asserted in the unit suite where they are the numeric contract. */
+/** A benchmark band for one preset: closed ranges every metric must fall in,
+ * plus the Salat figure-ground `anchor` the preset is calibrated toward. Ranges
+ * are deliberately GENEROUS windows, not exact values: the output is
+ * deterministic per pinned seed, so a range that current output satisfies both
+ * documents intent and tolerates future minor tuning while still catching a real
+ * regression (a halved intersection density, a blown-up land share). These
+ * distribution bands WARN in the live gallery gate (they encode taste) and are
+ * asserted in the unit suite where they are the numeric contract. */
 export interface PresetBenchmark {
   intersectionsPerKm2: [number, number];
   streetKmPerKm2: [number, number];
@@ -81,19 +79,17 @@ export interface PresetBenchmark {
 }
 
 /**
- * Benchmark bands for the four EXISTING presets (plan 025-A). Derived by
- * MEASURING the deterministic output on the gallery ring (regular 16-gon,
- * effective radius 700 m, pinned seed) and widening to research-anchored
- * windows. Cross-preset ORDERINGS (na-grid coarsest grain + most permeable +
- * sparsest; euro-medieval finer + denser than na-grid; na-suburb the most
- * dead-ends) are asserted separately in the suite — they are the strongest,
- * most research-faithful signals. New presets add their band here as they land.
+ * Benchmark bands per preset. Derived by MEASURING the deterministic output on
+ * the gallery ring (regular 16-gon, effective radius 700 m, pinned seed) and
+ * widening to research-anchored windows. Cross-preset ORDERINGS (na-grid
+ * coarsest grain + most permeable + sparsest; euro-medieval finer + denser than
+ * na-grid; na-suburb the most dead-ends) are asserted separately in the suite —
+ * they are the strongest, most research-faithful signals. New presets add their
+ * band here as they land.
  *
- * PHASE-A CAVEAT: our generator emits denser street fabric than the historic
- * cities Salat measured, so `streetLandShare` runs a little above his 25–30 %
- * guideline (the class-derived width table, §3.3 pending, also inflates it).
- * The bands accept that; the §3.3 width system + §3.4 permeability floor bring
- * it toward the guideline in later phases.
+ * CAVEAT: the generator emits denser street fabric than the historic cities
+ * Salat measured, so `streetLandShare` runs a little above his 25–30 %
+ * guideline. The bands accept that.
  */
 export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
   "euro-medieval": {
@@ -128,14 +124,14 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [1.2, 1.55],
     anchor: "Washington suburbs ~36 (ours denser) — cul-de-sac dead-ends",
   },
-  // superblock (plan 025 §2.6 + §3.1) — the ANTI-pattern band. Unlike the
-  // walkable presets, these ranges assert the research's BAD numbers ARE
-  // produced: the SPARSEST intersections, a street density DELIBERATELY under
-  // Salat's 18 km/km² floor, tree-like (low) permeability, and coarse megablock
-  // grain. streetLandShare stays in the 25–30 % window despite the sparse web
-  // because the arterial CANYONS (85 m) are wide — that width also puts >20 % of
-  // street length in the >20 m histogram band (the only preset that does). DO
-  // NOT retune toward walkable values; low connectivity is the genre (§2.6).
+  // superblock — the ANTI-pattern band. Unlike the walkable presets, these
+  // ranges assert the research's BAD numbers ARE produced: the SPARSEST
+  // intersections, a street density DELIBERATELY under Salat's 18 km/km² floor,
+  // tree-like (low) permeability, and coarse megablock grain. streetLandShare
+  // stays in the 25–30 % window despite the sparse web because the arterial
+  // CANYONS (85 m) are wide — that width also puts >20 % of street length in the
+  // >20 m histogram band (the only preset that does). DO NOT retune toward
+  // walkable values; low connectivity is the genre.
   superblock: {
     intersectionsPerKm2: [12, 42],
     streetKmPerKm2: [5, 14],
@@ -144,16 +140,16 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [1.0, 1.28],
     anchor: "Chongqing superblocks ~49–66 / Beijing South 13–16 — modernist megablocks, low connectivity",
   },
-  // ── plan 025-C presets: measured on the gallery ring (pinned seed), widened
-  // to research-anchored windows (25-A methodology). Cross-preset orderings —
-  // tartan-grid the DENSEST intersections of any preset, eixample the chamfered
-  // grid — are asserted separately in the suite (the strongest signals).
+  // ── Grid presets: measured on the gallery ring (pinned seed), widened
+  // to research-anchored windows. Cross-preset orderings — tartan-grid the
+  // DENSEST intersections of any preset, eixample the chamfered grid — are
+  // asserted separately in the suite (the strongest signals).
   //
-  // tartan-grid (§2.2): the two-scale Seoul/Tokyo grid — a coarse arterial grid
+  // tartan-grid: the two-scale Seoul/Tokyo grid — a coarse arterial grid
   // packed with a fine alley web. The HIGHEST intersection density AND the
   // narrowest fabric (its 9 m streets + 4 m alleys put >90% of street length in
-  // the <10 m band, the only preset that does — the §1.2 "highest proportion
-  // narrow" signature). Densest of all presets by design.
+  // the <10 m band, the only preset that does — the "highest proportion narrow"
+  // signature). Densest of all presets by design.
   "tartan-grid": {
     intersectionsPerKm2: [560, 900],
     streetKmPerKm2: [38, 60],
@@ -162,9 +158,9 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [1.45, 1.85],
     anchor: "Seoul 313 · Tokyo Nihonbashi 386 — two-scale tartan, densest & narrowest fabric",
   },
-  // ward-grid (§2.3): Savannah walled modular quarters — a regular grid ringed
+  // ward-grid: Savannah walled modular quarters — a regular grid ringed
   // by a wall, punctuated by square/park landmarks; wide mains vs narrow
-  // standards (§1.3 directional asymmetry). Moderate, regular-grid numbers.
+  // standards (directional asymmetry). Moderate, regular-grid numbers.
   "ward-grid": {
     intersectionsPerKm2: [110, 260],
     streetKmPerKm2: [16, 30],
@@ -173,7 +169,7 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [1.22, 1.55],
     anchor: "Amsterdam core 314 · Savannah ward grid — regular blocks around squares",
   },
-  // eixample (§2.4): Barcelona Cerdà — uniform blocks on a single cardinal
+  // eixample: Barcelona Cerdà — uniform blocks on a single cardinal
   // orientation with CHAMFERED corners (octagonal blocks/intersections). Denser
   // than the historic anchor (our generator's finer fabric); the octagon is the
   // signature (asserted by block-corner geometry, not a metric band).
@@ -185,14 +181,14 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [1.42, 1.85],
     anchor: "Barcelona Cerdà 103 (ours denser) — chamfered octagon blocks, uniform grid",
   },
-  // ── plan 025-D presets: euro-medieval organic base + the §3.2 axial-
-  // breakthrough operator. Both run DENSER than plain euro-medieval — the
-  // boulevards add street length + crossing intersections and the wide (30 m)
-  // cuts push a few % of length into the >20 m band (the only euro-organic
-  // presets that show a >20 m column). Measured on the gallery ring (pinned
-  // seed) and widened to research windows (25-A methodology).
+  // ── Axial presets: euro-medieval organic base + the axial-breakthrough
+  // operator. Both run DENSER than plain euro-medieval — the boulevards add
+  // street length + crossing intersections and the wide (30 m) cuts push a few %
+  // of length into the >20 m band (the only euro-organic presets that show a
+  // >20 m column). Measured on the gallery ring (pinned seed) and widened to
+  // research windows.
   //
-  // haussmann (§2.1): perspective boulevards CUT as chords through the retained
+  // haussmann: perspective boulevards CUT as chords through the retained
   // warren, crossing at interior star plazas. Anchor: Paris Étoile 133 /
   // Mayfair 165 (organic grain, few grand cuts — ours denser).
   haussmann: {
@@ -203,7 +199,7 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [1.32, 1.65],
     anchor: "Paris Étoile 133 · Mayfair 165 — breakthrough boulevards through a medieval warren, star plazas",
   },
-  // baroque-axial (§2.5): a straight trident of grand corsi fanning from one
+  // baroque-axial: a straight trident of grand corsi fanning from one
   // gate piazza to monumental far-rim endpoints. Anchor: Roma Trident / Turin
   // Via Po (a few composed axes through organic fabric).
   "baroque-axial": {
@@ -214,11 +210,11 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [1.3, 1.62],
     anchor: "Roma Trident · Turin Via Po — a straight trident of corsi from a gate piazza",
   },
-  // ── plan 025-E presets: the concentric-ring pattern family (§1.3 "concentric
+  // ── Concentric-ring presets: the concentric-ring pattern family ("concentric
   // grids", distinct from grid + organic). Measured on the gallery ring (pinned
-  // seed) and widened to research windows (25-A methodology).
+  // seed) and widened to research windows.
   //
-  // canal-rings (§2.7): Amsterdam 17th-c. — concentric CANALS crossed by radial
+  // canal-rings: Amsterdam 17th-c. — concentric CANALS crossed by radial
   // bridges, the fabric knit into elongated blocks BETWEEN the rings. The canals
   // (water) fragment the street web, so permeability runs LOW (<1: streets
   // dead-end at the water where no bridge crosses) — the canal-city signature,
@@ -232,7 +228,7 @@ export const PRESET_BENCHMARKS: Record<string, PresetBenchmark> = {
     permeability: [0.55, 1.05],
     anchor: "Amsterdam 17th-c. ≈195 — concentric canals, radial bridges, elongated blocks",
   },
-  // radial-star (§2.8): Paris Étoile — avenues from a rond-point crossed by
+  // radial-star: Paris Étoile — avenues from a rond-point crossed by
   // concentric CONNECTOR RINGS, wedge blocks toward the rim. The star spokes +
   // rings are the through-avenue web (high avenueShare); moderate, well-
   // connected numbers. Anchor: Paris Étoile ≈133 (ours denser).
@@ -271,12 +267,11 @@ export function benchmarkViolations(presetId: string, m: NetworkMetrics): string
 
 /**
  * Class→width table (metres): the FALLBACK width for a street feature that
- * carries no emitted `width` (synthetic test fixtures; pre-025 cached tiles).
- * Generated cities now emit an explicit `width` (§3.3), so `widthOf` prefers
- * that; these values match the pre-025 profiles' emitted widths
- * (`LEGACY_STREET_WIDTHS`) so a missing-width fallback reads identically.
- * Values follow §1.2's form hierarchy: alleys narrow, ordinary streets
- * ~10–18 m facade-to-facade, arterials/rings wider, boulevards widest.
+ * carries no emitted `width` (synthetic test fixtures). Generated cities emit an
+ * explicit `width`, so `widthOf` prefers that; these values match the walkable
+ * profiles' emitted widths (`LEGACY_STREET_WIDTHS`) so a missing-width fallback
+ * reads identically. Values follow the form hierarchy: alleys narrow, ordinary
+ * streets ~10–18 m facade-to-facade, arterials/rings wider, boulevards widest.
  */
 export const WIDTH_BY_CLASS: Record<string, number> = {
   alley: 5,
@@ -287,7 +282,7 @@ export const WIDTH_BY_CLASS: Record<string, number> = {
 };
 const DEFAULT_WIDTH = 12;
 
-/** A feature's street width: the emitted `width` once §3.3 lands, else the
+/** A feature's street width: the emitted `width` when present, else the
  * class-derived approximation. */
 function widthOf(props: Record<string, unknown>): number {
   const w = props.width;

@@ -1,20 +1,17 @@
 /**
- * Mountain elevation field (plan 023 §3) as a FIELDS module — moved VERBATIM
- * from `src/gen/mountain.ts` in box 23-E so that OTHER generators (farmland's
- * paddy terraces, the river's slope coupling — plan 022 §3.1/§3.5) can read the
+ * Mountain elevation field as a FIELDS module, so that OTHER generators
+ * (farmland's paddy terraces, the river's slope coupling) can read the
  * elevation the sketched mountains define WITHOUT importing the mountain
  * generator (the never-import-one-generator-from-another rule: shared field
  * access goes through `fields/`). `mountain.ts` imports these back one-way
- * (mountain → fields, acyclic) and re-exports its public API unchanged — the
- * 23-A verbatim-move bit-exactness technique: character-identical arithmetic,
- * same evaluation order, so every pre-23-E mountain byte-stays.
+ * (mountain → fields, acyclic) and re-exports its public API unchanged; the
+ * arithmetic here must stay character-identical to it (bit-exact reuse).
  *
- * STAGE-LAYERING LEGALITY (the 23-E design constraint): everything here is a
- * pure function of the DURABLE SKETCH LAYER — persisted seeds/params/rings of
- * mountain fabric features — never of another generator's OUTPUT. Reading it
- * from farmland/river is the same legality as 23-D's DEM ("pure field
- * evaluation over the durable sketch layer"); output→output coupling is plan
- * 024's cascade, not this.
+ * STAGE-LAYERING LEGALITY: everything here is a pure function of the DURABLE
+ * SKETCH LAYER — persisted seeds/params/rings of mountain fabric features —
+ * never of another generator's OUTPUT. Reading it from farmland/river is legal
+ * pure field evaluation over the durable sketch layer; output→output coupling
+ * belongs to the cascade, not here.
  */
 import { fMask } from "./combinators";
 import { sdfPolygon } from "./sdf";
@@ -27,10 +24,10 @@ type Pt = [number, number];
 export const MOUNTAIN_TERRAINS = ["alpine", "mesa", "rolling-hills"] as const;
 export type MountainTerrain = (typeof MOUNTAIN_TERRAINS)[number];
 
-/** Mountain params v1 (plan 023 §3). All knobs have defaults so a bare `{}`
- * validates to a reasonable alpine massif (additive-params rule §1). `terrain`
- * drives layout (like the city `profile`), never a preset-id branch; `amplitude`
- * 0–1 scales relief height; `roughness` 0–1 adds octaves (finer detail). */
+/** Mountain params. All knobs have defaults so a bare `{}` validates to a
+ * reasonable alpine massif. `terrain` drives layout (like the city `profile`),
+ * never a preset-id branch; `amplitude` 0–1 scales relief height; `roughness`
+ * 0–1 adds octaves (finer detail). */
 export interface MountainParams {
   terrain: MountainTerrain;
   amplitude: number;
@@ -78,7 +75,7 @@ export function terrainConfig(terrain: MountainTerrain): TerrainConfig {
 /** Terrace transform (mesa): flatten tops, steepen risers → cliff bands. Maps
  * `v ∈ [0,1]` to a stepped value whose plateaus are flat and whose steps are
  * sharp. `steps ≤ 0` is the identity. Exported for direct unit testing (the
- * mesa signature is otherwise subtle until contours land, 23-C). */
+ * mesa signature is otherwise subtle until contours land). */
 export function terrace(v: number, steps: number): number {
   if (steps <= 0) return v;
   const s = Math.min(0.999999, Math.max(0, v)) * steps;
@@ -94,21 +91,19 @@ export function clamp01(v: number): number {
 }
 
 /**
- * Build the mountain height field for a region (plan 023 §3): the campaign
- * base is deferred to plan 024, so this is `A · mask(x,y) · terrace(fbm(x,y))`
- * in meters, plus its analytic gradient. Exposed as an `ElevationField` — the
- * `elevationWithGrad(x,y)` shape §3 names, so plan 024 stage 0 can compose
- * several of these (+ base, + water carve) into the campaign-wide field.
+ * Build the mountain height field for a region: without a campaign base this is
+ * `A · mask(x,y) · terrace(fbm(x,y))` in meters, plus its analytic gradient.
+ * Exposed as an `ElevationField` so callers can compose several of these
+ * (+ base, + water carve) into the campaign-wide field.
  *
  * The returned gradient uses the RAW fbm gradient scaled by `A·mask` (the mask
  * factor's own gradient is dropped): deep inside `mask ≡ 1` (grad 0) so this is
  * exact there, and near the rim the tick DIRECTION should follow the terrain
- * slope, not point radially inward along `∇mask` — a deliberate choice (plan
- * 023 §3 hachure-orientation open question) that keeps the interior edit-local
- * and the rim natural.
+ * slope, not point radially inward along `∇mask` — a deliberate choice that
+ * keeps the interior edit-local and the rim natural.
  *
  * `region` is structural (`{ ring }`) so both a full `ProcgenRegion` and a
- * fabric-derived ring qualify — the arithmetic is untouched from 23-B.
+ * fabric-derived ring qualify.
  */
 export function mountainHeightField(seed: number, region: { ring: Pt[] }, params: MountainParams): ElevationField {
   const cfg = terrainConfig(params.terrain);
@@ -160,22 +155,21 @@ function normalizeRing(raw: Pt[]): Pt[] | null {
 }
 
 /**
- * The campaign elevation field as seen THROUGH THE CONSTRAINTS (box 23-E): the
- * union of every sketched mountain region's height field, rebuilt from the
- * persisted `procgen` blocks (seed + params) and ring geometry carried on
+ * The campaign elevation field as seen THROUGH THE CONSTRAINTS: the union of
+ * every sketched mountain region's height field, rebuilt from the persisted
+ * `procgen` blocks (seed + params) and ring geometry carried on
  * `constraints.fabricFeatures` — i.e. a pure function of the durable sketch
  * layer, in gen-space meters (the host converts units before threading
  * constraints; see `generationContext`). This is the twin of the host-side
- * `campaignElevationSnapshot` (DEM, 23-D) for the PURE side of the boundary:
+ * `campaignElevationSnapshot` (DEM) for the PURE side of the boundary:
  * generators must not call the controller, but every generator already
  * receives the whole sketch layer, so the field composes from what is in hand.
  *
  * Determinism: mountains are visited in feature-id order (stable across
  * enumeration order); params parse defensively with the SAME defaults the host
- * uses (terrain "alpine", amplitude 0.6, roughness 0.5 — MapController's
- * regionElevationReport precedent). `null` when no mountain sketch exists, so
- * callers can keep their uncoupled code path byte-identical (the 23-E
- * no-mountain byte-identity rule).
+ * uses (terrain "alpine", amplitude 0.6, roughness 0.5, matching MapController's
+ * regionElevationReport). `null` when no mountain sketch exists, so callers can
+ * keep their uncoupled code path byte-identical.
  */
 export function elevationFieldFromFabric(fabricFeatures: FabricFeature[] | undefined): ElevationField | null {
   if (!fabricFeatures || fabricFeatures.length === 0) return null;

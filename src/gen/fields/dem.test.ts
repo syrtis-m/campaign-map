@@ -12,7 +12,7 @@ import { mountainHeightField, type MountainParams } from "../mountain";
 import { makeRegion } from "../region";
 
 /**
- * DEM raster support (plan 023 §4.2). The determinism surface is the QUANTIZED
+ * DEM raster support. The determinism surface is the QUANTIZED
  * INT LATTICE — every test here compares heights numerically; nothing ever
  * touches PNG bytes (canvas/zlib encoders are not part of the contract).
  */
@@ -97,7 +97,7 @@ describe("unionFields (campaign composition)", () => {
   });
 });
 
-describe("demTileLattice — raw-lattice determinism (the §4.2 durable record)", () => {
+describe("demTileLattice — raw-lattice determinism (the durable record)", () => {
   const RES = 32; // small lattice keeps the suite fast; math identical to 256
 
   it("same inputs twice → identical int lattice (determinism D1)", () => {
@@ -163,7 +163,7 @@ describe("demTileLattice — raw-lattice determinism (the §4.2 durable record)"
     expect(worstStep).toBeLessThan(2500);
   });
 
-  it("plain fbm field (no region mask) also seams — the campaign-base case for plan 024", () => {
+  it("plain fbm field (no region mask) also seams — the campaign-base case", () => {
     const f: ElevationField = (x, y): HeightSample => fbmEroded(99, x, y, { octaves: 4 });
     const K = 25;
     const a = demTileLattice(f, 7, 50, 60, RES, SCALE, K);

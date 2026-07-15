@@ -1,23 +1,17 @@
 /**
- * Wards (procgen v3 §5.3.4, regions since plan 020 §6): the district-Voronoi
- * concept survives at ward scale only — a handful of cells over Stage-A
- * sites (plaza center + points along each arterial), tagged
- * market/craft/temple/slum by hash and waterfront adjacency, clipped to the
- * sketched region. Themes may tint them subtly; blocks do NOT derive from
- * wards (they come from faces.ts).
+ * Wards: the district-Voronoi concept applies at ward scale only — a handful
+ * of cells over Stage-A sites (plaza center + points along each arterial),
+ * tagged market/craft/temple/slum by hash and waterfront adjacency, clipped to
+ * the sketched region. Themes may tint them subtly; blocks do NOT derive from
+ * wards (they come from faces.ts). A district polygon IS the city container, so
+ * it never excludes its own ward sites.
  *
- * Region clipping (plan-020 approved v1 tradeoff): a CONVEX region ring is
- * an exact Sutherland-Hodgman clip target, so cells are clipped to it (the
- * disc-parity path — the migrated 32-gon is convex). A CONCAVE ring is not,
- * so cells with ANY vertex outside the region are dropped whole —
- * deterministic but conservative; wards near concave notches are simply
- * absent. KNOWN v1 LIMITATION: candidate for a later polygon-boolean pass.
- * Determinism over completeness.
- *
- * RETIRED (plan 020 §6): the plan-019 "sketched district excludes ward
- * sites" contract. A district polygon now IS the city container — it cannot
- * simultaneously be a hole in its own city; `districtRings` left
- * FabricConstraintIndex with it.
+ * Region clipping: a CONVEX region ring is an exact Sutherland-Hodgman clip
+ * target, so cells are clipped to it (the migrated 32-gon is convex). A CONCAVE
+ * ring is not, so cells with ANY vertex outside the region are dropped whole —
+ * deterministic but conservative; wards near concave notches are simply absent.
+ * LIMITATION: a candidate for a later polygon-boolean pass. Determinism over
+ * completeness.
  *
  * Determinism argument: sites are position-derived from the skeleton
  * (arc-length points on arterial polylines + the generation center),
@@ -157,7 +151,7 @@ export function buildWards(citySeed: number, region: ProcgenRegion, skeleton: Sk
     const siteKey = `${Math.round(site[0] * 100)},${Math.round(site[1] * 100)}`;
 
     // Tag priority: the generation-center cell = market; a cell containing a
-    // wall gate = gate ward (v3.3); waterfront-adjacent cells lean craft
+    // wall gate = gate ward; waterfront-adjacent cells lean craft
     // (quays mean trade); the rest hash on the site position.
     let tag: WardTag;
     if (pointInRing(clipped, skeleton.center[0], skeleton.center[1])) {

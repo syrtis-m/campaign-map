@@ -1,5 +1,5 @@
 /**
- * Contour rings → GeoJSON MultiPolygon coordinates (plan 026-B) — the reusable
+ * Contour rings → GeoJSON MultiPolygon coordinates — the reusable
  * assembly step that turns the closed loops a masked-field trace returns
  * (marchingSquares at one iso-level) into filled polygons WITH HOLES.
  *
@@ -12,7 +12,7 @@
  * (solid starts inside it) and a ring at ODD depth is a hole; each hole belongs
  * to its immediate (deepest) container, which is the exterior one level out.
  *
- * Pure/headless, D1–D6: containment is fields' verbatim `pointInRingClosed`, the
+ * Pure/headless: containment is fields' `pointInRingClosed`, the
  * output is canonically ordered (exteriors and their holes sorted by first
  * vertex), and exteriors are wound CCW / holes CW (RFC 7946 + MapLibre's
  * hole-detection both honour that) — so a whole-artifact regenerate is

@@ -1,17 +1,15 @@
 /**
- * Outskirts (procgen v3 §5.3.3, Watabou's rule, v3.3; regions since plan
- * 020 §6): outside the growth extent but inside the sketched region,
- * buildings ribbon along the arterials only; farther out, farm-field quads
- * aligned to the road; then nothing toward the boundary. The outskirts zone
- * is an arc-length band per arterial, anchored where cityness (interiorT-
- * driven since plan 020) first drops below the outskirts threshold along
- * that arterial; within it, development bands LATERALLY (Watabou's ribbon):
- * houses hug the road (≤ ~20 m), fields sit beyond them (≥ ~25 m off the
- * road edge), and nothing farther out — matching §9 v3.3 gate (d)'s
- * "footprints only within ~40 m of arterials there; fields exist beyond
- * that". ALL output stays strictly inside the region polygon (plan 020:
- * nothing spills past the GM's line) — every emitted quad's corners are
- * containment-checked, not just its center.
+ * Outskirts (Watabou's rule): outside the growth extent but inside the sketched
+ * region, buildings ribbon along the arterials only; farther out, farm-field
+ * quads aligned to the road; then nothing toward the boundary. The outskirts
+ * zone is an arc-length band per arterial, anchored where cityness (interiorT-
+ * driven) first drops below the outskirts threshold along that arterial; within
+ * it, development bands LATERALLY (Watabou's ribbon): houses hug the road
+ * (≤ ~20 m), fields sit beyond them (≥ ~25 m off the road edge), and nothing
+ * farther out — footprints only within ~40 m of arterials, fields beyond that.
+ * ALL output stays strictly inside the region polygon (nothing spills past the
+ * GM's line) — every emitted quad's corners are containment-checked, not just
+ * its center.
  *
  * Determinism argument: zones derive from arc-length walks in arterial-part
  * order (part keys are position-derived); every roll comes from
@@ -149,8 +147,8 @@ export function buildOutskirts(
   const threshold = OUTSKIRTS_START_FRAC * profile.edge;
   const arterialLines = skeleton.arterials.map((a) => a.coords);
 
-  /** Every corner (and the center) inside the region — plan 020's "nothing
-   * spills past the GM's line", enforced per quad. */
+  /** Every corner (and the center) inside the region — nothing spills past the
+   * GM's line, enforced per quad. */
   const quadInside = (center: Pt, ring: Pt[]): boolean => {
     if (!regionContains(region, center[0], center[1])) return false;
     for (let i = 0; i < 4; i++) {
@@ -196,10 +194,10 @@ export function buildOutskirts(
         const center: Pt = [s.p[0] + nx * offset, s.p[1] + ny * offset];
         // Soft boundary margin (the disc's rim margin, region form).
         if (distanceToBoundary(region, center[0], center[1]) < FIELD_RIM_MARGIN_M) continue;
-        // Double-field resolution (plan 022 §3.5): a GM's raw farmland sketch
-        // claims this ground — drop the city's own outskirt field inside it so
-        // the two don't double-paint. Strict no-op when no farmland is sketched
-        // (empty farmlandRings ⇒ false ⇒ city byte-identical to before).
+        // Double-field resolution: a GM's raw farmland sketch claims this
+        // ground — drop the city's own outskirt field inside it so the two
+        // don't double-paint. No-op when no farmland is sketched (empty
+        // farmlandRings ⇒ false).
         if (insideSketchedFarmland(waterIdx, center[0], center[1])) continue;
         // The lateral offset can land in a noise pocket the growth loop would
         // still build in — no farm fields where cityness says "city".

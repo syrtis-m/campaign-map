@@ -28,7 +28,7 @@ import { subdivideBlocks } from "./parcels";
 import { makeCityness } from "./cityness";
 import { toMeters, type StreetGraph } from "./graph";
 import { tileBBox, GENERATION_TILE_SIZE } from "../cache/tileGrid";
-// Shared fixtures also feed the slow fuzz tier (citynet.fuzz.test.ts). Plan 021 §2.1.
+// Shared fixtures also feed the slow fuzz tier (citynet.fuzz.test.ts).
 import { WORLD_BOUNDS, CAMPAIGN_SEED, fixtureAt, net, riverThrough, allCoordsInside } from "./citynet.fixtures";
 import { expectGeneratorInvariants, expectDeterministic } from "../testkit/invariants";
 
@@ -58,7 +58,7 @@ describe("generateCityNetwork determinism (gate a)", () => {
     expect(JSON.stringify(forward[2])).toBe(JSON.stringify(reversed[0]));
   });
 
-  it("is byte-identical twice on an irregular hexagon region (plan 020 gate b)", () => {
+  it("is byte-identical twice on an irregular hexagon region", () => {
     const hex: [number, number][] = [
       [1200, -300],
       [700, 700],
@@ -163,7 +163,7 @@ describe("bridge on river (gate d)", () => {
 });
 
 describe("waterfront offsets (gate e)", () => {
-  // Since v3.1 grown streets share `roadClass: "street"` with quays, so quays
+  // Grown streets share `roadClass: "street"` with quays, so quays
   // are identified geometrically: long streets running parallel to the river
   // in one of the profile's offset bands (20 m / 55 m), which the growth loop
   // cannot produce by accident over a >100 m run.
@@ -209,7 +209,7 @@ describe("canon avoidance (gate f)", () => {
   });
 });
 
-// ── v3.1 Stage-B gates ──────────────────────────────────────────────────────
+// ── Stage-B gates ───────────────────────────────────────────────────────────
 
 /** Run the growth pipeline directly (skeleton → growth) for graph metrics. */
 function grownGraph(
@@ -242,7 +242,7 @@ function degreeHistogram(graph: StreetGraph): { d1: number; d3: number; d4: numb
   return { d1, d3, d4 };
 }
 
-describe("v3.1 junction histogram (gate c)", () => {
+describe("junction histogram (gate c)", () => {
   it("euro-medieval: T-junctions (degree 3) outnumber 4-ways (degree 4+)", () => {
     const { graph } = grownGraph(600, 600);
     const { d3, d4 } = degreeHistogram(graph);
@@ -251,7 +251,7 @@ describe("v3.1 junction histogram (gate c)", () => {
   });
 });
 
-describe("v3.1 connectivity (gate d)", () => {
+describe("connectivity (gate d)", () => {
   it("dangling endpoints < 15% of grown endpoints inside the growth extent", () => {
     const { graph, region } = grownGraph(600, 600);
     // Growth-extent proxy: interiorT ≤ 0.6 (the disc test's 0.6×radius band).
@@ -274,9 +274,9 @@ describe("v3.1 connectivity (gate d)", () => {
   });
 });
 
-// The 200-region 4-profile fuzz (gate e) moved to citynet.fuzz.test.ts (plan 021 §2.1).
+// The 200-region 4-profile fuzz (gate e) lives in citynet.fuzz.test.ts.
 
-describe("v3.1 budget (gate f, §8)", () => {
+describe("budget (gate f)", () => {
   it("radius-900 euro-medieval full network in ≤ 2000 ms", () => {
     net(600, 600); // warm module/JIT paths
     const t0 = Date.now();
@@ -287,7 +287,7 @@ describe("v3.1 budget (gate f, §8)", () => {
   });
 });
 
-describe("v3.1 sketched-road pre-seed (gate g)", () => {
+describe("sketched-road pre-seed (gate g)", () => {
   const cx = 600;
   const cy = 600;
   // Straight sketched road through the region (straight ⇒ Chaikin-invariant,
@@ -331,9 +331,9 @@ describe("v3.1 sketched-road pre-seed (gate g)", () => {
   });
 });
 
-// ── v3.2 Stage-C gates ──────────────────────────────────────────────────────
+// ── Stage-C gates ───────────────────────────────────────────────────────────
 
-describe("v3.2 blocks + parcels (gates a–d)", () => {
+describe("blocks + parcels (gates a–d)", () => {
   const { graph, seed, region } = grownGraph(600, 600);
   const { blocks, stats } = extractBlocks(graph, region);
 
@@ -392,7 +392,7 @@ describe("v3.2 blocks + parcels (gates a–d)", () => {
   });
 });
 
-describe("v3.2 wards", () => {
+describe("wards", () => {
   it("emits a handful of tagged district polygons inside the region", () => {
     const { region } = fixtureAt(600, 600);
     const network = net(600, 600);
@@ -412,7 +412,7 @@ describe("v3.2 wards", () => {
   });
 });
 
-// ── v3.3 gates ──────────────────────────────────────────────────────────────
+// ── Wall / outskirts / density gates ─────────────────────────────────────────
 
 /** Min distance from a point to any arterial polyline of a network. */
 function distToArterialFeatures(p: [number, number], network: GeoJSON.Feature[]): number {
@@ -444,7 +444,7 @@ function ringCentroid(ring: [number, number][]): [number, number] {
   return [sx / n, sy / n];
 }
 
-describe("v3.3 monotonic density (gate c)", () => {
+describe("monotonic density (gate c)", () => {
   it("street density per interiorT band is non-increasing outside the core (≤10% inversion tolerance)", () => {
     const { region } = fixtureAt(600, 600);
     const network = net(600, 600);
@@ -483,7 +483,7 @@ describe("v3.3 monotonic density (gate c)", () => {
   });
 });
 
-describe("v3.3 outskirts (gate d)", () => {
+describe("outskirts (gate d)", () => {
   const { seed, region } = fixtureAt(600, 600);
   const network = net(600, 600);
   const edge = PROFILES["euro-medieval"].edge;
@@ -517,7 +517,7 @@ describe("v3.3 outskirts (gate d)", () => {
   });
 });
 
-describe("v3.3 wall + gates (gate e)", () => {
+describe("wall + gates (gate e)", () => {
   const network = net(600, 600);
   const ringFeature = network.find((f) => f.properties?.roadClass === "ring");
   const gates = network.filter((f) => f.properties?.type === "gate");
@@ -529,7 +529,7 @@ describe("v3.3 wall + gates (gate e)", () => {
     expect(network.filter((f) => f.properties?.type === "wall").length).toBeGreaterThan(10);
   });
 
-  it("every gate is a ring VERTEX (plan 020: crossings inserted into the inset ring) and lies on an arterial", () => {
+  it("every gate is a ring VERTEX (crossings inserted into the inset ring) and lies on an arterial", () => {
     expect(gates.length).toBeGreaterThanOrEqual(3);
     const ringCs = (ringFeature!.geometry as GeoJSON.LineString).coordinates as [number, number][];
     for (const g of gates) {
@@ -573,7 +573,7 @@ describe("v3.3 wall + gates (gate e)", () => {
   });
 });
 
-describe("v3.3 cityness canon bumps (§5.4)", () => {
+describe("cityness canon bumps", () => {
   it("a settlement pin raises cityness around itself; other pins raise it less", () => {
     const { seed, region } = fixtureAt(600, 600);
     const at: [number, number] = [900, 750];
@@ -591,9 +591,9 @@ describe("v3.3 cityness canon bumps (§5.4)", () => {
   });
 });
 
-// ── v3.4 gates: profile signatures ──────────────────────────────────────────
+// ── Profile-signature gates ──────────────────────────────────────────────────
 
-describe("v3.4 profile signatures (§9 v3.4)", () => {
+describe("profile signatures", () => {
   it("na-grid: 4-way junctions ≥ T-junctions (histogram flips)", () => {
     const { graph } = grownGraph(600, 600, 900, {}, "na-grid");
     const { d3, d4 } = degreeHistogram(graph);
@@ -648,15 +648,15 @@ describe("profile smoke (gate g)", () => {
         network = net(1200, -900, profile);
       }).not.toThrow();
       expect(network.length).toBeGreaterThan(0);
-      expect(network.length).toBeLessThan(30000); // incl. blocks/parcels/footprints since v3.2
+      expect(network.length).toBeLessThan(30000); // incl. blocks/parcels/footprints
       expect(network.some((f) => f.properties?.type === "plaza")).toBe(true);
     });
   }
 });
 
-// ── plan 025-C: chamfer operator + tartan-grid / ward-grid / eixample ───────
+// ── Chamfer operator + tartan-grid / ward-grid / eixample ───────────────────
 
-describe("chamfer operator (plan 025 §3.4)", () => {
+describe("chamfer operator", () => {
   type Pt = [number, number];
   const shoelace = (ring: Pt[]): number => {
     let a = 0;
@@ -730,7 +730,7 @@ describe("chamfer operator (plan 025 §3.4)", () => {
   });
 });
 
-describe("plan 025-C preset signatures (genre reads on the geometry)", () => {
+describe("grid preset signatures (genre reads on the geometry)", () => {
   const blockVertexCounts = (network: GeoJSON.Feature[]): number[] =>
     network
       .filter((f) => f.properties?.generatorId === "city-block")
@@ -775,7 +775,7 @@ describe("plan 025-C preset signatures (genre reads on the geometry)", () => {
     expect(widths.has(9)).toBe(true); // narrow street
   });
 
-  it("every 025-C preset is byte-deterministic and fully contained in its region", () => {
+  it("every grid preset is byte-deterministic and fully contained in its region", () => {
     for (const p of ["tartan-grid", "ward-grid", "eixample"] as ProfileId[]) {
       const a = net(600, 600, p);
       const b = net(600, 600, p);
@@ -786,9 +786,9 @@ describe("plan 025-C preset signatures (genre reads on the geometry)", () => {
   });
 });
 
-// ── plan 025-D: axial-breakthrough operator + haussmann / baroque-axial ──────
+// ── Axial-breakthrough operator + haussmann / baroque-axial ─────────────────
 
-describe("axial-breakthrough operator (plan 025 §3.2 / §2.1 + §2.5)", () => {
+describe("axial-breakthrough operator", () => {
   type Pt = [number, number];
   const AXIAL: ProfileId[] = ["haussmann", "baroque-axial"];
   const boulevards = (network: GeoJSON.Feature[]): GeoJSON.Feature[] =>
@@ -919,9 +919,9 @@ describe("axial-breakthrough operator (plan 025 §3.2 / §2.1 + §2.5)", () => {
   });
 });
 
-// ── v4.0 plan-020 gates ─────────────────────────────────────────────────────
+// ── Region-shape gates ───────────────────────────────────────────────────────
 
-describe("v4.0 concave smoke (plan 020 gate d)", () => {
+describe("concave smoke (gate d)", () => {
   it("an L-shaped region generates streets/blocks/footprints with every coordinate inside", () => {
     // 2000×2000 square minus its 1000×1000 NE quadrant: area 3·10⁶ m²,
     // effectiveRadius ≈ 977 m. Concave — exercises notch rejection, region
@@ -949,14 +949,14 @@ describe("v4.0 concave smoke (plan 020 gate d)", () => {
   });
 });
 
-describe("v4.0 disc-equivalence (plan 020 gate e)", () => {
-  // Recorded v3 disc metrics (r=900 euro-medieval at (600,600), campaign seed
-  // 90210, captured from the last disc build before this generalization):
-  // total features 12410, wall present, 5 gates, footprint counts by dist/R
-  // thirds [995, 2232, 1279] — inner-band density ≈ 4× the outer band's.
+describe("disc-equivalence (gate e)", () => {
+  // Recorded reference disc metrics (r=900 euro-medieval at (600,600), campaign
+  // seed 90210, captured from the reference disc build): total features 12410,
+  // wall present, 5 gates, footprint counts by dist/R thirds [995, 2232, 1279]
+  // — inner-band density ≈ 4× the outer band's.
   const V3_TOTAL = 12410;
 
-  it("the 32-gon build lands within ±40% of the v3 disc build and keeps its cartography", () => {
+  it("the 32-gon build lands within ±40% of the reference disc build and keeps its cartography", () => {
     const { region } = fixtureAt(600, 600, "euro-medieval", 900);
     const network = net(600, 600);
 
@@ -994,9 +994,9 @@ describe("v4.0 disc-equivalence (plan 020 gate e)", () => {
   });
 });
 
-// The v4.0 4-profile polygon fuzz (gate f) moved to citynet.fuzz.test.ts (plan 021 §2.1).
+// The 4-profile polygon fuzz (gate f) lives in citynet.fuzz.test.ts.
 
-describe("generation center override (plan 020 Addendum 2)", () => {
+describe("generation center override", () => {
   function plazaCentroid(network: GeoJSON.Feature[]): [number, number] | null {
     const plaza = network.find((f) => (f.properties as { type?: string } | null)?.type === "plaza");
     if (!plaza) return null;
@@ -1044,7 +1044,7 @@ describe("generation center override (plan 020 Addendum 2)", () => {
   });
 });
 
-describe("double-wall suppression (plan 022 §3.4)", () => {
+describe("double-wall suppression", () => {
   type Pt = [number, number];
   const isBand = (f: GeoJSON.Feature): boolean =>
     (f.properties as { generatorId?: string; type?: string })?.generatorId === "city-landmark" &&

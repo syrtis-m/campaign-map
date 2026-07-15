@@ -1,7 +1,7 @@
 /**
- * Stage C1 — face extraction (procgen v3 §5.3.1): the street graph is planar
+ * Stage C1 — face extraction: the street graph is planar
  * by construction (growth cuts at first crossings; skeleton pre-seed inserts
- * planar since v3.2), so its bounded faces ARE the city blocks. Half-edge
+ * planar), so its bounded faces ARE the city blocks. Half-edge
  * traversal by smallest left turn: at each node, outgoing half-edges are
  * sorted by angle; the successor of u→v is the half-edge one clockwise step
  * from v→u. Bounded faces come out counter-clockwise (positive shoelace
@@ -13,7 +13,7 @@
  * integer arithmetic on the 1 cm lattice (D1 — coordinates stay ≤ ~10^6 cm,
  * so the products stay far under 2^53).
  *
- * Anti-Watabou salvage (§5.3.1): degenerate faces — self-touching cycles
+ * Anti-Watabou salvage: degenerate faces — self-touching cycles
  * (repeated node: a face wrapping a dead-end spur), sub-40 m² slivers,
  * runaway walks — are counted and skipped, NEVER thrown.
  */
@@ -22,10 +22,10 @@ import { StreetGraph, toMeters } from "./graph";
 
 type Pt = [number, number];
 
-/** Faces smaller than this are slivers, not blocks (§5.3.1). */
+/** Faces smaller than this are slivers, not blocks. */
 export const MIN_BLOCK_AREA_M2 = 40;
 /** Faces with a vertex within this margin of the region boundary count as
- * "touching the boundary" and are dropped (§5.3.1). */
+ * "touching the boundary" and are dropped. */
 export const BOUNDARY_MARGIN_M = 0.5;
 
 export interface BlockFace {
@@ -52,7 +52,7 @@ interface HalfEdge {
 }
 
 /**
- * CHAMFER OPERATOR (plan 025 §3.4 / §2.4 — the eixample corner treatment).
+ * CHAMFER OPERATOR (the eixample corner treatment).
  *
  * Cut every CONVEX corner of a closed CCW ring back `dist` metres along each of
  * its two incident edges, replacing that one vertex with two — the Barcelona-
@@ -212,7 +212,7 @@ export function extractBlocks(graph: StreetGraph, region: ProcgenRegion): { bloc
       continue;
     }
 
-    // Faces touching the region boundary are not blocks (§5.3.1): any vertex
+    // Faces touching the region boundary are not blocks: any vertex
     // within the margin of — or outside — the sketched outline drops the face.
     let touchesRim = false;
     for (const p of pts) {

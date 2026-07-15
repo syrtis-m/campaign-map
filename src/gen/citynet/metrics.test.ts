@@ -1,13 +1,12 @@
-// Metrics module (plan 025 §3.1) — two jobs:
+// Metrics module — two jobs:
 //   1. MEANINGFULNESS: each metric returns the hand-computed value on a
 //      synthetic fixture whose geometry we control exactly (so the measurement
 //      logic is proven independent of the city generator).
-//   2. BENCHMARK GATES: the four EXISTING presets, generated deterministically
-//      on the gallery ring with PINNED seeds, land inside their §3.1 bands, and
-//      the cross-preset ORDERINGS the research predicts hold.
+//   2. BENCHMARK GATES: each preset, generated deterministically on the gallery
+//      ring with PINNED seeds, lands inside its band, and the cross-preset
+//      ORDERINGS the research predicts hold.
 // Determinism: metrics are a pure function of (features, region) — same input,
-// same numbers forever. Metrics never touch the generator, so city goldens
-// (citynet.test.ts) are byte-unchanged; that suite still passes alongside this.
+// same numbers forever.
 import { describe, expect, it } from "vitest";
 import {
   computeNetworkMetrics,
@@ -26,7 +25,7 @@ const GALLERY_SEED = 90210;
 
 /** The gallery shape: a regular 16-gon of effective radius ~700 m at the
  * origin — the SAME apples-to-apples boundary every gallery preset uses, so
- * on-screen differences are the preset, never the polygon (plan 025 §3.5). */
+ * on-screen differences are the preset, never the polygon. */
 function galleryRegion(effR = 700, n = 16): ProcgenRegion {
   const targetArea = Math.PI * effR * effR;
   const unit = 0.5 * n * Math.sin((2 * Math.PI) / n);
@@ -142,7 +141,7 @@ describe("computeNetworkMetrics — meaningfulness on exact hand geometry", () =
     expect(m.blockGrainP50).toBeCloseTo(200, 3);
   });
 
-  it("prefers an emitted width property over the class table (forward-compat with §3.3)", () => {
+  it("prefers an emitted width property over the class table", () => {
     const f = street(1, [[0, 0], [100, 0]], "street");
     (f.properties as Record<string, unknown>).width = 25; // >20 band despite class 'street'
     const m = computeNetworkMetrics([f], squareKm2());
@@ -177,17 +176,17 @@ describe("computeNetworkMetrics — meaningfulness on exact hand geometry", () =
   });
 });
 
-describe("computeNetworkMetrics — §3.1 benchmark gates for the four existing presets", () => {
+describe("computeNetworkMetrics — benchmark gates for the walkable presets", () => {
   const region = galleryRegion();
   // The four WALKABLE presets: the floor/medium-width assertions below are the
   // urbanism-virtue signals that hold for these but DELIBERATELY not for the
-  // superblock anti-pattern (§2.6), so superblock is measured separately.
+  // superblock anti-pattern, so superblock is measured separately.
   const profiles: ProfileId[] = ["euro-medieval", "euro-continental", "na-grid", "na-suburb"];
   const M: Record<string, NetworkMetrics> = {};
   for (const p of [...profiles, "superblock" as ProfileId]) M[p] = computeNetworkMetrics(presetNet(p, region), region);
 
   for (const p of [...profiles, "superblock" as ProfileId]) {
-    it(`${p} lands inside its §3.1 benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
+    it(`${p} lands inside its benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
       const violations = benchmarkViolations(p, M[p]);
       expect(violations, violations.join("; ")).toEqual([]);
     });
@@ -228,11 +227,11 @@ describe("computeNetworkMetrics — §3.1 benchmark gates for the four existing 
     expect(M["na-suburb"].deadEndCount).toBeGreaterThan(M["na-grid"].deadEndCount);
   });
 
-  it("every walkable preset's streets are majority medium-width (10–20 m band; narrow-majority lands with §3.3 widths)", () => {
+  it("every walkable preset's streets are majority medium-width (10–20 m band)", () => {
     for (const p of profiles) expect(M[p].widthHistogram.m10to20).toBeGreaterThanOrEqual(0.85);
   });
 
-  // ── superblock: the research's anti-pattern, asserted AS the genre (§2.6) ───
+  // ── superblock: the research's anti-pattern, asserted AS the genre ─────────
   it("superblock is the SPARSEST preset: fewer intersections/km² than every walkable preset", () => {
     for (const p of profiles) {
       expect(M["superblock"].intersectionsPerKm2).toBeLessThan(M[p].intersectionsPerKm2);
@@ -255,7 +254,7 @@ describe("computeNetworkMetrics — §3.1 benchmark gates for the four existing 
   });
 });
 
-describe("§3.1 benchmark gates — plan 025-C presets (tartan-grid / ward-grid / eixample)", () => {
+describe("benchmark gates — grid presets (tartan-grid / ward-grid / eixample)", () => {
   const region = galleryRegion();
   // Every preset (all eight) measured once on the pinned gallery ring.
   const ALL: ProfileId[] = [
@@ -272,14 +271,14 @@ describe("§3.1 benchmark gates — plan 025-C presets (tartan-grid / ward-grid 
   for (const p of ALL) M[p] = computeNetworkMetrics(presetNet(p, region), region);
 
   for (const p of ["tartan-grid", "ward-grid", "eixample"] as ProfileId[]) {
-    it(`${p} lands inside its §3.1 benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
+    it(`${p} lands inside its benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
       const violations = benchmarkViolations(p, M[p]);
       expect(violations, violations.join("; ")).toEqual([]);
     });
   }
 
-  // ── tartan-grid: the two-scale Seoul/Tokyo grid (§2.2) ─────────────────────
-  it("tartan-grid is the DENSEST preset — the highest intersections/km² of ALL presets (§2.2)", () => {
+  // ── tartan-grid: the two-scale Seoul/Tokyo grid ───────────────────────────
+  it("tartan-grid is the DENSEST preset — the highest intersections/km² of ALL presets", () => {
     for (const p of ALL) {
       if (p === "tartan-grid") continue;
       expect(
@@ -289,7 +288,7 @@ describe("§3.1 benchmark gates — plan 025-C presets (tartan-grid / ward-grid 
     }
   });
 
-  it("tartan-grid is the NARROWEST fabric: majority of street length in the <10 m band (§1.2 narrow-majority)", () => {
+  it("tartan-grid is the NARROWEST fabric: majority of street length in the <10 m band", () => {
     expect(M["tartan-grid"].widthHistogram.lt10).toBeGreaterThan(0.5);
     // No walkable/legacy preset is narrow-majority (their streets are 10–20 m).
     for (const p of ["euro-medieval", "euro-continental", "na-grid", "na-suburb", "ward-grid", "eixample"] as ProfileId[]) {
@@ -297,31 +296,31 @@ describe("§3.1 benchmark gates — plan 025-C presets (tartan-grid / ward-grid 
     }
   });
 
-  // ── ward-grid: regular walled quarters (§2.3) ──────────────────────────────
+  // ── ward-grid: regular walled quarters ────────────────────────────────────
   it("ward-grid clears Salat's ≥15 km/km² street-density floor (a walkable regular grid)", () => {
     expect(M["ward-grid"].streetKmPerKm2).toBeGreaterThanOrEqual(15);
   });
 
-  it("ward-grid shows wide-main width contrast: some street length in the >20 m band (directional asymmetry, §1.3)", () => {
+  it("ward-grid shows wide-main width contrast: some street length in the >20 m band (directional asymmetry)", () => {
     // Its 24 m arterials land in the >20 m band; the narrow 10 m standards don't.
     expect(M["ward-grid"].widthHistogram.gt20).toBeGreaterThan(0);
     expect(M["ward-grid"].widthHistogram.gt20).toBeLessThan(0.2);
   });
 
-  // ── eixample: uniform chamfered grid (§2.4) ────────────────────────────────
+  // ── eixample: uniform chamfered grid ──────────────────────────────────────
   it("eixample is a permeable, low-dead-end grid (uniform blocks, not a cul-de-sac fabric)", () => {
     expect(M["eixample"].permeability).toBeGreaterThan(1.3);
     expect(M["eixample"].deadEndShare).toBeLessThan(M["na-suburb"].deadEndShare);
   });
 
-  it("all §025-C presets clear Salat's ≥15 km/km² floor (none is the superblock anti-pattern)", () => {
+  it("all grid presets clear Salat's ≥15 km/km² floor (none is the superblock anti-pattern)", () => {
     for (const p of ["tartan-grid", "ward-grid", "eixample"] as ProfileId[]) {
       expect(M[p].streetKmPerKm2).toBeGreaterThanOrEqual(15);
     }
   });
 });
 
-describe("§3.1 benchmark gates — plan 025-D presets (haussmann / baroque-axial)", () => {
+describe("benchmark gates — axial presets (haussmann / baroque-axial)", () => {
   const region = galleryRegion();
   const AXIAL: ProfileId[] = ["haussmann", "baroque-axial"];
   const M: Record<string, NetworkMetrics> = {};
@@ -329,7 +328,7 @@ describe("§3.1 benchmark gates — plan 025-D presets (haussmann / baroque-axia
     M[p] = computeNetworkMetrics(presetNet(p, region), region);
 
   for (const p of AXIAL) {
-    it(`${p} lands inside its §3.1 benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
+    it(`${p} lands inside its benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
       const violations = benchmarkViolations(p, M[p]);
       expect(violations, violations.join("; ")).toEqual([]);
     });
@@ -337,7 +336,7 @@ describe("§3.1 benchmark gates — plan 025-D presets (haussmann / baroque-axia
 
   // The axial operator only ADDS fabric (boulevards + their crossings), so both
   // presets read DENSER than their euro-medieval organic base — more street
-  // length, more intersections. The §3.2 "cut through, preserve between" story.
+  // length, more intersections. The "cut through, preserve between" story.
   it("both axial presets are denser than plain euro-medieval (the boulevards add fabric)", () => {
     for (const p of AXIAL) {
       expect(
@@ -363,20 +362,20 @@ describe("§3.1 benchmark gates — plan 025-D presets (haussmann / baroque-axia
   });
 });
 
-describe("§3.1 benchmark gates — plan 025-E presets (canal-rings / radial-star)", () => {
+describe("benchmark gates — concentric-ring presets (canal-rings / radial-star)", () => {
   const region = galleryRegion();
   const RINGS: ProfileId[] = ["canal-rings", "radial-star"];
   const M: Record<string, NetworkMetrics> = {};
   for (const p of RINGS) M[p] = computeNetworkMetrics(presetNet(p, region), region);
 
   for (const p of RINGS) {
-    it(`${p} lands inside its §3.1 benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
+    it(`${p} lands inside its benchmark band (anchor: ${PRESET_BENCHMARKS[p].anchor})`, () => {
       const violations = benchmarkViolations(p, M[p]);
       expect(violations, violations.join("; ")).toEqual([]);
     });
   }
 
-  // ── canal-rings (§2.7): concentric canals crossed by radial bridges ─────────
+  // ── canal-rings: concentric canals crossed by radial bridges ──────────────
   it("canal-rings emits concentric CANAL water lines (city-landmark type=canal)", () => {
     const net = presetNet("canal-rings", region);
     const canals = net.filter(
@@ -398,7 +397,7 @@ describe("§3.1 benchmark gates — plan 025-E presets (canal-rings / radial-sta
     expect(bridges.length).toBeGreaterThan(6);
   });
 
-  // ── radial-star (§2.8): star spokes + concentric connector rings ───────────
+  // ── radial-star: star spokes + concentric connector rings ─────────────────
   it("radial-star splices concentric connector RINGS: many ring-class street chains", () => {
     const net = presetNet("radial-star", region);
     const ringChains = net.filter(
@@ -415,7 +414,7 @@ describe("§3.1 benchmark gates — plan 025-E presets (canal-rings / radial-sta
   });
 });
 
-describe("plan 025-E additive upgrades — seam boulevards (na-grid) + growth rings (euro-medieval)", () => {
+describe("additive upgrades — seam boulevards (na-grid) + growth rings (euro-medieval)", () => {
   const region = galleryRegion();
   const seed = (p: ProfileId): number => hashSeed(GALLERY_SEED, "gallery", p);
 
@@ -428,7 +427,7 @@ describe("plan 025-E additive upgrades — seam boulevards (na-grid) + growth ri
     const off = generateCityNetwork(seed("na-grid"), region, "na-grid", { worldBounds: WORLD }, undefined, {
       seamBoulevard: false,
     });
-    // Default and explicit-off are byte-identical (additive-params rule).
+    // Default and explicit-off are byte-identical.
     expect(digest(off)).toBe(digest(base));
 
     const on = generateCityNetwork(seed("na-grid"), region, "na-grid", { worldBounds: WORLD }, undefined, {
@@ -469,11 +468,11 @@ describe("plan 025-E additive upgrades — seam boulevards (na-grid) + growth ri
   });
 });
 
-describe("§3.3 form-based width — the generator emits an explicit metre width per street", () => {
+describe("form-based width — the generator emits an explicit metre width per street", () => {
   const region = galleryRegion();
 
   it("every city-street feature carries a numeric width matching its profile's class table", () => {
-    // The four legacy profiles all share LEGACY_STREET_WIDTHS (additive rule):
+    // The four walkable profiles all share LEGACY_STREET_WIDTHS:
     // arterial 18 · ring 16 · street 12 · alley 5.
     const legacy: Record<string, number> = { arterial: 18, ring: 16, street: 12, alley: 5 };
     const net = presetNet("euro-medieval", region);

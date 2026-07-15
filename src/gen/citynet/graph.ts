@@ -1,5 +1,5 @@
 /**
- * Planar street graph on a 1 cm integer lattice (procgen v3 §5.2, D1): every
+ * Planar street graph on a 1 cm integer lattice (D1): every
  * node coordinate is an integer count of centimeters (`Math.round(meters ×
  * 100)`), so the orientation and segment-intersection predicates used for
  * topology decisions are exact integer arithmetic — no epsilon, no FP

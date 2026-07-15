@@ -1,14 +1,13 @@
 /**
- * Stage B growth loop (procgen v3 §5.2, regions since plan 020 §6): Parish &
- * Müller priority-queue street growth with the classic local constraints —
- * snap to node, cut crossings into T-junctions, trim to edge interiors —
- * seeded along the Stage-A skeleton and run on the 1 cm integer lattice of
- * `graph.ts`, inside the sketched region polygon (endpoint containment PLUS
- * a segment/boundary crossing test, so a street can never cut across a
- * concave notch between two inside points), until `profile.maxSegments` or
- * an empty queue (D3: budgets, not convergence).
+ * Stage B growth loop: Parish & Müller priority-queue street growth with the
+ * classic local constraints — snap to node, cut crossings into T-junctions,
+ * trim to edge interiors — seeded along the Stage-A skeleton and run on the
+ * 1 cm integer lattice of `graph.ts`, inside the sketched region polygon
+ * (endpoint containment PLUS a segment/boundary crossing test, so a street can
+ * never cut across a concave notch between two inside points), until
+ * `profile.maxSegments` or an empty queue (D3: budgets, not convergence).
  *
- * Determinism argument (§4, all six):
+ * Determinism argument (all six):
  *  - D1: every committed vertex is an int lattice point; all topology
  *    predicates are exact int arithmetic in `graph.ts`.
  *  - D2: the queue is a binary heap over a TOTAL order — (priority,
@@ -25,8 +24,8 @@
  *  - D6: reads only its arguments — the per-candidate RNG streams derive from
  *    candidateId alone.
  *
- * Seam story unchanged: growth happens once per region inside
- * `generateCityNetwork`; tiles clip the finished artifact.
+ * Seam story: growth happens once per region inside `generateCityNetwork`;
+ * tiles clip the finished artifact.
  */
 import { hashSeed, mulberry32 } from "../rng";
 import type { GenerationConstraints } from "../types";
@@ -70,17 +69,17 @@ export const MAX_PRUNE_PASSES = 8;
  * (emitted features keep full smooth geometry) — keeps face rings lean. */
 export const GRAPH_RESAMPLE_M = 8;
 /** Grown streets may cross the generated wall only within this distance of a
- * gate point (v3.3 §5.1.5 growth interaction — gates are pass-throughs). */
+ * gate point (growth interaction — gates are pass-throughs). */
 export const GATE_PASS_M = 25;
 /** Minimum clearance between a grown segment (its whole span, not just the
  * endpoint) and a canon Point — never pave the GM's pins (I4). Endpoints get
  * the stricter `CANON_RADIUS_M`; interiors this. */
 export const CANON_SEGMENT_CLEARANCE_M = 20;
-/** Alley sub-branches (§6, v3.4) spawn where cityness exceeds this. */
+/** Alley sub-branches spawn where cityness exceeds this. */
 export const ALLEY_MIN_CITYNESS = 0.45;
 /** Chance an eligible committed street spawns an alley per side. */
 export const ALLEY_P = 0.25;
-/** Court-bulb radius, meters — caps na-suburb cul-de-sac tips (§5.2). */
+/** Court-bulb radius, meters — caps na-suburb cul-de-sac tips. */
 export const COURT_RADIUS_M = 3.5;
 
 interface Candidate {
@@ -93,7 +92,7 @@ interface Candidate {
   /** Proposed direction, radians (world frame). */
   dir: number;
   priority: number;
-  /** Alley sub-branch (§6): must terminate at existing fabric or be
+  /** Alley sub-branch: must terminate at existing fabric or be
    * discarded — a mid-block connector, never a dangling spur. */
   alley?: boolean;
 }
@@ -175,9 +174,9 @@ function lineAngleDelta(prior: number, theta: number): number {
 
 /** Insert a world-meter polyline into the graph as a chain of lattice edges.
  * Returns the inserted node keys in order (consecutive duplicates dropped).
- * Exported (plan 025-D) so the axial-breakthrough operator splices its
- * boulevards through the grown fabric with the same battle-tested planar
- * insertion (every crossing noded — faces need a true planar graph). */
+ * Exported so the axial-breakthrough operator splices its boulevards through
+ * the grown fabric with the same battle-tested planar insertion (every crossing
+ * noded — faces need a true planar graph). */
 export function insertPolyline(
   graph: StreetGraph,
   coords: Pt[],
@@ -202,8 +201,8 @@ export function insertPolyline(
 const MAX_SEGMENT_SPLITS = 32;
 
 /**
- * Insert edge a→b, noding EVERY crossing with existing edges (v3.2
- * prerequisite: faces need a true planar graph, so skeleton×skeleton and
+ * Insert edge a→b, noding EVERY crossing with existing edges (faces need a
+ * true planar graph, so skeleton×skeleton and
  * sketch×skeleton crossings become nodes too — growth already terminates its
  * own segments at their first crossing). Deterministic: `firstCrossing`
  * returns the minimum-t crossing with id tie-breaks, and the walk from a to b
@@ -253,8 +252,8 @@ export function resamplePolyline(coords: Pt[], spacing: number): Pt[] {
 }
 
 /** Walk a seed polyline's inserted nodes at ~`spacing` arc-length intervals,
- * emitting perpendicular branch candidates on both sides (§5.2 "queue ←
- * branch candidates along arterials/waterfront"). */
+ * emitting perpendicular branch candidates on both sides (queue ←
+ * branch candidates along arterials/waterfront). */
 function seedAlongPolyline(
   citySeed: number,
   graph: StreetGraph,
@@ -311,21 +310,21 @@ export function growNetwork(
 ): { graph: StreetGraph; stats: GrowthStats } {
   const graph = new StreetGraph();
   const idx = indexConstraints(constraints);
-  // Canon-bumped cityness (§5.4 complete, v3.3): the GM's settlement pins
-  // pull density toward themselves.
+  // Canon-bumped cityness: the GM's settlement pins pull density toward
+  // themselves.
   const cityness = makeCityness(citySeed, region, constraints.canonFeatures ?? []);
   const heap = new CandidateHeap();
   const spacing = profile.segmentLen * SEED_SPACING_FACTOR;
 
   // Orientation prior: tensor field blended with sketched-road alignment via
-  // the existing machinery (§5.2). Seeded by citySeed — pure (D6).
+  // the existing machinery. Seeded by citySeed — pure (D6).
   const field = buildTensorField(citySeed, constraints.worldBounds);
   const sampler = fabricAngleSampler(field, idx) ?? ((x: number, y: number) => sampleFieldAngle(field, x, y));
 
   // ── Pre-seed the graph ───────────────────────────────────────────────────
   // Stage-A arterials/waterfront: snappable targets + branch-candidate spines.
   // Polylines are resampled to ~GRAPH_RESAMPLE_M for the graph (the emitted
-  // features keep full smooth geometry) and inserted PLANAR (v3.2): every
+  // features keep full smooth geometry) and inserted PLANAR: every
   // skeleton×skeleton and sketch×skeleton crossing becomes a node, which face
   // extraction requires.
   skeleton.arterials.forEach((art, i) => {
@@ -344,7 +343,7 @@ export function growNetwork(
     });
     seedAlongPolyline(citySeed, graph, keys, `seed:wf:${i}`, spacing, cityness, heap);
   });
-  // Ring road (v3.3): a pre-seed spine like the arterials — streets snap to
+  // Ring road: a pre-seed spine like the arterials — streets snap to
   // it, faces form along it, and wall-hugging lanes seed off it. Planar
   // insertion nodes its crossings with the arterials at the gates.
   if (skeleton.wall) {
@@ -379,7 +378,7 @@ export function growNetwork(
   const segLenCm = toLattice(profile.segmentLen);
   const maxPops = profile.maxSegments * MAX_POPS_PER_SEGMENT;
 
-  /** Quadrant grid prior (§5.2 na-grid, v3.4): two hashed azimuths per
+  /** Quadrant grid prior (na-grid): two hashed azimuths per
    * quadrant around the generation center — a candidate direction snaps to
    * the nearest representative of the local quadrant's azimuth pair, so
    * quadrant boundaries jog the way real NA grids do. Replaces the tensor
@@ -391,10 +390,9 @@ export function growNetwork(
     let ang = Math.atan2(yM - centerY, xM - centerX);
     if (ang < 0) ang += 2 * Math.PI;
     const quadrant = Math.min(3, Math.floor(ang / (Math.PI / 2)));
-    // eixample (§2.4): a single cardinal orientation everywhere — a fixed base
-    // (0) for ALL quadrants instead of the per-quadrant hashed base that makes
-    // na-grid jog at its seams. Byte-neutral for every profile with
-    // uniformGrid=false (the hashed base is unchanged).
+    // eixample: a single cardinal orientation everywhere — a fixed base (0) for
+    // ALL quadrants instead of the per-quadrant hashed base that makes na-grid
+    // jog at its seams.
     const base = profile.uniformGrid ? 0 : mulberry32(hashSeed(citySeed, "gridaz", quadrant))() * (Math.PI / 2);
     let best = theta;
     let bestD = Infinity;
@@ -410,7 +408,7 @@ export function growNetwork(
     return best;
   };
 
-  /** Generated-wall barrier (§5.1.5 growth interaction): does the candidate
+  /** Generated-wall barrier (growth interaction): does the candidate
    * segment cross the ring contour farther than GATE_PASS_M from every gate?
    * Checked on the RAW proposed segment (before snap/trim) with the full
    * [0,1] parameter range, and RE-checked on the FINAL segment (after
@@ -441,7 +439,7 @@ export function growNetwork(
    * the ring within cm rounding — that is a junction, not a breach). */
   const WALL_RECHECK_T_MAX = 0.995;
 
-  /** Away-direction angle check at a junction node (§5.2 minAngle): the new
+  /** Away-direction angle check at a junction node (minAngle): the new
    * edge must not form a sliver with any incident edge. Directions point AWAY
    * from the node, so a straight continuation (~180° through the node) passes
    * while a near-duplicate heading (~0°) is rejected. */
@@ -482,18 +480,18 @@ export function growNetwork(
     if (!regionContains(region, exM, eyM)) continue; // the sketch is the limit
     if (segmentCrossesBoundary(region, fxM, fyM, exM, eyM)) continue; // no cutting across concave notches
     const cEnd = cityness(exM, eyM);
-    if (cEnd < profile.edge) continue; // growth extent (§5.4)
+    if (cEnd < profile.edge) continue; // growth extent
     if (canon.some(([px, py]) => Math.hypot(px - exM, py - eyM) < CANON_RADIUS_M)) continue; // canon clearance (end)
     if (canon.some(([px, py]) => pointSegDist(px, py, fxM, fyM, exM, eyM) < CANON_SEGMENT_CLEARANCE_M)) continue; // canon clearance (span)
     if (blockedByWater(idx, exM, eyM) || blockedByWater(idx, (fxM + exM) / 2, (fyM + eyM) / 2)) continue; // water (bridges are Stage-A only)
     if (crossesWall(idx, [fxM, fyM], [exM, eyM])) continue; // sketched walls: never cross (no sketch gates)
-    if (crossesGeneratedWall(fxM, fyM, exM, eyM)) continue; // generated wall: pass only at gates (v3.3)
+    if (crossesGeneratedWall(fxM, fyM, exM, eyM)) continue; // generated wall: pass only at gates
 
     // Snap to an existing node within snapDist of the proposed end. Snap
-    // radius shrinks with cityness (§5.4): tighter warrens in the core,
-    // looser joins toward the rim. na-suburb lowers the snap PROBABILITY
-    // (§5.2, v3.4): unsnapped ends ARE the cul-de-sacs, so a hashed roll can
-    // veto the snap/trim attempts entirely (real crossings still cut).
+    // radius shrinks with cityness: tighter warrens in the core, looser joins
+    // toward the rim. na-suburb lowers the snap PROBABILITY: unsnapped ends ARE
+    // the cul-de-sacs, so a hashed roll can veto the snap/trim attempts entirely
+    // (real crossings still cut).
     const allowSnap =
       profile.snapProb >= 1 || mulberry32(hashSeed(cand.id, "snap"))() < profile.snapProb;
     const snapEff = Math.max(1, Math.round(snapCm * (1.25 - 0.5 * Math.min(1, cEnd))));
@@ -529,7 +527,7 @@ export function growNetwork(
         const psi = Math.atan2(b.y - a.y, b.x - a.x);
         const theta = Math.atan2(near.y - from.y, near.x - from.x);
         if (Math.min(angDiff(theta, psi), Math.PI - angDiff(theta, psi)) < profile.minAngle) continue;
-        // Planarity recheck (v3.2): the trim moved the endpoint sideways (up
+        // Planarity recheck: the trim moved the endpoint sideways (up
         // to snapDist), so the trimmed segment can cross an edge the proposed
         // one did not. A crossing is physically first — prefer cutting there.
         const recheck = graph.firstCrossing(from.key, near.x, near.y);
@@ -569,7 +567,7 @@ export function growNetwork(
     }
 
     // Alleys are mid-block connectors: they must REACH something (snap, trim,
-    // or crossing cut) or they don't exist — never a dangling spur (§6, v3.4).
+    // or crossing cut) or they don't exist — never a dangling spur.
     if (cand.alley && !terminal) continue;
 
     // Commit (mutations only from here).
@@ -592,7 +590,7 @@ export function growNetwork(
     if (!edge) continue;
     committed++;
     if (terminal) {
-      // na-grid pass-through (§5.2, v3.4): grid streets run THROUGH cut
+      // na-grid pass-through: grid streets run THROUGH cut
       // junctions instead of T-ing out, which is where 4-ways come from.
       if (gridMode && splitEdgeId && !cand.alley) {
         heap.push({
@@ -630,9 +628,9 @@ export function growNetwork(
       priority: endCityness + CONTINUE_BIAS,
     });
 
-    // 1/2: side branches, probability modulated by cityness (§5.4). Grid
-    // profiles snap the branch heading to the local azimuth pair, then apply
-    // the small ±jitter (§6 na-grid: 90°±2° — jogs, not fans).
+    // 1/2: side branches, probability modulated by cityness. Grid profiles snap
+    // the branch heading to the local azimuth pair, then apply the small
+    // ±jitter (na-grid: 90°±2° — jogs, not fans).
     const pBranch = Math.min(0.9, profile.branchProb * (0.5 + endCityness));
     for (const [branchIndex, sign] of [
       [1, 1],
@@ -652,7 +650,7 @@ export function growNetwork(
       });
     }
 
-    // 3/4: alley sub-branches in high cityness (§6, v3.4) — short-lived
+    // 3/4: alley sub-branches in high cityness — short-lived
     // candidates that only commit if they terminate at existing fabric.
     if (profile.alleys && endCityness > ALLEY_MIN_CITYNESS) {
       for (const [branchIndex, sign] of [
@@ -679,7 +677,7 @@ export function growNetwork(
 }
 
 /**
- * Dead-end pruning (§5.2): remove grown stubs shorter than `profile.minStub`
+ * Dead-end pruning: remove grown stubs shorter than `profile.minStub`
  * hanging off degree-1 nodes, in deterministic node-key order, repeated to a
  * bounded fixpoint (D3). Cul-de-sac profiles keep their stubs — unsnapped
  * ends ARE the courts. Seed/sketch edges are never pruned.
@@ -779,7 +777,7 @@ export function collectGrownChains(graph: StreetGraph): { key: string; coords: P
 }
 
 /**
- * Cul-de-sac tips for court bulbs (§5.2 na-suburb, v3.4): degree-1 endpoints
+ * Cul-de-sac tips for court bulbs (na-suburb): degree-1 endpoints
  * of grown street edges, in sorted node-key order (D2). The caller emits an
  * octagon of COURT_RADIUS_M at each. Only meaningful for `culdesacs`
  * profiles (others prune their short stubs).

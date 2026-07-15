@@ -1,16 +1,16 @@
 /**
- * Axial-breakthrough operator (plan 025 §3.2 — shared by the haussmann and
- * baroque-axial presets, §2.1 + §2.5).
+ * Axial-breakthrough operator, shared by the haussmann and baroque-axial
+ * presets.
  *
  * A deterministic POST-GROWTH pass that cuts wide boulevards THROUGH the
  * already-grown organic fabric. `driveBoulevards` runs INSIDE
  * `generateCityNetwork`, after the Stage-B growth loop and BEFORE Stage-C faces/
- * parcels, so the stage order is fixed (§3.2): the boulevards are spliced into
+ * parcels, so the stage order is fixed: the boulevards are spliced into
  * the planar street graph as `boulevard`-class GROWN edges, and every
  * downstream stage (block faces, parcels, footprints) then computes ONCE against
  * the final graph — no reflow pass.
  *
- * What the breakthrough PRESERVES vs DEMOLISHES (the palimpsest, §1.3):
+ * What the breakthrough PRESERVES vs DEMOLISHES (the palimpsest):
  *  • PRESERVES — the organic fabric BETWEEN the cuts is untouched. The splice
  *    only ADDS boulevard edges and NODES the existing edges it crosses (a
  *    crossed street gains a vertex at the crossing; its geometry is otherwise
@@ -26,17 +26,17 @@
  * Two compositions:
  *  • `"breakthrough"` (Haussmann) — `count` chords between boundary points at
  *    interleaved bearings; the chords cross at interior STAR plazas, and a
- *    slight perpendicular elbow gives the "convex effect" (§1.3).
+ *    slight perpendicular elbow gives the "convex effect".
  *  • `"trident"` (Baroque) — `count` DEAD-STRAIGHT corsi fanning from ONE apex
  *    (a gate piazza: a rim point in a chosen gate's bearing) toward monumental
- *    endpoints on the far rim (the "points of view", §1.3).
+ *    endpoints on the far rim (the "points of view").
  *
  * Determinism (D6): every endpoint derives only from the region geometry, the
  * skeleton center/gates, and `citySeed` — no float ever reaches a seed, bearings
  * come from hashed integers. Robust / anti-Watabou: a boulevard whose endpoints
  * cannot be resolved (a ray that misses a concave rim) or that clips to nothing
  * is SKIPPED — counted by absence, never thrown. A profile with no `axial`
- * config is a no-op returning `[]`, so every pre-025-D preset is untouched.
+ * config is a no-op returning `[]`.
  */
 import { hashSeed, mulberry32 } from "../rng";
 import { boundaryPointFrom, clipPolylineToRegion, type ProcgenRegion } from "../region";

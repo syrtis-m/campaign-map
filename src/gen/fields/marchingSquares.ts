@@ -1,19 +1,19 @@
 /**
- * Marching squares over a point-evaluable scalar field (plan 023 §4.1) — the
- * shared iso-line / iso-band machinery. Pure/headless, D1–D6 binding: the only
- * inputs are the field (itself `f(x, y)` from durable inputs — plan 023 §0) and
+ * Marching squares over a point-evaluable scalar field — the
+ * shared iso-line / iso-band machinery. Pure/headless: the only
+ * inputs are the field (itself `f(x, y)` from durable inputs) and
  * a WORLD-ALIGNED lattice, so two callers sampling overlapping regions see
  * identical crossings on shared lattice edges → contours meet seam-free and the
  * output is byte-deterministic.
  *
- * Reusable by design (NOT mountain-private): plan 023-C's `mountain` contours
- * are the first consumer; plan 026-B's forest canopy will trace a density
+ * Reusable by design (NOT mountain-private): the `mountain` contours
+ * are the first consumer; a forest canopy traces a density
  * field's single iso-level into closed rings with the SAME module. Hence the
  * return shape carries `closed` (a summit ring / canopy boundary vs. an open
  * contour that runs off the lattice) and closed loops are canonicalized to a
  * fixed start vertex + winding so a whole-artifact regenerate is byte-identical
  * (a closed loop has no natural first vertex — determinism rides entirely on
- * that canonicalization, adversarial-review 2026-07-14).
+ * that canonicalization).
  *
  * Algorithm: sample the field on the world-aligned lattice ONCE (shared corners,
  * no double evaluation), then per cell per level classify corners above/below,

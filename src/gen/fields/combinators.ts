@@ -1,7 +1,7 @@
 /**
- * Field combinators and transforms (plan 023 §2). All closed-form, pure, and
+ * Field combinators and transforms. All closed-form, pure, and
  * point-evaluable — a combined field is still `f(x, y)` from durable inputs
- * alone, so the seam/determinism properties (plan 023 §0) compose for free.
+ * alone, so the seam/determinism properties compose for free.
  *
  * SDF sign convention (matches `sdf.ts`): **positive inside**, negative
  * outside, meters. Under that convention set-union is a pointwise MAX (a point
@@ -48,7 +48,7 @@ export function fSmoothUnion(a: Field, b: Field, k: number): Field {
 /**
  * Turn an SDF into a 0..1 mask that ramps from 0 at the boundary (and outside)
  * to 1 at `band` meters inside — `smoothstep(0, band, sdf)`. The mechanism for
- * "noise only inside a shape, fading at its edge" (plan 023 §1.2): forest
+ * "noise only inside a shape, fading at its edge": forest
  * density falling off at a treeline, mountain noise contained by a range
  * polygon. `band ≤ 0` gives a hard step at the boundary.
  */
@@ -91,8 +91,8 @@ export function fSum(...fields: Field[]): Field {
 /**
  * Domain warp (Iñigo Quílez): sample `base` at a position displaced by the
  * offset fields `(wx, wy)` — `base(x + wx(x,y), y + wy(x,y))`. The one trick
- * that turns geometric iso-lines into hand-drawn-looking edges (plan 026-B
- * §1.2): warping the canopy density field before thresholding scallops and
+ * that turns geometric iso-lines into hand-drawn-looking edges: warping the
+ * canopy density field before thresholding scallops and
  * frays the outline. Still `f(x, y)` from durable inputs (the offset is itself a
  * field), so seam/determinism properties compose.
  */
