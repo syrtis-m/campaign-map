@@ -389,3 +389,10 @@ _(none yet)_
   (delete flattens immediately — 21a46d2), create-campaign GUI overhaul incl. the
   scaleMetersPerUnit-hardcoded-to-1 catch (1eccc4f), band ghosts 040-P2 (01fa709), labels
   dry-side + region names (dc5f0eb), wall glacis v4 (cc0dcfc).
+
+## ROUND 6: the non-underlay Cradle learnings, all implemented (pushed)
+- `d5c0984` landform HOLES now shape elevation (donut = hole at base w/ rim ramp; single-ring
+  byte-identical, no bump) + replace-over-add ADVISORY (Notice + persistent ⚠ panel hint when a
+  replace landform covers add-stamps — wording flagged for Jonah).
+- `5de4c69` external Fabric.geojson edits reconcile live (vault watch + normalize-compare
+  self-write guard + debounce + one forward pass; malformed ⇒ badge, retains previous).
