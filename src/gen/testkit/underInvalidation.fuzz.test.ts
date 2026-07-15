@@ -41,7 +41,8 @@ function declaredConsumption(alg: ProcgenAlgorithm): DeclaredConsumption {
 describe("under-invalidation property harness (plan 033-A)", () => {
   it("every registry algorithm declares a consumption (consumesSketch + influenceMargin)", () => {
     const ids = allAlgorithms().map((a) => a.id);
-    expect(ids.length).toBe(7);
+    // plan 036 added the terrain stamps `relief` + `landform` (7 → 9).
+    expect(ids.length).toBe(9);
     for (const alg of allAlgorithms()) {
       expect(Array.isArray(alg.consumesSketch), `algorithm "${alg.id}" missing consumesSketch`).toBe(true);
       expect(typeof alg.influenceMargin, `algorithm "${alg.id}" missing influenceMargin`).toBe("number");

@@ -48,6 +48,11 @@ const CONTRACT_BY_ID: Record<string, readonly BucketStyle[]> = {
   wall: WALL_STYLE_CONTRACT,
   farmland: FARMLAND_STYLE_CONTRACT,
   mountain: MOUNTAIN_STYLE_CONTRACT,
+  // Terrain stamps (plan 036) emit NO per-region fabric — their visible form is
+  // the composed-field contours/hillshade (036-C), so the contract is empty and
+  // `tileGeneratorIds` is [].
+  relief: [],
+  landform: [],
 };
 
 function regionFor(algo: ProcgenAlgorithm, params: Record<string, unknown>): ProcgenRegion {

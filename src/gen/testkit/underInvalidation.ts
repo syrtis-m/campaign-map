@@ -156,6 +156,20 @@ export function fixtureFor(algorithmId: string): AlgorithmFixture {
       const spine = makeSpine("ui-region-wall", FIXTURE_SPINE);
       return { region: makeCorridorRegion("ui-region-wall", spine, alg.corridorMaxOffset!(params)), params, genSeed };
     }
+    case "relief": {
+      // Terrain add-stamp (line kind): emits no fabric, so it is trivially inert
+      // to every sketch — the harness still proves nothing it "reads" leaks in.
+      const params = { polarity: "ridge", height: 300, halfWidth: 180 };
+      const spine = makeSpine("ui-region-relief", FIXTURE_SPINE);
+      return { region: makeCorridorRegion("ui-region-relief", spine, alg.corridorMaxOffset!(params)), params, genSeed };
+    }
+    case "landform":
+      // Terrain replace-stamp (polygon kind): emits no fabric — consumesSketch [].
+      return {
+        region: makeRegion("ui-region-landform", hexRing(0, 0, 240)),
+        params: { mode: "plateau", band: 120, priority: 0 },
+        genSeed,
+      };
     default:
       throw new Error(`underInvalidation: no fixture for algorithm "${algorithmId}" — add one when registering it`);
   }
@@ -209,15 +223,35 @@ function featureFrom(id: string, kind: FabricKind, coords: Pt[], isPolygon: bool
   const geometry: FabricFeature["geometry"] = isPolygon
     ? { type: "Polygon", coordinates: [coords] }
     : { type: "LineString", coordinates: coords };
-  const procgen =
-    kind === "mountain"
-      ? {
-          algorithm: "mountain",
-          seed: hashSeed(7007, "ui-mountain", id),
-          version: 1,
-          params: { terrain: "alpine", amplitude: 0.85, roughness: 0.6 },
-        }
-      : undefined;
+  // Terrain-stamp kinds carry a REAL procgen block: `terrainAt` (the future
+  // river/farmland source) keys on `procgen.algorithm`, so a blockless stamp
+  // would be invisible to the consumers the harness probes. mountain/relief/
+  // landform all read by block; other kinds by geometry+kind alone.
+  let procgen: FabricFeature["properties"]["procgen"];
+  if (kind === "mountain") {
+    procgen = {
+      algorithm: "mountain",
+      seed: hashSeed(7007, "ui-mountain", id),
+      version: 1,
+      params: { terrain: "alpine", amplitude: 0.85, roughness: 0.6 },
+    };
+  } else if (kind === "relief") {
+    procgen = {
+      algorithm: "relief",
+      seed: hashSeed(7007, "ui-relief", id),
+      version: 1,
+      params: { polarity: "ridge", height: 300, halfWidth: 180 },
+    };
+  } else if (kind === "landform") {
+    procgen = {
+      algorithm: "landform",
+      seed: hashSeed(7007, "ui-landform", id),
+      version: 1,
+      params: { mode: "plateau", band: 120, priority: 0 },
+    };
+  } else {
+    procgen = undefined;
+  }
   return {
     type: "Feature",
     id,

@@ -105,6 +105,9 @@ describe("consumption declarations (plan 033-C)", () => {
     wall: { kinds: ["road"], margin: 0, cost: "medium" },
     farmland: { kinds: ["mountain"], margin: 0, cost: "medium" },
     mountain: { kinds: [], margin: 0, cost: "cheap" },
+    // plan 036 terrain stamps: field-only add/replace, read no other sketch.
+    relief: { kinds: [], margin: 0, cost: "cheap" },
+    landform: { kinds: [], margin: 0, cost: "cheap" },
   };
 
   it("every algorithm's consumesSketch / influenceMargin / costClass match the measured table", () => {

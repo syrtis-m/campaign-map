@@ -33,6 +33,14 @@ import { generateWall, wallMaxOffset, WALL_STYLES } from "../wall";
 import { generateFarmland, FARMLAND_TYPES, HEDGING_KINDS } from "../farmland";
 import { generateMountain, MOUNTAIN_TERRAINS } from "../mountain";
 import {
+  RELIEF_POLARITIES,
+  LANDFORM_MODES,
+  RELIEF_DEFAULTS,
+  LANDFORM_DEFAULTS,
+  reliefMaxOffset,
+  type ReliefParams,
+} from "../fields/terrain";
+import {
   DOMAIN_TILE_GENERATOR_IDS,
   generateCityNetwork,
   defaultProfileForTheme,
@@ -733,9 +741,105 @@ const mountainAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-/** v1 registers `city` + `forest` + `park` + `farmland` + `mountain` (polygon) +
- * `river` + `wall` (line). Order matters for `algorithmForKind` (first match
- * wins) — keep the list explicit and small. */
+// ─── Relief — ridge/valley polyline ADD-stamp (plan 036 terrain) ─────────────
+
+/** Relief params: a signed cross-profile stamp read by `terrainAt`. `polarity`
+ * drives layout (ridge raises, valley lowers), never a preset-id branch. */
+const reliefParamsSchema = z.object({
+  polarity: z.enum(RELIEF_POLARITIES).default(RELIEF_DEFAULTS.polarity),
+  height: z.number().positive().max(4000).default(RELIEF_DEFAULTS.height),
+  halfWidth: z.number().positive().max(20000).default(RELIEF_DEFAULTS.halfWidth),
+});
+
+const RELIEF_PRESETS: readonly ProcgenPreset[] = [
+  { id: "ridge", label: "Ridge — a raised spine", params: { polarity: "ridge", height: 300, halfWidth: 180 } },
+  { id: "valley", label: "Valley — an incised trough", params: { polarity: "valley", height: 200, halfWidth: 220 } },
+];
+
+const reliefAlgorithm: ProcgenAlgorithm = {
+  id: "relief",
+  label: "Relief",
+  currentVersion: 1,
+  appliesTo: ["relief"],
+  // Stage 1 (TERRAIN, with mountains): a durable add-stamp of the composed
+  // elevation field. Produces `elevation`; the generator itself emits NO
+  // per-region fabric — the stamp's visible form is the composed-field contours/
+  // hillshade (plan 036-C), and its arithmetic effect flows through `terrainAt`.
+  stage: 1,
+  produces: ["elevation"],
+  consumes: [],
+  // A base terrain stamp reads no other sketch — pure function of its own spine
+  // + params.
+  consumesSketch: [],
+  influenceMargin: 0,
+  costClass: "cheap",
+  paramsSchema: reliefParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
+  presets: RELIEF_PRESETS,
+  defaultPresetId(): string {
+    return "ridge";
+  },
+  defaultParams(): Record<string, unknown> {
+    return { ...RELIEF_PRESETS[0].params };
+  },
+  // No emitted fabric buckets: the field is the product (contours re-home to the
+  // composed field in 036-C).
+  tileGeneratorIds: [],
+  corridorMaxOffset(params: Record<string, unknown>): number {
+    return reliefMaxOffset(reliefParamsSchema.parse(params) as unknown as ReliefParams);
+  },
+  generate(): GeoJSON.Feature[] {
+    return [];
+  },
+};
+
+// ─── Landform — plateau/basin/sea polygon REPLACE-stamp (plan 036 terrain) ───
+
+/** Landform params: a replace-toward-target stamp read by `terrainAt`. `mode`
+ * drives the default target (plateau raises, basin lowers, sea → seaDatum);
+ * `priority` (Q4) makes id-order last-wins overridable where masks overlap. */
+const landformParamsSchema = z.object({
+  mode: z.enum(LANDFORM_MODES).default(LANDFORM_DEFAULTS.mode),
+  target: z.number().finite().optional(),
+  band: z.number().min(0).max(20000).default(LANDFORM_DEFAULTS.band),
+  priority: z.number().int().default(LANDFORM_DEFAULTS.priority),
+});
+
+const LANDFORM_PRESETS: readonly ProcgenPreset[] = [
+  { id: "plateau", label: "Plateau — flat tableland raised to a target", params: { mode: "plateau", band: 120, priority: 0 } },
+  { id: "basin", label: "Basin — a lowered depression", params: { mode: "basin", band: 120, priority: 0 } },
+  { id: "sea", label: "Sea — dropped to the sea datum", params: { mode: "sea", band: 60, priority: 0 } },
+];
+
+const landformAlgorithm: ProcgenAlgorithm = {
+  id: "landform",
+  label: "Landform",
+  currentVersion: 1,
+  appliesTo: ["landform"],
+  // Stage 1 (TERRAIN): a replace-stamp of the composed field; emits no per-region
+  // fabric (visible form is the composed-field contours, plan 036-C).
+  stage: 1,
+  produces: ["elevation"],
+  consumes: [],
+  consumesSketch: [],
+  influenceMargin: 0,
+  costClass: "cheap",
+  paramsSchema: landformParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
+  presets: LANDFORM_PRESETS,
+  defaultPresetId(): string {
+    return "plateau";
+  },
+  defaultParams(): Record<string, unknown> {
+    return { ...LANDFORM_PRESETS[0].params };
+  },
+  tileGeneratorIds: [],
+  generate(): GeoJSON.Feature[] {
+    return [];
+  },
+};
+
+/** v1 registers `city` + `forest` + `park` + `farmland` + `mountain` + `relief` +
+ * `landform` (polygon) + `river` + `wall` (line). Order matters for
+ * `algorithmForKind` (first match wins) — keep the list explicit and small. */
 const REGISTRY: readonly ProcgenAlgorithm[] = [
   cityAlgorithm,
   riverAlgorithm,
@@ -744,6 +848,8 @@ const REGISTRY: readonly ProcgenAlgorithm[] = [
   wallAlgorithm,
   farmlandAlgorithm,
   mountainAlgorithm,
+  reliefAlgorithm,
+  landformAlgorithm,
 ];
 
 export function algorithmForKind(kind: FabricKind): ProcgenAlgorithm | undefined {

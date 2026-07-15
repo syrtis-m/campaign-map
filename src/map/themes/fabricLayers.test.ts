@@ -67,13 +67,20 @@ describe("fabric kinds are visibly distinct per theme", () => {
     return (color as string).toLowerCase();
   }
 
+  // The terrain-stamp kinds (plan 036: relief, landform) DELIBERATELY share the
+  // mountain relief hue — their visible form is the composed-field contours
+  // (036-C), not a distinct fill, so a dedicated token would add nothing
+  // readable. They are excluded from the distinct-color guard, which still
+  // covers every kind the GM draws as its own coloured shape.
+  const DISTINCT_KINDS = FABRIC_KINDS.filter((k) => k !== "relief" && k !== "landform");
+
   function expectSixDistinctColors(themeId: string, layers: LayerSpecification[]) {
-    const colors = FABRIC_KINDS.map((kind) => {
+    const colors = DISTINCT_KINDS.map((kind) => {
       const layer = layers.find((l) => l.id === `fabric-${kind}`)!;
       return primaryColor(layer);
     });
     expect(new Set(colors).size, `${themeId} fabric colors collide: ${colors.join(", ")}`).toBe(
-      FABRIC_KINDS.length
+      DISTINCT_KINDS.length
     );
   }
 

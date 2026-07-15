@@ -66,6 +66,28 @@ export {
   terrainConfig,
   terrace,
 } from "./mountainField";
+export type {
+  TerrainBaseParams,
+  TerrainOptions,
+  ReliefParams,
+  ReliefPolarity,
+  LandformParams,
+  LandformMode,
+} from "./terrain";
+export {
+  // The composed campaign terrain field (plan 036): base + mountain-union add +
+  // relief/landform stamps. Byte-identical to `elevationFieldFromFabric` on a
+  // mountain-only campaign (the migration is a call); the drop-in the river slope
+  // + farmland paddy consumers read.
+  terrainAt,
+  hasTerrainRelief,
+  DEFAULT_TERRAIN_BASE,
+  RELIEF_POLARITIES,
+  RELIEF_DEFAULTS,
+  reliefMaxOffset,
+  LANDFORM_MODES,
+  LANDFORM_DEFAULTS,
+} from "./terrain";
 export type { Contour, MarchingSquaresOptions } from "./marchingSquares";
 export {
   // Iso-line / iso-band tracing over any scalar field — the reusable machinery

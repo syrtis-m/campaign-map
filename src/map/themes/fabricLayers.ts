@@ -131,7 +131,42 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
         "fill-outline-color": tokens.fabricMountain,
       },
     },
+    landform: {
+      // Inert sketched landform (plateau/basin/sea replace-stamp): a faint
+      // relief wash reusing the mountain token (both are terrain modifiers — a
+      // dedicated token would add nothing readable). Once a procgen block is
+      // attached its VISIBLE form is the composed-field contours/hillshade (plan
+      // 036-C), so the raw polygon drops to opacity 0 — same mechanism as the
+      // mountain/forest fill (fill stays rendered so queryRenderedFeatures still
+      // hit-tests it for selection).
+      id: "fabric-landform",
+      type: "fill",
+      source: "fabric",
+      filter: kindFilter("landform"),
+      paint: {
+        "fill-color": tokens.fabricMountain,
+        "fill-opacity": ["case", ["has", "procgen"], 0, 0.2],
+        "fill-outline-color": tokens.fabricMountain,
+      },
+    },
     // Lines
+    relief: {
+      // Inert sketched relief (ridge/valley add-stamp): a faint dashed relief
+      // stroke in the mountain hue. Its VISIBLE form is the composed-field
+      // contours (plan 036-C); the raw spine drops to opacity 0 once a procgen
+      // block is attached (still rendered for hit-testing / selection).
+      id: "fabric-relief",
+      type: "line",
+      source: "fabric",
+      filter: kindFilter("relief"),
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": tokens.fabricMountain,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 14, 4],
+        "line-dasharray": [3, 2],
+        "line-opacity": ["case", ["has", "procgen"], 0, 0.7],
+      },
+    },
     river: {
       id: "fabric-river",
       type: "line",

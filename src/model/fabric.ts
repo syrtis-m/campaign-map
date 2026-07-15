@@ -8,10 +8,14 @@ import { z } from "zod";
  * one. This file is pure (zod only — no DOM/map/Obsidian imports) so
  * generators can read fabric features as constraints headlessly.
  */
-export const FABRIC_KINDS = ["road", "wall", "river", "water", "district", "park", "forest", "farmland", "mountain"] as const;
+// plan 036: `relief` (line, ridge/valley add-stamp) + `landform` (polygon,
+// plateau/basin/sea replace-stamp) are terrain-modifier sketches — they carry a
+// procgen block whose params drive `terrainAt`, but their VISIBLE form is the
+// composed-field contours/hillshade (plan 036-C), not per-region fabric.
+export const FABRIC_KINDS = ["road", "wall", "river", "water", "district", "park", "forest", "farmland", "mountain", "relief", "landform"] as const;
 export type FabricKind = (typeof FABRIC_KINDS)[number];
 
-/** line kinds: road, wall, river ; polygon kinds: water, district, park, forest, farmland, mountain */
+/** line kinds: road, wall, river, relief ; polygon kinds: water, district, park, forest, farmland, mountain, landform */
 export function isPolygonKind(kind: FabricKind): boolean {
   return (
     kind === "water" ||
@@ -19,7 +23,8 @@ export function isPolygonKind(kind: FabricKind): boolean {
     kind === "park" ||
     kind === "forest" ||
     kind === "farmland" ||
-    kind === "mountain"
+    kind === "mountain" ||
+    kind === "landform"
   );
 }
 
