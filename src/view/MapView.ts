@@ -24,6 +24,7 @@ import { readCachedTiles, removeCachedTiles } from "../model/tileCache";
 import { FABRIC_LAYER_IDS } from "../map/themes/fabricLayers";
 import { SketchController } from "./SketchController";
 import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
+import { smoothPolyline } from "../map/fabricSmooth";
 import { obsidianNativeStyle, readObsidianCssTokens } from "../map/theme";
 import { glyphsUrlTemplate, createTransformRequest } from "../map/glyphs";
 import { registerVaultBasemap, vaultBasemapBounds } from "../map/pmtilesVaultProtocol";
@@ -1517,7 +1518,16 @@ export class MapView extends ItemView {
         const mode = (f.properties.procgen?.params as { mode?: unknown } | undefined)?.mode;
         if (typeof mode === "string") props.landformMode = mode;
       }
-      return { ...f, properties: props };
+      // Smooth rural sketched roads at paint time (centripetal Catmull-Rom):
+      // dead-straight faint strokes become gentle curves that still pass through
+      // the clicked vertices. Persisted geometry is untouched and selection reads
+      // the RAW feature (controller.fabricFeature → reselectController), so
+      // vertex-edit handles map to the true vertices, not the smoothed mirror.
+      const geometry =
+        f.properties.kind === "road" && f.geometry.type === "LineString"
+          ? { ...f.geometry, coordinates: smoothPolyline(f.geometry.coordinates as [number, number][]) }
+          : f.geometry;
+      return { ...f, geometry, properties: props };
     });
     source.setData({ type: "FeatureCollection", features } as GeoJSON.FeatureCollection);
   }

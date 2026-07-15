@@ -197,9 +197,13 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       source: "fabric",
       filter: kindFilter("road"),
       layout: { "line-cap": "round", "line-join": "round" },
+      // Rural tracks strengthened slightly (shortlist 7) so a smoothed road
+      // reads as a track rather than a faint hairline — a touch wider at every
+      // zoom, at full opacity.
       paint: {
         "line-color": tokens.fabricRoad,
-        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 16, 4],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.4, 16, 5],
+        "line-opacity": 1,
       },
     },
     wall: {

@@ -2,32 +2,32 @@
 
 exports[`handcrafted theme styles are byte-pinned (token-value golden) > ink-soot: fictional / basemap / dem style digests match the committed golden 1`] = `
 {
-  "basemap": "8ed667c095d5b0cf",
-  "dem": "4acb73011cacf4b1",
-  "fictional": "d85fd8af68bcf96c",
+  "basemap": "ac23d93eb72bc609",
+  "dem": "cfac0193d47b9bb1",
+  "fictional": "baa91abb003f7266",
 }
 `;
 
 exports[`handcrafted theme styles are byte-pinned (token-value golden) > modern-clean: fictional / basemap / dem style digests match the committed golden 1`] = `
 {
-  "basemap": "3e117508851a3623",
-  "dem": "36e2ca02c6b1043a",
-  "fictional": "06cba2be68f7003d",
+  "basemap": "e48f9c4e3eac2bea",
+  "dem": "0565342b963798cc",
+  "fictional": "8e542c2e3d20e08c",
 }
 `;
 
 exports[`handcrafted theme styles are byte-pinned (token-value golden) > neon-sprawl: fictional / basemap / dem style digests match the committed golden 1`] = `
 {
-  "basemap": "cd017270a0513895",
-  "dem": "0fa928bae61c82b1",
-  "fictional": "4901a29819d6abd0",
+  "basemap": "e6a9b9d6aff7b1c6",
+  "dem": "454ff52e4d751014",
+  "fictional": "12be62f0d1197ff9",
 }
 `;
 
 exports[`handcrafted theme styles are byte-pinned (token-value golden) > parchment: fictional / basemap / dem style digests match the committed golden 1`] = `
 {
-  "basemap": "e9a66a47d33c10b8",
-  "dem": "f610f32c6fa760a0",
-  "fictional": "95991763bb234377",
+  "basemap": "10ba089ce7434953",
+  "dem": "a9483488f7475318",
+  "fictional": "46b0e04bcdf845bb",
 }
 `;
