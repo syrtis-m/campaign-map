@@ -108,34 +108,67 @@ function parseUrl(url: string): { campaignId: string; z: number; x: number; y: n
   return { campaignId, z, x, y };
 }
 
-/** Resolve the height lattice for a tile: cache hit (matching digest) or compute
- * + persist. Returns the int lattice — the durable, determinism-compared record. */
-async function resolveLattice(
+/** An AbortController's signal as a never-resolving promise that REJECTS with an
+ * `AbortError` when the controller aborts (matching MapLibre's own abort error
+ * name). Lets the protocol handler bail out of a doomed request the instant the
+ * camera moves on, instead of holding the (serialized) worker to finish a tile no
+ * one will draw. */
+function abortError(): Error {
+  const e = new Error("AbortError");
+  e.name = "AbortError";
+  return e;
+}
+function abortSignalPromise(ac: AbortController): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    if (ac.signal.aborted) return reject(abortError());
+    ac.signal.addEventListener("abort", () => reject(abortError()), { once: true });
+  });
+}
+
+/** Belt-and-suspenders ceiling on how long a single worker DEM job may hold a
+ * tile before we give up and fall back to the (byte-identical) main-thread fill.
+ * The priority queue (workerClient) already keeps DEM jobs from starving; this
+ * only fires if the worker genuinely wedges, so a tile ALWAYS eventually resolves
+ * rather than hanging "loading" forever (the "doesn't reliably reappear" report).
+ * Generous — main-thread fill is the very stall we moved off-thread, so we only
+ * pay it when the worker has clearly failed us. */
+const WORKER_DEM_TIMEOUT_MS = 8000;
+
+/**
+ * In-flight DEDUPE for lattice computation. Two MapLibre requests can race the
+ * same tile (a quick pan-away-and-back, or overlapping raster-dem + hillshade
+ * reads); without this both would compute (and, pre-worker, both hit the single
+ * worker). Keyed by `campaign:key:digest` so a stale-digest re-fill is a distinct
+ * entry. CRITICALLY the entry is cleared in a `finally`, so a FAILED compute
+ * leaves nothing behind — the next request retries from scratch (a poisoned entry
+ * that never cleared is exactly the "aborted/failed tile never reappears" trap).
+ * The shared compute runs to completion regardless of any one requester aborting,
+ * so an abort never cancels a tile a concurrent requester still wants. */
+const inFlightLattice = new Map<string, Promise<number[]>>();
+
+/** Compute the lattice (worker with timeout → main-thread fallback, both
+ * byte-identical) and persist it BEST-EFFORT. Serving is decoupled from
+ * persistence: a cache-write failure (vault contention under heavy panning) is
+ * swallowed so it can NEVER reject the served tile — a rejected handler marks the
+ * MapLibre tile `errored`, which is never re-requested (the "disappears and
+ * doesn't reappear" mechanism). The lattice we return is valid regardless of
+ * whether the durable write landed; a later request simply recomputes/repersists. */
+async function computeAndPersist(
   provider: DemProvider,
-  campaignId: string,
   z: number,
   x: number,
-  y: number
+  y: number,
+  digest: string,
+  inputs: SerializableTerrainInputs,
+  field: ElevationField
 ): Promise<number[]> {
-  const { field, digest, inputs } = provider.snapshot();
-  const cached = await getDemTile(provider.app, provider.campaignFolder, z, x, y);
-  if (cached && cached.digest === digest && cached.res === DEM_TILE_RES && cached.k === provider.k) {
-    return cached.heights;
-  }
-  // Off-thread fill (worker) when available; else the main-thread pure function.
-  // Both sample the SAME composed field from the SAME inputs → byte-identical.
   let heights: number[] | null = null;
   if (provider.computeLatticeOffThread) {
     try {
-      heights = await provider.computeLatticeOffThread(
-        inputs,
-        z,
-        x,
-        y,
-        DEM_TILE_RES,
-        provider.scaleMetersPerUnit,
-        provider.k
-      );
+      heights = await Promise.race([
+        provider.computeLatticeOffThread(inputs, z, x, y, DEM_TILE_RES, provider.scaleMetersPerUnit, provider.k),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), WORKER_DEM_TIMEOUT_MS)),
+      ]);
     } catch {
       heights = null; // worker error → main-thread fallback keeps the map alive
     }
@@ -152,21 +185,60 @@ async function resolveLattice(
     heights,
     generatedAt: Date.now(),
   };
-  await appendDemTile(provider.app, provider.campaignFolder, tile);
+  try {
+    await appendDemTile(provider.app, provider.campaignFolder, tile);
+  } catch {
+    // Persist is best-effort — never let a write failure poison the served tile.
+  }
   return heights;
+}
+
+/** Resolve the height lattice for a tile: cache hit (matching digest) or a
+ * deduped compute + persist. Returns the int lattice — the durable,
+ * determinism-compared record. */
+async function resolveLattice(
+  provider: DemProvider,
+  campaignId: string,
+  z: number,
+  x: number,
+  y: number
+): Promise<number[]> {
+  const { field, digest, inputs } = provider.snapshot();
+  const cached = await getDemTile(provider.app, provider.campaignFolder, z, x, y);
+  if (cached && cached.digest === digest && cached.res === DEM_TILE_RES && cached.k === provider.k) {
+    return cached.heights;
+  }
+  const flightKey = `${campaignId}:${demTileKey(z, x, y)}:${digest}`;
+  let pending = inFlightLattice.get(flightKey);
+  if (!pending) {
+    pending = computeAndPersist(provider, z, x, y, digest, inputs, field).finally(() => {
+      inFlightLattice.delete(flightKey);
+    });
+    inFlightLattice.set(flightKey, pending);
+  }
+  return pending;
 }
 
 /** Register the shared `campaigndem` protocol once (idempotent). */
 export function ensureCampaignDemProtocol(): void {
   if (registered) return;
   registered = true;
-  maplibregl.addProtocol("campaigndem", async (params) => {
+  maplibregl.addProtocol("campaigndem", async (params, abortController) => {
     const parsed = parseUrl(params.url);
     const provider = parsed ? providers.get(parsed.campaignId) : undefined;
     if (!parsed || !provider) {
       return { data: await encodePng(flatRGBA(), DEM_TILE_RES) };
     }
-    const heights = await resolveLattice(provider, parsed.campaignId, parsed.z, parsed.x, parsed.y);
+    if (abortController?.signal.aborted) throw abortError();
+    // Race the (shared, deduped) lattice resolve against the abort signal so a
+    // camera move releases this request immediately — the shared compute lives on
+    // to warm the cache for whoever draws the tile next. An abort throws
+    // AbortError; MapLibre has already flagged its own tile aborted, so it unloads
+    // (retryable) rather than marking it errored.
+    const latticeP = resolveLattice(provider, parsed.campaignId, parsed.z, parsed.x, parsed.y);
+    const heights = abortController
+      ? await Promise.race([latticeP, abortSignalPromise(abortController)])
+      : await latticeP;
     const rgba = latticeToRGBA(heights, DEM_TILE_RES);
     return { data: await encodePng(rgba, DEM_TILE_RES) };
   });
