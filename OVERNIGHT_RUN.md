@@ -1,5 +1,22 @@
 # OVERNIGHT RUN — pipeline arc 031→039 (2026-07-14 → 2026-07-15)
 
+## LIVE-TESTING SESSION FIXES (2026-07-15 afternoon, all pushed, suite 1319/1319)
+- `2e7e342` contours at ALL zooms: interval capped at relief-range/10 (nice-number snapped,
+  digest-keyed, byte-identical at close zooms; overview 4→12–18 lines).
+- `9c40c9e` extrude grip is a SCREEN-SPACE DOM overlay (terrain-aware anchor + pixel offset) —
+  vertical at any pitch; the old draped-GeoJSON grip read as lying on the ground. (Earlier
+  `260bf14`: grip out-sized the move handle + ns-resize cursor — the "horizontal extrude" was a
+  center-handle grab.)
+- 3D package (7 commits): `f5a942d` tiles always retryable (non-abort rejection permanently
+  errored a tile — THE "doesn't reappear" bug; +8s worker timeout→fallback); `a246459` per-tile
+  terrain digest — extrude re-derives ONLY touched tiles; `9f09160` retention (512 decoded tiles
+  + PNG-byte LRU — revisits are pure serves, "once 3D stays 3D"); `6b032e2` carve occupancy-grid
+  reject, byte-proven, 2065→453 ms on a meander tile; `e43e7b2` worker priority (DEM/regen ahead
+  of contour leaves); `0ee8a41` DEM_TILE_RES 256→128 (~3.8×; ONE-LINE REVERT if hillshade reads
+  soft — Jonah's knob); `e417cb5` RIVERS FLOW DOWNHILL (cumulative-min bed source→mouth;
+  TERRAIN_FIELD_VERSION 3→4 so all cached tiles/leaves self-heal; generator bytes untouched).
+  9-tile cold camera move ≈4.4 s → ≈1 s; extrude + revisits near-instant.
+
 ## AFTERNOON SESSION (2026-07-15): rendering fixes + land-shaping UX + perf — ALL PUSHED
 - **Ghost-fabric fixes**: `4705e84` (delete/unpaint used static stage vs params-aware paint stage
   — urban-park survived deletion; preview path had the same hole) + `0579d4c` (stage MIGRATION on
