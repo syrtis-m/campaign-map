@@ -178,7 +178,16 @@ async function main(): Promise<void> {
     if (has !== true) throw new Error("tree-broadleaf-0 glyph image not registered");
   });
 
-  await gate.try("(e) glyph images survive a hard setStyle (styleimagemissing provider)", async () => {
+  await gate.try("(e) fixtures RENDER pixels (queryRenderedFeatures) + screenshot", async () => {
+    sync("(function(){v.map.fitBounds([[-44,-34],[32,-4]],{animate:false,padding:40});return 'ok';})()");
+    await new Promise((r) => setTimeout(r, 2500));
+    const rendered = sync("v.map.queryRenderedFeatures().length") as number;
+    if (!(rendered > 0)) throw new Error("nothing rendered over the fixtures — paint is blank");
+    screenshot("/Users/athena/projects/campaign-map/shots/gate-smoke-procgen.png");
+    if (!existsSync("shots/gate-smoke-procgen.png")) throw new Error("screenshot missing");
+  });
+
+  await gate.try("(f) glyph images survive a hard setStyle (styleimagemissing provider)", async () => {
     sync("(function(){v.map.setStyle(v.buildStyle(v.campaign));return 'restyled';})()");
     await new Promise((r) => setTimeout(r, 2500)); // restyle + missing-image round-trip
     const healthy = sync("v.map.isStyleLoaded() && !!v.map.getLayer('background')");
@@ -187,12 +196,12 @@ async function main(): Promise<void> {
     if (has !== true) throw new Error("glyph image lost across setStyle");
   });
 
-  await gate.try("(f) perf probes (advisory — budget target is a Surface Pro, never fail on the dev machine)", async () => {
+  await gate.try("(g) perf probes (advisory — budget target is a Surface Pro, never fail on the dev machine)", async () => {
     const rescan = evalJs("app.plugins.plugins['campaign-map'].rescanTimeMs");
     console.log(`     [f] rescanTimeMs=${String(rescan)} (advisory)`);
   });
 
-  await gate.try("(g) dev:errors clean end-to-end", () => {
+  await gate.try("(h) dev:errors clean end-to-end", () => {
     const errs = devErrors();
     if (!errs.includes("No errors")) throw new Error(errs);
   });
@@ -200,11 +209,6 @@ async function main(): Promise<void> {
   await gate.try("vespergate real features byte-intact", () => {
     const now = nonTestFabricBytes();
     if (now !== vespergateBytes) throw new Error("non-fixture fabric changed — Vespergate not byte-intact");
-  });
-
-  await gate.try("screenshot captured", () => {
-    screenshot("/Users/athena/projects/campaign-map/shots/gate-smoke-procgen.png");
-    if (!existsSync("shots/gate-smoke-procgen.png")) throw new Error("screenshot missing");
   });
 
   // Self-clean: strip fixtures with the app closed (no in-memory/disk race).
