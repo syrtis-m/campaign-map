@@ -175,6 +175,33 @@ describe("dag — source nodes (plan 034)", () => {
     expect(hasEdge(roadSrc, other, 200)).toBe(false);
   });
 
+  it("VARIABLE SUPPORT (ruling 2026-07-15): a terrain source's supportMargin overrides the consumer margin", () => {
+    // A forest consuming terrain stamps with a TIGHT 8 m influenceMargin.
+    const forest: DagNode = {
+      id: "forest",
+      stage: 2,
+      produces: ["vegetation"],
+      consumes: [],
+      bbox: box(0, 0, 200, 200),
+      consumesSketch: ["mountain", "relief", "landform"],
+      influenceMargin: 8,
+    };
+    // A relief spine 100 m past the region (bboxGap 100). With its OWN 300 m
+    // support it reaches the forest; the forest's 8 m scalar margin would have
+    // wrongly dropped it.
+    const relief300: DagNode = { id: "source:relief300", stage: -1, produces: [], consumes: [], bbox: box(300, 0, 400, 200), sketchKind: "relief", supportMargin: 300 };
+    expect(hasEdge(relief300, forest, /* consumer edge margin */ 200)).toBe(true);
+    // Same geometry, only a 50 m support ⇒ gap 100 > 50 ⇒ NO edge (byte-inert).
+    const relief50: DagNode = { ...relief300, id: "source:relief50", supportMargin: 50 };
+    expect(hasEdge(relief50, forest, 200)).toBe(false);
+    // A mountain/landform source carries supportMargin 0 ⇒ needs bbox overlap;
+    // 100 m away ⇒ no edge even though the consumer margin is 8 (0 wins).
+    const mtnSrc: DagNode = { id: "source:mtn", stage: -1, produces: [], consumes: [], bbox: box(300, 0, 400, 200), sketchKind: "mountain", supportMargin: 0 };
+    expect(hasEdge(mtnSrc, forest, 200)).toBe(false);
+    const mtnOver: DagNode = { ...mtnSrc, id: "source:mtnOver", bbox: box(100, 100, 150, 150) };
+    expect(hasEdge(mtnOver, forest, 200)).toBe(true); // overlaps ⇒ edge
+  });
+
   it("a source closure reaches the region's transitive downstream, DAG stays acyclic", () => {
     // road source → city (stage 3); city → wall (stage 4, consumes settlement).
     const wall: DagNode = {

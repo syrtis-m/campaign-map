@@ -576,11 +576,16 @@ export function generateRiver(
   // arithmetic regardless.
   const slopeSens = params.slopeSensitivity ?? 0;
   // Slope coupling reads the DURABLE MACRO terrain through the one composed
-  // source of truth (`terrainAt` via `macroTerrainField`): mountains + base, no
-  // relief/landform, and NOT the river's own carve (circular). Bit-exact drop-in
-  // for the old `elevationFieldFromFabric` — mountain-only campaigns are
-  // byte-identical, no-mountain campaigns return null (the same shortcut).
-  const elev = slopeSens > 0 && params.windiness > 0 ? macroTerrainField(constraints.fabricFeatures) : null;
+  // source of truth (`terrainAt` via `macroTerrainField`): the full global
+  // terrain system — base + mountain + relief + landform stamps — but NOT the
+  // river's own carve (circular) nor city grade (ruling 2026-07-15: a mountain is
+  // just one stamp kind). Bit-exact drop-in for the old `elevationFieldFromFabric`
+  // where the goldens run — mountain-only / no-stamp campaigns are byte-identical
+  // (the verbatim fast path), trivially-flat campaigns return null (same shortcut).
+  const elev =
+    slopeSens > 0 && params.windiness > 0
+      ? macroTerrainField(constraints.fabricFeatures, constraints.terrainBase, constraints.campaignSeed)
+      : null;
 
   // ── Tributary rank (plan 038 item 3): a Strahler-ish channel-width response to
   //    the sketched spine topology (sketch-only, same-stage legal — reads other

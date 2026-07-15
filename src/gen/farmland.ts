@@ -361,7 +361,10 @@ export function generateFarmland(
   // Slope-gating terrain (plan 038 item 4): the macro terrain field, for the
   // non-paddy field types (paddy reads it separately, below). null on a flat
   // campaign ⇒ no field is ever re-tagged (byte-identical).
-  const slopeTerrain = fieldType !== "paddy-terraces" ? macroTerrainField(constraints.fabricFeatures) : null;
+  const slopeTerrain =
+    fieldType !== "paddy-terraces"
+      ? macroTerrainField(constraints.fabricFeatures, constraints.terrainBase, constraints.campaignSeed)
+      : null;
   const LANE_STEP_M = 8; // resample step for lane channel-splitting (coupled path only)
   /** Emit a lane run, truncated at the channel when there is upstream water. */
   const emitLaneRun = (run: Pt[]): void => {
@@ -632,11 +635,13 @@ export function generateFarmland(
     const washRing: Pt[] = region.ring.map(([x, y]) => [q(x), q(y)] as Pt);
     out.push(blobFeature(seed, "farm-field", washRing, { crop: "paddy", fieldType }));
 
-    // Candidate bank field #1: the durable MACRO terrain (mountains + base) read
-    // through the one composed source of truth (`terrainAt` via
-    // `macroTerrainField`) — bit-exact drop-in for `elevationFieldFromFabric`
-    // (mountain-only ⇒ byte-identical; no relief/landform/carve coupling).
-    const elev = macroTerrainField(constraints.fabricFeatures);
+    // Candidate bank field #1: the durable MACRO terrain read through the one
+    // composed source of truth (`terrainAt` via `macroTerrainField`) — the full
+    // global terrain system (base + mountain + relief + landform stamps, no
+    // carve/grade; ruling 2026-07-15). Bit-exact drop-in for
+    // `elevationFieldFromFabric` where the goldens run (mountain-only / no-stamp ⇒
+    // byte-identical). A landform PLATEAU edge banks paddies with no mountain.
+    const elev = macroTerrainField(constraints.fabricFeatures, constraints.terrainBase, constraints.campaignSeed);
     // Deterministic relief scan: world-aligned coarse lattice, contained nodes
     // only (pure f(region, field) — no RNG, no iteration-to-convergence).
     const scan = (f: (x: number, y: number) => number): number => {

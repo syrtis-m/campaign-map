@@ -1,6 +1,7 @@
 import type { BBox } from "./spatialHash";
 import type { NamingGenre } from "./naming/culture";
 import type { FabricFeature } from "../model/fabric";
+import type { TerrainBaseParams } from "./fields/terrain";
 
 /**
  * Shared constraints contract for every Phase 3+ generator: `(seed, bbox,
@@ -25,6 +26,15 @@ export interface GenerationConstraints {
    * this list's constraint index. `fabric.ts` is a pure zod leaf, so this import
    * keeps generators host-agnostic. */
   fabricFeatures?: FabricFeature[];
+  /** Campaign base-terrain params (ruling 2026-07-15): the persisted continental
+   * base fBm amplitude + sea datum. Threaded so a terrain-reading generator
+   * (forest timberline / farmland paddy / river slope, via `macroTerrainField`)
+   * composes the SAME global terrain surface the DEM does. Absent ⇒ the inert
+   * flat default (campAmp 0, datum 0) ⇒ byte-identical to a pre-ruling run. */
+  terrainBase?: TerrainBaseParams;
+  /** Campaign seed for the base fBm — only consulted when `terrainBase.campAmp >
+   * 0`. Absent ⇒ 0 (with a flat base, the value is irrelevant). */
+  campaignSeed?: number;
   /** Naming culture genre for any generator that pre-names its output (e.g.
    * settlements) — defaults per-generator if omitted. */
   namingGenre?: NamingGenre;

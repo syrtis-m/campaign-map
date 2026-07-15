@@ -43,8 +43,15 @@
  */
 import type { FabricFeature, FabricKind } from "../../model/fabric";
 import { indexFabricConstraints } from "../fabricConstraints";
+import { terrainStampSupport, type TerrainBaseParams } from "../fields/terrain";
 import type { ProcgenRegion } from "../region";
 import type { BBox } from "../spatialHash";
+
+/** The sketch KINDS whose durable data drives the composed terrain field a
+ * consumer reads through `macroTerrainField` (ruling 2026-07-15). A consumer
+ * declaring any of these in `consumesSketch` also depends on the campaign base
+ * params, so those fold into its fingerprint (below). */
+const TERRAIN_STAMP_KINDS: readonly FabricKind[] = ["mountain", "relief", "landform"];
 
 /** Bumped when the fingerprint composition OR the hash function changes. Old
  * records carry the old tag ⇒ mismatch ⇒ a MISS that recomputes, so the change
@@ -81,6 +88,17 @@ export interface RegionFingerprintInput {
   /** Influence reach (meters) paired with `consumesSketch` for the scoped hash;
    * defaults to 0 when `consumesSketch` is given without it. */
   influenceMargin?: number;
+  /** Campaign base-terrain params (ruling 2026-07-15). Folded into the
+   * fingerprint ONLY for a terrain-reading algorithm (`consumesSketch` ∩
+   * {mountain,relief,landform}) AND only when non-inert (campAmp≠0 or
+   * seaDatum≠0), append-when-present — so a campaign with no terrain config keeps
+   * a byte-identical fingerprint (no churn), while a base-param change dirties
+   * every terrain-consuming region (the whole-campaign invalidation the Apply
+   * cost-notice flow bills). */
+  terrainBase?: TerrainBaseParams;
+  /** Campaign seed for the base fBm — folded alongside `terrainBase` only when
+   * `campAmp > 0` (with a flat base it never influences output). */
+  campaignSeed?: number;
   /** The fingerprints of this region's strictly-lower-stage DAG dependencies
    * (see `dag.ts`). Sorted by the caller for order-invariance; folded in ONLY
    * when non-empty (a no-upstream region keeps a stable fingerprint — see the
@@ -189,7 +207,16 @@ function scopeConstraintFeatures(
   return fabricFeatures.filter((f) => {
     if (!consumesSketch.includes(f.properties.kind)) return false;
     const fb = featureBbox(f);
-    return fb !== null && bboxGap(fb, regionBbox) <= margin;
+    if (fb === null) return false;
+    // VARIABLE SUPPORT (ruling 2026-07-15): a terrain STAMP uses its own
+    // per-feature reach (`terrainStampSupport`: relief → halfWidth, mountain/
+    // landform → 0) rather than the consumer's scalar `margin`, so a relief whose
+    // spine bbox sits within its cross-profile half-width of the region is kept
+    // (it moves the field) while one past it is dropped (byte-inert). Non-terrain
+    // kinds keep the scalar `margin`.
+    const support = terrainStampSupport(f);
+    const reach = support !== null ? support : margin;
+    return bboxGap(fb, regionBbox) <= reach;
   });
 }
 
@@ -220,13 +247,35 @@ function canonicalConstraints(fabricFeatures: FabricFeature[] | undefined): stri
     }
   }
   const nested = nestedRings.length > 0 ? "N" + bucket(nestedRings) : "";
+  // Terrain STAMPS (ruling 2026-07-15): mountain/relief/landform are procgen
+  // regions, NOT raw constraints, so `indexFabricConstraints` never buckets them
+  // — yet a forest timberline / farmland paddy / river slope reads the composed
+  // terrain field they drive (via `macroTerrainField`), so their durable identity
+  // MUST enter a terrain-consumer's fingerprint or an external stamp edit serves
+  // stale bytes. Hash algorithm + seed + params + geometry (the field is a pure
+  // function of those — id is irrelevant), id-sorted for enumeration-invariance.
+  // Only a terrain consumer scopes these in (its `consumesSketch`), so this
+  // bucket is empty for every other algorithm; APPENDED ONLY WHEN NON-EMPTY so a
+  // no-terrain-stamp region's fingerprint string is byte-unchanged (no churn, no
+  // FP_VERSION bump — the same append-when-present discipline as nested rings).
+  const terrainStamps: string[] = [];
+  for (const f of fabricFeatures ?? []) {
+    const alg = f.properties.procgen?.algorithm;
+    if (alg === "mountain" || alg === "relief" || alg === "landform") {
+      terrainStamps.push(
+        canonicalJson({ a: alg, s: f.properties.procgen!.seed, p: f.properties.procgen!.params, g: f.geometry.coordinates })
+      );
+    }
+  }
+  const terrain = terrainStamps.length > 0 ? "T[" + terrainStamps.sort().join(",") + "]" : "";
   return (
     "W" + bucket(idx.waterRings) +
     "R" + bucket(idx.riverLines) +
     "D" + bucket(idx.roadLines) +
     "L" + bucket(idx.wallLines) +
     "F" + bucket(idx.farmlandRings) +
-    nested
+    nested +
+    terrain
   );
 }
 
@@ -253,6 +302,18 @@ export function regionFingerprint(input: RegionFingerprintInput): string {
     "G:" + geometry,
     "C:" + canonicalConstraints(scoped),
   ];
+  // Campaign base-terrain params (ruling 2026-07-15): fold in ONLY for a
+  // terrain-reading algorithm AND only when the base is non-inert, append-when-
+  // present — a no-terrain-config campaign keeps a byte-identical fingerprint, a
+  // base change dirties every terrain consumer (the whole-campaign invalidation).
+  const readsTerrain = input.consumesSketch?.some((k) => TERRAIN_STAMP_KINDS.includes(k)) ?? false;
+  const campAmp = input.terrainBase?.campAmp ?? 0;
+  const seaDatum = input.terrainBase?.seaDatum ?? 0;
+  if (readsTerrain && (campAmp !== 0 || seaDatum !== 0)) {
+    // campaignSeed only influences output through the base fBm (campAmp>0).
+    const seedPart = campAmp !== 0 ? `:${input.campaignSeed ?? 0}` : "";
+    fields.push(`B:${campAmp}:${seaDatum}${seedPart}`);
+  }
   // Fold in upstream DAG dependencies ONLY when present, so a no-upstream region
   // keeps a stable fingerprint (no version bump, no needless recompute — module
   // header). Sorted here too, defensively, so the hash is invariant to the order

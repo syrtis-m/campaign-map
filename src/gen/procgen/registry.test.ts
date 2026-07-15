@@ -99,13 +99,17 @@ describe("consumption declarations (plan 033-C)", () => {
     { kinds: string[]; margin: number; cost: "cheap" | "medium" | "expensive" }
   > = {
     city: { kinds: ["water", "river", "road", "wall", "farmland", "park", "district"], margin: 1500, cost: "expensive" },
-    river: { kinds: ["water", "river", "mountain"], margin: 30, cost: "medium" },
-    // plan 038 item 4 (mountain terrain read) + item 7 (forest↔farmland/park
+    // Ruling 2026-07-15: the terrain readers gain relief/landform (the composed
+    // global terrain field, not a mountain polygon). The terrain-stamp kinds use
+    // a PER-FEATURE reach (`terrainStampSupport`), so `margin` still governs only
+    // the non-terrain kinds.
+    river: { kinds: ["water", "river", "mountain", "relief", "landform"], margin: 30, cost: "medium" },
+    // plan 038 item 4 (terrain read) + item 7 (forest↔farmland/park
     // shared-boundary hedgerow, HEDGE_ADJ_EPS margin 8).
-    forest: { kinds: ["mountain", "farmland", "park"], margin: 8, cost: "cheap" },
+    forest: { kinds: ["mountain", "relief", "landform", "farmland", "park"], margin: 8, cost: "cheap" },
     park: { kinds: ["road", "forest", "farmland"], margin: 30, cost: "medium" },
     wall: { kinds: ["road"], margin: 0, cost: "medium" },
-    farmland: { kinds: ["mountain", "forest", "park"], margin: 8, cost: "medium" },
+    farmland: { kinds: ["mountain", "relief", "landform", "forest", "park"], margin: 8, cost: "medium" },
     mountain: { kinds: [], margin: 0, cost: "cheap" },
     // plan 036 terrain stamps: field-only add/replace, read no other sketch.
     relief: { kinds: [], margin: 0, cost: "cheap" },

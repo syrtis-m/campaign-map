@@ -212,6 +212,81 @@ describe("regionFingerprint — scoped constraints (plan 033-D)", () => {
   });
 });
 
+function reliefLine(id: string, x0: number, x1: number, halfWidth: number): FabricFeature {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "LineString", coordinates: [[x0, 500], [x1, 500]] },
+    properties: { kind: "relief", procgen: { algorithm: "relief", seed: 7, version: 1, params: { polarity: "ridge", height: 300, halfWidth } } },
+  } as FabricFeature;
+}
+function landformPoly(id: string, x: number): FabricFeature {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "Polygon", coordinates: [[[x, x], [x + 200, x], [x + 200, x + 200], [x, x + 200], [x, x]]] },
+    properties: { kind: "landform", procgen: { algorithm: "landform", seed: 9, version: 1, params: { mode: "plateau", band: 100, priority: 0 } } },
+  } as FabricFeature;
+}
+
+describe("regionFingerprint — terrain stamps + base params (ruling 2026-07-15)", () => {
+  // A terrain-reading algorithm scope (forest): declares the terrain-stamp kinds.
+  function forestScope(): RegionFingerprintInput {
+    return { ...base(), algorithm: "forest", consumesSketch: ["mountain", "relief", "landform", "farmland", "park"], influenceMargin: 8 };
+  }
+  const forestRef = regionFingerprint(forestScope());
+
+  it("VARIABLE SUPPORT: a relief within its half-width flips the fingerprint; past it is inert", () => {
+    // Ridge spine at y=500; region 0..1000. A relief with halfWidth 300 whose
+    // spine sits 200 m outside the region (bboxGap 200 < 300) is IN reach.
+    const near = reliefLine("near", 1200, 1600, 300); // bbox starts 200 m past maxX
+    expect(regionFingerprint({ ...forestScope(), fabricFeatures: [near] })).not.toBe(forestRef);
+    // Same relief but only 100 m half-width ⇒ bboxGap 200 > 100 ⇒ byte-inert
+    // (the scalar 8 m margin would have wrongly dropped BOTH — this is the
+    // per-feature reach doing its job).
+    const outOfBand = reliefLine("far", 1200, 1600, 100);
+    expect(regionFingerprint({ ...forestScope(), fabricFeatures: [outOfBand] })).toBe(forestRef);
+  });
+
+  it("a landform's replace-mask uses reach 0: overlapping flips, disjoint is inert", () => {
+    expect(regionFingerprint({ ...forestScope(), fabricFeatures: [landformPoly("over", 100)] })).not.toBe(forestRef);
+    expect(regionFingerprint({ ...forestScope(), fabricFeatures: [landformPoly("far", 5000)] })).toBe(forestRef);
+  });
+
+  it("terrain stamps stay ISOLATED from a NON-terrain consumer (city ignores them)", () => {
+    // City's real scope does NOT declare relief/landform ⇒ a terrain stamp is
+    // byte-inert to it (byte-stability: no churn for the settlement algorithms).
+    const cityScope = (): RegionFingerprintInput => ({
+      ...base(),
+      consumesSketch: ["water", "river", "road", "wall", "farmland", "park", "district"],
+      influenceMargin: 1500,
+    });
+    const cityRef = regionFingerprint(cityScope());
+    expect(regionFingerprint({ ...cityScope(), fabricFeatures: [reliefLine("r", 100, 400, 300)] })).toBe(cityRef);
+    expect(regionFingerprint({ ...cityScope(), fabricFeatures: [landformPoly("l", 100)] })).toBe(cityRef);
+  });
+
+  it("BYTE-STABILITY: a default (inert) terrainBase leaves the fingerprint unchanged", () => {
+    // The append-when-present discipline: an absent/inert base must not flip an
+    // existing campaign's fingerprint (goldens + no-config campaigns byte-stable).
+    expect(regionFingerprint({ ...forestScope(), terrainBase: { campAmp: 0, seaDatum: 0 }, campaignSeed: 42 })).toBe(forestRef);
+    expect(regionFingerprint({ ...forestScope(), terrainBase: undefined })).toBe(forestRef);
+  });
+
+  it("a NON-inert base change dirties every terrain consumer", () => {
+    const withBase = regionFingerprint({ ...forestScope(), terrainBase: { campAmp: 100, seaDatum: 0 }, campaignSeed: 42 });
+    expect(withBase).not.toBe(forestRef);
+    // The campaign seed feeds the base fBm ⇒ a re-seed re-hashes when campAmp>0.
+    const reseeded = regionFingerprint({ ...forestScope(), terrainBase: { campAmp: 100, seaDatum: 0 }, campaignSeed: 99 });
+    expect(reseeded).not.toBe(withBase);
+  });
+
+  it("a base change is INERT for a non-terrain consumer (city keeps byte-stability)", () => {
+    const cityRef = regionFingerprint(base());
+    expect(regionFingerprint({ ...base(), terrainBase: { campAmp: 100, seaDatum: 25 }, campaignSeed: 7 })).toBe(cityRef);
+  });
+});
+
 describe("hasher (plan 033-B) — two-lane 32-bit, budget counter", () => {
   it("emits the same 16-hex width as the old FNV-64 output", () => {
     expect(regionFingerprint(base())).toMatch(/^[0-9a-f]{16}$/);

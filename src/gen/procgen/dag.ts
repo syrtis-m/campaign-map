@@ -83,6 +83,14 @@ export interface DagNode {
   /** SOURCE nodes only (plan 034): the raw `FabricKind` this source produces —
    * the currency a region's `consumesSketch` reads. */
   sketchKind?: FabricKind;
+  /** SOURCE nodes only (ruling 2026-07-15): a terrain-STAMP source's variable
+   * per-feature support reach (meters) beyond its bbox — relief → its halfWidth,
+   * mountain/landform → 0 (`terrainStampSupport`). When set it OVERRIDES the
+   * consumer's scalar `influenceMargin` for the source→region edge, so a relief
+   * reaches a terrain consumer within its cross-profile band (which the consumer's
+   * fixed margin does not model) while a compact mountain/landform reaches only on
+   * bbox overlap. Undefined for non-terrain sources ⇒ the consumer margin governs. */
+  supportMargin?: number;
   /** REGION nodes only (plan 034): the raw sketch kinds this region's generator
    * consumes (registry `consumesSketch`) — the source→region edge test keys on
    * it. */
@@ -126,11 +134,15 @@ export function hasEdge(a: DagNode, b: DagNode, margin: number): boolean {
   if (a.id === b.id) return false;
   if (a.stage >= b.stage) return false;
   if (a.sketchKind !== undefined) {
-    // Source → region: B must be a region declaring this sketch kind, reached
-    // within B's own influence margin. A source never feeds another source.
+    // Source → region: B must be a region declaring this sketch kind. A source
+    // never feeds another source. Reach: a terrain-stamp source's own variable
+    // support (`a.supportMargin`, ruling 2026-07-15) when set — relief carries its
+    // half-width, so it reaches a consumer within its cross-profile band that B's
+    // scalar margin would miss — else B's own `influenceMargin`.
     if (b.sketchKind !== undefined) return false;
     if (!b.consumesSketch?.includes(a.sketchKind)) return false;
-    return bboxOverlap(expandBBox(a.bbox, b.influenceMargin ?? 0), b.bbox);
+    const reach = a.supportMargin ?? b.influenceMargin ?? 0;
+    return bboxOverlap(expandBBox(a.bbox, reach), b.bbox);
   }
   // Region → region.
   if (!couples(a, b)) return false;

@@ -280,19 +280,35 @@ describe("macroTerrainField — bit-exact drop-in for elevationFieldFromFabric",
   it("returns null on a trivially-flat campaign (the null shortcut is preserved)", () => {
     expect(macroTerrainField([])).toBeNull();
     expect(macroTerrainField(undefined)).toBeNull();
-    // A river / relief / landform WITHOUT a mountain is still flat macro terrain.
-    expect(macroTerrainField([relief("r", [[0, 0], [100, 0]], { polarity: "ridge", height: 100, halfWidth: 80 })])).toBeNull();
+    // A river WITHOUT any terrain stamp is still flat macro terrain (the carve is
+    // NOT a terrain input — a river must not read its own gorge).
+    expect(macroTerrainField([river("rv", [[0, 0], [100, 0]], { width: 30 })])).toBeNull();
   });
 
-  it("ignores relief/landform/carve — only mountains + base reach the consumer", () => {
-    const withStamps = macroTerrainField([
+  it("a relief/landform WITHOUT a mountain reaches the consumer (ruling 2026-07-15)", () => {
+    // "No more mountain polygons, only the global terrain system": a relief ridge
+    // with NO mountain present composes a non-null macro field the consumer reads.
+    const reliefOnly = macroTerrainField([
+      relief("r", [[0, 0], [1000, 0]], { polarity: "ridge", height: 300, halfWidth: 200 }),
+    ]);
+    expect(reliefOnly).not.toBeNull();
+    // The field is nonzero on the ridge spine (the relief IS composed, not ignored).
+    expect(reliefOnly!(0, 0).v).toBeGreaterThan(0);
+  });
+
+  it("composes relief + landform, but EXCLUDES the river carve + city grade", () => {
+    const stampFeats = [
       mountain("m", RING),
       relief("r", [[200, 200], [1000, 1200]], { polarity: "ridge", height: 400, halfWidth: 300 }),
-      river("rv", [[-200, 750], [1700, 750]], { width: 30 }),
-    ])!;
+    ];
+    const withoutRiver = macroTerrainField(stampFeats)!;
+    const withRiver = macroTerrainField([...stampFeats, river("rv", [[-200, 750], [1700, 750]], { width: 30 })])!;
+    // CARVE EXCLUDED: adding a river makes NO difference to the macro field (a
+    // consumer never reads a river's own gorge — circular).
+    expect(withRiver(750, 750)).toEqual(withoutRiver(750, 750));
+    // RELIEF INCLUDED: the macro field differs from the mountain-only union.
     const mountainOnly = elevationFieldFromFabric([mountain("m", RING)])!;
-    // A point the relief + carve both influence: macro sees only the mountain.
-    expect(withStamps(750, 750)).toEqual(mountainOnly(750, 750));
+    expect(withoutRiver(750, 750)).not.toEqual(mountainOnly(750, 750));
   });
 
   it("adds the campaign base when opted in (campAmp > 0)", () => {

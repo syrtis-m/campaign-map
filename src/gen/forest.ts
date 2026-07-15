@@ -463,12 +463,15 @@ export function generateForest(
   // a raw sketch (`consumesSketch` stays []).
   const channel = buildUpstreamWaterField(constraints.upstream);
 
-  // Terrain reading (plan 038 item 4): RELATIVE elevation within the region from
-  // the MACRO terrain field (mountains + base, the durable sketch layer — never
-  // another generator's output). `relElevAt` is null on a flat campaign OR a
+  // Terrain reading (plan 038 item 4; ruling 2026-07-15): RELATIVE elevation
+  // within the region from the MACRO terrain field — the full global terrain
+  // system (base + mountain + relief + landform stamps), the durable sketch layer,
+  // never another generator's output. A relief RIDGE thins the canopy above its
+  // treeline with no mountain polygon present. `relElevAt` is null on a flat
+  // campaign OR a
   // region with < FOREST_MIN_RELIEF_M of local relief, so every terrain path is
   // then skipped and the wood is byte-identical to the uncoupled generator.
-  const terrain = macroTerrainField(constraints.fabricFeatures);
+  const terrain = macroTerrainField(constraints.fabricFeatures, constraints.terrainBase, constraints.campaignSeed);
   let relElevAt: ((x: number, y: number) => number) | null = null;
   if (terrain) {
     let eMin = Infinity;

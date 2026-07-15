@@ -83,6 +83,27 @@ describe("prove the net catches (intentional under-declarations MUST fail)", () 
     expect(violations.some((v) => v.kind === "mountain")).toBe(true);
   });
 
+  it("dropping `relief` from forest's set is detected (ruling 2026-07-15 terrain read)", () => {
+    // Forest reads the composed terrain field (`macroTerrainField`), so a relief
+    // RIDGE overlapping the region thins its canopy above the treeline. An
+    // under-declaration that omits `relief` must be caught (an overlapping relief
+    // moves bytes) — the net over the new terrain-stamp coupling.
+    const bad: DeclaredConsumption = { kinds: ["mountain", "landform", "farmland", "park"], marginMeters: 8 };
+    const violations = checkUnderInvalidation("forest", bad);
+    expect(violations.length).toBeGreaterThan(0);
+    expect(violations.some((v) => v.kind === "relief")).toBe(true);
+  });
+
+  it("dropping `landform` from farmland's set is detected (ruling 2026-07-15 terrain read)", () => {
+    // Farmland (paddy) reads the composed terrain field, so a landform PLATEAU
+    // overlapping the region reshapes its terrace banks. Omitting `landform` must
+    // be caught.
+    const bad: DeclaredConsumption = { kinds: ["mountain", "relief", "forest", "park"], marginMeters: 8 };
+    const violations = checkUnderInvalidation("farmland", bad);
+    expect(violations.length).toBeGreaterThan(0);
+    expect(violations.some((v) => v.kind === "landform")).toBe(true);
+  });
+
   it("an under-declared MARGIN is detected (city road margin 200 m is too small)", () => {
     const city = algorithmById("city")!;
     const bad: DeclaredConsumption = { kinds: city.consumesSketch, marginMeters: 200 };

@@ -211,6 +211,19 @@ function bboxOf(coords: Pt[]): BBox {
   return b;
 }
 
+/** The per-feature invalidation reach the harness proves inertness OUTSIDE of
+ * for a DECLARED kind (ruling 2026-07-15 variable support). For the terrain
+ * STAMP kinds it is the INJECTED feature's own support (matching
+ * `terrainStampSupport`): relief → the halfWidth `featureFrom` injects,
+ * mountain/landform → 0 (compact support). Every other kind uses the
+ * algorithm's scalar `marginMeters`. */
+const INJECTED_RELIEF_HALFWIDTH = 180; // MUST equal featureFrom's relief `halfWidth`
+function declaredReach(kind: FabricKind, declared: DeclaredConsumption): number {
+  if (kind === "relief") return INJECTED_RELIEF_HALFWIDTH;
+  if (kind === "mountain" || kind === "landform") return 0;
+  return declared.marginMeters;
+}
+
 /** Euclidean bbox-to-bbox separation (0 when they overlap/touch) — the same
  * currency the 33-C invalidation walk will use. */
 export function bboxGap(a: BBox, b: BBox): number {
@@ -360,20 +373,26 @@ export function checkUnderInvalidation(
 
       let placement: Placement;
       if (isDeclared) {
-        // Declared kind: probe strictly OUTSIDE the margin — just outside,
+        // Declared kind: probe strictly OUTSIDE the reach — just outside,
         // mid-range, far (cycled), each with seeded jitter that only ever
-        // ADDS distance.
+        // ADDS distance. VARIABLE SUPPORT (ruling 2026-07-15): a terrain STAMP
+        // kind uses the INJECTED feature's own per-feature support
+        // (`declaredReach`: relief → its halfWidth, mountain/landform → 0), not
+        // the algorithm's scalar margin — so a relief is proven inert only beyond
+        // its cross-profile band (where the field is exactly 0), which is what
+        // the scoped invalidation actually keys on.
+        const reach = declaredReach(kind, declared);
         const tier = i % 3;
         const gap =
           tier === 0
-            ? declared.marginMeters + 3 + rng() * 25
+            ? reach + 3 + rng() * 25
             : tier === 1
-              ? declared.marginMeters + 200 + rng() * 150
-              : declared.marginMeters + 1800 + rng() * 400;
+              ? reach + 200 + rng() * 150
+              : reach + 1800 + rng() * 400;
         placement = {
-          label: `outside-margin gap≈${Math.round(gap)}m`,
+          label: `outside-reach gap≈${Math.round(gap)}m`,
           coords: placeOutside(region.bbox, coords, gap, i, rng),
-          minGap: declared.marginMeters,
+          minGap: reach,
         };
       } else if (i === 0) {
         // Non-declared kind: even OVERLAPPING the region must be inert.

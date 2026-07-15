@@ -58,11 +58,13 @@ export interface TerrainOptions {
   /** Drives the base fBm; only consulted when `campAmp > 0`. */
   campaignSeed?: number;
   /** Select which operator classes compose (all default ON — the full visible
-   * surface). A CONSUMER that wants only the durable MACRO terrain (mountains +
-   * base) reads it through `macroTerrainField` / passes `relief`/`landform`
-   * false and `carve`/`grade` false — the river/farmland slope reads must not
-   * couple to a river's OWN gorge (circular) nor to variable-support stamps
-   * (whose invalidation model is unsettled). */
+   * surface). A CONSUMER that wants the durable MACRO terrain reads it through
+   * `macroTerrainField`, which passes `carve`/`grade` false while KEEPING
+   * `relief`/`landform` on (ruling 2026-07-15: the composed global terrain field
+   * — base + mountain + relief + landform — IS the terrain system a generator
+   * reads; a mountain is just one stamp kind). Only carve/grade stay excluded:
+   * carve is a river reading its OWN gorge (circular) and grade reads settlement
+   * OUTPUT (output-like) — both self-referential, never a terrain input. */
   include?: { relief?: boolean; landform?: boolean; carve?: boolean; grade?: boolean };
 }
 
@@ -113,6 +115,37 @@ export const RELIEF_DEFAULTS: ReliefParams = { polarity: "ridge", height: 200, h
  * margin): its full cross-profile band. */
 export function reliefMaxOffset(params: ReliefParams): number {
   return Math.max(0, params.halfWidth);
+}
+
+/**
+ * VARIABLE-SUPPORT invalidation reach (ruling 2026-07-15). The support margin
+ * (meters) of a durable terrain-STAMP feature: how far BEYOND its own geometry
+ * bbox the stamp can still move the composed terrain field a consumer reads —
+ * the per-FEATURE reach that replaces a fixed per-consumer margin for the
+ * terrain kinds.
+ *   - relief   → `params.halfWidth`: `reliefField` is EXACTLY 0 past the spine's
+ *                cross-profile half-width, but a relief's spine bbox does NOT
+ *                include that band, so a consumer within halfWidth of the spine
+ *                still reads it. The reach IS the half-width.
+ *   - landform → 0: `ringMaskField`'s replace mask is nonzero only strictly
+ *                INSIDE the ring, so the ring bbox already bounds the support —
+ *                a landform disjoint from the region is byte-inert.
+ *   - mountain → 0: `elevationFieldFromFabric` is compact-support inside the
+ *                mountain ring (bbox-bounded) — disjoint ⇒ byte-inert.
+ * Returns `null` for any non-terrain-stamp feature: those keep the consumer's
+ * own `influenceMargin`. Defensive parse (persisted params may be malformed):
+ * falls back to the relief default half-width, never throws. Keyed on
+ * `procgen.algorithm` (the field itself keys on it), so a blockless stamp ⇒
+ * `null` (invisible to the field AND to this reach — consistent). */
+export function terrainStampSupport(feature: FabricFeature): number | null {
+  const alg = feature.properties.procgen?.algorithm;
+  if (alg === "relief") {
+    const p = feature.properties.procgen!.params as Record<string, unknown>;
+    const hw = typeof p.halfWidth === "number" && Number.isFinite(p.halfWidth) ? p.halfWidth : RELIEF_DEFAULTS.halfWidth;
+    return Math.max(0, hw);
+  }
+  if (alg === "landform" || alg === "mountain") return 0;
+  return null;
 }
 
 /** A relief stamp's ADD contribution: `sign·height·bump(d/halfWidth)` where `d`
@@ -644,24 +677,31 @@ export function terrainAt(features: FabricFeature[] | undefined, opts: TerrainOp
 }
 
 /**
- * The durable MACRO terrain field a slope/paddy consumer couples to — mountains
- * + the campaign base, WITHOUT relief/landform stamps or any river carve. A
- * BIT-EXACT drop-in for `elevationFieldFromFabric` (plan 036 item 5): with a flat
- * base and only mountain stamps it IS that function's field (via `terrainAt`'s
- * verbatim fast path), and it returns `null` on a trivially-flat campaign (no
- * mountains, flat base) so the consumers keep their exact null-shortcut + perf
- * skip. Excluding the carve avoids a river reading its OWN gorge (circular);
- * excluding relief/landform keeps the consumers' `consumesSketch` = ["mountain"]
- * (compact support, margin 0) — coupling them to variable-support stamps awaits
- * a settled invalidation model (a relief's support is its param-driven
- * halfWidth, which the fixed-margin 033 harness does not model).
+ * The durable MACRO terrain field a slope/paddy/timberline consumer couples to
+ * (ruling 2026-07-15): the FULL global terrain system — base fBm + mountain
+ * add-stamps + relief add-stamps + landform replace-stamps — WITHOUT the river
+ * carve or city grade (those two stay excluded: a carve is a river reading its
+ * OWN gorge, circular; grade reads settlement OUTPUT). "No more mountain
+ * polygons, only the global terrain system": a mountain is now just one stamp
+ * kind feeding this field, never a special case.
+ *
+ * BIT-EXACT drop-in for `elevationFieldFromFabric` on the campaigns the goldens
+ * cover: with a flat base and no relief/landform stamps it IS that function's
+ * field (via `terrainAt`'s verbatim fast path — reliefs/landforms empty ⇒ same
+ * signed-zero-preserving mountain union), so a mountain-only or no-stamp
+ * campaign is byte-identical. Returns `null` on a trivially-flat campaign (no
+ * terrain stamp of any kind AND flat base — exactly `!hasTerrainRelief`) so the
+ * consumers keep their null-shortcut + perf skip.
+ *
+ * The campaign base (`base` = campAmp/seaDatum, `campaignSeed` for the base fBm)
+ * is threaded so a consumer composes the SAME surface the DEM does. Both default
+ * inert (campAmp 0 ⇒ flat datum-0 base) ⇒ byte-identical to a pre-ruling run.
  */
 export function macroTerrainField(
   features: FabricFeature[] | undefined,
-  base?: Partial<TerrainBaseParams>
+  base?: Partial<TerrainBaseParams>,
+  campaignSeed?: number
 ): ElevationField | null {
-  const campAmp = base?.campAmp ?? DEFAULT_TERRAIN_BASE.campAmp;
-  const hasMountain = (features ?? []).some((f) => f.properties.procgen?.algorithm === "mountain");
-  if (!hasMountain && campAmp === 0) return null; // trivially flat ⇒ the null shortcut
-  return terrainAt(features, { base, include: { relief: false, landform: false, carve: false, grade: false } });
+  if (!hasTerrainRelief(features, base)) return null; // trivially flat ⇒ null shortcut
+  return terrainAt(features, { base, campaignSeed, include: { relief: true, landform: true, carve: false, grade: false } });
 }

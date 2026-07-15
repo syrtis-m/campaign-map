@@ -503,4 +503,68 @@ verified in Vitest only (no live gates this arc).
   live edits (new `testing/` campaign + Preset Gallery), ruled green by Jonah
   same day. `version29` passed in-board.
 
+## Ruling 2026-07-15 — global terrain system, generator/invalidation half (headless-only)
+Jonah: "region generators working with relief/landform stamps; base terrain
+reaching generators; no more mountain polygons, only the global terrain system."
+A mountain is now just one stamp kind feeding the composed field; nothing
+special-cases "terrain == mountains". This half is the GENERATOR + INVALIDATION
+side (the host/paint half — worker DEM, contour re-home, mountain.ts contour
+retirement, MapView/campaignDemProtocol/styleContract, registry MOUNTAIN entry —
+is the PARALLEL agent's, landing concurrently in the shared tree).
+
+What landed:
+- **`macroTerrainField` = full durable terrain** (`src/gen/fields/terrain.ts`):
+  now composes base fBm + mountain + **relief** add-stamps + **landform** replace-
+  stamps (carve + grade STILL excluded — self-referential/output-like). Null
+  guard is now `!hasTerrainRelief` (a relief/landform with NO mountain reaches
+  consumers). Base params + `campaignSeed` threaded so a generator composes the
+  SAME surface the DEM does. **Byte-stable**: a mountain-only / no-stamp / flat-
+  base campaign hits `terrainAt`'s verbatim fast path ⇒ byte-identical — the
+  generator snapshot goldens (forest/farmland/river/city/mountain) PASS UNTOUCHED,
+  no re-accept, no version bumps (029 prefer-param path).
+- **Consumers thread base** (`forest.ts` / `farmland.ts` / `river.ts`):
+  `macroTerrainField(features, constraints.terrainBase, constraints.campaignSeed)`.
+  Base flows via `GenerationConstraints.terrainBase`/`campaignSeed` (new, in
+  `src/gen/types.ts`), injected ONCE in `MapController.regionCompute` (worker +
+  direct paths) — no `src/map/**` edit needed.
+- **Variable-support invalidation** (the deferred design, ratified): a per-FEATURE
+  reach resolver `terrainStampSupport(feature)` (relief → `params.halfWidth`;
+  mountain/landform → 0). It overrides the consumer's scalar `influenceMargin`
+  for the terrain-stamp kinds in BOTH invalidation surfaces — the fingerprint
+  scope (`fingerprint.ts scopeConstraintFeatures`) and the DAG source→region edge
+  (`dag.ts` `DagNode.supportMargin`, set by `MapController.sourceDagNodesFor`).
+  `consumesSketch` extended to include relief/landform for river/forest/farmland
+  (mountain already present).
+- **Scoped fingerprints** (`src/gen/cache/fingerprint.ts`): `canonicalConstraints`
+  now buckets terrain stamps (algorithm+seed+params+geometry, id-sorted),
+  APPEND-WHEN-PRESENT; campaign base params fold in only for a terrain-reading
+  algorithm when non-inert. No FP_VERSION bump — the append-when-present
+  discipline keeps a no-terrain campaign byte-identical (the nested-ring
+  precedent). A mountain-near-farmland campaign re-hashes ONCE (self-healing
+  recompute, byte-identical regeneration).
+- **033-A harness** (`src/gen/testkit/underInvalidation.ts`): `declaredReach`
+  probes a declared terrain kind OUTSIDE the injected feature's own support
+  (relief 180 = its halfWidth, mountain/landform 0), not the scalar margin.
+  Prove-the-net RED cases added (drop `relief` from forest / `landform` from
+  farmland ⇒ harness FAILS).
+
+Verification (all headless): new `src/gen/terrainStampCoupling.test.ts` (forest
+timberline thins above a RELIEF ridge with NO mountain; farmland pasture from
+relief slope; paddy from landform plateau edge; river opt-in slope reads relief;
+each disjoint/absent case byte-inert) 11/11; terrain 18/18; fingerprint 34/34
+(incl. variable-support + base-param scoping + byte-stability); dag 20/20 (incl.
+supportMargin); registry 24/24; MapController 100/100 standalone; forestTerrain +
+generator goldens untouched. **Full suite 1233/1233, fuzz 40/40 (was 38 — +2 red
+cases), tsc + build clean.**
+
+Shared-tree handoff: my hunks in `registry.ts` (river/forest/farmland
+consumesSketch), `MapController.ts` (constraint threading + `sourceDagNodesFor`
+supportMargin + `regionFingerprint` base params), and `fields/index.ts`
+(`terrainStampSupport` export) are co-mingled with the parallel agent's in-flight
+mountain/DEM/contour hunks — committed by the parallel agent's final commit (they
+own the mountain-entry / worker-DEM / contour hunks in those three files). Docs
+needing an edit (the OTHER agent's docs surface, flagged not done here):
+ARCHITECTURE §terrain + CLAUDE locked-decision phrasing (terrain field = base +
+mountain + relief + landform; mountain is one stamp kind).
+
 Older arcs (plans 001–028, phases 0–5): `review/progress-archive.md`.
