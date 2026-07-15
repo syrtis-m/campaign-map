@@ -997,6 +997,15 @@ const landformAlgorithm: ProcgenAlgorithm = {
   appliesTo: ["landform"],
   // Stage 1 (TERRAIN): a replace-stamp of the composed field; emits no per-region
   // fabric (visible form is the composed-field contours, plan 036-C).
+  //
+  // MULTI-RING (Cradle learning 2026-07-15): the landform polygon HONOURS HOLES —
+  // the mask is `min(outerMask, 1 − holeMask_i)` per hole, so a hole interior
+  // stays at base elevation (a donut sea leaves the island in its hole dry, the
+  // exact bug found). Single-ring landforms are byte-identical (no version bump).
+  // `influenceMargin` stays 0: every hole bbox is INSIDE the outer ring bbox, so
+  // the outer bbox still bounds the whole stamp's support — a landform disjoint
+  // from a region is byte-inert regardless of its holes (the 033 under-invalidation
+  // harness rides on this reach-0 assertion).
   stage: 1,
   produces: ["elevation"],
   consumes: [],

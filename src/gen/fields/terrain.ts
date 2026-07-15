@@ -224,6 +224,51 @@ function bboxTouches(stamp: BBox, tile: BBox, reach: number): boolean {
   );
 }
 
+/**
+ * REPLACE-OVER-ADD overlap detection (Cradle learning 2026-07-15 — pure, the
+ * advisory's headless core). A non-inverted landform REPLACES the composed field
+ * toward its target inside its ring, so any mountain/relief ADD-stamp whose
+ * influence reaches inside that ring is silently FLATTENED (a replace over an add
+ * — the trap that cost the Cradle two iterations). Returns the id-sorted ids of
+ * every mountain/relief stamp whose support-expanded bbox intersects this
+ * landform's outer-ring bbox — the add-stamps a GM most likely did not mean to
+ * erase.
+ *
+ * NON-inverted only: an inverted sea replaces the ring's EXTERIOR (open ocean),
+ * not its interior, so a peak sketched inside its coast is preserved, not flattened
+ * — no advisory. Returns [] for any feature that is not a qualifying replace
+ * landform, so a caller may invoke it on any selected feature. Reach is
+ * `terrainStampSupport` (mountain 0, relief halfWidth+apron): an add-stamp whose
+ * field is provably 0 over the whole ring never triggers the advisory. PURE — the
+ * bbox test only; never blocks, never alters bytes.
+ */
+export function landformReplaceOverlaps(landform: FabricFeature, features: FabricFeature[]): string[] {
+  const block = landform.properties.procgen;
+  if (
+    landform.properties.kind !== "landform" ||
+    block?.algorithm !== "landform" ||
+    landform.geometry.type !== "Polygon"
+  ) {
+    return [];
+  }
+  const p = block.params as Record<string, unknown>;
+  if (p.mode === "sea" && p.invert === true) return []; // inverted sea replaces the EXTERIOR
+  const lfBox = stampBBox(landform);
+  if (!Number.isFinite(lfBox.minX)) return [];
+  const lfId = String(landform.id);
+  const hits: string[] = [];
+  for (const f of features) {
+    if (String(f.id) === lfId) continue;
+    const alg = f.properties.procgen?.algorithm;
+    if (alg !== "mountain" && alg !== "relief") continue;
+    if (f.geometry.type !== "Polygon" && f.geometry.type !== "LineString") continue;
+    const reach = terrainStampSupport(f) ?? 0; // mountain 0, relief halfWidth+apron
+    if (bboxTouches(stampBBox(f), lfBox, reach)) hits.push(String(f.id));
+  }
+  hits.sort();
+  return hits;
+}
+
 /** Fingerprint one terrain stamp's durable identity (matches `elevationDigest`'s
  * per-feature shape so the two digests move together on an edit). */
 function stampFingerprint(f: FabricFeature): string {
@@ -432,16 +477,73 @@ function ringMaskField(ring: Pt[], band: number): (x: number, y: number) => Mask
 }
 
 /**
- * Island-from-coastline exterior mask (plan 041): `1 − ringMask`. The drawn ring
- * is the COAST (land boundary); the sea replaces its EXTERIOR. So the mask is 1
- * (full sea) everywhere outside the ring, fades across `band` INWARD from the coast
- * to 0 deep inland — the byte-exact complement of the interior mask, gradient
- * negated. The far-field reject flips for free: `ringMaskField` returns m=0 outside
- * the bbox (⇒ this returns m=1, full sea) WITHOUT the nearest-spiral, so a sample
- * far out in the ocean is O(1). Support is therefore GLOBAL (see
- * `terrainStampSupport` → Infinity for an inverted sea). */
-function exteriorMaskField(ring: Pt[], band: number): (x: number, y: number) => MaskSample {
-  const inner = ringMaskField(ring, band);
+ * The landform's interior mask over a polygon WITH HOLES (Cradle learning
+ * 2026-07-15 — a donut sea silently flattened the island in its hole because the
+ * mask read only `coordinates[0]`). Effective mask = the outer ring's interior
+ * mask MINUS each hole's interior: `m = min(outerMask, 1 − holeMask_i)` per hole.
+ * A hole is OUTSIDE the stamp — `1 − holeMask` is 0 deep inside the hole (⇒ m=0,
+ * base elevation, no replace), 1 outside the hole, ramping across `band` INWARD
+ * from each hole rim EXACTLY like the outer rim ramp. `min` composes them: the
+ * field is replaced (m→1) only where a sample is inside the outer ring AND
+ * outside every hole, and the band ramps line every rim (outer and hole).
+ *
+ * SINGLE RING (no holes) ⇒ returns `ringMaskField(rings[0], band)` UNCHANGED —
+ * byte-identical (value, gradient, far-field reject are the exact same path;
+ * existing goldens/tests untouched, no version bump per 029).
+ *
+ * Determinism: `min` is commutative + associative and FP-exact, so the mask
+ * VALUE is independent of hole enumeration order; the gradient is the active
+ * (strictly-minimal) term's, with equal-value ties (measure-zero) broken by the
+ * authored ring order — fully deterministic for a given feature (holes carry no
+ * id; the fold is over the as-authored `coordinates` order).
+ *
+ * Far-field reject stays byte-exact: every hole bbox ⊂ the outer bbox, so a
+ * sample outside the outer ring is outside every hole too — the outer's O(1) bbox
+ * reject returns m=0, which is already the global min (every `1 − holeMask` ≥ 0),
+ * so we short-circuit before touching a single hole (no nearest-spiral anywhere
+ * beyond the outer bbox — the DEM-fill-stall guard holds).
+ */
+function landformMaskField(rings: Pt[][], band: number): (x: number, y: number) => MaskSample {
+  const outer = ringMaskField(rings[0], band);
+  if (rings.length <= 1) return outer; // no holes ⇒ byte-identical single-ring path
+  const holes = rings.slice(1).map((h) => ringMaskField(h, band));
+  return (x, y): MaskSample => {
+    const o = outer(x, y);
+    // Outside the outer ring (m=0) the mask is already the global min — every
+    // `1 − holeMask` ∈ [0,1] ≥ 0 — so return it without evaluating any hole (also
+    // skips the holes' cheap bbox checks). Gradient there is (0,0), correct.
+    if (o.m <= 0) return o;
+    let m = o.m;
+    let dmx = o.dmx;
+    let dmy = o.dmy;
+    for (const hole of holes) {
+      const hs = hole(x, y);
+      const cm = 1 - hs.m; // 0 deep inside the hole, 1 outside it, C1 ramp across `band`
+      if (cm < m) {
+        m = cm;
+        dmx = -hs.dmx;
+        dmy = -hs.dmy;
+      }
+    }
+    return { m, dmx, dmy };
+  };
+}
+
+/**
+ * Island-from-coastline exterior mask (plan 041): `1 − landformMask`. The drawn
+ * ring is the COAST (land boundary); the sea replaces its EXTERIOR. So the mask
+ * is 1 (full sea) everywhere outside the ring, fades across `band` INWARD from the
+ * coast to 0 deep inland — the byte-exact complement of the interior mask,
+ * gradient negated. Holes carry through the inner `landformMaskField` (a hole in
+ * an island coast reads as an inland lake — its `1 − landformMask` is sea again),
+ * a natural generalisation the composition gives for free. The far-field reject
+ * flips for free: the inner mask returns m=0 outside the bbox (⇒ this returns m=1,
+ * full sea) WITHOUT the nearest-spiral, so a sample far out in the ocean is O(1).
+ * Support is therefore GLOBAL (see `terrainStampSupport` → Infinity for an
+ * inverted sea). SINGLE RING ⇒ inner is `ringMaskField` verbatim ⇒ byte-identical
+ * to the pre-hole exterior mask. */
+function exteriorMaskField(rings: Pt[][], band: number): (x: number, y: number) => MaskSample {
+  const inner = landformMaskField(rings, band);
   return (x, y): MaskSample => {
     const s = inner(x, y);
     return { m: 1 - s.m, dmx: -s.dmx, dmy: -s.dmy };
@@ -875,7 +977,11 @@ interface ReliefStamp {
 }
 interface LandformStamp {
   id: string;
-  ring: Pt[];
+  /** Outer ring FIRST, then holes (GeoJSON polygon ring order). A hole is OUTSIDE
+   * the stamp — the mask carves it out (a donut sea leaves the island in its hole
+   * at base elevation). Single element (no holes) ⇒ the byte-identical single-ring
+   * path. */
+  rings: Pt[][];
   params: LandformParams;
 }
 
@@ -919,8 +1025,14 @@ function landformStampsFromFabric(features: FabricFeature[]): LandformStamp[] {
   for (const f of features) {
     if (f.properties.kind !== "landform" || f.properties.procgen?.algorithm !== "landform") continue;
     if (f.geometry.type !== "Polygon") continue;
-    const ring = f.geometry.coordinates[0] as Pt[] | undefined;
-    if (!ring || ring.length < 3) continue;
+    const polyRings = f.geometry.coordinates as Pt[][] | undefined;
+    const outer = polyRings?.[0];
+    if (!outer || outer.length < 3) continue;
+    // Holes = coordinates[1..], each a valid ring (≥3 pts). A malformed hole is
+    // DROPPED (defensive parse of the durable sketch layer) ⇒ that ring reverts to
+    // the no-hole path — never throws. Authored order kept (holes carry no id; the
+    // min-fold value is order-invariant, so this is deterministic).
+    const holes = polyRings!.slice(1).filter((h): h is Pt[] => Array.isArray(h) && h.length >= 3);
     const p = f.properties.procgen.params as Record<string, unknown>;
     const mode = (
       typeof p.mode === "string" && (LANDFORM_MODES as readonly string[]).includes(p.mode)
@@ -929,7 +1041,7 @@ function landformStampsFromFabric(features: FabricFeature[]): LandformStamp[] {
     ) as LandformMode;
     out.push({
       id: String(f.id),
-      ring,
+      rings: [outer, ...holes],
       params: {
         mode,
         target: typeof p.target === "number" && Number.isFinite(p.target) ? p.target : undefined,
@@ -998,8 +1110,8 @@ export function terrainAt(features: FabricFeature[] | undefined, opts: TerrainOp
     ? landformStampsFromFabric(feats).map((s) => ({
         mask:
           s.params.mode === "sea" && s.params.invert
-            ? exteriorMaskField(s.ring, s.params.band)
-            : ringMaskField(s.ring, s.params.band),
+            ? exteriorMaskField(s.rings, s.params.band)
+            : landformMaskField(s.rings, s.params.band),
         target: landformTarget(s.params, base.seaDatum),
       }))
     : [];

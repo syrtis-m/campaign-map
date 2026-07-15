@@ -483,6 +483,19 @@
   color: var(--text-faint, #888);
 }
 
+/* Replace-over-add advisory: a landform whose replace flattens mountain/relief
+   add-stamps under it. Non-blocking — a persistent, muted-warning hint line. */
+.campaign-map-sketch-selection-warning {
+  margin: 4px 0 2px;
+  padding: 4px 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-warning, #d08770);
+  background: var(--background-modifier-error-hover, rgba(208, 135, 112, 0.12));
+  border-left: 2px solid var(--text-warning, #d08770);
+  border-radius: 3px;
+}
+
 /* Schema-driven procgen param controls (RegionProcgenModal + selection panel). */
 .campaign-map-param-controls {
   display: flex;

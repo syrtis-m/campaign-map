@@ -62,6 +62,7 @@ import { UNDERLAY_LAYER_ID, type UnderlayDescriptor } from "../map/themes/underl
 import { algorithmForKind, matchingPresetId, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import { RegionProcgenModal } from "./RegionProcgenModal";
 import { paramFieldSpecs, renderParamControls } from "./paramControls";
+import { landformReplaceAdvisoryMessage, warnLandformReplaceOverlap } from "./terrainAdvisory";
 import {
   heightHandleDescriptor,
   heightParamsFromValue,
@@ -1450,6 +1451,10 @@ export class MapView extends ItemView {
     new RegionProcgenModal(this.app, algorithm, this.campaign.config.theme, (choice) => {
       if (!choice) return; // "Keep as plain shape" — inert district
       void this.controller.attachProcgenAndGenerate(feature, algorithm, choice.params).then(() => {
+        // A freshly-created landform sitting over a mountain/relief add-stamp
+        // silently flattens it — warn once on creation.
+        const created = this.controller.fabricFeature(feature.id);
+        if (created) this.maybeWarnReplaceOverlap(created);
         if (this.selectedFabricId === feature.id) this.refreshSelectionPanel();
       });
     }).open();
@@ -1851,6 +1856,11 @@ export class MapView extends ItemView {
           this.sketchPreviewTimer = null;
         }
         void this.controller.commitGeometryEdit(featureId, geometry, { debounce: true });
+        // Replace-over-add advisory: a landform whose (edited) ring now covers a
+        // mountain/relief add-stamp flattens it — warn against the new geometry
+        // (the commit is debounced, so build a feature carrying the fresh ring).
+        const edited = this.controller.fabricFeature(featureId);
+        if (edited) this.maybeWarnReplaceOverlap({ ...edited, geometry } as FabricFeature);
       },
       onCenterEdit: (featureId, center) => void this.controller.setRegionCenter(featureId, center),
       // Click-out safety: a finishable draft the GM implicitly left (switched
@@ -2368,6 +2378,17 @@ export class MapView extends ItemView {
       }
     });
 
+    // Persistent replace-over-add hint (Cradle learning 2026-07-15): while a
+    // non-inverted landform that covers mountain/relief add-stamps is selected,
+    // keep a one-line advisory in view (the Notice is transient — this is the
+    // durable reminder that its replace is flattening those stamps).
+    if (feature.properties.kind === "landform") {
+      const hint = landformReplaceAdvisoryMessage(feature, this.controller.fabric.features);
+      if (hint) {
+        panel.createDiv({ cls: "campaign-map-sketch-selection-warning", text: `⚠ ${hint}` });
+      }
+    }
+
     const algorithm = algorithmForKind(feature.properties.kind);
     if (algorithm && this.campaign?.config.crs === "fictional") {
       this.buildProcgenSection(panel, feature, algorithm);
@@ -2494,6 +2515,23 @@ export class MapView extends ItemView {
     // DEM/contour refresh converges through the render chokepoint (the commit
     // repaints, moving the elevation digest for a terrain-bearing kind) — no
     // explicit refresh needed here (would double-fire).
+    // A landform param edit (mode/target/band/…) can change what it flattens —
+    // re-run the replace-over-add advisory against the settled feature.
+    const edited = this.controller.fabricFeature(featureId);
+    if (edited) this.maybeWarnReplaceOverlap(edited);
+  }
+
+  /** Replace-over-add advisory (Cradle learning 2026-07-15): fire a NON-BLOCKING
+   * Notice when a non-inverted landform's ring covers a mountain/relief add-stamp
+   * (a replace flattens the add inside it). No-op for any non-landform feature and
+   * when nothing overlaps. The decision + message live in the host-agnostic,
+   * headless-tested `terrainAdvisory` twin; here we just pass the live fabric and
+   * the Obsidian Notice seam. */
+  private maybeWarnReplaceOverlap(feature: FabricFeature): void {
+    if (feature.properties.kind !== "landform") return;
+    warnLandformReplaceOverlap(feature, this.controller.fabric.features, (message) =>
+      new Notice(`Campaign Map: ${message}`, 8000)
+    );
   }
 
   /** Apply a template (preset) to a region — the headless twin of the panel's

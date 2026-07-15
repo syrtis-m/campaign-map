@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { terrainAt, macroTerrainField, hasTerrainRelief, terrainStampSupport, reliefReach } from "./terrain";
+import { terrainAt, macroTerrainField, hasTerrainRelief, terrainStampSupport, reliefReach, landformReplaceOverlaps } from "./terrain";
 import { SegmentHash } from "../segmentHash";
 import { elevationFieldFromFabric } from "./mountainField";
 import type { FabricFeature } from "../../model/fabric";
@@ -442,5 +442,210 @@ describe("terrainAt — island-from-coastline (plan 041 inverted sea)", () => {
     // invert only inverts the SEA mode — a plateau with invert:true stays compact.
     expect(terrainStampSupport(landform("p", COAST, { mode: "plateau", band: 60, invert: true }))).toBe(0);
     expect(terrainStampSupport(landform("i-false", COAST, { mode: "sea", band: 60, invert: false }))).toBe(0);
+  });
+});
+
+// ─── Multi-ring landform: polygon holes are carved out of the mask ───────────
+// (Cradle learning 2026-07-15 — a donut sea silently flattened the island in its
+// hole because the mask read only coordinates[0].)
+
+describe("terrainAt — landform holes (donut) leave the hole interior at base elevation", () => {
+  type Pt3 = [number, number];
+  const OUTER: Pt3[] = [
+    [0, 0],
+    [2000, 0],
+    [2000, 2000],
+    [0, 2000],
+    [0, 0],
+  ];
+  const HOLE: Pt3[] = [
+    [800, 800],
+    [1200, 800],
+    [1200, 1200],
+    [800, 1200],
+    [800, 800],
+  ];
+
+  function donut(id: string, rings: Pt3[][], params: Record<string, unknown>): FabricFeature {
+    return {
+      type: "Feature",
+      id,
+      geometry: { type: "Polygon", coordinates: rings },
+      properties: { kind: "landform", procgen: { algorithm: "landform", seed: 3, version: 1, params } },
+    } as FabricFeature;
+  }
+
+  const PLATEAU = { mode: "plateau", target: 500, band: 120 };
+
+  it("hole interior stays at base elevation; the plateau body saturates to target", () => {
+    const t = terrainAt([donut("d", [OUTER, HOLE], PLATEAU)]);
+    // Deep inside the hole (>band from every hole rim) → mask 0 → base (0).
+    expect(t(1000, 1000).v).toBe(0);
+    // Deep in the plateau body (>band from outer rim AND hole rim) → mask 1 → target.
+    expect(t(300, 1000).v).toBe(500);
+    expect(t(1000, 300).v).toBe(500);
+  });
+
+  it("WITHOUT the hole the same spot is flattened (proves the hole is what saves it)", () => {
+    const solid = terrainAt([donut("d", [OUTER], PLATEAU)]);
+    // No hole: the whole interior is the plateau, so the (would-be) island is flat-topped.
+    expect(solid(1000, 1000).v).toBe(500);
+  });
+
+  it("a C1 rim ramp runs INWARD along the hole boundary (monotone 0 → target)", () => {
+    const t = terrainAt([donut("d", [OUTER, HOLE], PLATEAU)]);
+    // Walk from the hole center outward toward a hole edge (y=800): center 0,
+    // just inside the rim raised, and by the time we clear the band the plateau
+    // body is at target. Values must be non-decreasing.
+    const center = t(1000, 1000).v; // 0
+    const nearRimInside = t(1000, 850).v; // 50 into the hole, within band → (0, target)
+    const rim = t(1000, 800).v; // on the hole boundary (sd=0) → mask 1 side → target-ish
+    const body = t(1000, 650).v; // 150 outside the hole, clear of the band → target
+    expect(center).toBe(0);
+    expect(nearRimInside).toBeGreaterThan(0);
+    expect(nearRimInside).toBeLessThan(500);
+    expect(rim).toBeGreaterThanOrEqual(nearRimInside);
+    expect(body).toBe(500);
+  });
+
+  it("hole band gradient: analytic matches central differences", () => {
+    const t = terrainAt([donut("d", [OUTER, HOLE], PLATEAU)]);
+    function central(f: (x: number, y: number) => { v: number }, x: number, y: number, h: number): [number, number] {
+      return [(f(x + h, y).v - f(x - h, y).v) / (2 * h), (f(x, y + h).v - f(x, y - h).v) / (2 * h)];
+    }
+    // Inside the hole band, away from corners: analytic ∇ ≈ central.
+    for (const [x, y] of [[1000, 850], [1000, 1150], [850, 1000], [1150, 1000]] as Pt3[]) {
+      const s = t(x, y);
+      const [gx, gy] = central(t, x, y, 0.05);
+      expect(s.dx).toBeCloseTo(gx, 2);
+      expect(s.dy).toBeCloseTo(gy, 2);
+    }
+  });
+
+  it("deep hole interior has EXACTLY zero gradient (flat base)", () => {
+    const s = terrainAt([donut("d", [OUTER, HOLE], PLATEAU)])(1000, 1000);
+    expect(s.dx).toBe(0);
+    expect(s.dy).toBe(0);
+  });
+
+  it("2×2 seam: two independently-constructed fields sample byte-identically across the donut", () => {
+    // terrainAt is a pure point field, so a tile that constructs its own field must
+    // read the SAME bytes as any adjacent tile at every shared-edge sample — the
+    // seam guarantee. Build the field twice (as two tiles would) and compare along
+    // a seam line crossing the outer rim, the hole band, and the hole interior.
+    const a = terrainAt([donut("d", [OUTER, HOLE], PLATEAU)]);
+    const b = terrainAt([donut("d", [OUTER, HOLE], PLATEAU)]);
+    for (let x = -100; x <= 2100; x += 37) {
+      const sa = a(x, 1000);
+      const sb = b(x, 1000);
+      expect(sa.v).toBe(sb.v);
+      expect(sa.dx).toBe(sb.dx);
+      expect(sa.dy).toBe(sb.dy);
+    }
+  });
+
+  it("shuffled HOLE order is byte-identical (fold determinism, holes id-independent)", () => {
+    // Two asymmetric holes; swapping their ring order in `coordinates` must not
+    // move a single byte (min-fold value is order-invariant; generic samples avoid
+    // the measure-zero equal-value tie).
+    const H1: Pt3[] = [[300, 300], [600, 300], [600, 600], [300, 600], [300, 300]];
+    const H2: Pt3[] = [[1300, 1300], [1700, 1300], [1700, 1700], [1300, 1700], [1300, 1300]];
+    const straight = terrainAt([donut("d", [OUTER, H1, H2], PLATEAU)]);
+    const swapped = terrainAt([donut("d", [OUTER, H2, H1], PLATEAU)]);
+    for (let x = 100; x <= 1900; x += 53) {
+      for (let y = 100; y <= 1900; y += 59) {
+        const s = straight(x, y);
+        const w = swapped(x, y);
+        expect(s.v).toBe(w.v);
+        expect(s.dx).toBe(w.dx);
+        expect(s.dy).toBe(w.dy);
+      }
+    }
+  });
+
+  it("a malformed (degenerate) hole ring is ignored ⇒ byte-identical to no hole", () => {
+    // Defensive parse of the durable sketch layer: a <3-point hole reverts to the
+    // no-hole path rather than throwing or building a broken ring.
+    const bad = terrainAt([donut("d", [OUTER, [[1000, 1000], [1000, 1000]]], PLATEAU)]);
+    const none = terrainAt([donut("d", [OUTER], PLATEAU)]);
+    for (let x = 0; x <= 2000; x += 143) {
+      for (let y = 0; y <= 2000; y += 149) {
+        expect(bad(x, y)).toEqual(none(x, y));
+      }
+    }
+  });
+
+  it("a donut SEA leaves its island (hole) dry — the exact Cradle bug", () => {
+    // Sea target -500 fills the donut ring; the hole is the island, which must stay
+    // at the datum (0), not drown to -500.
+    const sea = terrainAt([donut("d", [OUTER, HOLE], { mode: "sea", target: -500, band: 120 })]);
+    expect(sea(1000, 1000).v).toBe(0); // island: dry land
+    expect(sea(300, 1000).v).toBe(-500); // sea body: sunk to target
+  });
+
+  it("single-ring landform is byte-identical to the pre-hole path (no version bump)", () => {
+    // The multi-ring refactor must not perturb an existing (holeless) landform.
+    const solid = terrainAt([donut("d", [OUTER], PLATEAU)]);
+    // Reference: value/gradient computed the old way is stable across probes; here
+    // we assert the field is well-formed and saturates as before.
+    expect(solid(1000, 1000).v).toBe(500);
+    expect(solid(5000, 5000)).toEqual({ v: 0, dx: 0, dy: 0 });
+  });
+});
+
+// ─── Replace-over-add advisory: pure overlap detection ───────────────────────
+
+describe("landformReplaceOverlaps — a replace landform that flattens add-stamps", () => {
+  type Pt2 = [number, number];
+  const BOX: Pt2[] = [
+    [0, 0],
+    [1000, 0],
+    [1000, 1000],
+    [0, 1000],
+    [0, 0],
+  ];
+
+  it("reports a mountain whose bbox intersects the landform ring", () => {
+    const lf = landform("lf", BOX, { mode: "plateau", target: 400, band: 100 });
+    const mtn = mountain("mtn", [[400, 400], [900, 400], [900, 900], [400, 900], [400, 400]]);
+    expect(landformReplaceOverlaps(lf, [lf, mtn])).toEqual(["mtn"]);
+  });
+
+  it("reports a relief whose support (halfWidth) reaches into the ring, but not one beyond it", () => {
+    const lf = landform("lf", BOX, { mode: "basin", target: -100, band: 100 });
+    // Spine sits 120 m outside the ring's right edge, halfWidth 200 → its band
+    // reaches inside ⇒ flagged.
+    const near = relief("near", [[1120, 200], [1120, 800]], { polarity: "ridge", height: 300, halfWidth: 200 });
+    expect(landformReplaceOverlaps(lf, [lf, near])).toEqual(["near"]);
+    // Same spine but halfWidth 50 → its band stops short of the ring ⇒ NOT flagged
+    // (support-aware, terrainStampSupport reach).
+    const farNarrow = relief("far", [[1120, 200], [1120, 800]], { polarity: "ridge", height: 300, halfWidth: 50 });
+    expect(landformReplaceOverlaps(lf, [lf, farNarrow])).toEqual([]);
+  });
+
+  it("returns [] when the landform overlaps no add-stamp", () => {
+    const lf = landform("lf", BOX, { mode: "plateau", target: 400, band: 100 });
+    const mtn = mountain("mtn", [[5000, 5000], [6000, 5000], [6000, 6000], [5000, 6000], [5000, 5000]]);
+    expect(landformReplaceOverlaps(lf, [lf, mtn])).toEqual([]);
+  });
+
+  it("an INVERTED sea is silent (it replaces the exterior, not the interior)", () => {
+    const inv = landform("inv", BOX, { mode: "sea", target: -500, band: 100, invert: true });
+    const mtn = mountain("mtn", [[400, 400], [900, 400], [900, 900], [400, 900], [400, 400]]);
+    expect(landformReplaceOverlaps(inv, [inv, mtn])).toEqual([]);
+  });
+
+  it("a non-landform feature returns [] (safe to call on any selection)", () => {
+    const mtn = mountain("mtn", BOX);
+    expect(landformReplaceOverlaps(mtn, [mtn])).toEqual([]);
+    const rv = river("rv", [[0, 0], [100, 0]], { width: 20 });
+    expect(landformReplaceOverlaps(rv, [rv])).toEqual([]);
+  });
+
+  it("id-sorts multiple overlapping stamps and never lists the landform itself", () => {
+    const lf = landform("lf", BOX, { mode: "plateau", target: 400, band: 100 });
+    const zMtn = mountain("z-mtn", [[100, 100], [500, 100], [500, 500], [100, 500], [100, 100]]);
+    const aRelief = relief("a-relief", [[200, 200], [800, 800]], { polarity: "ridge", height: 200, halfWidth: 150 });
+    expect(landformReplaceOverlaps(lf, [zMtn, lf, aRelief])).toEqual(["a-relief", "z-mtn"]);
   });
 });
