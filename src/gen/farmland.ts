@@ -72,7 +72,7 @@ import {
   type ProcgenRegion,
 } from "./region";
 import { marchingSquares, sdfPolygon } from "./fields";
-import { elevationFieldFromFabric } from "./fields/mountainField";
+import { macroTerrainField } from "./fields/terrain";
 import { q, blobFeature } from "./waterEmit";
 import type { GenerationConstraints } from "./types";
 
@@ -433,8 +433,11 @@ export function generateFarmland(
     const washRing: Pt[] = region.ring.map(([x, y]) => [q(x), q(y)] as Pt);
     out.push(blobFeature(seed, "farm-field", washRing, { crop: "paddy", fieldType }));
 
-    // Candidate bank field #1: sketch-derived elevation (meters of height).
-    const elev = elevationFieldFromFabric(constraints.fabricFeatures);
+    // Candidate bank field #1: the durable MACRO terrain (mountains + base) read
+    // through the one composed source of truth (`terrainAt` via
+    // `macroTerrainField`) — bit-exact drop-in for `elevationFieldFromFabric`
+    // (mountain-only ⇒ byte-identical; no relief/landform/carve coupling).
+    const elev = macroTerrainField(constraints.fabricFeatures);
     // Deterministic relief scan: world-aligned coarse lattice, contained nodes
     // only (pure f(region, field) — no RNG, no iteration-to-convergence).
     const scan = (f: (x: number, y: number) => number): number => {

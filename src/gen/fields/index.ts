@@ -80,6 +80,7 @@ export {
   // mountain-only campaign (the migration is a call); the drop-in the river slope
   // + farmland paddy consumers read.
   terrainAt,
+  macroTerrainField,
   hasTerrainRelief,
   DEFAULT_TERRAIN_BASE,
   RELIEF_POLARITIES,

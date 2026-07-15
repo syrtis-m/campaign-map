@@ -57,6 +57,13 @@ export interface TerrainOptions {
   base?: Partial<TerrainBaseParams>;
   /** Drives the base fBm; only consulted when `campAmp > 0`. */
   campaignSeed?: number;
+  /** Select which operator classes compose (all default ON — the full visible
+   * surface). A CONSUMER that wants only the durable MACRO terrain (mountains +
+   * base) reads it through `macroTerrainField` / passes `relief`/`landform`
+   * false and `carve` false — the river/farmland slope reads must not couple to
+   * a river's OWN gorge (circular) nor to variable-support stamps (whose
+   * invalidation model is unsettled). */
+  include?: { relief?: boolean; landform?: boolean; carve?: boolean };
 }
 
 /** Coarsest continental base-fBm octave cell (meters) — FIXED absolute-world
@@ -438,17 +445,25 @@ export function terrainAt(features: FabricFeature[] | undefined, opts: TerrainOp
   const B = baseField(base, opts.campaignSeed ?? 0);
   const feats = features ?? [];
 
+  const inc = {
+    relief: opts.include?.relief ?? true,
+    landform: opts.include?.landform ?? true,
+    carve: opts.include?.carve ?? true,
+  };
+
   // ADD: base + mountain union (verbatim) + Σ relief (id-sorted).
   const mountain = elevationFieldFromFabric(feats);
-  const reliefs = reliefStampsFromFabric(feats).map((s) => reliefField(s.spine, s.params));
+  const reliefs = inc.relief ? reliefStampsFromFabric(feats).map((s) => reliefField(s.spine, s.params)) : [];
 
   // REPLACE: landform lerp stamps, folded in (priority, id) order.
-  const landforms = landformStampsFromFabric(feats).map((s) => ({
-    mask: ringMaskField(s.ring, s.params.band),
-    target: landformTarget(s.params, base.seaDatum),
-  }));
+  const landforms = inc.landform
+    ? landformStampsFromFabric(feats).map((s) => ({
+        mask: ringMaskField(s.ring, s.params.band),
+        target: landformTarget(s.params, base.seaDatum),
+      }))
+    : [];
 
-  const carveStamps = riverCarvesFromFabric(feats);
+  const carveStamps = inc.carve ? riverCarvesFromFabric(feats) : [];
 
   // VERBATIM-MIGRATION FAST PATH: a flat datum-0 base with no add-relief, no
   // replace stamp, and no river carve IS `elevationFieldFromFabric` — return it
@@ -507,4 +522,27 @@ export function terrainAt(features: FabricFeature[] | undefined, opts: TerrainOp
     for (const carve of carves) s = carve(s, x, y);
     return s;
   };
+}
+
+/**
+ * The durable MACRO terrain field a slope/paddy consumer couples to — mountains
+ * + the campaign base, WITHOUT relief/landform stamps or any river carve. A
+ * BIT-EXACT drop-in for `elevationFieldFromFabric` (plan 036 item 5): with a flat
+ * base and only mountain stamps it IS that function's field (via `terrainAt`'s
+ * verbatim fast path), and it returns `null` on a trivially-flat campaign (no
+ * mountains, flat base) so the consumers keep their exact null-shortcut + perf
+ * skip. Excluding the carve avoids a river reading its OWN gorge (circular);
+ * excluding relief/landform keeps the consumers' `consumesSketch` = ["mountain"]
+ * (compact support, margin 0) — coupling them to variable-support stamps awaits
+ * a settled invalidation model (a relief's support is its param-driven
+ * halfWidth, which the fixed-margin 033 harness does not model).
+ */
+export function macroTerrainField(
+  features: FabricFeature[] | undefined,
+  base?: Partial<TerrainBaseParams>
+): ElevationField | null {
+  const campAmp = base?.campAmp ?? DEFAULT_TERRAIN_BASE.campAmp;
+  const hasMountain = (features ?? []).some((f) => f.properties.procgen?.algorithm === "mountain");
+  if (!hasMountain && campAmp === 0) return null; // trivially flat ⇒ the null shortcut
+  return terrainAt(features, { base, include: { relief: false, landform: false, carve: false } });
 }

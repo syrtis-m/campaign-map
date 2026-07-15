@@ -94,7 +94,7 @@ import { hashSeed, mulberry32 } from "./rng";
 import { q, harmonicBlobRing, blobFeature } from "./waterEmit";
 import type { ProcgenRegion } from "./region";
 import type { GenerationConstraints } from "./types";
-import { elevationFieldFromFabric } from "./fields/mountainField";
+import { macroTerrainField } from "./fields/terrain";
 import type { ElevationField } from "./fields/elevation";
 import { distanceToPolyline } from "./fields/sdf";
 import type { FabricFeature } from "../model/fabric";
@@ -575,7 +575,12 @@ export function generateRiver(
   // coupling. windiness 0 (canal) has zero meander amplitude through the same
   // arithmetic regardless.
   const slopeSens = params.slopeSensitivity ?? 0;
-  const elev = slopeSens > 0 && params.windiness > 0 ? elevationFieldFromFabric(constraints.fabricFeatures) : null;
+  // Slope coupling reads the DURABLE MACRO terrain through the one composed
+  // source of truth (`terrainAt` via `macroTerrainField`): mountains + base, no
+  // relief/landform, and NOT the river's own carve (circular). Bit-exact drop-in
+  // for the old `elevationFieldFromFabric` — mountain-only campaigns are
+  // byte-identical, no-mountain campaigns return null (the same shortcut).
+  const elev = slopeSens > 0 && params.windiness > 0 ? macroTerrainField(constraints.fabricFeatures) : null;
 
   // 1. Per-segment meandered samples (identity-keyed per segment), concatenated
   //    into ONE global centerline. The join vertex appears exactly once (as the

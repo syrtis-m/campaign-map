@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { terrainAt, hasTerrainRelief } from "./terrain";
+import { terrainAt, macroTerrainField, hasTerrainRelief } from "./terrain";
 import { elevationFieldFromFabric } from "./mountainField";
 import type { FabricFeature } from "../../model/fabric";
 
@@ -44,6 +44,15 @@ function landform(id: string, ring: Pt[], params: Record<string, unknown>): Fabr
     id,
     geometry: { type: "Polygon", coordinates: [ring] },
     properties: { kind: "landform", procgen: { algorithm: "landform", seed: 3, version: 1, params } },
+  } as FabricFeature;
+}
+
+function river(id: string, spine: Pt[], params: Record<string, unknown>): FabricFeature {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "LineString", coordinates: spine },
+    properties: { kind: "river", procgen: { algorithm: "river", seed: 9, version: 2, params } },
   } as FabricFeature;
 }
 
@@ -234,5 +243,44 @@ describe("terrainAt — compact support (disjoint stamps are exactly inert)", ()
     const withStamp = terrainAt([landform("l", ring, { mode: "plateau", target: 500, band: 100 })]);
     const without = terrainAt([]);
     expect(withStamp(9000, 9000)).toEqual(without(9000, 9000));
+  });
+});
+
+// ─── Item 5: macroTerrainField is a bit-exact drop-in ────────────────────────
+
+describe("macroTerrainField — bit-exact drop-in for elevationFieldFromFabric", () => {
+  it("mountain-only campaign: identical field (v/dx/dy) to the float", () => {
+    const feats = [mountain("aa", RING, 11), mountain("bb", EAST_RING, 22, { terrain: "mesa", amplitude: 0.6, roughness: 0.4 })];
+    const macro = macroTerrainField(feats)!;
+    const legacy = elevationFieldFromFabric(feats)!;
+    for (const [x, y] of [[400, 400], [750, 1100], [60, 60], [3750, 750], [2250, 750], [9999, 9999]] as Pt[]) {
+      expect(macro(x, y)).toEqual(legacy(x, y));
+    }
+  });
+
+  it("returns null on a trivially-flat campaign (the null shortcut is preserved)", () => {
+    expect(macroTerrainField([])).toBeNull();
+    expect(macroTerrainField(undefined)).toBeNull();
+    // A river / relief / landform WITHOUT a mountain is still flat macro terrain.
+    expect(macroTerrainField([relief("r", [[0, 0], [100, 0]], { polarity: "ridge", height: 100, halfWidth: 80 })])).toBeNull();
+  });
+
+  it("ignores relief/landform/carve — only mountains + base reach the consumer", () => {
+    const withStamps = macroTerrainField([
+      mountain("m", RING),
+      relief("r", [[200, 200], [1000, 1200]], { polarity: "ridge", height: 400, halfWidth: 300 }),
+      river("rv", [[-200, 750], [1700, 750]], { width: 30 }),
+    ])!;
+    const mountainOnly = elevationFieldFromFabric([mountain("m", RING)])!;
+    // A point the relief + carve both influence: macro sees only the mountain.
+    expect(withStamps(750, 750)).toEqual(mountainOnly(750, 750));
+  });
+
+  it("adds the campaign base when opted in (campAmp > 0)", () => {
+    const field = macroTerrainField([mountain("m", RING)], { campAmp: 100, seaDatum: 50 })!;
+    // Far outside the mountain: value is the base (mountain contributes 0), non-flat.
+    const s = field(20000, 20000);
+    expect(s.v).not.toBe(0);
+    expect(Number.isFinite(s.v)).toBe(true);
   });
 });
