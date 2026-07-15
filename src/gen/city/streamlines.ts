@@ -22,8 +22,8 @@ export interface StreamlineOptions {
   bounds: BBox; // halo-padded generation bounds; tracing stops if it exits
 }
 
-/** A direction field as a bare angle sampler — lets callers (plan 014's
- * corridor generator) blend extra bases into the tensor field without this
+/** A direction field as a bare angle sampler — lets callers (the corridor
+ * generator) blend extra bases into the tensor field without this
  * module knowing about them. MUST remain a pure function of world coordinates
  * only (never of other streamlines / generation order) or seams break. */
 export type AngleSampler = (x: number, y: number) => number;

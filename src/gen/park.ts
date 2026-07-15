@@ -1,9 +1,8 @@
 /**
- * Park generator (plan 022 §3.3, reshaped by plan 027-A/-B). Pure/headless (no
- * DOM/map/Obsidian imports; reads only its arguments, D6): a sketched `park`
- * polygon is the region; this fills it with a ground fabric, lays a REAL path
- * skeleton hung off boundary ENTRANCES, and dresses it per `variety` —
- * everything strictly inside the ring.
+ * Park generator. Pure/headless (no DOM/map/Obsidian imports; reads only its
+ * arguments): a sketched `park` polygon is the region; this fills it with a
+ * ground fabric, lays a REAL path skeleton hung off boundary ENTRANCES, and
+ * dresses it per `variety` — everything strictly inside the ring.
  *
  * Four varieties (params, never presetId — mirrors the city algorithm's
  * `profile` branch): `formal-garden` (axial composition on the ring's principal
@@ -17,22 +16,22 @@
  * teahouse + roji stepping-stone spur, and an optional raked-gravel
  * `karesansui` court; small regions degrade gracefully).
  *
- * Plan 027-A figure-ground rewrite:
+ * Figure-ground:
  *  - GROUND is ONE `park-lawn` polygon = the region ring (no cell lattice).
  *  - CANOPY (the second green) = `park-canopy` harmonic-blob clumps at hashed
  *    absolute-lattice anchors (city-park).
  *  - PATHS are `park-path` LINESTRINGS carrying a `class` (theme casing+fill).
  *
- * Plan 027-B skeleton rewrite (§2):
+ * Skeleton:
  *  - ENTRANCES: boundary points where a SKETCHED road passes within a threshold
  *    of the ring (`constraints.fabricFeatures`, gen-space via
  *    `indexFabricConstraints`), plus hashed edge-midpoint fallbacks (2–5 total).
  *    Each entrance is derived from LOCAL geometry (a specific road crossing or a
  *    specific ring edge) and hashed on its ABSOLUTE boundary position — so a
- *    far-vertex edit leaves near-side entrances byte-identical (edit-local), and
- *    a re-roll (new seed) re-selects the midpoint fallbacks.
- *  - PATHS connect entrances (city diagonals, wild desire lines) and now REACH
- *    the ring: a path endpoint sits on the boundary (distance ~0, clears the
+ *    far-vertex edit leaves near-side entrances unchanged (edit-local), and a
+ *    re-roll (new seed) re-selects the midpoint fallbacks.
+ *  - PATHS connect entrances (city diagonals, wild desire lines) and REACH the
+ *    ring: a path endpoint sits on the boundary (distance ~0, clears the
  *    containment gate's −1 m tolerance, which scans centerlines).
  *  - formal-garden lays its axes on the ring's principal inertia axis (stable
  *    under small edits, hash-tiebroken when isotropic) with a cross-axis at the
@@ -41,13 +40,12 @@
  *  - japanese-garden gains lanterns, a teahouse + roji spur, and odd-count rock
  *    groups; the circuit is the winding loop around the pond.
  *  - point dressing (fountain/bandstand/monument/lantern/teahouse) is emitted as
- *    one `park-point` gid carrying `pointKind` (theme tints per kind; symbols in
- *    27-C).
+ *    one `park-point` gid carrying `pointKind` (theme tints per kind).
  *
- * Determinism argument (procgen_v3_design.md §4):
- *  - D4/D6: closed-form arithmetic + seeded harmonic blobs / low-freq warps;
- *    seeded only by `hashSeed(seed, salt, …)`.
- *  - D5: every emitted coordinate is mm-quantized before it leaves.
+ * Determinism:
+ *  - Closed-form arithmetic + seeded harmonic blobs / low-freq warps; seeded
+ *    only by `hashSeed(seed, salt, …)`; every emitted coordinate is mm-quantized
+ *    before it leaves.
  *  - Identity property: the lawn is the ring itself (seed-independent); canopy
  *    clumps + path warps + rocks + trees + entrances key on ABSOLUTE world
  *    position (lattice anchor, boundary point, ring edge) or the region's
@@ -80,7 +78,7 @@ type Pt = [number, number];
 export const PARK_VARIETIES = ["formal-garden", "city-park", "wild-common", "japanese-garden"] as const;
 export type ParkVariety = (typeof PARK_VARIETIES)[number];
 
-/** Park params (plan 022 §3.3). `pathDensity` 0–1 scales the path web; `pond`
+/** Park params. `pathDensity` 0–1 scales the path web; `pond`
  * toggles the water anchor (japanese-garden always ponds; formal-garden always
  * gets its central basin — both are intrinsic to the composition). `variety`
  * drives layout AND is carried onto features for theme tinting. */
@@ -102,8 +100,8 @@ const MIN_ENTRANCE_EDGE_M = 18; // a ring edge shorter than this hosts no midpoi
 const ENTRANCE_MID_PROB = 0.55; // per-edge fallback-entrance inclusion probability (local, edit-safe)
 const MAX_ENTRANCES = 6; // restraint cap (roads + fallbacks)
 
-// ── Organic water / canopy (plan 027-C) — marching-squares pipeline, shared
-//    with the 026-B forest canopy (fields/{metaball,smoothing,polygons}.ts) ────
+// ── Organic water / canopy — marching-squares pipeline, shared with the forest
+//    canopy (fields/{metaball,smoothing,polygons}.ts) ─────────────────────────
 const ORGANIC_LATTICE_M = 5; // marching-squares sampling step (world-aligned, fine for a smooth shore)
 const ORGANIC_CONTAIN_M = 2; // hard containment floor: shape stays ≥ this inside the ring
 const ORGANIC_CHAIKIN_PASSES = 2; // corner-cutting rounds (staircase → hand-drawn outline)
@@ -187,7 +185,7 @@ function projectToRing(open: Pt[], perim: number[], x: number, y: number): { pt:
 }
 
 /**
- * Boundary entrances (plan 027-B §2): where sketched roads meet the ring, plus
+ * Boundary entrances: where sketched roads meet the ring, plus
  * hashed edge-midpoint fallbacks, 2–`MAX_ENTRANCES` total. Sorted by arc
  * position. Each is derived from LOCAL geometry and hashed on absolute position
  * (edit-local); road entrances are always kept, midpoint fallbacks re-select on
@@ -229,7 +227,7 @@ function computeEntrances(seed: number, region: ProcgenRegion, roadLines: Pt[][]
   //     a hash of the edge's ABSOLUTE endpoints. Inclusion is PER-EDGE LOCAL (a
   //     threshold on that edge's own score — no global sort), so moving a far
   //     vertex changes ONLY the two edges it touches; every other edge's
-  //     entrance stays byte-identical. Roads (above), when present, ARE the
+  //     entrance is unchanged. Roads (above), when present, ARE the
   //     entrances — the midpoints are a fallback for a park with none.
   const mids: { e: Entrance; score: number }[] = [];
   for (let i = 0; i < n; i++) {
@@ -306,8 +304,8 @@ function ringAreaAbs(ring: Pt[]): number {
 }
 
 /**
- * Organic blob(s) via the shared marching-squares pipeline (plan 027-C, same
- * machinery as the 026-B forest canopy): a metaball potential around `anchors`
+ * Organic blob(s) via the shared marching-squares pipeline (same machinery as
+ * the forest canopy): a metaball potential around `anchors`
  * (peak 1 at each, threshold 0.5 ⇒ blob radius ≈ 0.54·`radius`) is domain-warped
  * (organic wobble) then HARD-capped by a signed-distance containment floor so the
  * outline can never sit closer than `ORGANIC_CONTAIN_M` to the ring. The zero
@@ -410,10 +408,10 @@ function largestExterior(polys: Pt[][][]): Pt[] | null {
 }
 
 /**
- * Generate a park inside a sketched polygon region (plan 022 §3.3 / 027-A/-B).
+ * Generate a park inside a sketched polygon region.
  * `constraints.fabricFeatures` are consumed for the SKETCHED-road entrances
- * (plan 027-B §2 — sketched roads only; the park↔city-street continuity is
- * plan 024's cascade). All output is strictly inside `region.ring`.
+ * (sketched roads only — the park never reads generated city streets). All
+ * output is strictly inside `region.ring`.
  */
 export function generatePark(
   seed: number,
@@ -423,7 +421,7 @@ export function generatePark(
 ): GeoJSON.Feature[] {
   const { variety, pathDensity, pond } = params;
   const L = layoutFor(variety);
-  // Park-tree glyph family (plan 027-C): japanese gardens read as pine/conifer,
+  // Park-tree glyph family: japanese gardens read as pine/conifer,
   // every other park as broadleaf shade. Declared here (not by emitTreeAt) so it
   // is initialized before the hoisted skeleton builders call emitTreeAt.
   const treeFamily = variety === "japanese-garden" ? "conifer" : "broadleaf";
@@ -503,8 +501,8 @@ export function generatePark(
   // the fill) so the per-tile clip runs it through `clipPolylineToBBox` — which
   // cuts a boundary at a tile edge WITHOUT synthesizing a segment along the seam
   // (a `line` on the MultiPolygon would instead stroke the clip-induced tile
-  // edges as visible grid lines — plan 026-B DECISIONS). id hashes the ring's
-  // first vertex (position, never emission order).
+  // edges as visible grid lines). id hashes the ring's first vertex (position,
+  // never emission order).
   const emitRingLine = (gid: string, ring: Pt[]): void => {
     if (ring.length < 2) return;
     out.push({
@@ -544,10 +542,10 @@ export function generatePark(
   );
 
   // ── Canopy: the second green (city-park). ONE merged organic MultiPolygon
-  //    (plan 027-C) traced by marching squares over a metaball union of the
-  //    hashed clump anchors — the 027-A per-clump blobFeature stack double-
-  //    darkened where clumps overlapped; a single union polygon paints ONE
-  //    figure-ground green. A seam-safe `park-canopy-rim` LineString traces every
+  //    traced by marching squares over a metaball union of the hashed clump
+  //    anchors — a per-clump blobFeature stack would double-darken where clumps
+  //    overlap; a single union polygon paints ONE figure-ground green. A
+  //    seam-safe `park-canopy-rim` LineString traces every
   //    ring (outer belt + any hole) so the wooded mass reads as a drawn shape. ──
   if (L.canopy) {
     const cjit = CANOPY_CELL_M * CANOPY_JITTER_FRAC;
@@ -579,8 +577,8 @@ export function generatePark(
     }
   }
 
-  // ── Pond / basin footprint decided up front (paths route around it). Plan
-  //    027-C: an organic marching-squares shoreline (not a harmonic blob circle).
+  // ── Pond / basin footprint decided up front (paths route around it): an
+  //    organic marching-squares shoreline (not a harmonic blob circle).
   //    A formal basin stays near-circular (tiny wobble — Versailles); city and
   //    japanese ponds get a strongly irregular shore. The duck pond (wild-common)
   //    sits OFF-centre (built in buildWildCommon). ────────────────────────────
@@ -593,7 +591,7 @@ export function generatePark(
     pondRing = emitOrganicPond("park-pond", [cx, cy], effR, warpAmp);
   }
 
-  // ── Per-variety skeleton (plan 027-B §2) ───────────────────────────────────
+  // ── Per-variety skeleton ────────────────────────────────────────────────────
   if (variety === "formal-garden") {
     buildFormal();
   } else if (variety === "city-park") {
@@ -675,7 +673,7 @@ export function generatePark(
     const loop = insetRing(region, inset);
     if (loop.length >= 4) emitLine(loop, "loop");
     else {
-      // Concave fallback: a harmonic loop around the anchor (old 027-A path).
+      // Concave fallback: a harmonic loop around the anchor.
       const loopR = maxD * (0.62 - pathDensity * 0.12);
       if (loopR > MIN_FEATURE_M) emitLine(harmonicBlobRing(seed, "park-loop", cx, cy, loopR, 0.35, 2, 56), "loop");
     }
@@ -735,7 +733,7 @@ export function generatePark(
           const outer: Pt = [cx + Math.cos(theta) * maxD * 0.42, cy + Math.sin(theta) * maxD * 0.42];
           if (!clearOf(region, outer[0], outer[1], L.pathHalfM + MARGIN_M)) continue;
           const hw = Math.max(1.4, L.pathHalfM);
-          // Plan 027-C bridge styling: a hashed choice between an arch (straight
+          // Bridge styling: a hashed choice between an arch (straight
           // deck) and a yatsuhashi ZIGZAG (a kinked plank walk). Both carry `style`
           // for theme paint; the zigzag deck is a buffered zigzag centerline.
           const zig = hash01(seed, "park-bridge-style", bI) < 0.5;
@@ -793,7 +791,7 @@ export function generatePark(
           const px = gx + dx;
           const py = gy + dy;
           if (!clearOf(region, px, py, MARGIN_M)) continue;
-          // Horizontal-dominant: sizeN wider than tall (Sakuteiki). Plan 027-C:
+          // Horizontal-dominant: sizeN wider than tall (Sakuteiki).
           // `variant` (0–2) picks a hashed boulder SDF glyph so a 3/5-stone group
           // doesn't read as stamped copies.
           const rid = hashSeed(seed, "park-rock", cI, r);
@@ -843,7 +841,7 @@ export function generatePark(
       ];
       if (ringContained(region, court, MARGIN_M)) {
         out.push(blobFeature(seed, "park-court", court, { parkType: variety }));
-        // Karesansui raked-gravel texture (plan 027-C): parallel `park-court-rake`
+        // Karesansui raked-gravel texture: parallel `park-court-rake`
         // LineStrings sweeping the court, each with a low sinusoidal wobble (the
         // rake's furrows). Seam-safe (LineStrings, never a line on the court fill)
         // and strictly inside the contained court band. Deterministic (phase
@@ -894,10 +892,10 @@ export function generatePark(
     if (withNeighbors) for (let i = 0; i < m; i++) link(i, (i + 1) % m);
   }
 
-  // Emit a tree point at (px,py) with a stable position-hashed id. Plan 027-C:
-  // carries a `treeFamily` + hashed `variant` so the park-tree symbol layer draws
-  // a per-park SDF tree glyph from the shared 026-C set (`tree-<family>-<variant>`
-  // — japanese gardens read as pine/conifer, other parks as broadleaf shade).
+  // Emit a tree point at (px,py) with a stable position-hashed id. Carries a
+  // `treeFamily` + hashed `variant` so the park-tree symbol layer draws a
+  // per-park SDF tree glyph from the shared set (`tree-<family>-<variant>` —
+  // japanese gardens read as pine/conifer, other parks as broadleaf shade).
   // `treeFamily` is declared at the top of generatePark (the skeleton builders
   // that call emitTreeAt run before this point in source order).
   function emitTreeAt(px: number, py: number, salt: string, ...ks: number[]): void {

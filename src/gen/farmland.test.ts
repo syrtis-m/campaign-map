@@ -53,8 +53,8 @@ function regionFor(ring: Pt[]): ProcgenRegion {
 }
 
 /** A sketched procgen MOUNTAIN feature covering the SQUARE region and beyond —
- * the box 23-E elevation source paddy-terraces reads via the constraints (the
- * raw sketch layer; the persisted seed/params ARE the durable input). */
+ * the elevation source paddy-terraces reads via the constraints (the raw sketch
+ * layer; the persisted seed/params ARE the durable input). */
 const MOUNTAIN_OVER_SQUARE = {
   type: "Feature",
   id: "mountain-z",
@@ -252,9 +252,9 @@ describe("farmland generator — outskirt suppression is a strict no-op with no 
   it("non-paddy farmland never reads its constraints — output is identical with or without busy fabric (incl. a MOUNTAIN, box 23-E)", () => {
     const region = regionFor(SQUARE);
     // Constraints carrying arbitrary sketched fabric (incl. a city district,
-    // another farmland, and — the 23-E cross-kind byte-identity rule — a
-    // procgen MOUNTAIN overlapping the region) must not perturb the four 22-F
-    // field types: only paddy-terraces composes the elevation field. Farmland
+    // another farmland, and — the cross-kind identity rule — a procgen MOUNTAIN
+    // overlapping the region) must not perturb the four non-paddy field types:
+    // only paddy-terraces composes the elevation field. Farmland
     // reading the city would be a stage-3→2 cascade cycle, which is rejected.
     const busy: GenerationConstraints = {
       worldBounds: CONSTRAINTS.worldBounds,
@@ -346,7 +346,7 @@ describe("farmland generator — paddy-terraces (box 23-E: elevation-coupled ban
     const b = generateFarmland(7, region, PADDY, MOUNTAIN_CONSTRAINTS);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
     // A different mountain seed is a different durable input → different banks
-    // (documented 23-E coupling: the mountain is an INPUT, like a vertex edit).
+    // (the mountain is an INPUT, like a vertex edit).
     const otherMountain = JSON.parse(JSON.stringify(MOUNTAIN_OVER_SQUARE)) as typeof MOUNTAIN_OVER_SQUARE;
     (otherMountain.properties.procgen as { seed: number }).seed = 778;
     const c = generateFarmland(7, region, PADDY, {
@@ -455,9 +455,9 @@ describe("farmland generator — 2x2 seam via whole-artifact clip", () => {
 });
 
 describe("farmland generator — metric bands (regression net)", () => {
-  // The band is the tunable safety net that replaces byte-eternity for tuning:
-  // it survives a field/lane retune but catches a field split or lane network
-  // that collapses. Measured on the committed golden (enclosed-patchwork, 4242).
+  // The band is a tunable safety net: it survives a field/lane retune but
+  // catches a field split or lane network that collapses. Measured on the
+  // committed golden (enclosed-patchwork, 4242).
   it("golden fixture (enclosed-patchwork) lands inside its metric band", () => {
     const region = regionFor(SQUARE);
     const v = farmlandBandViolations(computeFarmlandMetrics(generateFarmland(4242, region, PARAMS(), CONSTRAINTS), region));

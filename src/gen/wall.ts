@@ -1,40 +1,40 @@
 /**
- * Wall generator (plan 022 §3.4) — the second LINE-kind procgen algorithm
- * (river was the first). Pure/headless (no DOM/map/Obsidian imports; reads only
- * its arguments, D6): a sketched `wall` LINE is the SPINE; this elaborates it
- * into a masonry band, towers, gates and an optional moat — all strictly inside
- * the spine corridor.
+ * Wall generator — the second LINE-kind procgen algorithm (river was the
+ * first). Pure/headless (no DOM/map/Obsidian imports; reads only its
+ * arguments): a sketched `wall` LINE is the SPINE; this elaborates it into a
+ * masonry band, towers, gates and an optional moat — all strictly inside the
+ * spine corridor.
  *
- * Determinism argument (procgen_v3_design.md §4):
- *  - D4/D6: closed-form arithmetic on a mm-quantized spine, seeded only by
- *    `hashSeed(seed, salt, quantized positions)`.
- *  - D5: every emitted coordinate is mm-quantized before it leaves.
- *  - Identity property (plan 022 §3.4, same discipline as the river meander
- *    §3.1): each ORIGINAL spine segment's tower run gets a seeded PHASE hashed
- *    on THAT segment's quantized endpoints — never global arc-length. So a
- *    single-vertex edit re-phases ONLY the two adjacent segments (their towers
- *    shift); every other segment's towers are byte-identical. A re-roll (new
- *    seed) re-phases every segment (measured in the gate: tower-bucket overlap
- *    away from an edit ≫ overlap under re-roll). Corner accents key on the
- *    vertex position, so only the moved corner's accent changes on an edit.
- *  - Gates are where a sketched ROAD crosses the spine (plan-020 gate-at-
- *    crossing logic against `constraints.fabricFeatures` roadLines — NOT the
- *    generated city streets: reading another generator's output is the plan-024
- *    cascade, forbidden here, exactly as the river defers channel→constraint).
- *    A crossing is a closed-form segment/segment solve on quantized geometry.
+ * Determinism:
+ *  - Closed-form arithmetic on a mm-quantized spine, seeded only by
+ *    `hashSeed(seed, salt, quantized positions)`; every emitted coordinate is
+ *    mm-quantized before it leaves.
+ *  - Identity property (same discipline as the river meander): each ORIGINAL
+ *    spine segment's tower run gets a seeded PHASE hashed on THAT segment's
+ *    quantized endpoints — never global arc-length. So a single-vertex edit
+ *    re-phases ONLY the two adjacent segments (their towers shift); every other
+ *    segment's towers are unchanged. A re-roll (new seed) re-phases every
+ *    segment (tower-bucket overlap away from an edit ≫ overlap under re-roll).
+ *    Corner accents key on the vertex position, so only the moved corner's
+ *    accent changes on an edit.
+ *  - Gates are where a sketched ROAD crosses the spine (against
+ *    `constraints.fabricFeatures` roadLines — NOT the generated city streets:
+ *    reading another generator's output is forbidden here, exactly as the river
+ *    defers channel→constraint). A crossing is a closed-form segment/segment
+ *    solve on quantized geometry.
  *  - Containment: every lateral displacement term is bounded by a params-only
  *    constant, and `wallMaxOffset(params)` is their max + margin, so all output
- *    sits strictly within the corridor (plan 022 §2). A moat/wider-tower params
- *    change widens the corridor, never violates it.
+ *    sits strictly within the corridor. A moat/wider-tower params change widens
+ *    the corridor, never violates it.
  *  - Feature ids hash on POSITION (never emission order), integers so
  *    `clipNetworkToTile`'s `Number(id)` sort/clip stays deterministic.
  *
- * Double-wall resolution (plan 022 §3.4) does NOT live here — wall elaboration
- * is stage 4 (AFTER the city), so its output cannot legally constrain city
- * generation. The suppression signal is the RAW wall SKETCH, read by the CITY
- * (stage 3) via `constraints.fabricFeatures`: see `buildWall` in
- * `citynet/skeleton.ts`, which drops its own wall-band segments that run
- * alongside a sketched wall. This generator just decorates the GM's line.
+ * Double-wall resolution does NOT live here — wall elaboration is stage 4 (AFTER
+ * the city), so its output cannot legally constrain city generation. The
+ * suppression signal is the RAW wall SKETCH, read by the CITY (stage 3) via
+ * `constraints.fabricFeatures`: see `buildWall` in `citynet/skeleton.ts`, which
+ * drops its own wall-band segments that run alongside a sketched wall. This
+ * generator just decorates the GM's line.
  */
 import { hashSeed, mulberry32 } from "./rng";
 import { q, quad, spanQuad } from "./waterEmit";
@@ -47,7 +47,7 @@ type Pt = [number, number];
 export const WALL_STYLES = ["curtain-wall", "palisade", "bastioned"] as const;
 export type WallStyle = (typeof WALL_STYLES)[number];
 
-/** Wall params (plan 022 §3.4). `style` drives layout AND is carried onto every
+/** Wall params. `style` drives layout AND is carried onto every
  * feature for theme tinting (like the park `variety` / city `profile`), never a
  * preset-id branch. `towerSpacing` is meters between towers along a segment;
  * `moat` toggles the outboard channel; `gatehouseScale` widens gate openings +
@@ -84,7 +84,7 @@ function gatehouseHalf(params: WallParams): number {
 }
 
 /**
- * Corridor half-width (plan 022 §2): a pure, monotonic function of the params.
+ * Corridor half-width: a pure, monotonic function of the params.
  * Every emitted point sits at most this far from the spine, so it is a strict
  * upper bound on how far output leaves the sketched line. Adding a moat or a
  * larger tower/gatehouse widens it; a palisade (no towers, no moat) is the
@@ -153,7 +153,7 @@ function towerFeature(
 }
 
 /**
- * Generate a wall inside a spine corridor (plan 022 §3.4). `region.spine` is the
+ * Generate a wall inside a spine corridor. `region.spine` is the
  * mm-quantized sketched polyline; output is the masonry band (`wall-quad`),
  * `wall-tower` footprints, `wall-gate` markers where a sketched road crosses,
  * and (when `moat`) a `wall-moat` channel — all strictly within
@@ -242,7 +242,7 @@ export function generateWall(
     }
   }
 
-  // ── Towers: seeded per-segment PHASE (identity keying, plan 022 §3.4) — the
+  // ── Towers: seeded per-segment PHASE (identity keying) — the
   //    along-run field a re-roll must shift but an edit must keep off the two
   //    adjacent segments. Palisades carry no towers. ────────────────────────
   if (params.style !== "palisade") {

@@ -1,9 +1,8 @@
 /**
- * Sketched-fabric constraints for generators (plan 019, Phase 3): the GM's
- * hand-drawn background geometry (Fabric.geojson) feeds every generator run
- * — sketch a river, regenerate, streets stop at the water; sketch a road,
- * the street network aligns to it (generalizing plan 014's corridor
- * elaboration to *every* sketched road).
+ * Sketched-fabric constraints for generators: the GM's hand-drawn background
+ * geometry (Fabric.geojson) feeds every generator run — sketch a river,
+ * regenerate, streets stop at the water; sketch a road, the street network
+ * aligns to it.
  *
  * Pure/headless (no DOM/map/Obsidian imports) and seam-safe by construction:
  * every predicate here is a pure function of world coordinates + the WHOLE
@@ -15,18 +14,18 @@ import type { AngleSampler } from "./city/streamlines";
 import type { GenerationConstraints } from "./types";
 import { buildUpstreamConstraints } from "./upstream";
 import { sampleFieldAngle, type TensorFieldParams } from "./city/tensorField";
-// The water-polygon predicate is fields' `pointInRingClosed` (moved verbatim,
-// plan 023 §2), imported back so the constraint math shares the fields
-// distance/containment currency. Byte-identical — see fields/sdf.ts.
+// The water-polygon predicate is fields' `pointInRingClosed`, imported back so
+// the constraint math shares the fields distance/containment currency. See
+// fields/sdf.ts.
 import { pointInRingClosed } from "./fields/sdf";
 
 type Pt = [number, number];
 
 /** Rivers are lines; streets treat them as water within this half-width. */
 export const RIVER_HALF_WIDTH = 15;
-/** Road-alignment tensor weight/decay — same values as plan 014's corridor
- * blend (corridor.ts), so a sketched road steers streets the way a
- * generate-mode corridor used to. */
+/** Road-alignment tensor weight/decay — same values as the corridor blend
+ * (corridor.ts), so a sketched road steers streets the way a generate-mode
+ * corridor does. */
 export const ROAD_ALIGN_STRENGTH = 3;
 export const ROAD_FALLOFF = 60;
 
@@ -35,19 +34,17 @@ export interface FabricConstraintIndex {
   riverLines: Pt[][];
   roadLines: Pt[][];
   wallLines: Pt[][];
-  /** Raw `farmland`-kind sketch polygons (plan 022 §3.5). The CITY reads these
-   * to suppress its own outskirt fields inside them — the GM's farmland claims
-   * that ground. Strict empty when no farmland is sketched, so a city without
-   * one is byte-identical to before this feature. */
+  /** Raw `farmland`-kind sketch polygons. The CITY reads these to suppress its
+   * own outskirt fields inside them — the GM's farmland claims that ground.
+   * Strict empty when no farmland is sketched. */
   farmlandRings: Pt[][];
-  /** Plan 024 §3 (24-C): outer rings of the GENERATED, meandered river CHANNEL
-   * (`upstream.water` — stage-1 hydrology output the city consumes). Unlike a
-   * `water`-polygon LAKE (impassable), a channel is a RIVER: passable-but-
-   * bridged. Street-ends/buildings/walls treat it as water (they avoid it);
-   * arterials cross it as bridges; euro quays hug its real bank. Strict empty
-   * when there is no upstream channel, so a city WITHOUT a procgen river
-   * upstream is byte-identical to before this feature. When NON-empty it
-   * SUPERSEDES the raw sketched `river` spine (`riverLines` is emptied): the
+  /** Outer rings of the GENERATED, meandered river CHANNEL (`upstream.water` —
+   * stage-1 hydrology output the city consumes). Unlike a `water`-polygon LAKE
+   * (impassable), a channel is a RIVER: passable-but-bridged.
+   * Street-ends/buildings/walls treat it as water (they avoid it); arterials
+   * cross it as bridges; euro quays hug its real bank. Strict empty when there
+   * is no upstream channel. When NON-empty it SUPERSEDES the raw sketched
+   * `river` spine (`riverLines` is emptied): the
    * generated channel is the river's real geometry the city tracks. */
   channelRings: Pt[][];
 }
@@ -63,9 +60,8 @@ const EMPTY: FabricConstraintIndex = {
 
 /** Buckets fabric features by the constraint role their kind plays. Park
  * polygons impose nothing on generators (streets through a park are fine).
- * District polygons impose nothing either since plan 020: a district is a
- * PROCGEN REGION — the container city generation runs inside — not a
- * constraint on it (the plan-019 ward-site exclusion is retired). */
+ * District polygons impose nothing either: a district is a PROCGEN REGION — the
+ * container city generation runs inside — not a constraint on it. */
 export function indexFabricConstraints(features: FabricFeature[] | undefined): FabricConstraintIndex {
   if (!features || features.length === 0) return EMPTY;
   const idx: FabricConstraintIndex = {
@@ -94,27 +90,25 @@ export function indexFabricConstraints(features: FabricFeature[] | undefined): F
 }
 
 /**
- * Plan 024 §3 (24-C) — the FULL constraint index a stage-3 consumer reads: the
- * raw sketched fabric (`indexFabricConstraints`) PLUS the strictly-lower-stage
- * GENERATED upstream it declared it `consumes` — today the meandered river
- * CHANNEL (`constraints.upstream.water`). This is where output→output coupling
- * enters the city: bridges track the meandered channel, quays hug its real
- * bank, street-ends/buildings stop at it (§6's windiness acceptance).
+ * The FULL constraint index a stage-3 consumer reads: the raw sketched fabric
+ * (`indexFabricConstraints`) PLUS the strictly-lower-stage GENERATED upstream it
+ * declared it `consumes` — today the meandered river CHANNEL
+ * (`constraints.upstream.water`). This is where output→output coupling enters
+ * the city: bridges track the meandered channel, quays hug its real bank,
+ * street-ends/buildings stop at it.
  *
  * The channel arrives as DATA (`upstream.water` GeoJSON polygons); we rebuild
  * its outer rings via the shared pure `buildUpstreamConstraints` (host + worker
- * agree, D6) — citynet never imports `river.ts`. When a channel is present it
+ * agree) — citynet never imports `river.ts`. When a channel is present it
  * SUPERSEDES the raw sketched `river` spine (the generated meander is the
  * river's real geometry, so the straight spine would be a phantom second
  * river): `riverLines` is dropped, and `channelRings` drives every water
- * predicate. Absent/empty upstream ⇒ byte-identical to `indexFabricConstraints`
- * (a city with no procgen river upstream is untouched — the 23-A digest golden
- * and the sketched-river citynet tests still hold).
+ * predicate. Absent/empty upstream ⇒ identical to `indexFabricConstraints`.
  *
- * LIMITATION (flagged, DECISIONS 24-C): a channel present drops ALL raw
- * `river` spines, so a hypothetical NON-procgen raw river coexisting with a
- * procgen river inside the same city would lose its constraint. The suite has
- * no such fixture (Vespergate has one river); acceptable for v1.
+ * LIMITATION: a channel present drops ALL raw `river` spines, so a hypothetical
+ * NON-procgen raw river coexisting with a procgen river inside the same city
+ * would lose its constraint. The suite has no such fixture (Vespergate has one
+ * river); acceptable for v1.
  */
 export function indexConstraints(constraints: GenerationConstraints): FabricConstraintIndex {
   const base = indexFabricConstraints(constraints.fabricFeatures);
@@ -123,9 +117,8 @@ export function indexConstraints(constraints: GenerationConstraints): FabricCons
   return { ...base, riverLines: [], channelRings };
 }
 
-/** Inside a raw `farmland` sketch polygon (plan 022 §3.5)? True ⇒ the city
- * suppresses its own outskirt field here. Strict `false` when nothing is
- * sketched, so a city without farmland is byte-identical to before. */
+/** Inside a raw `farmland` sketch polygon? True ⇒ the city suppresses its own
+ * outskirt field here. Strict `false` when nothing is sketched. */
 export function insideSketchedFarmland(idx: FabricConstraintIndex, x: number, y: number): boolean {
   for (const ring of idx.farmlandRings) {
     if (pointInRing(ring, x, y)) return true;
@@ -134,8 +127,7 @@ export function insideSketchedFarmland(idx: FabricConstraintIndex, x: number, y:
 }
 
 /** Ray-cast point-in-polygon — pure arithmetic on the ring, deterministic.
- * Thin wrapper over fields' `pointInRingClosed` (moved verbatim, plan 023 §2)
- * — byte-identical. */
+ * Thin wrapper over fields' `pointInRingClosed`. */
 export function pointInRing(ring: Pt[], x: number, y: number): boolean {
   return pointInRingClosed(ring, x, y);
 }
@@ -161,7 +153,7 @@ export function nearestOnLine(line: Pt[], x: number, y: number): { dist: number;
 }
 
 /** Inside a sketched water polygon, within a sketched river's half-width, or
- * inside the GENERATED meandered channel (plan 024 §3, 24-C). Street-ends,
+ * inside the GENERATED meandered channel. Street-ends,
  * buildings and walls all avoid these — so "zero city geometry intersects the
  * channel" holds once `channelRings` is folded in (via `indexConstraints`). */
 export function blockedByWater(idx: FabricConstraintIndex, x: number, y: number): boolean {

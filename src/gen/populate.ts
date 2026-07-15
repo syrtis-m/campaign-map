@@ -1,8 +1,8 @@
 /**
- * Deterministic offline "populate this area" generator (plan 010 / docs/03
- * Phase 5's "LLM hook: populate this district with N shops" — no LLM, no
- * network call. Scatters `count` seeded points inside a bbox and asks the
- * caller's `nameFor` (culture-aware, see MapView.populateArea) to name each.
+ * Deterministic offline "populate this area" generator (the "populate this
+ * district with N shops" hook — no LLM, no network call). Scatters `count`
+ * seeded points inside a bbox and asks the caller's `nameFor` (culture-aware,
+ * see MapView.populateArea) to name each.
  * Pure: no DOM/map/Obsidian imports (CLAUDE.md generator contract).
  * Determinism is sacred: same (seed, bbox, type, count, salt) → identical
  * output forever.

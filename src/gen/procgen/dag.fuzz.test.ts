@@ -1,8 +1,8 @@
 /**
- * Cascade determinism fuzz (plan 024 §4 / DoD): the cross-layer cascade order
- * MUST be a pure function of the node SET, never of the order regions were
- * enumerated / edited (D2 for the host — "cascade order must be deterministic,
- * never Map-iteration order"). Randomizes node sets + input permutations +
+ * Cascade determinism fuzz: the cross-layer cascade order MUST be a pure
+ * function of the node SET, never of the order regions were enumerated / edited
+ * (cascade order must be deterministic, never Map-iteration order). Randomizes
+ * node sets + input permutations +
  * edit-root permutations and asserts the DAG outputs are permutation-invariant,
  * cycle-free, and stage-monotone. Slow tier (`npm run test:fuzz`).
  */

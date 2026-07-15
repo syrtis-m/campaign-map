@@ -51,7 +51,7 @@ describe("regionFingerprint — determinism", () => {
   });
 });
 
-describe("regionFingerprint — change detection per input class (plan 024 §5.1)", () => {
+describe("regionFingerprint — change detection per input class", () => {
   const ref = regionFingerprint(base());
 
   it("seed change flips the fingerprint (re-roll)", () => {
@@ -113,13 +113,13 @@ describe("regionFingerprint — invariances (no false staleness)", () => {
   });
 });
 
-describe("regionFingerprint — upstream artifact fingerprints (plan 024 §5.1, 24-B)", () => {
+describe("regionFingerprint — upstream artifact fingerprints", () => {
   const ref = regionFingerprint(base());
 
-  it("BACK-COMPAT: no upstream ⇒ byte-identical to the 24-A composition (no version bump, no storm)", () => {
-    // A region with no cross-region dependency hashes exactly as before 24-B —
-    // opening such a campaign triggers NO recompute (DoD #6). Empty AND absent
-    // both collapse to the no-upstream string.
+  it("BACK-COMPAT: no upstream ⇒ the same fingerprint as a no-upstream composition (no version bump, no storm)", () => {
+    // A region with no cross-region dependency hashes as if upstream were absent
+    // — opening such a campaign triggers NO recompute. Empty AND absent both
+    // collapse to the no-upstream string.
     expect(regionFingerprint({ ...base(), upstreamFingerprints: [] })).toBe(ref);
     expect(regionFingerprint({ ...base(), upstreamFingerprints: undefined })).toBe(ref);
   });
@@ -148,7 +148,7 @@ describe("regionFingerprint — upstream artifact fingerprints (plan 024 §5.1, 
 });
 
 describe("isCacheRecordFresh — back-compat grandfathering", () => {
-  it("a record with no stored fingerprint is fresh (pre-024 grandfathering)", () => {
+  it("a record with no stored fingerprint is fresh (grandfathering)", () => {
     expect(isCacheRecordFresh(undefined, "fpNow")).toBe(true);
   });
 

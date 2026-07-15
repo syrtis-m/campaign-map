@@ -1,12 +1,11 @@
 /**
- * Procgen regions (plan 020 §4): the polygonal replacement for the v3 city
- * disc. A ProcgenRegion is built once per generation run from a sketched
- * fabric polygon (converted to generation-space meters by the host) and
- * threaded through the whole pipeline as the container of ALL generated
- * output — nothing spills past the GM's line.
+ * Procgen regions: the polygonal container for a generation run. A
+ * ProcgenRegion is built once per run from a sketched fabric polygon (converted
+ * to generation-space meters by the host) and threaded through the whole
+ * pipeline as the container of ALL generated output — nothing spills past the
+ * GM's line.
  *
- * Determinism argument (procgen_v3_design.md §4, restated for regions in
- * plan 020 §7):
+ * Determinism:
  *  - D4: everything here is closed-form arithmetic (products, divisions,
  *    Math.hypot/sqrt) on the mm-quantized ring. The ONLY trig lives in
  *    `boundaryPointAt`/`boundaryPointFrom` direction vectors, which is
@@ -27,10 +26,9 @@
  *    lowest-x) point of any tie wins — scan order can never leak.
  */
 import type { BBox } from "./spatialHash";
-// Leaf distance/containment primitives live in the fields module (plan 023 §2)
-// — MOVED verbatim from here, imported back one-way (region → fields, acyclic)
-// so `interiorT`/`distanceToBoundary` are literally thin wrappers over fields
-// while the float arithmetic is byte-identical. See fields/sdf.ts BIT-EXACTNESS.
+// Leaf distance/containment primitives live in the fields module, imported back
+// one-way (region → fields, acyclic) so `interiorT`/`distanceToBoundary` are
+// thin wrappers over fields. See fields/sdf.ts BIT-EXACTNESS.
 import {
   distanceToRingBoundary,
   ringContainsEvenOdd,
@@ -47,8 +45,8 @@ function q(v: number): number {
 
 /** World-anchored lattice spacing for the interior-distance scan, meters. */
 export const INTERIOR_LATTICE_M = 10;
-/** Area clamp (plan 020 §4): below the useful minimum / the perf valve —
- * mirrors the old 150–2500 m radius envelope. */
+/** Area clamp: below the useful minimum / the perf valve — the 150–2500 m
+ * radius envelope. */
 export const REGION_MIN_AREA_M2 = Math.PI * 150 * 150;
 export const REGION_MAX_AREA_M2 = Math.PI * 2500 * 2500;
 /** Miter clamp for `insetRing`: a vertex may move at most this many insets. */
@@ -68,7 +66,7 @@ export interface ProcgenRegion {
   centroid: Pt;
   /** |signed shoelace area|, m². */
   area: number;
-  /** sqrt(area/π) — replaces the disc `radius` in size-scaled parameters. */
+  /** sqrt(area/π) — the radius-equivalent scalar for size-scaled parameters. */
   effectiveRadius: number;
   /** Max distanceToBoundary over the contained 10 m lattice (see module
    * JSDoc for the approximation + tie-break). Always > 0. */
@@ -83,22 +81,22 @@ export interface ProcgenRegion {
    * `corridorMaxOffset` of the spine" (see `distanceToBoundary`). For a spine
    * corridor `ring` is a bbox rectangle (spine bbox grown by the offset) used
    * only for the tile-overlap range — never for containment. Polygon regions
-   * leave both undefined and behave exactly as before. */
+   * leave both undefined. */
   spine?: Spine;
   /** Corridor half-width (meters): all generated output must sit within this
-   * distance of `spine`. A pure function of the algorithm's params (plan 022
-   * §2), so a windiness increase widens it. Undefined for polygon regions. */
+   * distance of `spine`. A pure function of the algorithm's params, so a
+   * windiness increase widens it. Undefined for polygon regions. */
   corridorMaxOffset?: number;
 }
 
 /**
- * A sketched LINE turned into a generation spine (plan 022 §2) — the polyline
- * a line-kind algorithm (river, later wall) elaborates. mm-quantized, with a
- * cumulative arc-length index. Kept deliberately minimal: a generator that
- * needs identity-preserving keying hashes each SEGMENT's quantized endpoints
- * (never global arc-length — that would make a single-vertex edit re-roll the
- * whole line; plan 022 §3.1 adversarial note), so `cumLen` is only for the
- * inherently-global quantities (downstream width growth).
+ * A sketched LINE turned into a generation spine — the polyline a line-kind
+ * algorithm (river, wall) elaborates. mm-quantized, with a cumulative
+ * arc-length index. Kept deliberately minimal: a generator that needs
+ * identity-preserving keying hashes each SEGMENT's quantized endpoints (never
+ * global arc-length — that would make a single-vertex edit re-roll the whole
+ * line), so `cumLen` is only for the inherently-global quantities (downstream
+ * width growth).
  */
 export interface Spine {
   id: string;
@@ -230,22 +228,20 @@ export function makeRegion(id: string, ring: Pt[]): ProcgenRegion {
 }
 
 /** Even-odd ray cast (same predicate family as fabricConstraints.pointInRing).
- * Thin wrapper over fields' `ringContainsEvenOdd` (moved verbatim, plan 023
- * §2) — byte-identical. */
+ * Thin wrapper over fields' `ringContainsEvenOdd`. */
 export function regionContains(r: ProcgenRegion, x: number, y: number): boolean {
   return ringContainsEvenOdd(r.ring, x, y);
 }
 
 /** Exact per-segment distance to the region boundary, signed: positive
- * inside, negative outside (plan 020 §4). For a spine CORRIDOR (plan 022 §2)
- * the boundary is the corridor edge: `corridorMaxOffset − distanceToSpine`,
- * so a point is "inside" iff it sits within the offset of the spine — the same
- * positive-inside / negative-outside convention every caller already relies
- * on, including the containment gate (`< −1` ⇒ spilled outside).
+ * inside, negative outside. For a spine CORRIDOR the boundary is the corridor
+ * edge: `corridorMaxOffset − distanceToSpine`, so a point is "inside" iff it
+ * sits within the offset of the spine — the same positive-inside /
+ * negative-outside convention every caller already relies on, including the
+ * containment gate (`< −1` ⇒ spilled outside).
  *
- * The polygon branch is fields' `signedDistancePolygon` (moved verbatim, plan
- * 023 §2): identical arithmetic (`distanceToRingBoundary` then sign by
- * `ringContainsEvenOdd`), so the retrofit is byte-preserving. */
+ * The polygon branch is fields' `signedDistancePolygon`: `distanceToRingBoundary`
+ * then sign by `ringContainsEvenOdd`. */
 export function distanceToBoundary(r: ProcgenRegion, x: number, y: number): number {
   if (r.spine && r.corridorMaxOffset !== undefined) {
     return r.corridorMaxOffset - distanceToSpine(r.spine, x, y);
@@ -395,8 +391,8 @@ export function clipPolylineToRegion(r: ProcgenRegion, line: Pt[]): Pt[][] {
 }
 
 /**
- * Deterministic miter-clamped polygon inset (plan 020 §4) — the wall /
- * ring-road path: sketch the city limits and the wall traces them. Each
+ * Deterministic miter-clamped polygon inset — the wall / ring-road path:
+ * sketch the city limits and the wall traces them. Each
  * edge's offset line moves `inset` along its inward (left, ring is CCW)
  * normal; each vertex is the intersection of its two adjacent offset lines,
  * with the displacement clamped to `INSET_MITER_LIMIT × inset` along the
@@ -521,7 +517,7 @@ export function bboxWithMargin(bbox: BBox, margin: number): BBox {
 
 /** Is the ring convex (all turns the same way, CCW after normalization)?
  * Used by wards to pick the exact convex clip vs. the conservative concave
- * drop (plan 020 approved v1 tradeoff). Collinear vertices are tolerated. */
+ * drop. Collinear vertices are tolerated. */
 export function ringIsConvex(closed: Pt[]): boolean {
   const open = closed.slice(0, -1);
   const n = open.length;
@@ -538,8 +534,8 @@ export function ringIsConvex(closed: Pt[]): boolean {
 export type RingValidation = { ok: true } | { ok: false; reason: string };
 
 /**
- * Host-side ingest validation (plan 020 §4): ≥3 distinct vertices, simple
- * (no self-intersection, O(n²) is fine), area within the useful envelope.
+ * Host-side ingest validation: ≥3 distinct vertices, simple (no
+ * self-intersection, O(n²) is fine), area within the useful envelope.
  * Pure and side-effect free — the host turns a failure into a Notice.
  */
 export function validateRegionRing(ring: Pt[]): RingValidation {
@@ -574,7 +570,7 @@ export function validateRegionRing(ring: Pt[]): RingValidation {
   return { ok: true };
 }
 
-// ─── Spine (line-kind) support (plan 022 §2) ─────────────────────────────────
+// ─── Spine (line-kind) support ───────────────────────────────────────────────
 
 /** A spine shorter than this is below the useful minimum for elaboration. */
 export const SPINE_MIN_LENGTH_M = 20;
@@ -583,7 +579,7 @@ export const SPINE_MIN_LENGTH_M = 20;
 export const SPINE_MAX_LENGTH_M = 40000;
 
 /**
- * Build a spine from a polyline (plan 022 §2). Ingest normalization, all
+ * Build a spine from a polyline. Ingest normalization, all
  * deterministic: mm-quantize every vertex (D5), drop consecutive duplicates,
  * accumulate arc length. Never throws — validation is `validateSpineLine`'s
  * job (host-side). `id` is the fabric feature id, so cache keys stay
@@ -618,14 +614,14 @@ export function makeSpine(id: string, line: Pt[]): Spine {
 
 /** Min distance from a point to any segment of the spine polyline — the
  * corridor containment metric (closed-form, deterministic). Thin wrapper over
- * fields' `distanceToPolyline` (moved verbatim, plan 023 §2) — byte-identical,
- * degenerate handling (empty → Infinity, single point → hypot) preserved. */
+ * fields' `distanceToPolyline`; degenerate handling (empty → Infinity, single
+ * point → hypot) preserved. */
 export function distanceToSpine(spine: Spine, x: number, y: number): number {
   return distanceToPolyline(spine.points, x, y);
 }
 
 /**
- * A spine CORRIDOR as a ProcgenRegion (plan 022 §2): reuses the whole region
+ * A spine CORRIDOR as a ProcgenRegion: reuses the whole region
  * lifecycle (tile range, cache keys, generate/regen/clip) unchanged. `ring` is
  * the spine bbox grown by `maxOffset` — a simple CCW rectangle used ONLY for
  * the tile-overlap range (a harmless superset; empty tiles clip to nothing).
@@ -654,8 +650,8 @@ export function makeCorridorRegion(id: string, spine: Spine, maxOffset: number):
 }
 
 /**
- * Host-side ingest validation for a line-kind sketch (plan 022 §2): ≥2
- * distinct vertices and a total length within the useful envelope. Pure and
+ * Host-side ingest validation for a line-kind sketch: ≥2 distinct vertices and
+ * a total length within the useful envelope. Pure and
  * side-effect free — the host turns a failure into a Notice ("kept as a plain
  * shape"). Mirrors `validateRegionRing` for polygons.
  */

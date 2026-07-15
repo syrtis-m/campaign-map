@@ -11,9 +11,9 @@ import { makeRegion } from "../region";
 import type { GenerationConstraints } from "../types";
 import type { BBox } from "../spatialHash";
 
-/** World-tier generators are per-tile; city-tier generation is region-scoped
- * (plan 020) — the whole-region network is the one expensive job that must
- * run off-thread, dispatched via the procgen registry. */
+/** World-tier generators are per-tile; city-tier generation is region-scoped —
+ * the whole-region network is the one expensive job that must run off-thread,
+ * dispatched via the procgen registry. */
 export type GeneratorId = "world-region" | "world-settlement" | "world-route";
 
 const GENERATORS: Record<GeneratorId, (seed: number, bbox: BBox, c: GenerationConstraints) => GeoJSON.Feature[]> = {
@@ -24,7 +24,7 @@ const GENERATORS: Record<GeneratorId, (seed: number, bbox: BBox, c: GenerationCo
 
 type Pt = [number, number];
 
-/** A whole-region procgen job (plan 020 §5). The worker resolves the
+/** A whole-region procgen job. The worker resolves the
  * algorithm from the registry, rebuilds the region from its ring, and runs
  * the pure generator — `seed`/`params` come from the region's persisted
  * procgen block, so identity is durable data, never derived at run time. */

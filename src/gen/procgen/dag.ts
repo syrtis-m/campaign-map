@@ -1,13 +1,13 @@
 /**
- * Cross-layer regen cascade — the stage DAG (plan 024 §2/§4).
+ * Cross-layer regen cascade — the stage DAG.
  *
  * The suite feels like one world (not independent stamps) because a layer-2
  * procgen edit propagates to the layer-1 fabric that reads it: turn a river's
- * windiness up, the city around it regenerates. Plan 024 makes that propagation
- * (a) cycle-free BY CONSTRUCTION and (b) deterministic, via a fixed global
- * partial order over STAGES:
+ * windiness up, the city around it regenerates. That propagation is (a)
+ * cycle-free BY CONSTRUCTION and (b) deterministic, via a fixed global partial
+ * order over STAGES:
  *
- *   0 elevation   (mountain — a FIELD, plan 023)
+ *   0 elevation   (mountain — a FIELD)
  *   1 hydrology   (river, water bodies)
  *   2 vegetation  (forest, park, farmland — agriculture is grouped here: it
  *                  consumes stage-0 elevation and produces nothing downstream)
@@ -17,7 +17,7 @@
  * An algorithm consumes constraints only from STRICTLY LOWER stages (plus raw
  * sketches + canon, unchanged). Same-stage regions never see each other's
  * OUTPUT (only each other's sketch), so there is no ordering ambiguity and no
- * cycle, ever (D2 for the host).
+ * cycle, ever.
  *
  * PURE / headless (imports only `BBox` from spatialHash) — no registry, no
  * generators, no DOM/map/Obsidian. The controller builds `DagNode`s by reading
@@ -25,25 +25,23 @@
  * bbox from `region.ts`; this module is graph math over those nodes only, so it
  * stays a leaf both the host and (via serialized nodes) a worker can run.
  *
- * ── Edge rule (a field-aware refinement of §4, justified by §3) ──────────────
- * §4 states `A → B iff stage(A) < stage(B) ∧ outputBBox(A) ∩ inputBBox(B) ≠ ∅`.
- * §3 introduces `produces`/`consumes` ConstraintKinds precisely to say WHICH
- * field a downstream actually reads. We intersect them into the edge test:
+ * ── Edge rule ────────────────────────────────────────────────────────────────
+ * `produces`/`consumes` ConstraintKinds say WHICH field a downstream actually
+ * reads; the edge test intersects them with a bbox overlap:
  *
  *   A → B  iff  stage(A) < stage(B)
  *          ∧    produces(A) ∩ consumes(B) ≠ ∅
  *          ∧    bbox(A) grown by `margin` overlaps bbox(B)
  *
- * This is strictly TIGHTER than the bbox-only rule: it drops the wasteful
+ * This is strictly TIGHTER than a bbox-only rule: it drops the wasteful
  * "recompute every higher-stage region in bbox even if it reads nothing this
  * one produces" edges (e.g. a city, which consumes water/vegetation, is NOT a
  * dependent of a mountain, which produces elevation — so a mountain edit leaves
- * the city byte-identical AND un-recomputed). Under-declaring `consumes` is the
- * only risk; the registry declares the design's intended couplings, so the DAG
- * is a superset of what any single phase has wired for consumption (a declared-
- * but-not-yet-consumed edge merely triggers a byte-identical recompute — the
- * same "over-invalidation is correct + deterministic, perf-only" tradeoff 24-A
- * accepted). Documented for Jonah in the 24-B report.
+ * the city unchanged AND un-recomputed). Under-declaring `consumes` is the only
+ * risk; the registry declares the design's intended couplings, so the DAG is a
+ * superset of what any single consumer wires (a declared-but-not-yet-consumed
+ * edge merely triggers a recompute with unchanged output — over-invalidation is
+ * correct + deterministic, perf-only).
  */
 import type { BBox } from "../spatialHash";
 import { expandBBox } from "../spatialHash";
@@ -160,12 +158,11 @@ export function downstreamClosure(nodes: readonly DagNode[], margin: number, roo
 }
 
 /**
- * Defensive cycle DETECTION (plan 024 DoD "cycle prevention/detection"). Edges
- * built by `downstreamEdges` are cycle-free BY CONSTRUCTION (strictly
- * stage-ascending) — this proves it, and catches any future hand-built /
- * corrupt adjacency (e.g. a "just this once" same-stage dependency §0 warns
- * against) BEFORE it can make replay order ambiguous. Throws on the first back
- * edge found; a no-op on a valid DAG.
+ * Defensive cycle DETECTION. Edges built by `downstreamEdges` are cycle-free BY
+ * CONSTRUCTION (strictly stage-ascending) — this proves it, and catches any
+ * future hand-built / corrupt adjacency (e.g. a "just this once" same-stage
+ * dependency) BEFORE it can make replay order ambiguous. Throws on the first
+ * back edge found; a no-op on a valid DAG.
  *
  * `adjacency` maps `id → downstream ids`; ids absent from the map are leaves.
  */

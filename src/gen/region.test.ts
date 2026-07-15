@@ -283,7 +283,7 @@ describe("validateRegionRing", () => {
   });
 });
 
-describe("spine (line-kind) support (plan 022 §2)", () => {
+describe("spine (line-kind) support", () => {
   const LINE: Pt[] = [
     [0, 0],
     [100, 0],

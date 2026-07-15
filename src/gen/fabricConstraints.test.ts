@@ -15,11 +15,10 @@ import type { BBox } from "./spatialHash";
 import type { FabricFeature } from "../model/fabric";
 
 /**
- * Unit coverage for the pure sketched-fabric constraint helpers. Since procgen
- * v3.4 the generator-INTEGRATION coverage (streets stop at water, walls
- * truncate, roads steer, seams hold with fabric crossing them) lives in
- * src/gen/citynet/citynet.test.ts against the domain pipeline — the legacy
- * per-tile generators these scenarios used to drive are deleted (§5.5).
+ * Unit coverage for the pure sketched-fabric constraint helpers. The
+ * generator-INTEGRATION coverage (streets stop at water, walls truncate, roads
+ * steer, seams hold with fabric crossing them) lives in
+ * src/gen/citynet/citynet.test.ts against the domain pipeline.
  */
 const WORLD_BOUNDS: BBox = { minX: -2000, minY: -2000, maxX: 2000, maxY: 2000 };
 
@@ -57,8 +56,8 @@ const LAKE: Pt[] = [
 
 describe("indexFabricConstraints", () => {
   it("buckets features by constraint role; parks and districts impose nothing", () => {
-    // Districts left the constraint index in plan 020: a district polygon is
-    // a procgen REGION (the city container), not a constraint on generation.
+    // A district polygon is a procgen REGION (the city container), not a
+    // constraint on generation.
     const park: FabricFeature = {
       type: "Feature",
       id: "fabric-test-park",
@@ -103,7 +102,7 @@ describe("water predicates", () => {
   });
 });
 
-describe("farmland outskirt-suppression (plan 022 §3.5)", () => {
+describe("farmland outskirt-suppression", () => {
   const FIELD: Pt[] = [
     [-80, -120],
     [90, -120],

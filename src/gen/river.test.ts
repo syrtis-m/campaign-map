@@ -94,11 +94,9 @@ function digest(features: GeoJSON.Feature[]): { sha256: string; summary: Record<
 
 describe("river generator — determinism", () => {
   it("matches the seeded snapshot fixture (windy + braided — golden drift tripwire)", () => {
-    // Golden DELIBERATELY regenerated for box 28-C: windiness 0.85 ≥
-    // DRESS_WINDINESS appends point-bar / oxbow / ford dressing; braidBias 0.2 <
-    // DELTA_BIAS_THRESHOLD and no partner spine / water polygon in CONSTRAINTS,
-    // so NO delta / confluence / estuary — the additive 28-C dressing is the
-    // only change from 28-B.
+    // windiness 0.85 ≥ DRESS_WINDINESS appends point-bar / oxbow / ford
+    // dressing; braidBias 0.2 < DELTA_BIAS_THRESHOLD and no partner spine /
+    // water polygon in CONSTRAINTS, so NO delta / confluence / estuary.
     const p = PARAMS({ windiness: 0.85, braiding: 0.6, width: 26, widthGrowth: 0.7, braidBias: 0.2 });
     expect(digest(generateRiver(4242, regionFor(LINE, p), p, CONSTRAINTS))).toMatchSnapshot();
   });
@@ -294,8 +292,7 @@ describe("river generator — 2x2 seam via whole-artifact clip", () => {
   });
 });
 
-// ─── Plan 028 §1.1/§1.3 (box 28-A): channel-merge topology, bank casing,
-// island legibility, canal regression ────────────────────────────────────────
+// ─── channel-merge topology, bank casing, island legibility, canal regression ─
 
 const byType = (feats: GeoJSON.Feature[], type: string): GeoJSON.Feature[] =>
   feats.filter((f) => (f.properties as { type?: string }).type === type);
@@ -435,11 +432,11 @@ describe("river generator — braid islands are legible lozenges (plan 028 §1.3
 });
 
 describe("river generator — canal preset regression (plan 028 §2, 28-A gate)", () => {
-  // Pre-028 fixture, captured from the last quad-chain build (commit 5dc9fe6):
-  // the canal preset's 414 unique bank coordinates over LINE with seed 3. The
-  // merge must not move a single bank sample — the bank casing lines carry
-  // exactly the old outline, and the ribbons add ONLY the ≤2 weld vertices per
-  // interior joint, each within JOINT_WELD_M of a pre-028 coordinate.
+  // Pinned fixture: the canal preset's 414 unique bank coordinates over LINE
+  // with seed 3. The channel merge must not move a single bank sample — the bank
+  // casing lines carry exactly the pinned outline, and the ribbons add ONLY the
+  // ≤2 weld vertices per interior joint, each within JOINT_WELD_M of a pinned
+  // coordinate.
   const PRE_028_SHA = "63bde42fc912f4d6a1162d68d3bd559d3fae5bc264d6fc42df5acff2cef0e48c";
   const PRE_028_COUNT = 414;
   const p = PARAMS({ windiness: 0, braiding: 0, width: 12, widthGrowth: 0 });
@@ -475,8 +472,8 @@ describe("river generator — canal preset regression (plan 028 §2, 28-A gate)"
   });
 });
 
-// ─── Plan 028 §1.2 (box 28-B): SGC/Kinoshita meander math — ratio defaults,
-// per-bend jitter, upstream skew, R_c ≥ 2W realism clamp ─────────────────────
+// ─── SGC/Kinoshita meander math — ratio defaults, per-bend jitter, upstream
+// skew, R_c ≥ 2W realism clamp ───────────────────────────────────────────────
 
 /** One long straight segment along +x: lateral offset IS the y coordinate,
  * there are no fillets, and the envelope is negligible mid-segment — the
@@ -626,7 +623,7 @@ describe("river generator — meander math (plan 028 §1.2, box 28-B)", () => {
   });
 });
 
-// ── Box 23-E: slope coupling (plan 022 §3.1 deferral) ────────────────────────
+// ── slope coupling ───────────────────────────────────────────────────────────
 // The sketched mountains' elevation field (fields/mountainField.ts, composed
 // from constraints.fabricFeatures — the raw sketch layer) damps meander
 // amplitude and stretches wavelength on steep ground. These tests pin the
@@ -750,12 +747,12 @@ describe("river generator — slope coupling (box 23-E)", () => {
   });
 });
 
-// ─── Plan 028 §1.4 (box 28-C): junctions, mouths, dressing ───────────────────
+// ─── junctions, mouths, dressing ─────────────────────────────────────────────
 // Confluences/deltas/estuaries are RELATIONSHIPS read from the RAW SKETCH LAYER
 // (other river spines + water polygons on constraints.fabricFeatures — never
-// another generator's output). Everything is APPENDED to the 28-B output and
-// verified inside the EXISTING corridor, so a lone plain river is byte-
-// identical to 28-B (additive rule).
+// another generator's output). Everything is APPENDED to the channel/meander
+// output and verified inside the EXISTING corridor, so a lone plain river emits
+// none of it (additive rule).
 
 type FF = NonNullable<GenerationConstraints["fabricFeatures"]>[number];
 
@@ -807,10 +804,10 @@ function crossWidths(f: GeoJSON.Feature): number[] {
 }
 
 describe("river generator — 28-C additive byte-identity (lone river == 28-B)", () => {
-  // Pinned from the 28-B build (pre-28-C): a lone river with windiness below
-  // DRESS_WINDINESS and no partner spine / water polygon fires NO 28-C code
-  // path, so it must stay byte-identical. The canal fixture above pins
-  // windiness 0; this pins a MEANDERING lone river.
+  // A lone river with windiness below DRESS_WINDINESS and no partner spine /
+  // water polygon fires NO junction/dressing code path, so its output is pinned
+  // and must stay stable. The canal fixture above pins windiness 0; this pins a
+  // MEANDERING lone river.
   const LONE_065_SHA = "2b50749b8aa256a21be901408665915938aabe74962d6941d0983e02a9be9dbf";
   const p = PARAMS({ windiness: 0.65, braiding: 0, width: 20, widthGrowth: 0, braidBias: 0 });
 
@@ -818,7 +815,7 @@ describe("river generator — 28-C additive byte-identity (lone river == 28-B)",
     expect(p.windiness).toBeLessThan(DRESS_WINDINESS); // below the dressing gate
     const feats = generateRiver(4242, regionFor(LINE, p), p, CONSTRAINTS);
     expect(createHash("sha256").update(JSON.stringify(feats)).digest("hex")).toBe(LONE_065_SHA);
-    // No 28-C feature types at all.
+    // No junction/dressing feature types at all.
     for (const t of ["river-confluence", "river-distributary", "river-estuary", "river-point-bar", "river-oxbow", "river-glyph"]) {
       expect(byType(feats, t).length, `unexpected ${t}`).toBe(0);
     }
@@ -834,7 +831,8 @@ describe("river generator — 28-C additive byte-identity (lone river == 28-B)",
     expect(byType(withM, "river-oxbow").length).toBe(0);
     // The channel/bank geometry is unchanged from bare except where slope
     // coupling bends it — but with slopeSensitivity default the meander adapts;
-    // that is 23-E, not 28-C. Here just assert no confluence/estuary/delta.
+    // that is slope coupling, not dressing. Here just assert no
+    // confluence/estuary/delta.
     for (const t of ["river-confluence", "river-distributary", "river-estuary"]) expect(byType(withM, t).length).toBe(0);
     void bare;
   });
@@ -987,7 +985,7 @@ describe("river generator — 28-C determinism + edit-locality (plan 028 §1.4)"
     const a = generateRiver(321, region, p, cons);
     const b = generateRiver(321, region, p, cons);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    // All three 28-C surfaces are present in this fixture.
+    // All three junction/dressing surfaces are present in this fixture.
     expect(byType(a, "river-confluence").length).toBe(1);
     expect(byType(a, "river-distributary").length).toBe(2);
     expect(byType(a, "river-point-bar").length + byType(a, "river-oxbow").length + byType(a, "river-glyph").length).toBeGreaterThan(0);
@@ -1012,7 +1010,7 @@ describe("river generator — 28-C 2×2 seam with junction/dressing present", ()
     const cons = withFabric([partnerRiver("t2", [[1200, 0], [1500, 280]], 18)]);
     const region = regionFor(LINE, p);
     const network = generateRiver(21, region, p, cons);
-    // Sanity: the network actually carries 28-C features to clip.
+    // Sanity: the network actually carries junction/dressing features to clip.
     expect(byType(network, "river-distributary").length + byType(network, "river-confluence").length).toBeGreaterThan(0);
     const min = tileXYForPoint(region.bbox.minX, region.bbox.minY);
     const max = tileXYForPoint(region.bbox.maxX, region.bbox.maxY);
@@ -1041,9 +1039,9 @@ describe("river generator — 28-C 2×2 seam with junction/dressing present", ()
 });
 
 describe("river generator — metric bands (regression net)", () => {
-  // The band is the tunable safety net that replaces byte-eternity for tuning:
-  // it survives a meander/width retune but catches a channel gone dead-straight
-  // or a width collapsed/blown up. Measured on the committed golden (seed 4242).
+  // The band is a tunable safety net: it survives a meander/width retune but
+  // catches a channel gone dead-straight or a width collapsed/blown up. Measured
+  // on the committed golden (seed 4242).
   it("golden fixture (windy + braided) lands inside its metric band", () => {
     const p = PARAMS({ windiness: 0.85, braiding: 0.6, width: 26, widthGrowth: 0.7, braidBias: 0.2 });
     const region = regionFor(LINE, p);

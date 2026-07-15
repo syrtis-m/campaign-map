@@ -1,5 +1,5 @@
 /**
- * Sketch-corridor street inference (plan 014 vertical slice #1): a GM-drawn
+ * Sketch-corridor street inference: a GM-drawn
  * road corridor (a fabric `road` feature in "generate" mode) is elaborated
  * into a street network that follows it — the corridor becomes a smoothed
  * major avenue, and branching minor streets grow off it through the same
@@ -47,7 +47,7 @@ export const CORRIDOR_FALLOFF = 60;
 export const CORRIDOR_ALIGN_STRENGTH = 3;
 
 /**
- * Chaikin corner-cutting ("simple sketch smoothing" per plan 014): each pass
+ * Chaikin corner-cutting (simple sketch smoothing): each pass
  * replaces every segment with its 1/4 and 3/4 points, keeping the endpoints.
  * Pure floating-point arithmetic on the input — deterministic.
  */
@@ -116,8 +116,8 @@ function toVec2(pts: Pt[]): Vec2[] {
 
 /**
  * `(seed, bbox, corridor, constraints) => Feature[]` — the corridor is an
- * extra deterministic input alongside the seed (plan 014: "the sketch is an
- * additional deterministic input"). Callers MUST pass the whole drawn
+ * extra deterministic input alongside the seed. Callers MUST pass the whole
+ * drawn
  * corridor to every tile (like worldBounds, never the tile's clipped view of
  * it), or adjacent tiles would derive different fields and break seams.
  */

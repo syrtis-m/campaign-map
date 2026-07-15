@@ -1,14 +1,13 @@
 /**
- * Forest generator (plan 022 §3.2, tree placement overhauled in plan 026-A) —
- * the first masked-noise POLYGON algorithm. Pure/headless (no DOM/map/Obsidian
- * imports; reads only its arguments, D6): a sketched `forest` polygon is the
- * region; this fills it with a woodland canopy (cells of a masked density
- * field), punches clearings, and scatters individual trees as hashed
- * Thomas clusters — all strictly inside the sketched ring.
+ * Forest generator — the first masked-noise POLYGON algorithm. Pure/headless
+ * (no DOM/map/Obsidian imports; reads only its arguments): a sketched `forest`
+ * polygon is the region; this fills it with a woodland canopy (a masked density
+ * field), punches clearings, and scatters individual trees as hashed Thomas
+ * clusters — all strictly inside the sketched ring.
  *
- * Tree placement (plan 026-A §1.1 — replaces the plan-022 stipple grid, whose
- * low-jitter lattice always read as a grid per Red Blob Games' point-set
- * research):  a two-scale hashed Neyman–Scott / Thomas cluster process.
+ * Tree placement: a two-scale hashed Neyman–Scott / Thomas cluster process (a
+ * low-jitter stipple lattice always reads as a grid, per Red Blob Games'
+ * point-set research).
  *  - CLUMP PARENTS on a coarse absolute-world lattice, existence gated by a
  *    low-frequency fBm mask (dense patches, thin gaps), jittered off-grid.
  *  - OFFSPRING per parent: a hashed count, polar offsets with radial falloff.
@@ -16,14 +15,13 @@
  *    the RAW (containment-independent) clump-tree positions in the 3×3
  *    neighbouring parent cells — bounded, order-free, edit-local.
  *  - Per-variety knobs (broadleaf strongly clumped, conifer near-regular,
- *    swamp rim-biased, dead-wood loners only, mixed medium) — §1.1.
+ *    swamp rim-biased, dead-wood loners only, mixed medium).
  *  - Emits `forestType`, `sizeN` (0–1, low-freq correlated size field biased
  *    up at clump cores), `rank` (0 core / 1 fringe / 2 loner — paint fades
  *    loners), `variant` (0–3 hashed glyph pick, consumed by phase C).
  *
- * Canopy approach (plan 026-B — organic marching-squares canopy, replaces the
- * 026-A cell-fill): the canopy is ONE `forest-canopy` MultiPolygon traced from a
- * masked density field with 23-C's marching-squares module. The field is
+ * Canopy approach: the canopy is ONE `forest-canopy` MultiPolygon traced from a
+ * masked density field with the marching-squares module. The field is
  *   F(p) = min( warp(fbm)(p) + Σ metaball(clump parentᵢ) − edgeFade − clearing
  *               − threshold ,  sdf(p) − CONTAIN )
  * traced at level 0, Chaikin-smoothed, and nested into exteriors + clearing
@@ -39,17 +37,16 @@
  * function of absolute world position + the persisted seed (the containment
  * floor and rim fade read the LOCAL signed distance, never the global
  * `interiorT`/`maxInteriorDistance`), so a rim vertex edit only re-extracts the
- * boundary-adjacent cells — interior canopy is byte-identical (edit-locality),
- * and abutting/whole-artifact clips are seam-free (world-aligned lattice).
+ * boundary-adjacent cells — interior canopy is unchanged (edit-locality), and
+ * abutting/whole-artifact clips are seam-free (world-aligned lattice).
  *
- * Determinism argument (procgen_v3_design.md §4):
- *  - D4/D6: closed-form arithmetic + seeded value noise on an absolute-world
- *    lattice, seeded only by `hashSeed(seed, salt, integer lattice indices)`.
- *  - D5: every emitted coordinate is mm-quantized before it leaves.
+ * Determinism:
+ *  - Closed-form arithmetic + seeded value noise on an absolute-world lattice,
+ *    seeded only by `hashSeed(seed, salt, integer lattice indices)`; every
+ *    emitted coordinate is mm-quantized before it leaves.
  *  - Identity property: the canopy is keyed on ABSOLUTE world position, so a
  *    ring vertex edit only changes which boundary cells pass containment — every
- *    interior cell is byte-identical (measured in the gate: edit overlap ≫
- *    re-roll overlap).
+ *    interior cell is unchanged (edit overlap ≫ re-roll overlap).
  *  - Watertight edges: corner jitter is hashed on the shared lattice VERTEX
  *    (not the cell), so the four cells meeting at a vertex displace it
  *    identically — no gaps, no overlaps.
@@ -77,8 +74,8 @@ type Pt = [number, number];
 export const FOREST_VARIETIES = ["broadleaf", "conifer", "mixed", "swamp", "dead-wood"] as const;
 export type ForestVariety = (typeof FOREST_VARIETIES)[number];
 
-/** Forest params (plan 022 §3.2). `density`/`clearings`/`edgeRaggedness` are
- * 0–1; `variety` is the canopy type carried onto features for theme tinting. */
+/** Forest params. `density`/`clearings`/`edgeRaggedness` are 0–1; `variety` is
+ * the canopy type carried onto features for theme tinting. */
 export interface ForestParams {
   variety: ForestVariety;
   density: number;
@@ -86,7 +83,7 @@ export interface ForestParams {
   edgeRaggedness: number;
 }
 
-// ── Organic canopy (plan 026-B) — marching-squares density field ─────────────
+// ── Organic canopy — marching-squares density field ──────────────────────────
 const CANOPY_NOISE_CELL_M = 190; // fractal base cell — patch scale of the canopy
 const CLEARING_NOISE_CELL_M = 150; // clearing (hole) noise scale
 const CANOPY_LATTICE_M = 12; // marching-squares sampling step (world-aligned)
@@ -100,17 +97,17 @@ const CANOPY_CLEARING_AMP = 0.6; // how deep a clearing subtracts (punches holes
 const CANOPY_CLEARING_W = 0.12; // clearing-edge softness band
 const CANOPY_CHAIKIN_PASSES = 2; // corner-cutting rounds (staircase → organic)
 
-// ── Tree placement (plan 026-A §1.1) — all lattices absolute-world ───────────
-const CLUMP_CELL_M = 110; // coarse clump-parent lattice (§1.1 "start 110 m")
+// ── Tree placement — all lattices absolute-world ─────────────────────────────
+const CLUMP_CELL_M = 110; // coarse clump-parent lattice
 const CLUMP_JITTER_FRAC = 0.4; // parent offset within its cell (off-grid)
 const CLUMP_MASK_CELL_M = 320; // low-freq fBm cell gating parent existence
 const LONER_CELL_M = 60; // sparse between-clump loner lattice
-const LONER_JITTER_FRAC = 0.65; // §1.1 "high jitter (~0.65 of spacing)"
+const LONER_JITTER_FRAC = 0.65; // high jitter (~0.65 of spacing)
 const LONER_REJECT_M = 15; // loner min distance to any raw clump tree
 const SIZE_NOISE_CELL_M = 230; // low-freq size field (neighbours correlated)
 const TREE_MARGIN_M = 1; // containment slack for a tree point
 
-/** Per-variety Thomas-cluster shape (plan 026-A §1.1). `clumpThreshold` is the
+/** Per-variety Thomas-cluster shape. `clumpThreshold` is the
  * fBm mask cutoff for a parent to exist (higher ⇒ fewer clumps); `clumpsEnabled`
  * false ⇒ loners only (dead-wood). `edgeBias` pulls trees toward the rim
  * (swamp). Counts/probabilities are scaled by `density` at run time. */
@@ -133,8 +130,7 @@ const PLACEMENT: Record<ForestVariety, VarietyPlacement> = {
   mixed: { clumpsEnabled: true, clumpThreshold: 0.46, offMin: 3, offMax: 8, clumpRadius: 27, lonerProb: 0.18, edgeBias: 0.2 },
   // Sparse + biased to the boundary rim.
   swamp: { clumpsEnabled: true, clumpThreshold: 0.56, offMin: 2, offMax: 5, clumpRadius: 24, lonerProb: 0.14, edgeBias: 0.78 },
-  // Bare stand: scattered loners only, no clumps (canopy still emits in 026-A;
-  // its removal is 026-B).
+  // Bare stand: scattered loners only, no clumps, no canopy.
   "dead-wood": { clumpsEnabled: false, clumpThreshold: 1, offMin: 0, offMax: 0, clumpRadius: 20, lonerProb: 0.3, edgeBias: 0.3 },
 };
 
@@ -152,7 +148,7 @@ function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
-/** Clump parent for lattice cell `(cix,ciy)` (plan 026-A §1.1). Exists iff a
+/** Clump parent for lattice cell `(cix,ciy)`. Exists iff a
  * low-frequency fBm mask clears `threshold` (dense patches, thin gaps); its
  * position is the cell centre pushed off-grid by a hashed offset. Pure
  * f(seed, variety, indices) — never emission order, never floats-as-seed. */
@@ -241,7 +237,7 @@ function nearClumpTree(
 
 /** `sizeN` in [0,1] from a LOW-FREQ noise field (so neighbours are correlated —
  * same-age stands, never iid per tree), biased up by `coreBias` near clump
- * cores (plan 026-A §1.1). */
+ * cores. */
 function sizeAt(seed: number, variety: ForestVariety, px: number, py: number, coreBias: number): number {
   const n = fractalNoise2D(seed, px, py, `forest-size-${variety}`, {
     octaves: 2,
@@ -253,7 +249,7 @@ function sizeAt(seed: number, variety: ForestVariety, px: number, py: number, co
 
 /** A tree point feature. `id` hashes the salt + integer lattice indices
  * (position, never emission order — D-invariant). Carries the paint hooks
- * `forestType`/`sizeN`/`rank`/`variant` (plan 026-A §1.1). */
+ * `forestType`/`sizeN`/`rank`/`variant`. */
 function treeFeature(
   seed: number,
   idSalt: string,
@@ -307,8 +303,8 @@ function collectClumpParents(
 }
 
 /**
- * The organic canopy MultiPolygon coordinates (plan 026-B §1.2) — see the module
- * JSDoc for the field. Returns [] when nothing crosses the threshold (a very
+ * The organic canopy MultiPolygon coordinates — see the module JSDoc for the
+ * field. Returns [] when nothing crosses the threshold (a very
  * sparse forest). `dead-wood` never reaches here (bare stand, no canopy).
  */
 function buildCanopy(
@@ -385,12 +381,11 @@ function buildCanopy(
 }
 
 /**
- * Generate a forest inside a sketched polygon region (plan 022 §3.2, canopy
- * overhauled in plan 026-B). Emits ONE `forest-canopy` MultiPolygon (organic
- * mass with clearing holes; `dead-wood` emits none) and `forest-tree` points,
- * all strictly inside `region.ring`. `constraints` are accepted for signature
- * parity but not consumed in v1 (the city→forest interaction is plan 024's
- * cascade; forest never sees the city — one-direction rule, plan 022 §3.2).
+ * Generate a forest inside a sketched polygon region. Emits ONE `forest-canopy`
+ * MultiPolygon (organic mass with clearing holes; `dead-wood` emits none) and
+ * `forest-tree` points, all strictly inside `region.ring`. `constraints` are
+ * accepted for signature parity but not consumed — forest never sees the city
+ * (one-direction rule).
  */
 export function generateForest(
   seed: number,
@@ -407,8 +402,8 @@ export function generateForest(
   // Denser forests seed more clumps too (the fBm mask cutoff drops with density).
   const clumpThreshold = clamp01(cfg.clumpThreshold + (0.5 - density) * 0.3);
 
-  // ── Canopy: ONE organic MultiPolygon (plan 026-B). dead-wood = bare stand,
-  //    no leaf mass → no canopy (instant variety differentiation). ───────────
+  // ── Canopy: ONE organic MultiPolygon. dead-wood = bare stand, no leaf mass →
+  //    no canopy (instant variety differentiation). ──────────────────────────
   if (variety !== "dead-wood") {
     const coords = buildCanopy(seed, region, params, clumpThreshold);
     if (coords.length > 0) {
@@ -423,8 +418,8 @@ export function generateForest(
       // cuts the boundary at a tile edge WITHOUT synthesizing a segment along the
       // seam. A `line` layer on the MultiPolygon itself would instead stroke the
       // clip-induced tile edges (visible grid lines); a separate line feature is
-      // the seam-free rim (plan 026-B). id hashes the ring's first vertex
-      // (position, never emission order).
+      // the seam-free rim. id hashes the ring's first vertex (position, never
+      // emission order).
       let ringIx = 0;
       for (const poly of coords) {
         for (const ring of poly) {
@@ -440,7 +435,7 @@ export function generateForest(
     }
   }
 
-  // ── Trees — hashed Thomas clusters (plan 026-A §1.1) ─────────────────────
+  // ── Trees — hashed Thomas clusters ───────────────────────────────────────
   if (cfg.clumpsEnabled) {
     const cix0 = Math.floor(bbox.minX / CLUMP_CELL_M) - 1;
     const cix1 = Math.ceil(bbox.maxX / CLUMP_CELL_M) + 1;

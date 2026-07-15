@@ -13,11 +13,10 @@ import { THEME_IDS } from "../../model/campaignConfig";
 
 const WORLD_BOUNDS: BBox = { minX: -4000, minY: -4000, maxX: 4000, maxY: 4000 };
 
-describe("procgen registry (plan 020 §5)", () => {
-  it("binds district → city and park → park (plan 022 §3.3); road has no algorithm", () => {
+describe("procgen registry", () => {
+  it("binds district → city and park → park; road has no algorithm", () => {
     expect(algorithmForKind("district")?.id).toBe("city");
     expect(algorithmById("city")?.label).toBe("City");
-    // Park is no longer inert — plan 022 §3.3 binds it to the park generator.
     expect(algorithmForKind("park")?.id).toBe("park");
     expect(algorithmForKind("road")).toBeUndefined();
     expect(algorithmById("nope")).toBeUndefined();
@@ -56,7 +55,7 @@ describe("procgen registry (plan 020 §5)", () => {
   });
 });
 
-describe("procgen presets (plan 022 §1)", () => {
+describe("procgen presets", () => {
   it("registry contract: every algorithm has ≥1 preset and defaultPresetId is always valid", () => {
     // Reach REGISTRY through the only public door — city is the only entry v1,
     // but the contract must hold for every algorithm we can name.
@@ -93,7 +92,7 @@ describe("procgen presets (plan 022 §1)", () => {
       const presetId = city.defaultPresetId(theme);
       expect(city.defaultParams(theme)).toEqual(presetById(city, presetId)!.params);
     }
-    // Sanity: theme mapping unchanged from pre-022 behavior.
+    // Sanity: the theme mapping resolves to the expected profiles.
     expect(city.defaultParams("parchment")).toEqual({ profile: "euro-medieval" });
     expect(city.defaultParams("modern-clean")).toEqual({ profile: "na-grid" });
   });

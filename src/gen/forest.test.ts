@@ -139,7 +139,7 @@ describe("forest generator — determinism", () => {
   it("emits ONE canopy MultiPolygon (with clearing holes) + trees for a mixed woodland", () => {
     const feats = generateForest(9, regionFor(SQUARE), PARAMS({ clearings: 0.3 }), CONSTRAINTS);
     const canopy = feats.filter((f) => (f.properties as { generatorId?: string }).generatorId === "forest-canopy");
-    expect(canopy.length).toBe(1); // plan 026-B: a single organic mass, not a cell soup
+    expect(canopy.length).toBe(1); // a single organic mass, not a cell soup
     expect(canopy[0].geometry.type).toBe("MultiPolygon");
     // Clearings are now interior HOLES on the canopy polygons (no forest-clearing
     // features are emitted any more).
@@ -299,7 +299,7 @@ describe("forest generator — 2x2 seam via whole-artifact clip", () => {
   });
 });
 
-// ── plan 026-A: hashed Thomas-cluster tree placement ─────────────────────────
+// ── hashed Thomas-cluster tree placement ─────────────────────────────────────
 
 /** A large region for stable placement statistics. */
 const BIG: Pt[] = [
@@ -320,8 +320,8 @@ function treeProps(f: GeoJSON.Feature): TreeProps {
 
 /** Index of dispersion (variance/mean) of tree counts over a `bin`-metre grid
  * across the region bbox. ≈1 for a Poisson/uniform-grid process, >1 clumped,
- * <1 regular. The statistical signature that separates Thomas clusters from the
- * old stipple grid (plan 026-A §1.1). */
+ * <1 regular. The statistical signature that separates Thomas clusters from a
+ * plain stipple grid. */
 function dispersionIndex(feats: GeoJSON.Feature[], region: ProcgenRegion, bin: number): number {
   const counts = new Map<string, number>();
   for (const f of treesOf(feats)) {
@@ -416,10 +416,9 @@ describe("forest generator — tree property carry (plan 026-A §1.1)", () => {
 });
 
 describe("forest generator — metric bands (regression net)", () => {
-  // The band is the tunable safety net that replaces byte-eternity for tuning:
-  // it survives a canopy/clearing retune but catches a gross regression (a
-  // canopy that collapses, a tree scatter that vanishes). Measured on the
-  // committed golden fixture (broadleaf, seed 4242).
+  // The band is a tunable safety net: it survives a canopy/clearing retune but
+  // catches a gross regression (a canopy that collapses, a tree scatter that
+  // vanishes). Measured on the committed golden fixture (broadleaf, seed 4242).
   it("golden fixture (broadleaf) lands inside its metric band", () => {
     const region = regionFor(SQUARE);
     const p = PARAMS({ variety: "broadleaf", density: 0.7, clearings: 0.15, edgeRaggedness: 0.45 });

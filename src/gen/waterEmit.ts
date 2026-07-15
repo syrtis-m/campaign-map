@@ -1,12 +1,9 @@
 /**
- * Shared water-feature emitters (plan 022 §3.1/§3.3). Extracted from the river
- * generator so the PARK generator can reuse them at pond scale WITHOUT importing
- * the river generator (plan 022 §3.3: "extract them to a shared module rather
- * than importing the river generator"). River behaviour must stay byte-identical
- * — `river.ts` imports `q`/`quad` from here unchanged, so its output is bit-for-
- * bit what it was before the move (verified by the river snapshot).
+ * Shared water-feature emitters. Extracted from the river generator so the PARK
+ * generator can reuse them at pond scale WITHOUT importing the river generator;
+ * `river.ts` imports `q`/`quad` from here too.
  *
- * Pure/headless (no DOM/map/Obsidian imports; reads only its arguments, D6).
+ * Pure/headless (no DOM/map/Obsidian imports; reads only its arguments).
  * Every coordinate is mm-quantized (D5); every feature id hashes on POSITION
  * (never emission order), integer so `clipNetworkToTile`'s `Number(id)` stays
  * stable (D2).
@@ -43,8 +40,8 @@ export function quad(seed: number, gid: string, a: Pt, b: Pt, c: Pt, d: Pt): Geo
 }
 
 /**
- * A seeded harmonic-radius blob ring (plan 022 §3.3 pre-023 pond fallback — the
- * "same closed-form trick as the meander", NOT a smooth-min SDF). The radius at
+ * A seeded harmonic-radius blob ring (the same closed-form trick as the
+ * meander, NOT a smooth-min SDF). The radius at
  * angle θ is `baseR · (1 + Σ aₖ·sin(kθ + φₖ))` for a few low harmonics whose
  * amplitudes/phases hash on `(seed, salt)` — so a pond is deterministic, keyed
  * only on its anchor's seed, and re-rolls with a new seed. Returned CCW and
@@ -105,7 +102,7 @@ export function blobFeature(
 
 /**
  * A bridge span: a rectangle of half-width `hw` centred on the segment a→b
- * (a short deck where a path crosses water, plan 022 §3.3). Reuses `quad`, so
+ * (a short deck where a path crosses water). Reuses `quad`, so
  * the id/quantization discipline is shared. `extraProps` merge onto properties.
  */
 export function spanQuad(

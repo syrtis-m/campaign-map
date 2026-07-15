@@ -15,8 +15,8 @@ const PRESETS: FarmlandParams[] = [
   { fieldType: "enclosed-patchwork", fieldSize: 0.5, hedging: "hedgerows", laneDensity: 0.4, farmsteads: 0.45 },
   { fieldType: "grid-quarters", fieldSize: 0.7, hedging: "fences", laneDensity: 0.66, farmsteads: 0.35 },
   { fieldType: "orchard", fieldSize: 0.4, hedging: "hedgerows", laneDensity: 0.5, farmsteads: 0.3 },
-  // Box 23-E: no mountains in CONSTRAINTS ⇒ this fuzzes the concentric
-  // interior-distance fallback banks on every random/concave region.
+  // No mountains in CONSTRAINTS ⇒ this fuzzes the concentric interior-distance
+  // fallback banks on every random/concave region.
   { fieldType: "paddy-terraces", fieldSize: 0.35, hedging: "none", laneDensity: 0.4, farmsteads: 0.25 },
 ];
 
@@ -120,7 +120,7 @@ describe("farmland generator — fuzz (seeded random polygons × 4 presets × re
     }
   });
 
-  it("paddy-terraces coupled to a random MOUNTAIN sketch: never throws, contained, byte-deterministic (box 23-E)", () => {
+  it("paddy-terraces coupled to a random MOUNTAIN sketch: never throws, contained, byte-deterministic", () => {
     const paddy = PRESETS[PRESETS.length - 1];
     for (let s = 0; s < 40; s++) {
       const region = makeRegion("fuzz-paddy", randomRing(s + 900, 120, 500));

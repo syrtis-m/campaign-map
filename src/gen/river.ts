@@ -1,12 +1,10 @@
 /**
- * River generator (plan 022 §3.1; channel body overhauled per plan 028 §1.1 +
- * §1.3, box 28-A; meander math overhauled per plan 028 §1.2, box 28-B).
- * Pure/headless (no DOM/map/Obsidian imports; reads only its arguments, D6):
- * a sketched river LINE is the SPINE; this elaborates it into per-segment
- * merged channel polygons, `river-bank` casing LineStrings, and legible
- * braid-island lozenges, all strictly inside the spine corridor.
+ * River generator. Pure/headless (no DOM/map/Obsidian imports; reads only its
+ * arguments): a sketched river LINE is the SPINE; this elaborates it into
+ * per-segment merged channel polygons, `river-bank` casing LineStrings, and
+ * legible braid-island lozenges, all strictly inside the spine corridor.
  *
- * Meander shape (plan 028 §1.2 — kills the metronomic worm-wiggle):
+ * Meander shape:
  *  - Each ORIGINAL segment's lateral profile is a quasi-periodic train of
  *    half-wave "lobes" (one lobe = one bend). Lobe length targets the
  *    empirical ratio λ ≈ MEANDER_WAVELENGTH_WIDTHS × channel width (USGS /
@@ -15,80 +13,79 @@
  *    periodic).
  *  - The bend shape carries a Kinoshita third-harmonic skew,
  *    `P(φ) = sin φ − skew·cos 3φ`, `skew = θ₀²·Jₛ`, `θ₀ = KINOSHITA_THETA0_MAX
- *    · windiness`, canonical `Jₛ = 1/32` (plan 028 §0 digest; J_f dropped in
- *    v1 — subtle at map scale). Every full bend's apex leans UPSTREAM (apex
- *    arc-position < bend midpoint). The profile is normalized by its exact
- *    bound max|P| ≤ 1 + skew, so the amplitude budget stays exact.
+ *    · windiness`, canonical `Jₛ = 1/32` (J_f dropped — subtle at map scale).
+ *    Every full bend's apex leans UPSTREAM (apex arc-position < bend midpoint).
+ *    The profile is normalized by its exact bound max|P| ≤ 1 + skew, so the
+ *    amplitude budget stays exact.
  *  - Phase is the integral of a piecewise-LINEAR ω(s) interpolated between
  *    per-lobe rates at lobe midpoints (piecewise-quadratic phase ⇒ C1
  *    centerline), and per-lobe amplitudes interpolate linearly at the same
  *    midpoints — per-bend wavelength/amplitude jitter without kinks.
- *  - Realism clamp AS containment (plan 028 §1.2): per-lobe amplitude is
- *    capped so bend curvature radius R_c ≥ RC_MIN_WIDTHS × width (empirical
- *    R_c ≈ 2–3 W): the small-slope bound |D″| ≤ A·ω²·max|P″|/(1+skew) is
- *    inverted for A, with max|P″| evaluated on a fixed deterministic grid.
- *    The cap only SHRINKS amplitudes below the windiness budget, so
- *    `riverMaxOffset` and the corridor argument are unchanged.
+ *  - Realism clamp AS containment: per-lobe amplitude is capped so bend
+ *    curvature radius R_c ≥ RC_MIN_WIDTHS × width (empirical R_c ≈ 2–3 W): the
+ *    small-slope bound |D″| ≤ A·ω²·max|P″|/(1+skew) is inverted for A, with
+ *    max|P″| evaluated on a fixed deterministic grid. The cap only SHRINKS
+ *    amplitudes below the windiness budget, so `riverMaxOffset` and the
+ *    corridor argument are unchanged.
  *  - λ and the R_c clamp read `params.width` (BASE width, not the grown
  *    downstream width) — a deliberate deviation from local-width realism so
  *    the meander stays a pure per-segment function of params: zero global-arc
- *    coupling, identity property preserved verbatim. (The braid path's fMid
+ *    coupling, so the identity property below holds. (The braid path's fMid
  *    precedent exists, but the meander is kept stricter.)
- *  - SLOPE COUPLING (box 23-E, the plan 022 §3.1 deferral): the sketch-derived
- *    elevation field (fields/mountainField.ts — a pure function of the durable
- *    mountain sketches on the constraints) modulates each segment's meander:
- *    amplitude ×(1−0.85·k), wavelength ×(1+0.6·k), k = slopeSensitivity ·
- *    sat(mean |∇h| along the segment). Steep ground ⇒ straighter, longer
- *    reaches; flat ⇒ full meander. Sampled at five fixed along-segment positions (position-
- *    derived, zero rng draws) so identity keying and the containment bound are
- *    untouched (amplitude only shrinks); no mountain ⇒ multipliers exactly 1 ⇒
- *    byte-identical to 28-B. Braids are deliberately NOT slope-coupled in v1.
- *  - windiness = 0 (canal) zeroes every amplitude cap, so the lateral offset
- *    is EXACTLY 0 through the same arithmetic — canal output is byte-identical
- *    to 28-A (the sha-pinned regression fixture must never change).
+ *  - SLOPE COUPLING: the sketch-derived elevation field (fields/mountainField.ts
+ *    — a pure function of the durable mountain sketches on the constraints)
+ *    modulates each segment's meander: amplitude ×(1−0.85·k), wavelength
+ *    ×(1+0.6·k), k = slopeSensitivity · sat(mean |∇h| along the segment). Steep
+ *    ground ⇒ straighter, longer reaches; flat ⇒ full meander. Sampled at five
+ *    fixed along-segment positions (position-derived, zero rng draws) so
+ *    identity keying and the containment bound are untouched (amplitude only
+ *    shrinks); no mountain ⇒ multipliers exactly 1. Braids are deliberately NOT
+ *    slope-coupled.
+ *  - windiness = 0 (canal) zeroes every amplitude cap, so the lateral offset is
+ *    EXACTLY 0 through the same arithmetic — the canal is the pinned regression
+ *    fixture and its output must never move.
  *
- * Emission shape (plan 028 §1.1 — kills the every-6 m quad hairline texture):
- *  - `river-channel`: ONE ribbon Polygon per ORIGINAL spine segment (the old
- *    per-6 m quad chain merged; left bank forward + right bank reversed). At
- *    each interior spine vertex the downstream segment's ribbon extends
- *    ~0.5 m upstream along both banks (`JOINT_WELD_M`) so adjacent ribbons
- *    OVERLAP instead of abutting — the one remaining per-vertex antialiasing
- *    hairline is painted over. (Rejected: one polygon per reach — kills
- *    edit-locality and strokes a casing bar across every joint; plan 028 §1.1.)
+ * Emission shape:
+ *  - `river-channel`: ONE ribbon Polygon per ORIGINAL spine segment (left bank
+ *    forward + right bank reversed). At each interior spine vertex the
+ *    downstream segment's ribbon extends ~0.5 m upstream along both banks
+ *    (`JOINT_WELD_M`) so adjacent ribbons OVERLAP instead of abutting — the one
+ *    remaining per-vertex antialiasing hairline is painted over. (Rejected: one
+ *    polygon per reach — kills edit-locality and strokes a casing bar across
+ *    every joint.)
  *  - `river-bank`: left + right bank LineStrings per segment, endpoints landing
  *    exactly on the shared quantized joint samples so round line-joins render
  *    the casing continuous across spine vertices. Braid side-channels emit
  *    their two bank lines too; a braid lens is 0 at both ends, so its casing
  *    tips tuck INSIDE the main channel and never dangle on land.
- *  - `river-island`: ONE lozenge Polygon per braid (plan 028 §1.3), emitted
- *    only over the sub-span where the open ground between main and secondary
- *    channels is ≥ `MIN_ISLAND_WIDTH_FRAC ×` the LOCAL channel width. If no
- *    legible island fits, the whole braid is skipped (degradation ladder) —
- *    no more sliver islands. The braid unit is sized to the empirical
- *    split→rejoin length (~4–5× channel width, Hundey & Ashmore 2009) and its
- *    lens envelope is skewed upstream so the island tapers downstream.
+ *  - `river-island`: ONE lozenge Polygon per braid, emitted only over the
+ *    sub-span where the open ground between main and secondary channels is
+ *    ≥ `MIN_ISLAND_WIDTH_FRAC ×` the LOCAL channel width. If no legible island
+ *    fits, the whole braid is skipped (degradation ladder) — no sliver islands.
+ *    The braid unit is sized to the empirical split→rejoin length (~4–5×
+ *    channel width, Hundey & Ashmore 2009) and its lens envelope is skewed
+ *    upstream so the island tapers downstream.
  *
- * Determinism argument (procgen_v3_design.md §4):
- *  - D4/D6: closed-form arithmetic + trig sampling on a mm-quantized spine,
- *    seeded only by `hashSeed(seed, "…", quantized positions)`.
- *  - D5: every emitted coordinate is mm-quantized before it leaves.
- *  - Identity property (plan 020 §gate-b, plan 022 deliverable 4): the meander
- *    of each ORIGINAL spine segment, AND its braid placement, hash on THAT
- *    segment's quantized endpoints — NOT on global arc-length. Resampling is
- *    also per-segment (0→segLen anchored at the segment's own start), so a
- *    single-vertex edit re-meanders ONLY the two adjacent segments plus the
- *    corner-fillet windows (≤FILLET_MAX_M of arc) reaching into their
- *    neighbors' tails; everything further is byte-identical. Global arc-length
- *    (`cumLen`) feeds only the smooth downstream width growth, whose sub-meter
- *    drift a bucket grid absorbs. The joint weld reads ONE sample of the
- *    upstream neighbor's tail — the same blast radius the central-difference
- *    bank normals already have.
+ * Determinism:
+ *  - Closed-form arithmetic + trig sampling on a mm-quantized spine, seeded only
+ *    by `hashSeed(seed, "…", quantized positions)`; every emitted coordinate is
+ *    mm-quantized before it leaves.
+ *  - Identity property: the meander of each ORIGINAL spine segment, AND its
+ *    braid placement, hash on THAT segment's quantized endpoints — NOT on global
+ *    arc-length. Resampling is also per-segment (0→segLen anchored at the
+ *    segment's own start), so a single-vertex edit re-meanders ONLY the two
+ *    adjacent segments plus the corner-fillet windows (≤FILLET_MAX_M of arc)
+ *    reaching into their neighbors' tails; everything further is unchanged.
+ *    Global arc-length (`cumLen`) feeds only the smooth downstream width growth,
+ *    whose sub-meter drift a bucket grid absorbs. The joint weld reads ONE
+ *    sample of the upstream neighbor's tail — the same blast radius the
+ *    central-difference bank normals already have.
  *  - Containment: each lateral displacement term is bounded by a params-only
  *    constant, and `riverMaxOffset(params)` is their sum + a margin, so all
- *    output sits strictly within the corridor `distanceToBoundary` measures
- *    (plan 022 §2). A windiness/width/braiding increase widens the corridor.
- *    A weld point sits ≤ JOINT_WELD_M from a contained bank sample (distance
- *    to the spine is 1-Lipschitz), well inside CORRIDOR_MARGIN_M.
+ *    output sits strictly within the corridor `distanceToBoundary` measures. A
+ *    windiness/width/braiding increase widens the corridor. A weld point sits
+ *    ≤ JOINT_WELD_M from a contained bank sample (distance to the spine is
+ *    1-Lipschitz), well inside CORRIDOR_MARGIN_M.
  *  - Feature ids hash the ORIGINAL segment's quantized endpoints plus a small
  *    role discriminant (position, never emission order), integers so
  *    `clipNetworkToTile`'s `Number(id)` sort/clip stays deterministic.
@@ -104,7 +101,7 @@ import type { FabricFeature } from "../model/fabric";
 
 type Pt = [number, number];
 
-/** River params (plan 022 §3.1). `windiness`/`braiding`/`braidBias` are 0–1;
+/** River params. `windiness`/`braiding`/`braidBias` are 0–1;
  * `width` is base channel width in meters; `widthGrowth` widens downstream. */
 export interface RiverParams {
   windiness: number;
@@ -115,22 +112,20 @@ export interface RiverParams {
    * (the `delta` preset). Params are the whole truth (determinism), so the
    * "toward the end" behavior is a param, never a preset-id branch. */
   braidBias: number;
-  /** Slope coupling strength, 0–1 (box 23-E, the plan 022 §3.1 deferral):
-   * local terrain slope — read from the elevation field the SKETCHED MOUNTAINS
-   * define (fields/mountainField.ts, a pure function of the durable sketch
-   * layer) — damps meander amplitude and stretches wavelength, so a river
-   * crossing steep ground runs straighter (flat → full meander, steep →
-   * straight; the empirical low-sinuosity-on-gradient signature). 0 disables
-   * coupling entirely. OPTIONAL, additive (plan 022 §1): absent ⇒ 1, and with
-   * no mountain sketch the multipliers are EXACTLY 1 through the same
-   * arithmetic, so every no-mountain river is byte-identical to pre-23-E. */
+  /** Slope coupling strength, 0–1: local terrain slope — read from the elevation
+   * field the SKETCHED MOUNTAINS define (fields/mountainField.ts, a pure function
+   * of the durable sketch layer) — damps meander amplitude and stretches
+   * wavelength, so a river crossing steep ground runs straighter (flat → full
+   * meander, steep → straight; the empirical low-sinuosity-on-gradient
+   * signature). 0 disables coupling entirely. Optional: absent ⇒ 1, and with no
+   * mountain sketch the multipliers are EXACTLY 1 through the same arithmetic. */
   slopeSensitivity?: number;
 }
 
 // Params-only lateral-budget constants (meters). maxOffset sums their scaled
 // maxima, so the corridor is a pure function of the params.
 export const BASE_MEANDER_AMP_M = 45; // meander amplitude at windiness = 1
-// ── Meander-shape constants (plan 028 §1.2, box 28-B) ────────────────────────
+// ── Meander-shape constants ──────────────────────────────────────────────────
 /** Target meander wavelength in channel widths (USGS/Leopold–Wolman: 10–14). */
 export const MEANDER_WAVELENGTH_WIDTHS = 11;
 /** Per-lobe wavelength jitter, ± fraction (Ferguson quasi-periodicity). */
@@ -138,26 +133,23 @@ const WAVELENGTH_JITTER = 0.3;
 /** Per-lobe amplitude jitter: A ∈ [1−AMP_JITTER, 1]×cap (±25% around mean). */
 const AMP_JITTER = 0.4;
 /** Kinoshita heading amplitude θ₀ at windiness 1 (rad, ~109°: a well-developed
- * meander train; plan 028 §0 flags exact coefficients for later verification
- * vs Abad WRR 2023 — Jₛ is the canonical 1/32). */
+ * meander train; Jₛ is the canonical 1/32, cf. Abad WRR 2023). */
 const KINOSHITA_THETA0_MAX = 1.9;
 const KINOSHITA_JS = 1 / 32;
 /** Curvature-radius floor in channel widths (empirical R_c ≈ 2–3 W; doubles as
  * the bank self-intersection guard: R_c ≥ 2W ≫ half-width). */
 export const RC_MIN_WIDTHS = 2;
-// ── Slope coupling (box 23-E; plan 022 §3.1 "modulated by local slope") ───────
+// ── Slope coupling ───────────────────────────────────────────────────────────
 // Slope is the mean |∇h| (m/m) of the sketch-derived elevation field over
 // five fixed positions along the segment — a pure function of the segment's
-// own endpoints + the durable
-// mountain sketches, so the per-segment identity keying is untouched (an edit
-// re-meanders only the adjacent segments, exactly as before). The response is
-// a saturating curve s/(s+HALF) (the wave-1 P2 idiom: smooth saturation, no
-// cliffs): HALF is the half-effect slope, calibrated against measured field
-// gradients (alpine median ≈ 2.8 m/m, rolling-hills ≈ 1.1 at default params).
-// Amplitude is only ever SHRUNK (mA ≤ 1) and wavelength only ever STRETCHED
-// (mH ≥ 1 ⇒ fewer, longer lobes), so `riverMaxOffset` and the containment
-// proof are byte-untouched. Zero slope (or no mountain sketch) yields mA = mH
-// = 1 EXACTLY, so uncoupled rivers/segments multiply by 1 — byte-identical.
+// own endpoints + the durable mountain sketches, so the per-segment identity
+// keying is untouched (an edit re-meanders only the adjacent segments). The
+// response is a saturating curve s/(s+HALF): HALF is the half-effect slope,
+// calibrated against measured field gradients (alpine median ≈ 2.8 m/m,
+// rolling-hills ≈ 1.1 at default params). Amplitude is only ever SHRUNK
+// (mA ≤ 1) and wavelength only ever STRETCHED (mH ≥ 1 ⇒ fewer, longer lobes),
+// so `riverMaxOffset` and the containment bound are untouched. Zero slope (or
+// no mountain sketch) yields mA = mH = 1 EXACTLY.
 const SLOPE_HALF_MPM = 1.2;
 /** Max fraction of the meander amplitude a fully steep slope removes. */
 const SLOPE_AMP_KILL = 0.85;
@@ -176,7 +168,7 @@ const SECONDARY_WIDTH_FRAC = 0.5; // braid side-channel width vs main
 const AMP_SEG_FRAC = 0.35; // per-segment amplitude cap (self-intersection guard)
 const BRAID_SUB0 = 0.15; // braid unit sits inside [BRAID_SUB0, 1-BRAID_SUB0] of a segment
 const MIN_BRAID_SEG_LEN_M = 60; // absolute floor; the width-relative rule below dominates
-// Braid unit + island legibility (plan 028 §1.3, Hundey & Ashmore 2009):
+// Braid unit + island legibility (Hundey & Ashmore 2009):
 // the split→rejoin unit is ~4–5× channel width long, and an island must be
 // wide enough to READ as land — otherwise the braid is skipped entirely.
 const BRAID_LEN_WIDTHS = 4.5; // target braid-unit length, in local channel widths
@@ -186,12 +178,12 @@ export const MIN_ISLAND_WIDTH_FRAC = 0.4; // island floor vs the LOCAL channel w
 // the widest point upstream of the middle (t ≈ 0.5^(1/p)), so the island tapers
 // downstream — the empirical bar/teardrop orientation. p ∈ (0.5, 1].
 const BRAID_TAPER_POW = 0.75;
-// Joint overlap weld (plan 028 §1.1): the downstream segment's channel ribbon
-// extends this far upstream along both banks, past the shared joint
-// cross-section, so adjacent ribbons overlap and the per-vertex antialiasing
-// hairline is painted over. Must stay ≪ CORRIDOR_MARGIN_M (containment).
+// Joint overlap weld: the downstream segment's channel ribbon extends this far
+// upstream along both banks, past the shared joint cross-section, so adjacent
+// ribbons overlap and the per-vertex antialiasing hairline is painted over.
+// Must stay ≪ CORRIDOR_MARGIN_M (containment).
 const JOINT_WELD_M = 0.5;
-// Corner fillet (Jonah 2026-07-13: sharp spine bends must curve naturally).
+// Corner fillet: sharp spine bends must curve naturally.
 // Radius scales with windiness so a canal (windiness 0) keeps its engineered
 // crisp corners while a natural river rounds its bends; the quadratic-Bezier
 // blend deviates from the spine corner by at most R/2, so the corridor grows
@@ -200,23 +192,22 @@ const FILLET_MAX_M = 60;
 const FILLET_FRAC = 0.35; // ≤ this fraction of each adjacent segment
 const FILLET_ALLOWANCE_M = FILLET_MAX_M / 2;
 
-// ── Junctions, mouths, dressing (plan 028 §1.4, box 28-C) ────────────────────
-// EVERYTHING below is emitted APPENDED to the 28-B output (steps 1–4 of
-// `generateRiver` are byte-untouched), and every appended vertex is verified
-// INSIDE the EXISTING corridor (`riverMaxOffset` unchanged) before it leaves —
-// so the additive rule is exact: a lone river with no partner spine, no
-// water-polygon mouth, and windiness < DRESS_WINDINESS emits nothing here and
-// is byte-identical to 28-B. `constraints` are read as the RAW DURABLE SKETCH
-// LAYER only (other river spines + water polygons — never another generator's
-// OUTPUT; that is plan 024's cascade), the same stage-legality as 23-E's slope
-// coupling. The mouth signal (plan 028 §1.4) is a terminal spine endpoint
-// near/inside a sketched WATER polygon.
+// ── Junctions, mouths, dressing ──────────────────────────────────────────────
+// EVERYTHING below is emitted APPENDED after the channel/meander steps (those
+// steps stay untouched), and every appended vertex is verified INSIDE the
+// EXISTING corridor (`riverMaxOffset` unchanged) before it leaves — so the
+// additive rule is exact: a lone river with no partner spine, no water-polygon
+// mouth, and windiness < DRESS_WINDINESS emits nothing here. `constraints` are
+// read as the RAW DURABLE SKETCH LAYER only (other river spines + water
+// polygons — never another generator's OUTPUT), the same stage-legality as the
+// slope coupling. The mouth signal is a terminal spine endpoint near/inside a
+// sketched WATER polygon.
 /** A spine endpoint within this distance of ANOTHER sketched river spine is a
  * confluence junction; a mouth within it of a sketched water polygon is a
  * tidal mouth. Absolute-world meters (position-keyed, no float-hash). */
 export const CONFLUENCE_SNAP_M = 30;
 /** braidBias at/above this on a river with a land mouth triggers a delta split
- * (no new preset-id branch — braidBias is the whole truth, plan 028 §1.4). */
+ * (no preset-id branch — braidBias is the whole truth). */
 export const DELTA_BIAS_THRESHOLD = 0.8;
 /** Delta bifurcation: two arms at ≈72° between them (Coffey & Rothman 2017
  * 70.4°±2.6°), the whole fan jittered ±DELTA_ANGLE_JITTER so the inter-arm
@@ -227,14 +218,13 @@ const DELTA_ANGLE_JITTER = (5 * Math.PI) / 180;
  * 1 split → 2 arms, each width W/√2 = W/√N). */
 const DELTA_LEN_WIDTHS = 4;
 /** Estuary flare: mouth width = ESTUARY_FLARE × base width, W(x)=Wm·e^(−x/Lc)
- * decaying upstream (Langbein estuary flare, plan 028 §0). */
+ * decaying upstream (Langbein estuary flare). */
 const ESTUARY_FLARE = 2.4;
 const ESTUARY_LEN_WIDTHS = 6; // flare length upstream of the mouth, in widths
 const ESTUARY_LIP_WIDTHS = 2; // trumpet lip length beyond the mouth, in widths
 /** Dressing (point bars, oxbows, ford/rapids/falls glyphs) turns on at/above
- * this windiness (plan 028 §1.4 + OQ#2 plan-default ≈0.7); rapids/falls also
- * turn on wherever the slope field is steep, regardless of windiness. Below
- * both, a lone river is byte-identical to 28-B. */
+ * this windiness; rapids/falls also turn on wherever the slope field is steep,
+ * regardless of windiness. Below both, a lone river emits no dressing. */
 export const DRESS_WINDINESS = 0.7;
 const POINT_BAR_PROB = 0.5; // hashed per-segment emission chance
 const OXBOW_PROB = 0.28; // sparser — the "old river" story cue
@@ -243,14 +233,14 @@ const POINT_BAR_LEN_WIDTHS = 3;
 /** Slope (m/m) thresholds for the water-symbol glyph classification. */
 const RAPIDS_SLOPE_MPM = 0.5;
 const FALLS_SLOPE_MPM = 1.5;
-/** Corridor safety epsilon: a 28-C feature is DROPPED (degradation ladder) if
- * any vertex sits outside (maxOffset − eps) of the spine — the additive
+/** Corridor safety epsilon: a junction/dressing feature is DROPPED (degradation
+ * ladder) if any vertex sits outside (maxOffset − eps) of the spine — the
  * containment guard that keeps `riverMaxOffset` a pure f(params). */
 const C28_CORRIDOR_EPS = 0.5;
 
 /** Base channel half-width at downstream fraction `f` (0 = source, 1 = mouth).
- * The ONE global-arc quantity (plan 022 §3.1); its sub-meter drift on an
- * upstream edit is bucket-absorbed. */
+ * The ONE global-arc quantity; its sub-meter drift on an upstream edit is
+ * bucket-absorbed. */
 function halfWidthAt(params: RiverParams, f: number): number {
   return (params.width / 2) * (1 + params.widthGrowth * f);
 }
@@ -260,7 +250,7 @@ function maxHalfWidth(params: RiverParams): number {
 }
 
 /**
- * Corridor half-width (plan 022 §2): a pure function of the params. Every
+ * Corridor half-width: a pure function of the params. Every
  * lateral displacement term is individually clamped ≤ its scaled constant, so
  * their sum + margin is a strict upper bound on how far output leaves the
  * spine. Monotonic increasing in windiness, braiding, width, widthGrowth.
@@ -289,8 +279,8 @@ interface SegmentCtx {
   segLen: number;
   /** Whether this ORIGINAL segment carries a braid, and its params: the side
    * the secondary channel bulges to, the lens amplitude, and the braid unit's
-   * segment-local arc interval `[s0, s1]` (plan 028 §1.3: ~4–5× channel width
-   * long, hashed placement inside the segment's interior window). */
+   * segment-local arc interval `[s0, s1]` (~4–5× channel width long, hashed
+   * placement inside the segment's interior window). */
   braid: { side: number; amp: number; s0: number; s1: number } | null;
 }
 
@@ -312,8 +302,8 @@ function maxProfileCurvature(skew: number): number {
   return m;
 }
 
-/** Per-segment meander offset function (plan 028 §1.2), keyed on the segment's
- * quantized endpoints (identity property). Envelope `sin²(πt)` is 0 with zero
+/** Per-segment meander offset function, keyed on the segment's quantized
+ * endpoints (identity property). Envelope `sin²(πt)` is 0 with zero
  * derivative at both ends, so the centerline passes through each spine vertex
  * tangentially — self-contained per segment. Inside: a lobe train with hashed
  * per-lobe half-wavelengths (target λ/2 = 11·width/2, ±30%) and amplitudes
@@ -338,17 +328,16 @@ function meanderSegment(seed: number, a: Pt, b: Pt, params: RiverParams, elev: E
   const phi0 = rng() * Math.PI * 2;
   const sign = rng() < 0.5 ? -1 : 1;
   const W = params.width; // BASE width: params-only (see header — identity)
-  // ── Slope coupling (box 23-E): the mean sketch-derived |∇h| over five fixed
-  //    interior positions along THIS segment (i/6, i = 1..5 — position-derived
-  //    from the segment's own endpoints, so identity keying is untouched, and
-  //    NO rng draws, so the stream below is bit-for-bit the 28-B stream). A
-  //    single midpoint sample proved luck-hostage on a live gate run — one
-  //    ridge-top/valley-floor sample (∇ ≈ 0) switched a mountain crossing's
+  // ── Slope coupling: the mean sketch-derived |∇h| over five fixed interior
+  //    positions along THIS segment (i/6, i = 1..5 — position-derived from the
+  //    segment's own endpoints, so identity keying is untouched, and NO rng
+  //    draws). A single midpoint sample is luck-hostage — one
+  //    ridge-top/valley-floor sample (∇ ≈ 0) can switch a mountain crossing's
   //    coupling off; the along-segment mean reads the terrain the reach
   //    actually runs through. Steep ⇒ amplitude damped + wavelength stretched
   //    (straighter); flat or uncoupled ⇒ both multipliers EXACTLY 1 (the mask
   //    is exactly 0 outside every mountain ring, so every sample — hence the
-  //    mean — is exactly 0 and far-from-mountain segments stay byte-identical).
+  //    mean — is exactly 0).
   let slopeAmpMul = 1;
   let slopeLambdaMul = 1;
   if (elev) {
@@ -403,14 +392,14 @@ function meanderSegment(seed: number, a: Pt, b: Pt, params: RiverParams, elev: E
     // long lobe's amplitude with a short neighbor's rate — ~30% overshoot at
     // ±30% jitter).
     const hMin = Math.min(hs[Math.max(0, i - 1)], hs[i], hs[Math.min(nLobes - 1, i + 1)]);
-    // Box 23-E: rcCap is PINNED at its unstretched value (÷ mH²; hMin carries
-    // the λ stretch, so rcCap ∝ h² would otherwise grow by mH² and cancel the
+    // rcCap is PINNED at its unstretched value (÷ mH²; hMin carries the λ
+    // stretch, so rcCap ∝ h² would otherwise grow by mH² and cancel the
     // amplitude damping almost exactly in the R_c-bound regime — the common
-    // one per 28-B's saturation note; caught live twice). Dividing only ever
-    // SHRINKS the cap below the physically-allowed bound (longer bends at
-    // capped amplitude sit ABOVE the R_c floor), so realism + containment
-    // hold, and the slope damping applies AFTER the min so it is never masked.
-    // ÷1 and ×1 are exact in IEEE 754 — the uncoupled stream is bit-unchanged.
+    // one). Dividing only ever SHRINKS the cap below the physically-allowed
+    // bound (longer bends at capped amplitude sit ABOVE the R_c floor), so
+    // realism + containment hold, and the slope damping applies AFTER the min
+    // so it is never masked. ÷1 and ×1 are exact in IEEE 754, so the uncoupled
+    // stream is bit-unchanged.
     const rcCap =
       (hMin * hMin) / (Math.PI * Math.PI * RC_MIN_WIDTHS * W * curvFactor) / (slopeLambdaMul * slopeLambdaMul);
     const cap = Math.min(ampBudget, rcCap) * slopeAmpMul;
@@ -424,7 +413,7 @@ function meanderSegment(seed: number, a: Pt, b: Pt, params: RiverParams, elev: E
   }
   const last = nLobes - 1;
   const offset = (localS: number): number => {
-    if (ampBudget <= 0) return 0; // canal: exact zero, byte-identical
+    if (ampBudget <= 0) return 0; // canal: exact zero
     const t = localS / segLen;
     const env = Math.sin(Math.PI * t) ** 2;
     let phi: number;
@@ -472,7 +461,7 @@ function segmentCtx(
     return [a[0] + ux * s + leftN[0] * off, a[1] + uy * s + leftN[1] * off];
   };
   // Braid decision, keyed on the segment endpoints (per-segment, not global).
-  // Legibility gate (plan 028 §1.3, degradation ladder): a braid happens only
+  // Legibility gate (degradation ladder): a braid happens only
   // if the segment can afford a split→rejoin unit ≥ BRAID_MIN_LEN_WIDTHS
   // channel-widths long AND the lens peak opens an island at least
   // MIN_ISLAND_WIDTH_FRAC channel-widths wide. Both checks use the channel
@@ -509,7 +498,7 @@ function centerlineNormal(center: CenterPoint[], i: number): Pt {
   return [-uy, ux];
 }
 
-/** Position-hashed integer feature id (plan 028 §1.1): keyed on the ORIGINAL
+/** Position-hashed integer feature id: keyed on the ORIGINAL
  * segment's quantized endpoints + a small role discriminant (main channel /
  * braid channel / left bank / right bank / …), so ids survive emission-order
  * changes and the identity property keeps its feature-level meaning. */
@@ -556,16 +545,15 @@ function weldToward(from: Pt, toward: Pt): Pt {
 }
 
 /**
- * Generate a river inside a spine corridor (plan 022 §3.1 / plan 028 §1.1).
+ * Generate a river inside a spine corridor.
  * `region.spine` is the mm-quantized sketched polyline; output is per-segment
  * merged river-channel polygons + river-bank casing LineStrings (+ braid
  * river-island lozenges), all strictly within `riverMaxOffset(params)` of the
  * spine.
- * `constraints` feed ONE thing (box 23-E): the sketched MOUNTAIN features, from
- * which the elevation field is composed for slope coupling — reading the raw
- * sketch layer, never another generator's output. The spine (not the generated
- * channel) still feeds the city as a constraint (RIVER_HALF_WIDTH); the
- * channel→constraint cascade remains plan 024 (an intentional seam).
+ * `constraints` feed ONE thing: the sketched MOUNTAIN features, from which the
+ * elevation field is composed for slope coupling — reading the raw sketch
+ * layer, never another generator's output. The spine (not the generated
+ * channel) still feeds the city as a constraint (RIVER_HALF_WIDTH).
  */
 export function generateRiver(
   seed: number,
@@ -578,21 +566,20 @@ export function generateRiver(
   const pts = spine.points;
   const totalLen = spine.totalLen;
 
-  // Slope coupling input (box 23-E): the elevation field composed from the
-  // SKETCHED mountain features on the constraints — the raw sketch layer, the
-  // one cross-feature surface every stage may read (never another generator's
-  // OUTPUT; that is plan 024's cascade). `null` when no mountain sketch exists
-  // or coupling is off ⇒ the pre-23-E code path, byte-identical. windiness 0
-  // (canal) has zero meander amplitude through the same arithmetic regardless.
+  // Slope coupling input: the elevation field composed from the SKETCHED
+  // mountain features on the constraints — the raw sketch layer, the one
+  // cross-feature surface every stage may read (never another generator's
+  // OUTPUT). `null` when no mountain sketch exists or coupling is off ⇒ no
+  // coupling. windiness 0 (canal) has zero meander amplitude through the same
+  // arithmetic regardless.
   const slopeSens = params.slopeSensitivity ?? 1;
   const elev = slopeSens > 0 && params.windiness > 0 ? elevationFieldFromFabric(constraints.fabricFeatures) : null;
 
   // 1. Per-segment meandered samples (identity-keyed per segment), concatenated
   //    into ONE global centerline. The join vertex appears exactly once (as the
   //    tail sample of the previous segment), so banks and quads bridge every
-  //    spine vertex seamlessly — the per-segment emission of v1 left a gap and
-  //    a normal mismatch at each vertex (the "sharp bend" notch,
-  //    Jonah 2026-07-13).
+  //    spine vertex seamlessly — a per-segment emission would leave a gap and
+  //    a normal mismatch at each vertex (the "sharp bend" notch).
   const center: CenterPoint[] = [];
   const sampleSeg: number[] = []; // per-sample original-segment index
   const sampleS: number[] = []; // per-sample segment-local arc (m)
@@ -645,7 +632,7 @@ export function generateRiver(
   }
 
   // 3. Global banks, then ONE merged channel ribbon + two bank casing lines
-  //    per ORIGINAL segment (plan 028 §1.1). Normals by central difference over
+  //    per ORIGINAL segment. Normals by central difference over
   //    the WHOLE centerline (miter-consistent across joins); the joint sample
   //    is shared by both adjacent segments' emissions, and the downstream
   //    ribbon's head is weld-extended past it so the ribbons overlap.
@@ -686,8 +673,8 @@ export function generateRiver(
   // 4. Braids: per-original-segment decision (identity keying unchanged). The
   //    secondary channel is ONE ribbon bulging to one side over the braid unit
   //    [s0, s1] with a downstream-tapered lens envelope; the island is ONE
-  //    lozenge over the sub-run where the open ground is legible (plan 028
-  //    §1.3) — and if no legible island fits, the braid emits NOTHING at all.
+  //    lozenge over the sub-run where the open ground is legible — and if no
+  //    legible island fits, the braid emits NOTHING at all.
   //    Banks come from the GLOBAL centerline/normals so braids follow the
   //    filleted curve.
   for (let k = 0; k < segs.length; k++) {
@@ -748,11 +735,11 @@ export function generateRiver(
     );
   }
 
-  // 5. Plan 028 §1.4 (box 28-C): junctions, mouths, dressing — APPENDED to the
-  //    28-B output, each feature verified inside the EXISTING corridor. Reads
-  //    the raw sketch layer (other river spines + water polygons) for the
-  //    confluence/estuary topology; delta activates on braidBias; point bars /
-  //    oxbows / water-symbol glyphs are the per-bend dressing.
+  // 5. Junctions, mouths, dressing — APPENDED, each feature verified inside the
+  //    EXISTING corridor. Reads the raw sketch layer (other river spines + water
+  //    polygons) for the confluence/estuary topology; delta activates on
+  //    braidBias; point bars / oxbows / water-symbol glyphs are the per-bend
+  //    dressing.
   const maxOffset = region.corridorMaxOffset ?? riverMaxOffset(params);
   for (const f of dressRiver(seed, spine, pts, params, center, normals, sampleSeg, sampleS, constraints, elev)) {
     if (containedInCorridor(f, spine.points, maxOffset)) out.push(f);
@@ -760,13 +747,13 @@ export function generateRiver(
   return out;
 }
 
-// ─── Plan 028 §1.4 (box 28-C) helpers ────────────────────────────────────────
+// ─── Junctions, mouths, dressing helpers ─────────────────────────────────────
 
 /** Every emitted coordinate within (maxOffset − eps) of the spine — the
- * additive containment guard (`distanceToSpine` is 1-Lipschitz, so this is the
- * same metric `regionContainmentReport` uses). A feature that would spill is
- * dropped whole (degradation ladder), so `riverMaxOffset` stays a pure
- * f(params) and 28-C never widens the corridor. */
+ * containment guard (`distanceToSpine` is 1-Lipschitz, so this is the same
+ * metric `regionContainmentReport` uses). A feature that would spill is dropped
+ * whole (degradation ladder), so `riverMaxOffset` stays a pure f(params) and
+ * the appended features never widen the corridor. */
 function containedInCorridor(f: GeoJSON.Feature, spinePts: Pt[], maxOffset: number): boolean {
   const limit = maxOffset - C28_CORRIDOR_EPS;
   let ok = true;
@@ -852,7 +839,7 @@ function partnerRiverAt(selfId: string, feats: FabricFeature[] | undefined, p: P
 }
 
 /** Is mouth `p` at open water — inside, or within CONFLUENCE_SNAP_M of, a
- * sketched WATER polygon (the plan 028 §1.4 mouth signal)? */
+ * sketched WATER polygon (the mouth signal)? */
 function mouthAtWater(feats: FabricFeature[] | undefined, p: Pt): boolean {
   if (!feats) return false;
   for (const f of feats) {
@@ -866,7 +853,7 @@ function mouthAtWater(feats: FabricFeature[] | undefined, p: Pt): boolean {
 }
 
 /** A ribbon polygon from a left chain (forward) + right chain (reversed), id
- * position-hashed on the two anchor points + role — the shared 28-C emitter. */
+ * position-hashed on the two anchor points + role — the shared emitter. */
 function dressRibbon(seed: number, gid: string, anchorA: Pt, anchorB: Pt, role: number, left: Pt[], right: Pt[]): GeoJSON.Feature {
   return ribbonFeature(seed, gid, anchorA, anchorB, role, left, right);
 }
@@ -882,7 +869,7 @@ function pointFeature(seed: number, gid: string, at: Pt, props: Record<string, u
 }
 
 /**
- * Confluence Y-merge gusset at junction `J` (plan 028 §1.4): a water ribbon
+ * Confluence Y-merge gusset at junction `J`: a water ribbon
  * over the last `Lc` of this river's approach that swings its INNER bank out to
  * meet the partner, widening the junction cross-section to the derived law
  * W₃ = √(W₁²+W₂²) (flagged-derived; W∝√Q, Q additive) — the smooth Y, never a
@@ -908,7 +895,7 @@ function confluenceGusset(seed: number, J: Pt, thisTangent: Pt, w1: number, part
   return dressRibbon(seed, "river-confluence", J, add(J, thisTangent, -Lc), 0, outer, inner);
 }
 
-/** Delta distributaries at mouth `M` (plan 028 §1.4): two bird's-foot arms at
+/** Delta distributaries at mouth `M`: two bird's-foot arms at
  * ≈72° (jittered), each width W/√2, tapering to a point — the ONLY downstream
  * fork the generator ever emits, and only at the terminal mouth. */
 function deltaArms(seed: number, M: Pt, uM: Pt, params: RiverParams, maxOffset: number): GeoJSON.Feature[] {
@@ -940,7 +927,7 @@ function deltaArms(seed: number, M: Pt, uM: Pt, params: RiverParams, maxOffset: 
   return out;
 }
 
-/** Estuary trumpet at mouth `M` (plan 028 §1.4): an exponential flare
+/** Estuary trumpet at mouth `M`: an exponential flare
  * W(x)=Wm·e^(−x/Lc) along the mouth axis, monotonically widening toward and
  * past the mouth into open water — replaces the delta split at a tidal mouth. */
 function estuaryTrumpet(seed: number, M: Pt, uM: Pt, params: RiverParams, maxOffset: number): GeoJSON.Feature | null {
@@ -967,14 +954,14 @@ function estuaryTrumpet(seed: number, M: Pt, uM: Pt, params: RiverParams, maxOff
 }
 
 /**
- * Per-bend dressing (plan 028 §1.4): point-bar sand crescents on inner bends,
- * oxbow-lake blobs beside the tightest bends, and USGS-style water-symbol
- * glyphs (ford / rapids / falls) at hashed candidates. All keyed on the
- * ORIGINAL segment's endpoints (identity-local); point bars/oxbows/glyphs gate
- * on windiness ≥ DRESS_WINDINESS (rapids/falls also fire on steep slope, so a
- * mountain torrent gets them at any windiness). Placement never reads the
- * elevation field (only glyph CLASSIFICATION does), so a slope-uncoupled river
- * dresses byte-identically whether coupling is off or the mountain is absent.
+ * Per-bend dressing: point-bar sand crescents on inner bends, oxbow-lake blobs
+ * beside the tightest bends, and USGS-style water-symbol glyphs (ford / rapids
+ * / falls) at hashed candidates. All keyed on the ORIGINAL segment's endpoints
+ * (identity-local); point bars/oxbows/glyphs gate on windiness ≥ DRESS_WINDINESS
+ * (rapids/falls also fire on steep slope, so a mountain torrent gets them at any
+ * windiness). Placement never reads the elevation field (only glyph
+ * CLASSIFICATION does), so a slope-uncoupled river dresses identically whether
+ * coupling is off or the mountain is absent.
  */
 function dressRiver(
   seed: number,

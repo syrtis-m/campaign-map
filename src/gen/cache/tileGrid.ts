@@ -28,7 +28,7 @@ export function tileKey(campaignSeed: number, tileX: number, tileY: number, zoom
 }
 
 /**
- * Generation tiers (plan 019 — formerly "zoom bands"). World-tier content
+ * Generation tiers. World-tier content
  * (regions/routes/coastline) is coarse and appropriate below street level;
  * city-tier (streets/districts/blocks) is the fine fabric for street-level
  * zooms. `bandForZoom` picks which tier an explicit "Generate fabric here"
@@ -39,7 +39,7 @@ export function tileKey(campaignSeed: number, tileX: number, tileY: number, zoom
  * needed yet; the cache key's `zoom`/generatorId fields already make this
  * additive, not a format break, if that changes later.
  *
- * `world-settlement` is deliberately NOT in the world set (plan 019, D2):
+ * `world-settlement` is deliberately NOT in the world set:
  * named places are Locations the GM creates, not generator output. The
  * settlements generator stays in-tree (populate-area shares its naming),
  * it's just unwired from generate-here.

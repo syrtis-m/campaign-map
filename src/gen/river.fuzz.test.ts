@@ -77,7 +77,7 @@ describe("river generator — fuzz (seeded random polylines × 4 presets)", () =
     }
   });
 
-  it("slope-coupled to a random MOUNTAIN sketch (box 23-E): never throws, contained, byte-deterministic", () => {
+  it("slope-coupled to a random MOUNTAIN sketch: never throws, contained, byte-deterministic", () => {
     // Random spines crossing random mountains at full sensitivity — the
     // coupling only SHRINKS amplitude / stretches wavelength, so the corridor
     // bound must keep holding, and the coupled output must be a pure function
@@ -140,8 +140,8 @@ describe("river generator — fuzz (seeded random polylines × 4 presets)", () =
   });
 });
 
-// ─── Plan 028 §1.2 (box 28-B): extreme-params grid — containment under the new
-// R_c-clamped meander, no self-intersection, curvature floor ─────────────────
+// ─── extreme-params grid — containment under the R_c-clamped meander, no
+// self-intersection, curvature floor ─────────────────────────────────────────
 
 /** Proper segment intersection (strict — shared endpoints don't count). */
 function properIntersect(a: Pt, b: Pt, c: Pt, d: Pt): boolean {
@@ -165,7 +165,7 @@ function ringSelfIntersects(ring: Pt[]): boolean {
   return false;
 }
 
-describe("river generator — 28-B extreme-params fuzz (R_c clamp as containment)", () => {
+describe("river generator — extreme-params fuzz (R_c clamp as containment)", () => {
   it("extreme windiness×braiding×width×growth grid: never throws, always contained", () => {
     // The schema's corners (windiness/braiding 1, width up to 120, growth up
     // to the zod max 4) exercise the new amplitude caps at their harshest.
@@ -207,7 +207,7 @@ describe("river generator — 28-B extreme-params fuzz (R_c clamp as containment
 
   it("single-segment extremes: channel rings stay simple and the R_c ≥ 2W floor holds", () => {
     // Single straight segments isolate the meander math from fillet-corner
-    // interactions (28-A machinery, unchanged): random direction + length ×
+    // interactions: random direction + length ×
     // the windiness-1 grid. Rings must be simple polygons (the R_c clamp is
     // the bank self-intersection guard), and on long segments (envelope
     // negligible) the measured curvature radius must respect the floor.
@@ -257,7 +257,7 @@ function hashLike(a: number, b: number): number {
   return ((a * 2654435761) ^ (b * 40503)) >>> 0;
 }
 
-// ─── Plan 028 §1.4 (box 28-C): junction / delta / estuary fuzz ────────────────
+// ─── junction / delta / estuary fuzz ─────────────────────────────────────────
 // Random spines meeting random partner rivers and random water polygons at
 // their mouths, at delta braidBias — the confluence/delta/estuary code paths
 // on degenerate configurations. The additive containment guard must keep every
@@ -268,7 +268,7 @@ type FF = NonNullable<GenerationConstraints["fabricFeatures"]>[number];
 
 const byT = (fs: GeoJSON.Feature[], t: string): number => fs.filter((f) => (f.properties as { type?: string }).type === t).length;
 
-describe("river generator — 28-C junction/mouth/dressing fuzz", () => {
+describe("river generator — junction/mouth/dressing fuzz", () => {
   it("random confluences + deltas + estuaries: never throws, always contained, deterministic", () => {
     const rng = mulberry32(90210);
     let sawConfluence = 0;

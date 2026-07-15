@@ -1,9 +1,9 @@
 /**
- * Mountain generator (plan 023 §3) — wires up the new `mountain` polygon kind.
- * Pure/headless (no DOM/map/Obsidian imports; reads only its arguments, D6): a
- * sketched `mountain` polygon is the region; this fills it with cartographic
- * relief derived from a point-evaluable elevation field (the gradient-damped
- * fBm of `fields/elevation.ts`, masked to the sketched ring):
+ * Mountain generator — the `mountain` polygon kind. Pure/headless (no
+ * DOM/map/Obsidian imports; reads only its arguments): a sketched `mountain`
+ * polygon is the region; this fills it with cartographic relief derived from a
+ * point-evaluable elevation field (the gradient-damped fBm of
+ * `fields/elevation.ts`, masked to the sketched ring):
  *
  *  - `mountain-massif`  — the sketched ring as a rocky-ground base wash (one
  *                         polygon; contained by construction).
@@ -14,19 +14,17 @@
  *                         LENGTH ∝ local slope. Classic relief hachures.
  *  - `mountain-peak`    — summit markers at lattice local-maxima of the field
  *                         above a per-terrain threshold (elevation + sizeN).
- *  - `mountain-contour` — topographic iso-lines (marching squares, plan 023
- *                         §4.1) traced over the SAME elevation field on a
- *                         world-aligned lattice, clipped to the ring. Emitted
- *                         when an EXISTING mountain (re)generates — NO new
- *                         request surface, no contour-only trigger: contours
- *                         derive from the mountain region's elevation field.
- *                         The campaign-base field is deferred to plan 024, so a
- *                         sketched mountain is the only elevation source in
- *                         23-C; §4.1's field-tier world-manifest contours
- *                         generalize there once that field exists.
+ *  - `mountain-contour` — topographic iso-lines (marching squares) traced over
+ *                         the SAME elevation field on a world-aligned lattice,
+ *                         clipped to the ring. Emitted when an EXISTING mountain
+ *                         (re)generates — NO new request surface, no contour-only
+ *                         trigger: contours derive from the mountain region's
+ *                         elevation field. A sketched mountain is the only
+ *                         elevation source; field-tier world-manifest contours
+ *                         generalize there once a campaign-base field exists.
  *
- * DEM/hillshade/3D (§4.2) are a LATER phase; the mountain kind renders
- * self-contained relief + contours now.
+ * DEM/hillshade/3D are a LATER phase; the mountain kind renders self-contained
+ * relief + contours now.
  *
  * Three terrain types (a `terrain` param, never a presetId — mirrors the city
  * algorithm's `profile` / park's `variety` / farmland's `fieldType`): `alpine`
@@ -35,20 +33,19 @@
  * is carried onto every feature for theme tinting, never a runtime branch in the
  * paint.
  *
- * Determinism (procgen_v3_design.md §4):
+ * Determinism:
  *  - The elevation field is `f(regionSeed, position)` — the persisted procgen
  *    seed drives the fBm, so a vertex edit KEEPS identity (same seed → same
  *    field) while only the mask boundary adapts; an explicit re-roll (new seed)
- *    replaces the whole relief. (Deviation from §3's campaign-wide
- *    `f(campaignSeed,…)` phrasing: the region-generator signature hands only
- *    the region seed, and campaign-wide summation is plan 024 stage 0 — flagged
- *    in the phase report; `ElevationField` is exposed in the shape 024 composes.)
+ *    replaces the whole relief. (The region-generator signature hands only the
+ *    region seed; campaign-wide summation is a later stage-0 concern, and
+ *    `ElevationField` is already exposed in the shape that composition needs.)
  *  - Hachures/peaks key on ABSOLUTE-WORLD lattice indices (like farmland's
  *    fields / orchard rows), so the mask saturates to 1 deep inside (grad 0) and
- *    every interior tick/peak is byte-identical under a rim vertex edit — only
+ *    every interior tick/peak is unchanged under a rim vertex edit — only
  *    boundary nodes appear/disappear (the forest/farmland identity property;
- *    measured in the gate: edit overlap ≫ re-roll overlap). A bbox-derived
- *    lattice would shift under an edit → edit indistinguishable from re-roll.
+ *    edit overlap ≫ re-roll overlap). A bbox-derived lattice would shift under
+ *    an edit → edit indistinguishable from re-roll.
  *  - D5: every emitted coordinate is mm-quantized. Feature ids hash POSITION
  *    (lattice indices), never emission order, integer so `clipNetworkToTile`'s
  *    `Number(id)` sort stays stable.
@@ -69,11 +66,10 @@ import {
 import { sdfPolygon, fMask, marchingSquares } from "./fields";
 import { fbmEroded, type HeightSample, type ElevationField } from "./fields/elevation";
 import {
-  // The elevation-field internals moved VERBATIM to fields/mountainField.ts in
-  // box 23-E (shared-field rule: farmland/river read the mountain elevation
-  // through fields/, never by importing this generator). Re-exported below so
-  // every existing import path (registry, MapController, tests) is unchanged —
-  // the 23-A verbatim-move technique; mountain output stays byte-identical.
+  // The elevation-field internals live in fields/mountainField.ts (shared-field
+  // rule: farmland/river read the mountain elevation through fields/, never by
+  // importing this generator). Re-exported below so every existing import path
+  // (registry, MapController, tests) is unchanged.
   MOUNTAIN_TERRAINS,
   type MountainTerrain,
   type MountainParams,
@@ -104,9 +100,9 @@ const TICK_MAX_M = 24;
 const TICK_JITTER_M = 5; // hashed per-node start jitter (breaks the grid look)
 // Near-flat gate: skip ticks where the SMOOTH relief is essentially level.
 const FLAT_GATE = 0.00025;
-// ── Contours (plan 023 §4.1) ─────────────────────────────────────────────────
-// World-aligned marching-squares lattice for iso-lines. 20 m per §4.1 — fine
-// enough that terrace risers read as bunched bands, coarse enough to stay cheap
+// ── Contours ─────────────────────────────────────────────────────────────────
+// World-aligned marching-squares lattice for iso-lines. 20 m — fine enough that
+// terrace risers read as bunched bands, coarse enough to stay cheap
 // (region generation is explicit + cached, never per-frame). ABSOLUTE-world so
 // abutting mountains agree on shared samples (seam rule) and edits stay local.
 const CONTOUR_LATTICE_M = 20;
@@ -140,7 +136,7 @@ function shapeValue(seed: number, region: ProcgenRegion, params: MountainParams)
 }
 
 /**
- * Generate mountain relief inside a sketched polygon region (plan 023 §3).
+ * Generate mountain relief inside a sketched polygon region.
  * Emits `mountain-massif` (1 polygon), `mountain-hachure` (downslope ticks) and
  * `mountain-peak` (summit points) — all strictly inside `region.ring`.
  * `_constraints` accepted for signature parity, never consumed (a mountain is
@@ -265,8 +261,8 @@ export function generateMountain(
     }
   }
 
-  // ── Contours: topographic iso-lines over the SAME elevation field (plan 023
-  //    §4.1). Marching squares on a world-aligned lattice → polylines, each
+  // ── Contours: topographic iso-lines over the SAME elevation field.
+  //    Marching squares on a world-aligned lattice → polylines, each
   //    clipped to the ring (containment: the mask fades the field to 0 by the
   //    rim, but the linear lattice interpolant can nick a curved boundary, so
   //    the clip is load-bearing, not cosmetic). No new request surface — this

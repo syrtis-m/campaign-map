@@ -16,15 +16,14 @@ export interface GenerationConstraints {
   /** Existing canon location features in or near the requested tile+halo.
    * Generators route around them; regeneration never touches them. */
   canonFeatures?: GeoJSON.Feature[];
-  /** ALL sketched fabric (plan 019 Phase 3) — same coordinate space as
-   * worldBounds, passed WHOLE to every tile (never pre-clipped, like a
-   * corridor in plan 014) or adjacent tiles would derive different fields
-   * and break seams. Water/rivers block streets and district sites; roads
+  /** ALL sketched fabric — same coordinate space as worldBounds, passed WHOLE
+   * to every tile (never pre-clipped) or adjacent tiles would derive different
+   * fields and break seams. Water/rivers block streets and district sites; roads
    * steer the street field; walls stop streets. Sketched districts are NOT
-   * constraints since plan 020 — a district polygon is a procgen REGION
-   * (the container generation runs inside), handled by the region/registry
-   * machinery, not by this list's constraint index. `fabric.ts` is a pure
-   * zod leaf, so this import keeps generators host-agnostic. */
+   * constraints — a district polygon is a procgen REGION (the container
+   * generation runs inside), handled by the region/registry machinery, not by
+   * this list's constraint index. `fabric.ts` is a pure zod leaf, so this import
+   * keeps generators host-agnostic. */
   fabricFeatures?: FabricFeature[];
   /** Naming culture genre for any generator that pre-names its output (e.g.
    * settlements) — defaults per-generator if omitted. */
@@ -33,8 +32,8 @@ export interface GenerationConstraints {
    * frontmatter) — see culturesForGenre's restrictTo. Omit for the full
    * genre set. */
   namingCultureIds?: string[];
-  /** City-domain arterial destinations (procgen v3 §5.0): `world-route`
-   * endpoints near the domain, threaded WHOLE by the host from `world-route`
+  /** City-domain arterial destinations: `world-route` endpoints near the
+   * domain, threaded WHOLE by the host from `world-route`
    * output when present. Position-hashed already, so passing them keeps the
    * network a pure function of its inputs (D6). When absent, the citynet
    * skeleton falls back to hashed compass bearings. `x`/`y` are world-space
@@ -43,19 +42,17 @@ export interface GenerationConstraints {
    * generators. */
   routeHints?: { x: number; y: number; bearing: number }[];
   /**
-   * Plan 024 §3 — the cross-layer cascade's upstream context: the GENERATED
-   * output of STRICTLY-LOWER-stage regions that this region's algorithm reads.
+   * The cross-layer cascade's upstream context: the GENERATED output of
+   * STRICTLY-LOWER-stage regions that this region's algorithm reads.
    *
    * This is where output→output coupling lives (as opposed to the sketch-
    * derived `elevation` field, which every generator already reaches through
-   * `fabricFeatures` — box 23-E). What crosses the worker boundary is DATA, not
-   * `Field` closures (they don't survive structured clone, plan 024 §3): plain
-   * GeoJSON feature lists that the consumer rebuilds into an SDF/index on its
-   * own side via the pure `buildUpstreamConstraints` (both host and worker share
-   * that function). Absent/empty ⇒ byte-identical to a run with no cascade
-   * (back-compat). The host populates this from the fresh lower-stage artifacts
-   * once a consumer wires it in (24-C); the DATA channel, its serialization, and
-   * its rebuild are in place and tested at 24-B.
+   * `fabricFeatures`). What crosses the worker boundary is DATA, not `Field`
+   * closures (they don't survive structured clone): plain GeoJSON feature lists
+   * that the consumer rebuilds into an SDF/index on its own side via the pure
+   * `buildUpstreamConstraints` (both host and worker share that function).
+   * Absent/empty ⇒ a run with no cascade (back-compat). The host populates this
+   * from the fresh lower-stage artifacts.
    */
   upstream?: UpstreamArtifacts;
 }

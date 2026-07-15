@@ -1,6 +1,6 @@
 /**
- * Procgen algorithm registry (plan 020 §5): the sketch-kind →
- * procgen-algorithm binding. A sketched district IS the request for city
+ * Procgen algorithm registry: the sketch-kind → procgen-algorithm binding.
+ * A sketched district IS the request for city
  * procgen; future bindings (park → park-gen, forest/mountain polygons,
  * river-kind enrichment) slot in by adding a registry entry + params schema
  * + pure generator — zero new host lifecycle code. Host lifecycle code must
@@ -31,7 +31,7 @@ import {
 } from "../citynet";
 
 /**
- * A named "template" (plan 022 §1): a bundle of params the host offers as a
+ * A named "template": a bundle of params the host offers as a
  * dropdown before the algorithm's per-param controls. Presets are pure sugar
  * over `params` — they are NEVER a runtime dependency (determinism: `params`
  * are the whole truth). The persisted procgen block stores `params` (+ an
@@ -48,7 +48,7 @@ export interface ProcgenAlgorithm {
   label: string; // "City"
   /** Generator contract version: params semantics + output bytes, one number.
    * Any change that alters output bytes for the same `(seed, params)` MUST
-   * bump this (and then needs no byte-neutrality argument — plan 029 policy).
+   * bump this (and then needs no byte-neutrality argument).
    * Host-side routing data only: written into new procgen blocks at creation,
    * compared at edit time to drive the adoption prompt. NEVER a generator
    * input — a generator never branches on version; the code IS the version. */
@@ -59,26 +59,25 @@ export interface ProcgenAlgorithm {
    * during generation. */
   migrateParams?(oldVersion: number, params: Record<string, unknown>): Record<string, unknown>;
   appliesTo: readonly FabricKind[]; // ["district"]
-  /** Plan 024 §2: the fixed stage this algorithm occupies in the cross-layer
-   * regen cascade. An algorithm consumes only from STRICTLY LOWER stages, so
-   * the global partial order `(stage, regionId)` is cycle-free by construction
-   * and drives both replay and cascade order (see `dag.ts`). */
+  /** The fixed stage this algorithm occupies in the cross-layer regen cascade.
+   * An algorithm consumes only from STRICTLY LOWER stages, so the global partial
+   * order `(stage, regionId)` is cycle-free by construction and drives both
+   * replay and cascade order (see `dag.ts`). */
   stage: Stage;
-  /** Plan 024 §3: the constraint FIELD(s) this algorithm's output supplies to
-   * higher stages (river → `water`; forest/park → `vegetation`; mountain →
-   * `elevation`; city → `settlement`; wall → `detail`). `[]` for a terminal
-   * producer nothing downstream reads (e.g. farmland). */
+  /** The constraint FIELD(s) this algorithm's output supplies to higher stages
+   * (river → `water`; forest/park → `vegetation`; mountain → `elevation`; city
+   * → `settlement`; wall → `detail`). `[]` for a terminal producer nothing
+   * downstream reads (e.g. farmland). */
   produces: readonly ConstraintKind[];
-  /** Plan 024 §3: the constraint FIELD(s) this algorithm reads from lower
-   * stages. Declares the DESIGN's intended coupling (river consumes
-   * `elevation`; city consumes `water`+`vegetation`; wall consumes
-   * `settlement`) — the DAG edge machinery keys on it; a declared-but-not-yet-
-   * wired consumption merely triggers a byte-identical downstream recompute
-   * (perf-only), so declaring intent here keeps 24-C purely about wiring
-   * consumption, never re-touching the DAG. */
+  /** The constraint FIELD(s) this algorithm reads from lower stages. Declares
+   * the DESIGN's intended coupling (river consumes `elevation`; city consumes
+   * `water`+`vegetation`; wall consumes `settlement`) — the DAG edge machinery
+   * keys on it; a declared-but-not-yet-wired consumption merely triggers a
+   * downstream recompute with unchanged output (perf-only), so declaring intent
+   * here never re-touches the DAG. */
   consumes: readonly ConstraintKind[];
   paramsSchema: z.ZodType<Record<string, unknown>>;
-  /** Named templates (plan 022 §1). Every algorithm has ≥1; the host renders
+  /** Named templates. Every algorithm has ≥1; the host renders
    * these as a dropdown, seeding the param controls from the chosen preset's
    * `params`. City's four profiles are its presets. */
   presets: readonly ProcgenPreset[];
@@ -92,12 +91,12 @@ export interface ProcgenAlgorithm {
   /** Per-tile generator ids this algorithm's network clips into — the host
    * uses these for cache keys and paint layers. */
   tileGeneratorIds: readonly string[];
-  /** Plan 022 §2 (LINE-kind algorithms only): the corridor half-width, a PURE
-   * function of the params — all output must sit within this distance of the
-   * sketched spine. The host builds the spine corridor region from it (a
-   * windiness increase widens the corridor, never violates it) and plan 024
-   * reuses it as the cascade influence margin. Absent for polygon algorithms
-   * (city), which are contained by their sketched ring instead. */
+  /** LINE-kind algorithms only: the corridor half-width, a PURE function of the
+   * params — all output must sit within this distance of the sketched spine.
+   * The host builds the spine corridor region from it (a windiness increase
+   * widens the corridor, never violates it) and the cascade reuses it as the
+   * influence margin. Absent for polygon algorithms (city), which are contained
+   * by their sketched ring instead. */
   corridorMaxOffset?(params: Record<string, unknown>): number;
   generate(
     seed: number,
@@ -107,8 +106,8 @@ export interface ProcgenAlgorithm {
   ): GeoJSON.Feature[];
 }
 
-/** City params v1 (plan 020 §3.1): `{ profile }`. Room to grow — density,
- * wall override, etc. — behind the persisted `procgen.version`. */
+/** City params: `{ profile }`. Room to grow — density, wall override, etc. —
+ * behind the persisted `procgen.version`. */
 export const CITY_PROFILE_IDS = [
   "euro-medieval",
   "euro-continental",
@@ -126,31 +125,26 @@ export const CITY_PROFILE_IDS = [
 
 const cityParamsSchema = z.object({
   profile: z.enum(CITY_PROFILE_IDS),
-  /** Plan 025 §2.9 (na-grid): promote the quadrant-collision seam into ONE wide
-   * diagonal boulevard (Market Street). Additive — DEFAULT off, so na-grid stays
-   * byte-identical unless the GM opts in. Read only by the `city` generator. */
+  /** na-grid: promote the quadrant-collision seam into ONE wide diagonal
+   * boulevard (Market Street). DEFAULT off. Read only by the `city` generator. */
   seamBoulevard: z.boolean().optional(),
-  /** Plan 025 §2.10 (euro-medieval): number of successive walls/ring-roads —
-   * 1 (default, today) or 2 (a second, older inner ring, the Paris Châtelet
-   * reading). Additive — absent/1 leaves euro-medieval byte-identical. */
+  /** euro-medieval: number of successive walls/ring-roads — 1 (default) or 2 (a
+   * second, older inner ring, the Paris Châtelet reading). */
   growthRings: z.union([z.literal(1), z.literal(2)]).optional(),
-  /** Optional GM-placed generation center (plan 020 Addendum 2), gen-space
-   * meters, mm-quantized by the host. Present ⇒ the plaza + arterial star
-   * anchor here instead of the computed `generationCenter(region)`, so a
-   * boundary vertex edit leaves the skeleton in place and only the rim adapts.
-   * Absent ⇒ automatic center (keeps migrated regions byte-stable). If a later
-   * edit moves the boundary so this point falls outside the ring, generation
-   * falls back to the automatic center deterministically. */
+  /** Optional GM-placed generation center, gen-space meters, mm-quantized by the
+   * host. Present ⇒ the plaza + arterial star anchor here instead of the computed
+   * `generationCenter(region)`, so a boundary vertex edit leaves the skeleton in
+   * place and only the rim adapts. Absent ⇒ automatic center. If a later edit
+   * moves the boundary so this point falls outside the ring, generation falls
+   * back to the automatic center deterministically. */
   center: z.tuple([z.number().finite(), z.number().finite()]).optional(),
 });
 
-/** City presets (plan 022 §1): the four profiles become templates of the
- * `city` algorithm. Preset id === profile id (they are 1:1 today); a preset's
- * `params` is exactly `{ profile }`. Future city knobs (density, wall
- * override) would join `params` here and default per preset — additive, so a
- * plugin update never re-rolls an existing region (§1 additive-params rule).
- * Labels are concise-but-descriptive and are the single source for both the
- * create modal and the selected-region panel. */
+/** City presets: each profile becomes a template of the `city` algorithm.
+ * Preset id === profile id (they are 1:1 today); a preset's `params` is exactly
+ * `{ profile }`. Future city knobs (density, wall override) would join `params`
+ * here and default per preset. Labels are concise-but-descriptive and are the
+ * single source for both the create modal and the selected-region panel. */
 const CITY_PRESETS: readonly ProcgenPreset[] = [
   { id: "euro-medieval", label: "European medieval — organic warren, plaza, T-junctions", params: { profile: "euro-medieval" } },
   { id: "euro-continental", label: "European continental — regular blocks, wide angles", params: { profile: "euro-continental" } },
@@ -172,9 +166,8 @@ const cityAlgorithm: ProcgenAlgorithm = {
   currentVersion: 1,
   appliesTo: ["district"],
   // Stage 3 (settlement): bridges over the meandered channel + a growth-cost
-  // bump from canopy → consumes water + vegetation (plan 024 §3; the actual
-  // channel/canopy consumption wires in 24-C with the windiness gate). Produces
-  // `settlement` for the stage-4 wall elaboration (§7).
+  // bump from canopy → consumes water + vegetation. Produces `settlement` for
+  // the stage-4 wall elaboration.
   stage: 3,
   produces: ["settlement"],
   consumes: ["water", "vegetation"],
@@ -193,37 +186,32 @@ const cityAlgorithm: ProcgenAlgorithm = {
   tileGeneratorIds: DOMAIN_TILE_GENERATOR_IDS,
   generate(seed, region, params, constraints): GeoJSON.Feature[] {
     const { profile, center, seamBoulevard, growthRings } = cityParamsSchema.parse(params);
-    // Additive per-run params (plan 025-E §2.9/§2.10) — undefined ⇒ byte-identical.
     const overrides =
       seamBoulevard !== undefined || growthRings !== undefined ? { seamBoulevard, growthRings } : undefined;
     return generateCityNetwork(seed, region, profile, constraints, center, overrides);
   },
 };
 
-// ─── River (plan 022 §3.1) — the first LINE-kind algorithm ───────────────────
+// ─── River — the first LINE-kind algorithm ───────────────────────────────────
 
-/** River params v1 (plan 022 §3.1). All knobs default to the prior/simplest
- * behavior (§1 additive-params rule): a plain straight uniform channel. */
+/** River params. All knobs default to the simplest behavior: a plain straight
+ * uniform channel. */
 const riverParamsSchema = z.object({
   windiness: z.number().min(0).max(1).default(0),
   braiding: z.number().min(0).max(1).default(0),
   width: z.number().positive().max(500).default(12),
   widthGrowth: z.number().min(0).max(4).default(0),
   braidBias: z.number().min(0).max(1).default(0),
-  /** Box 23-E (plan 022 §3.1): terrain-slope coupling strength — steep ground
-   * (from the sketched mountains' elevation field) straightens the meander.
-   * ADDITIVE default 1 (coupling on): with no mountain sketch the output is
-   * byte-identical for ANY value, so legacy no-mountain rivers are untouched;
-   * a legacy river that DOES cross a sketched mountain adapts on its next
-   * regenerate — the elevation field was already that river's declared input
-   * (§3.1 "when plan 023 lands"), the same additive-output precedent as 23-C
-   * contours appearing on existing mountains. Flagged in DECISIONS. */
+  /** Terrain-slope coupling strength — steep ground (from the sketched
+   * mountains' elevation field) straightens the meander. Default 1 (coupling
+   * on): with no mountain sketch the output is identical for ANY value, so a
+   * river without mountains is unaffected; a river that DOES cross a sketched
+   * mountain adapts on its next regenerate. */
   slopeSensitivity: z.number().min(0).max(1).default(1),
 });
 
-/** River presets (plan 022 §3.1) — the templates Jonah named. Params are the
- * whole truth; the "delta weights braiding toward the end" behavior is carried
- * by `braidBias`, never a preset-id branch. */
+/** River presets. Params are the whole truth; the "delta weights braiding
+ * toward the end" behavior is carried by `braidBias`, never a preset-id branch. */
 const RIVER_PRESETS: readonly ProcgenPreset[] = [
   {
     id: "lazy-lowland",
@@ -248,9 +236,8 @@ const RIVER_PRESETS: readonly ProcgenPreset[] = [
   },
 ];
 
-/** River tile-generator ids = the emitted feature buckets (plan 022 §3.1 +
- * plan 028 §1.1): channel water + bank casing lines + island land. Cache keys
- * + paint layers key on these. */
+/** River tile-generator ids = the emitted feature buckets: channel water + bank
+ * casing lines + island land. Cache keys + paint layers key on these. */
 export const RIVER_TILE_GENERATOR_IDS: readonly string[] = [
   "river-channel",
   "river-bank",
@@ -269,8 +256,8 @@ const riverAlgorithm: ProcgenAlgorithm = {
   currentVersion: 1,
   appliesTo: ["river"],
   // Stage 1 (hydrology): reads the sketched mountains' `elevation` field
-  // (slope straightens the meander — box 23-E, already wired); produces the
-  // `water` channel the city/forest read.
+  // (slope straightens the meander); produces the `water` channel the
+  // city/forest read.
   stage: 1,
   produces: ["water"],
   consumes: ["elevation"],
@@ -295,11 +282,10 @@ const riverAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-// ─── Forest (plan 022 §3.2) — masked-noise polygon canopy ────────────────────
+// ─── Forest — masked-noise polygon canopy ────────────────────────────────────
 
-/** Forest params v1 (plan 022 §3.2). All knobs have sensible defaults so a bare
- * `{}` validates to a reasonable mixed woodland (additive-params rule §1: a
- * later knob must default to prior behavior; v1 ships all three at once). */
+/** Forest params. All knobs have sensible defaults so a bare `{}` validates to
+ * a reasonable mixed woodland. */
 const forestParamsSchema = z.object({
   variety: z.enum(FOREST_VARIETIES).default("mixed"),
   density: z.number().min(0).max(1).default(0.6),
@@ -307,9 +293,8 @@ const forestParamsSchema = z.object({
   edgeRaggedness: z.number().min(0).max(1).default(0.5),
 });
 
-/** Forest presets (plan 022 §3.2) — the templates Jonah named. Params are the
- * whole truth; `variety` is carried onto features for theme tinting, never a
- * runtime branch in the generator. */
+/** Forest presets. Params are the whole truth; `variety` is carried onto
+ * features for theme tinting, never a runtime branch in the generator. */
 const FOREST_PRESETS: readonly ProcgenPreset[] = [
   { id: "broadleaf", label: "Broadleaf — dense deciduous wood", params: { variety: "broadleaf", density: 0.7, clearings: 0.12, edgeRaggedness: 0.45 } },
   { id: "conifer", label: "Conifer — dark evergreen forest", params: { variety: "conifer", density: 0.8, clearings: 0.08, edgeRaggedness: 0.3 } },
@@ -318,12 +303,12 @@ const FOREST_PRESETS: readonly ProcgenPreset[] = [
   { id: "dead-wood", label: "Dead-wood — sparse, ragged, many clearings", params: { variety: "dead-wood", density: 0.35, clearings: 0.35, edgeRaggedness: 0.7 } },
 ];
 
-/** Forest tile-generator ids = the emitted feature buckets. Plan 026-B: the
- * canopy is ONE `forest-canopy` MultiPolygon (clearings are interior HOLES, no
- * `forest-clearing` features any more) plus its `forest-canopy-rim` outline
- * LineStrings and the `forest-tree` stipple. `forest-clearing` is retained in
- * the list so pre-026-B caches still surface their clearing cells (cache keys +
- * paint layers key on these ids; an uncached gid is silently dropped). */
+/** Forest tile-generator ids = the emitted feature buckets. The canopy is ONE
+ * `forest-canopy` MultiPolygon (clearings are interior HOLES, not
+ * `forest-clearing` features) plus its `forest-canopy-rim` outline LineStrings
+ * and the `forest-tree` stipple. `forest-clearing` is retained in the list so
+ * older caches still surface their clearing cells (cache keys + paint layers
+ * key on these ids; an uncached gid is silently dropped). */
 export const FOREST_TILE_GENERATOR_IDS: readonly string[] = [
   "forest-canopy",
   "forest-canopy-rim",
@@ -336,11 +321,11 @@ const forestAlgorithm: ProcgenAlgorithm = {
   label: "Forest",
   currentVersion: 1,
   appliesTo: ["forest"],
-  // Stage 2 (vegetation): no canopy in the river → consumes `water` (plan 024
-  // §3; consumption wires in 24-C). Produces `vegetation` for the city's
-  // growth-cost bump. NEVER consumes `settlement` — the reverse (city clips
-  // canopy) is rejected outright (§3, it breaks cycle-freedom); the town reads
-  // as a clearing because city fabric paints above canopy within layer 1.
+  // Stage 2 (vegetation): no canopy in the river → consumes `water`. Produces
+  // `vegetation` for the city's growth-cost bump. NEVER consumes `settlement` —
+  // the reverse (city clips canopy) is rejected outright (it breaks
+  // cycle-freedom); the town reads as a clearing because city fabric paints
+  // above canopy within layer 1.
   stage: 2,
   produces: ["vegetation"],
   consumes: ["water"],
@@ -361,21 +346,19 @@ const forestAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-// ─── Park (plan 022 §3.3) — the second consumer of the ground-cell + harmonic
-// blob primitives; wires up the previously-inert `park` polygon kind ──────────
+// ─── Park — the second consumer of the ground-cell + harmonic blob primitives ─
 
-/** Park params v1 (plan 022 §3.3). All knobs have defaults so a bare `{}`
- * validates to a reasonable city park (additive-params rule §1). `variety`
- * drives layout (like the city algorithm's `profile`), never a preset-id
- * branch; `pond` is a bool, `pathDensity` 0–1. */
+/** Park params. All knobs have defaults so a bare `{}` validates to a reasonable
+ * city park. `variety` drives layout (like the city algorithm's `profile`),
+ * never a preset-id branch; `pond` is a bool, `pathDensity` 0–1. */
 const parkParamsSchema = z.object({
   variety: z.enum(PARK_VARIETIES).default("city-park"),
   pathDensity: z.number().min(0).max(1).default(0.5),
   pond: z.boolean().default(false),
 });
 
-/** Park presets (plan 022 §3.3) — the four templates. Params are the whole
- * truth; `japanese-garden` forces `pond: true` (its composition anchor). */
+/** Park presets. Params are the whole truth; `japanese-garden` forces
+ * `pond: true` (its composition anchor). */
 const PARK_PRESETS: readonly ProcgenPreset[] = [
   { id: "formal-garden", label: "Formal garden — axial paths, symmetric beds", params: { variety: "formal-garden", pathDensity: 0.6, pond: false } },
   { id: "city-park", label: "City park — curved paths, lawns, a pond", params: { variety: "city-park", pathDensity: 0.5, pond: true } },
@@ -383,9 +366,9 @@ const PARK_PRESETS: readonly ProcgenPreset[] = [
   { id: "japanese-garden", label: "Japanese garden — winding circuit, pond, island, rocks", params: { variety: "japanese-garden", pathDensity: 0.4, pond: true } },
 ];
 
-/** Park tile-generator ids = the emitted feature buckets (plan 022 §3.3):
- * ground fabric + path web + water (pond/island/bridge) + gravel court + rock +
- * tree points. Cache keys + paint layers key on these. */
+/** Park tile-generator ids = the emitted feature buckets: ground fabric + path
+ * web + water (pond/island/bridge) + gravel court + rock + tree points. Cache
+ * keys + paint layers key on these. */
 export const PARK_TILE_GENERATOR_IDS: readonly string[] = [
   "park-lawn",
   "park-canopy",
@@ -406,8 +389,8 @@ export const PARK_TILE_GENERATOR_IDS: readonly string[] = [
 const parkAlgorithm: ProcgenAlgorithm = {
   id: "park",
   label: "Park",
-  // v2: blobFeature now mm-quantizes its ring (D5) — a sub-mm snap of the
-  // formal-garden bed / japanese bridge / court coordinates. Params unchanged.
+  // Version 2: blobFeature mm-quantizes its ring (D5), snapping the
+  // formal-garden bed / japanese bridge / court coordinates to sub-mm.
   currentVersion: 2,
   appliesTo: ["park"],
   // Stage 2 (vegetation), same band as forest: a park pond sits away from a
@@ -432,11 +415,11 @@ const parkAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-// ─── Wall (plan 022 §3.4) — the second LINE-kind algorithm (after river) ─────
+// ─── Wall — the second LINE-kind algorithm (after river) ─────────────────────
 
-/** Wall params v1 (plan 022 §3.4). All knobs have defaults so a bare `{}`
- * validates to a plain curtain wall (additive-params rule §1). `style` drives
- * layout (like the city `profile` / park `variety`), never a preset-id branch. */
+/** Wall params. All knobs have defaults so a bare `{}` validates to a plain
+ * curtain wall. `style` drives layout (like the city `profile` / park
+ * `variety`), never a preset-id branch. */
 const wallParamsSchema = z.object({
   style: z.enum(WALL_STYLES).default("curtain-wall"),
   towerSpacing: z.number().min(15).max(400).default(60),
@@ -444,18 +427,18 @@ const wallParamsSchema = z.object({
   gatehouseScale: z.number().min(0.2).max(3).default(1),
 });
 
-/** Wall presets (plan 022 §3.4) — the three templates Jonah named. Params are
- * the whole truth; `palisade` carries `towerSpacing` too (harmless — the
- * generator emits no towers for a palisade), so switching style keeps the knob. */
+/** Wall presets. Params are the whole truth; `palisade` carries `towerSpacing`
+ * too (harmless — the generator emits no towers for a palisade), so switching
+ * style keeps the knob. */
 const WALL_PRESETS: readonly ProcgenPreset[] = [
   { id: "curtain-wall", label: "Curtain wall — stone, regular towers", params: { style: "curtain-wall", towerSpacing: 60, moat: false, gatehouseScale: 1 } },
   { id: "palisade", label: "Palisade — timber stockade, no towers", params: { style: "palisade", towerSpacing: 60, moat: false, gatehouseScale: 0.8 } },
   { id: "bastioned", label: "Bastioned — angular star-fort trace, moat", params: { style: "bastioned", towerSpacing: 90, moat: true, gatehouseScale: 1.4 } },
 ];
 
-/** Wall tile-generator ids = the emitted feature buckets (plan 022 §3.4): the
- * outboard moat, the masonry band, the towers, and the gate markers. Cache keys
- * + paint layers key on these. */
+/** Wall tile-generator ids = the emitted feature buckets: the outboard moat, the
+ * masonry band, the towers, and the gate markers. Cache keys + paint layers key
+ * on these. */
 export const WALL_TILE_GENERATOR_IDS: readonly string[] = ["wall-moat", "wall-quad", "wall-tower", "wall-gate"];
 
 const wallAlgorithm: ProcgenAlgorithm = {
@@ -464,9 +447,8 @@ const wallAlgorithm: ProcgenAlgorithm = {
   currentVersion: 1,
   appliesTo: ["wall"],
   // Stage 4 (detail): the procgen wall ELABORATION (towers/gates/moat) consumes
-  // stage-3 `settlement` (plan 024 §7 resolution; consumption wires later). The
-  // raw wall SKETCH stays a stage-agnostic constraint every stage reads
-  // (`fabricConstraints.wallLines`) — that is unchanged and orthogonal to this
+  // stage-3 `settlement`. The raw wall SKETCH stays a stage-agnostic constraint
+  // every stage reads (`fabricConstraints.wallLines`) — orthogonal to this
   // stage. The cascade never carries stage-4 output downward (produces `detail`,
   // which nothing consumes).
   stage: 4,
@@ -493,12 +475,11 @@ const wallAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-// ─── Farmland (plan 022 §3.5) — the new agriculture polygon kind ─────────────
+// ─── Farmland — the agriculture polygon kind ─────────────────────────────────
 
-/** Farmland params v1 (plan 022 §3.5). All knobs have defaults so a bare `{}`
- * validates to a reasonable patchwork (additive-params rule §1). `fieldType`
- * drives layout (like the city `profile` / park `variety`), never a preset-id
- * branch. `paddy-terraces` is intentionally absent (deferred to plan 023). */
+/** Farmland params. All knobs have defaults so a bare `{}` validates to a
+ * reasonable patchwork. `fieldType` drives layout (like the city `profile` /
+ * park `variety`), never a preset-id branch. */
 const farmlandParamsSchema = z.object({
   fieldType: z.enum(FARMLAND_TYPES).default("enclosed-patchwork"),
   fieldSize: z.number().min(0).max(1).default(0.5),
@@ -507,11 +488,10 @@ const farmlandParamsSchema = z.object({
   farmsteads: z.number().min(0).max(1).default(0.4),
 });
 
-/** Farmland presets (plan 022 §3.5) — the five templates. `paddy-terraces`
- * landed in box 23-E (the plan-023 field-coupled variant: contour-following
- * banks over the sketched mountains' elevation field, concentric fallback on
- * flat ground). Params are the whole truth; `fieldType` is carried onto
- * features for theme tinting, never a runtime preset-id branch. */
+/** Farmland presets. `paddy-terraces` is the field-coupled variant:
+ * contour-following banks over the sketched mountains' elevation field,
+ * concentric fallback on flat ground. Params are the whole truth; `fieldType` is
+ * carried onto features for theme tinting, never a runtime preset-id branch. */
 const FARMLAND_PRESETS: readonly ProcgenPreset[] = [
   { id: "open-field-strips", label: "Open-field strips — medieval furlongs off lanes", params: { fieldType: "open-field-strips", fieldSize: 0.55, hedging: "none", laneDensity: 0.66, farmsteads: 0.3 } },
   { id: "enclosed-patchwork", label: "Enclosed patchwork — irregular hedged fields", params: { fieldType: "enclosed-patchwork", fieldSize: 0.5, hedging: "hedgerows", laneDensity: 0.4, farmsteads: 0.45 } },
@@ -520,13 +500,11 @@ const FARMLAND_PRESETS: readonly ProcgenPreset[] = [
   { id: "paddy-terraces", label: "Paddy terraces — contour-following banks", params: { fieldType: "paddy-terraces", fieldSize: 0.35, hedging: "none", laneDensity: 0.4, farmsteads: 0.25 } },
 ];
 
-/** Farmland tile-generator ids = the emitted feature buckets (plan 022 §3.5 +
- * box 23-E): tilled fields, the lane web, field-edge hedges/fences, farmstead
- * footprints, orchard tree points, and paddy terrace bank lines. Cache keys +
- * paint layers key on these. (`farm-bank` appended — ADDITIVE: a pre-23-E
- * cached farmland tile just misses the new bucket, so its next read re-clips
- * the cached network; the pre-existing gids' bytes are unchanged, the 23-C
- * mountain-contour precedent.) */
+/** Farmland tile-generator ids = the emitted feature buckets: tilled fields, the
+ * lane web, field-edge hedges/fences, farmstead footprints, orchard tree points,
+ * and paddy terrace bank lines. Cache keys + paint layers key on these. (An
+ * older cached farmland tile missing the `farm-bank` bucket re-clips the cached
+ * network on its next read; the other gids' bytes are unchanged.) */
 export const FARMLAND_TILE_GENERATOR_IDS: readonly string[] = [
   "farm-field",
   "farm-lane",
@@ -542,9 +520,9 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   currentVersion: 1,
   appliesTo: ["farmland"],
   // Stage 2 (grouped with vegetation): paddy-terraces follow the sketched
-  // mountains' `elevation` contours (box 23-E, already wired) → consumes
-  // `elevation`. Produces NOTHING downstream — the city reads a raw farmland
-  // SKETCH (`fabricConstraints.farmlandRings`) to suppress its outskirts, not
+  // mountains' `elevation` contours → consumes `elevation`. Produces NOTHING
+  // downstream — the city reads a raw farmland SKETCH
+  // (`fabricConstraints.farmlandRings`) to suppress its outskirts, not
   // farmland's generated OUTPUT, so there is no farmland → city output edge.
   stage: 2,
   produces: [],
@@ -567,33 +545,30 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   },
 };
 
-// ─── Mountain (plan 023 §3) — the relief polygon kind, first consumer of the
-// elevation field (fields/elevation.ts) ──────────────────────────────────────
+// ─── Mountain — the relief polygon kind, first consumer of the elevation field
+// (fields/elevation.ts) ──────────────────────────────────────────────────────
 
-/** Mountain params v1 (plan 023 §3). All knobs have defaults so a bare `{}`
- * validates to a reasonable alpine massif (additive-params rule §1). `terrain`
- * drives layout (like the city `profile` / park `variety`), never a preset-id
- * branch. `paddy-terraces` (farmland box, deferred) is unrelated. */
+/** Mountain params. All knobs have defaults so a bare `{}` validates to a
+ * reasonable alpine massif. `terrain` drives layout (like the city `profile` /
+ * park `variety`), never a preset-id branch. */
 const mountainParamsSchema = z.object({
   terrain: z.enum(MOUNTAIN_TERRAINS).default("alpine"),
   amplitude: z.number().min(0).max(1).default(0.6),
   roughness: z.number().min(0).max(1).default(0.5),
 });
 
-/** Mountain presets (plan 023 §3) — the three templates Jonah named. Params are
- * the whole truth; `terrain` is carried onto features for theme tinting, never
- * a runtime preset-id branch. */
+/** Mountain presets. Params are the whole truth; `terrain` is carried onto
+ * features for theme tinting, never a runtime preset-id branch. */
 const MOUNTAIN_PRESETS: readonly ProcgenPreset[] = [
   { id: "alpine", label: "Alpine — high ridged peaks, steep relief", params: { terrain: "alpine", amplitude: 0.85, roughness: 0.6 } },
   { id: "mesa", label: "Mesa — terraced tablelands, cliff risers", params: { terrain: "mesa", amplitude: 0.55, roughness: 0.4 } },
   { id: "rolling-hills", label: "Rolling hills — gentle rounded uplands", params: { terrain: "rolling-hills", amplitude: 0.3, roughness: 0.35 } },
 ];
 
-/** Mountain tile-generator ids = the emitted feature buckets (plan 023 §3 +
- * §4.1): the rocky-ground massif, the downslope relief hachures, the summit
- * peaks, and the topographic contour iso-lines (23-C). Cache keys + paint
- * layers key on these — EVERY emitted gid MUST appear here or the tile clip
- * silently drops it (the twice-hit integration bug). */
+/** Mountain tile-generator ids = the emitted feature buckets: the rocky-ground
+ * massif, the downslope relief hachures, the summit peaks, and the topographic
+ * contour iso-lines. Cache keys + paint layers key on these — EVERY emitted gid
+ * MUST appear here or the tile clip silently drops it. */
 export const MOUNTAIN_TILE_GENERATOR_IDS: readonly string[] = [
   "mountain-massif",
   "mountain-hachure",
@@ -608,7 +583,7 @@ const mountainAlgorithm: ProcgenAlgorithm = {
   appliesTo: ["mountain"],
   // Stage 0 (elevation): the base FIELD. Produces `elevation` (the river's
   // slope coupling + farmland's paddy terraces read it via the sketch-derived
-  // `elevationFieldFromFabric`, box 23-E). Consumes nothing.
+  // `elevationFieldFromFabric`). Consumes nothing.
   stage: 0,
   produces: ["elevation"],
   consumes: [],
@@ -657,7 +632,7 @@ export function algorithmById(id: string): ProcgenAlgorithm | undefined {
   return REGISTRY.find((a) => a.id === id);
 }
 
-// ─── Preset helpers (plan 022 §1) — pure, host-agnostic ──────────────────────
+// ─── Preset helpers — pure, host-agnostic ────────────────────────────────────
 // Presets are sugar over params; these functions are the ONLY sanctioned way to
 // go preset⇆params, and they never touch a persisted block or a generator.
 

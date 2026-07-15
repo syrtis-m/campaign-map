@@ -1,51 +1,42 @@
 /**
- * Input fingerprints for whole-artifact region caches (plan 024 §5.1).
+ * Input fingerprints for whole-artifact region caches.
  *
- * "A cache hit needs no upstream fields" (§5) assumes the cache is FRESH — but
- * `Fabric.geojson` can change WITHOUT any in-app commit path running (vault
- * sync from another device, an external editor, a crash mid-cascade). A blind
- * key-match replay would then paint STALE downstream output and silently
- * violate "the map is a pure function of the durable data".
+ * A key-match cache hit assumes the cache is FRESH — but `Fabric.geojson` can
+ * change WITHOUT any in-app commit path running (vault sync from another device,
+ * an external editor, a crash mid-cascade). A blind key-match replay would then
+ * paint STALE downstream output and silently violate "the map is a pure function
+ * of the durable data".
  *
- * Fix (the same self-invalidating discipline as the 23-D DEM `digest`): every
- * region cache record stores an input fingerprint — a canonical hash of the
- * durable inputs that determine the record's bytes. Replay treats a key hit
- * whose fingerprint ≠ the current one as a MISS and recomputes. Deterministic,
- * cheap (hashing durable data we already read), and it hardens plan 020's
+ * Fix: every region cache record stores an input fingerprint — a canonical hash
+ * of the durable inputs that determine the record's bytes. Replay treats a key
+ * hit whose fingerprint ≠ the current one as a MISS and recomputes.
+ * Deterministic, cheap (hashing durable data we already read), and it hardens
  * single-region replay against external sketch edits as a side effect.
  *
- * Composition (plan 024 §5.1's list, for the inputs that exist at 24-A):
+ * Composition:
  *   - seed, procgen version + params (the region's own `procgen` block),
  *   - the quantized ring / spine (the region geometry),
  *   - the raw-sketch constraint geometry the generators actually consume
  *     (`indexFabricConstraints` — water/river/road/wall/farmland), sorted so
  *     the hash is invariant to feature order.
- *
- * 24-B ADDS (§5.1's "sorted upstream artifact fingerprints"):
  *   - `upstreamFingerprints`: the sorted fingerprints of every STRICTLY-LOWER-
  *     stage region this one depends on in the stage DAG (`dag.ts`). Each is
  *     itself a `regionFingerprint`, so any change to an upstream's durable
  *     inputs (a mountain's params, a river's windiness) transitively changes
  *     THIS region's fingerprint → its cache goes stale → it recomputes on
  *     replay, in stage order (a stale stage-1 recompute invalidates its
- *     dependents' fingerprints too). This is what catches an upstream edit no
- *     in-app commit path saw, and closes 24-A's gap: a mountain is a procgen
- *     REGION (not a raw-sketch kind), so its edit was invisible to the
- *     raw-constraint hash below — the upstream fingerprints see it.
- *   - APPENDED ONLY WHEN NON-EMPTY, and the `FP` version tag is NOT bumped: a
- *     region with no upstream hashes to the SAME string as at 24-A, so opening
- *     a campaign without cross-region dependencies triggers NO recompute
- *     (DoD #6 back-compat — strictly better than a blanket version bump, which
- *     would force a one-time byte-identical recompute of every fingerprinted
- *     record). A region that genuinely GAINS an upstream changes fingerprint —
- *     correct: that coupling is new. Decision logged in the 24-B report.
+ *     dependents' fingerprints too). This catches an upstream edit no in-app
+ *     commit path saw: a mountain is a procgen REGION (not a raw-sketch kind),
+ *     so its edit is invisible to the raw-constraint hash below — the upstream
+ *     fingerprints see it. Folded in ONLY when non-empty, and the `FP` version
+ *     tag is NOT bumped, so a region with no upstream keeps a stable fingerprint
+ *     and triggers no recompute; a region that GAINS an upstream changes
+ *     fingerprint (correct — that coupling is new).
  *
- * DELIBERATELY EXCLUDED (documented in DECISIONS):
- *   - canon Locations: `generationService` documents that a cache hit does NOT
- *     re-check canon ("canon changes don't auto-invalidate cached fabric").
- *     Fingerprinting canon would silently change that behavior — it is plan
- *     024 open question #3, unresolved. Excluding canon preserves today's
- *     contract exactly.
+ * DELIBERATELY EXCLUDED:
+ *   - canon Locations: a cache hit does NOT re-check canon ("canon changes don't
+ *     auto-invalidate cached fabric"). Fingerprinting canon would silently
+ *     change that behavior. Excluding canon preserves today's contract exactly.
  *
  * Pure/headless (no DOM/map/Obsidian imports) so both the host and the worker
  * can compute an identical fingerprint from the same durable data.
@@ -54,9 +45,8 @@ import type { FabricFeature } from "../../model/fabric";
 import { indexFabricConstraints } from "../fabricConstraints";
 import type { ProcgenRegion } from "../region";
 
-/** Bumped when the fingerprint composition changes (e.g. 24-B adds upstream
- * artifact fingerprints). Old records carry the old tag ⇒ mismatch ⇒ a MISS
- * that recomputes byte-identically, so a composition change self-heals. */
+/** Bumped when the fingerprint composition changes. Old records carry the old
+ * tag ⇒ mismatch ⇒ a MISS that recomputes, so a composition change self-heals. */
 const FP_VERSION = "fp1";
 
 export interface RegionFingerprintInput {
@@ -73,10 +63,10 @@ export interface RegionFingerprintInput {
   /** The whole sketched-fabric collection — the SAME features every generator
    * run sees as constraints. Only the constraint-bearing kinds contribute. */
   fabricFeatures?: FabricFeature[];
-  /** Plan 024 §5.1: the fingerprints of this region's strictly-lower-stage DAG
-   * dependencies (see `dag.ts`). Sorted by the caller for order-invariance;
-   * folded in ONLY when non-empty (a no-upstream region stays byte-identical to
-   * its 24-A fingerprint — see the module header). */
+  /** The fingerprints of this region's strictly-lower-stage DAG dependencies
+   * (see `dag.ts`). Sorted by the caller for order-invariance; folded in ONLY
+   * when non-empty (a no-upstream region keeps a stable fingerprint — see the
+   * module header). */
   upstreamFingerprints?: string[];
 }
 
@@ -143,10 +133,10 @@ export function regionFingerprint(input: RegionFingerprintInput): string {
     "G:" + geometry,
     "C:" + canonicalConstraints(fabricFeatures),
   ];
-  // 24-B: fold in upstream DAG dependencies ONLY when present, so a no-upstream
-  // region hashes byte-identically to 24-A (no version bump, no needless
-  // recompute — module header). Sorted here too, defensively, so the hash is
-  // invariant to the order the caller collected upstreams.
+  // Fold in upstream DAG dependencies ONLY when present, so a no-upstream region
+  // keeps a stable fingerprint (no version bump, no needless recompute — module
+  // header). Sorted here too, defensively, so the hash is invariant to the order
+  // the caller collected upstreams.
   if (upstreamFingerprints && upstreamFingerprints.length > 0) {
     fields.push("U:" + [...upstreamFingerprints].sort().join(","));
   }
@@ -155,12 +145,11 @@ export function regionFingerprint(input: RegionFingerprintInput): string {
 
 /**
  * Freshness test for a cached region record against the current expected
- * fingerprint. BACK-COMPAT (plan 024 §5.1, DoD #6): a record with NO stored
- * fingerprint is a PRE-024 record — grandfathered as fresh so opening an
- * existing campaign never triggers a regen storm (deleting `.mapcache/` stays
- * harmless; Jonah's real campaign opens from cache, byte-intact). Only a record
- * that HAS a fingerprint AND mismatches is stale. A `undefined` expected
- * fingerprint (a caller that can't compute one) also can't invalidate.
+ * fingerprint. A record with NO stored fingerprint is grandfathered as fresh so
+ * opening an existing campaign never triggers a regen storm (deleting
+ * `.mapcache/` stays harmless). Only a record that HAS a fingerprint AND
+ * mismatches is stale. A `undefined` expected fingerprint (a caller that can't
+ * compute one) also can't invalidate.
  */
 export function isCacheRecordFresh(
   storedFingerprint: string | undefined,

@@ -1,53 +1,49 @@
 /**
- * Farmland generator (plan 022 §3.5) — wires up the new `farmland` polygon
- * kind. Pure/headless (no DOM/map/Obsidian imports; reads only its arguments,
- * D6): a sketched `farmland` polygon is the region; this fills it with tilled
- * fields, a sparse lane web, field-edge hedges/fences, farmstead footprints at
- * lane junctions, and (for the orchard preset) regular tree rows — everything
- * strictly inside the sketched ring.
+ * Farmland generator — the `farmland` polygon kind. Pure/headless (no
+ * DOM/map/Obsidian imports; reads only its arguments): a sketched `farmland`
+ * polygon is the region; this fills it with tilled fields, a sparse lane web,
+ * field-edge hedges/fences, farmstead footprints at lane junctions, and (for
+ * the orchard preset) regular tree rows — everything strictly inside the
+ * sketched ring.
  *
  * Five field types (a `fieldType` param, never a presetId — mirrors the city
  * algorithm's `profile` / park's `variety`): `open-field-strips` (medieval long
  * strips off a central lane), `enclosed-patchwork` (irregular hedged fields),
  * `grid-quarters` (rectilinear sections + straight section roads), `orchard`
- * (regular tree rows in a grid), and — box 23-E, the plan 022 §3.5 deferral —
- * `paddy-terraces`: contour-following terrace bank lines (`farm-bank`) traced
- * by marching squares over the ELEVATION FIELD the sketched mountains define
- * (fields/mountainField.ts — a pure function of the durable sketch layer via
- * `constraints.fabricFeatures`; the same legality as 23-D's DEM — the raw
- * sketch, never another generator's OUTPUT) over a region-wide paddy wash.
- * Where no usable relief exists (< PADDY_MIN_RELIEF_M), banks fall back to
- * concentric interior-distance bands (§3.5's pre-023 fallback, kept as the
- * no-mountain behavior: terraces following the sketched boundary inward).
- * ONLY paddy-terraces reads the constraints — the four 22-F field types never
- * touch them, so their output is byte-identical with or without mountains
- * (the 23-E no-mountain / cross-kind byte-identity rule, gate-asserted).
+ * (regular tree rows in a grid), and `paddy-terraces`: contour-following terrace
+ * bank lines (`farm-bank`) traced by marching squares over the ELEVATION FIELD
+ * the sketched mountains define (fields/mountainField.ts — a pure function of the
+ * durable sketch layer via `constraints.fabricFeatures`; the raw sketch, never
+ * another generator's OUTPUT) over a region-wide paddy wash. Where no usable
+ * relief exists (< PADDY_MIN_RELIEF_M), banks fall back to concentric
+ * interior-distance bands (terraces following the sketched boundary inward).
+ * ONLY paddy-terraces reads the constraints — the four other field types never
+ * touch them, so their output is identical with or without mountains.
  *
- * Design (advisor 2026-07-13, the park/forest precedent): NOT the parcels.ts
- * OBB splitter oriented to the region. Two plan-literal deviations, logged in
- * DECISIONS + flagged to Jonah:
+ * Design (the park/forest precedent): NOT the parcels.ts OBB splitter oriented
+ * to the region. Two deviations:
  *  1. The field lattice is keyed on ABSOLUTE WORLD POSITION and aligned to the
  *     WORLD axes, not to the region's oriented bounding box. Orienting the grid
  *     to the region OBB would mean a single vertex edit changes the OBB angle
  *     and rotates the WHOLE field grid — an edit would look like a re-roll and
  *     fail the edit-locality gate. World-axis alignment keeps every interior
- *     field byte-identical under an edit (forest/park's identity property).
+ *     field unchanged under an edit (forest/park's identity property).
  *     Real grid/strip farmland is axis-aligned anyway.
- *  2. Field subdivision is a self-contained recursive rectangle splitter (the
- *     "OBB/strip splitter at field scale" in spirit) rather than importing
- *     `parcels.subdivideBlocks`, which is tightly coupled to CityProfile /
- *     CitynessFn / BlockFace — a fake city to grow fields, more fragile than a
- *     purpose-built closed-form generator, not less (park set this precedent).
+ *  2. Field subdivision is a self-contained recursive rectangle splitter rather
+ *     than importing `parcels.subdivideBlocks`, which is tightly coupled to
+ *     CityProfile / CitynessFn / BlockFace — a fake city to grow fields, more
+ *     fragile than a purpose-built closed-form generator, not less (park set
+ *     this precedent).
  *
- * Determinism argument (procgen_v3_design.md §4):
- *  - D4/D6: closed-form arithmetic on an absolute-world lattice; every roll
- *    comes from `hashSeed(seed, salt, …integer world indices/paths)`.
- *  - D5: every emitted coordinate is mm-quantized before it leaves.
+ * Determinism:
+ *  - Closed-form arithmetic on an absolute-world lattice; every roll comes from
+ *    `hashSeed(seed, salt, …integer world indices/paths)`; every emitted
+ *    coordinate is mm-quantized before it leaves.
  *  - Identity property: fields/lanes/farmsteads/trees all key on ABSOLUTE world
  *    position (lattice indices + split path), so a ring vertex edit changes only
  *    which boundary rectangles pass containment — every interior field is
- *    byte-identical, while a re-roll (new seed) re-splits/re-classifies
- *    everything (measured in the gate: edit overlap ≫ re-roll overlap).
+ *    unchanged, while a re-roll (new seed) re-splits/re-classifies everything
+ *    (edit overlap ≫ re-roll overlap).
  *  - Containment: fields aren't jittered, so a rectangle emits only when all
  *    four corners are ≥ FIELD_MARGIN_M inside the ring AND no edge crosses the
  *    boundary (a straight edge between two contained corners can still bridge a
@@ -56,12 +52,11 @@
  *  - Feature ids hash positions (never emission order), integers so
  *    `clipNetworkToTile`'s `Number(id)` sort stays stable.
  *
- * Stage 2 (agriculture) in plan 024: the CITY sees farmland (its outskirt
- * fields are suppressed inside a raw farmland sketch — see
- * `citynet/outskirts.ts`); farmland NEVER sees the city (the only constraint it
- * reads is the raw mountain SKETCH, for paddy elevation — box 23-E). Farmland-
- * vs-city overlap is legal (overlap keys on the algorithm id —
- * MapController.overlappingRegion).
+ * The CITY sees farmland (its outskirt fields are suppressed inside a raw
+ * farmland sketch — see `citynet/outskirts.ts`); farmland NEVER sees the city
+ * (the only constraint it reads is the raw mountain SKETCH, for paddy
+ * elevation). Farmland-vs-city overlap is legal (overlap keys on the algorithm
+ * id — MapController.overlappingRegion).
  */
 import { hashSeed, mulberry32 } from "./rng";
 import {
@@ -89,7 +84,7 @@ export type FarmlandType = (typeof FARMLAND_TYPES)[number];
 export const HEDGING_KINDS = ["none", "fences", "hedgerows"] as const;
 export type Hedging = (typeof HEDGING_KINDS)[number];
 
-/** Farmland params (plan 022 §3.5). `fieldType` drives layout AND is carried
+/** Farmland params. `fieldType` drives layout AND is carried
  * onto every feature for theme tinting (never a presetId branch). `fieldSize`
  * 0–1 scales the base field dimension; `hedging` picks field-edge treatment;
  * `laneDensity` 0–1 scales the lane web; `farmsteads` 0–1 is the per-junction
@@ -115,7 +110,7 @@ const FARMSTEAD_M = 9; // farm building footprint size
 const ORCHARD_ROW_M = 13; // orchard tree row/column spacing (regular rows, kept light)
 const STRIP_COUNT = 4; // strips per coarse cell (open-field-strips)
 const PATCHWORK_MAX_DEPTH = 3; // recursive split cap (D3 budget, not convergence)
-// ── Paddy terraces (box 23-E, plan 022 §3.5) ─────────────────────────────────
+// ── Paddy terraces ───────────────────────────────────────────────────────────
 // World-aligned marching-squares lattice for the terrace banks. Finer than the
 // mountain's 20 m contour lattice — banks are field-scale features and the run
 // is explicit + cached, never per-frame. ABSOLUTE-world (seam rule + edits stay
@@ -125,10 +120,10 @@ const PADDY_LATTICE_M = 10;
 const PADDY_SCAN_M = 40;
 // Below this much relief inside the region, the elevation field is effectively
 // flat here (region doesn't meaningfully overlap a mountain) → concentric
-// interior-distance fallback bands (§3.5 pre-023 behavior, kept deliberately).
+// interior-distance fallback bands.
 const PADDY_MIN_RELIEF_M = 8;
 // Bank cadence: smallest "nice" ladder step giving ≤ TARGET bands across the
-// scanned range (the 23-C adaptive-interval idiom — consistent visual density
+// scanned range (adaptive interval — consistent visual density
 // whatever the relief/region size). Shared by both the elevation levels
 // (meters of height) and the fallback bands (meters of inward distance).
 // The ladder is deliberately CAPPED at 25 m: terraces are agricultural steps,
@@ -140,9 +135,8 @@ const PADDY_MIN_RELIEF_M = 8;
 const PADDY_TARGET_BANDS = 14;
 const PADDY_INTERVAL_LADDER = [1, 2, 5, 10, 20, 25] as const;
 
-/** Nice-round bank interval for a scanned range `maxV` (23-C's contourInterval
- * idiom). Smallest ladder step giving ≤ PADDY_TARGET_BANDS bands; the coarsest
- * as a floor. */
+/** Nice-round bank interval for a scanned range `maxV`. Smallest ladder step
+ * giving ≤ PADDY_TARGET_BANDS bands; the coarsest as a floor. */
 function paddyInterval(maxV: number): number {
   const raw = maxV / PADDY_TARGET_BANDS;
   for (const step of PADDY_INTERVAL_LADDER) if (step >= raw) return step;
@@ -235,15 +229,14 @@ function cropAt(seed: number, ix: number, iy: number, sub: number): string {
 }
 
 /**
- * Generate farmland inside a sketched polygon region (plan 022 §3.5). Emits
- * `farm-field` polygons (+ `crop`/`fieldType` props), `farm-lane` lines,
- * `farm-hedge` lines, `farm-building` footprints, (orchard) `orchard-tree`
- * points and (paddy-terraces, box 23-E) `farm-bank` terrace lines — all
- * strictly inside `region.ring`. `constraints` feed ONE thing: the sketched
- * MOUNTAIN features, from which paddy-terraces composes its elevation field
- * (the raw sketch layer — farmland still never sees the city or any other
- * generator's output; stage layering, plan 022 §3.5 / plan 024). The four
- * 22-F field types never read the constraints at all.
+ * Generate farmland inside a sketched polygon region. Emits `farm-field`
+ * polygons (+ `crop`/`fieldType` props), `farm-lane` lines, `farm-hedge` lines,
+ * `farm-building` footprints, (orchard) `orchard-tree` points and
+ * (paddy-terraces) `farm-bank` terrace lines — all strictly inside
+ * `region.ring`. `constraints` feed ONE thing: the sketched MOUNTAIN features,
+ * from which paddy-terraces composes its elevation field (the raw sketch layer —
+ * farmland never sees the city or any other generator's output). The four other
+ * field types never read the constraints at all.
  */
 export function generateFarmland(
   seed: number,
@@ -328,16 +321,15 @@ export function generateFarmland(
     }
   }
 
-  // ── Paddy terraces (box 23-E): a region-wide paddy wash + contour-following
-  //    terrace banks. Bank lines are marching-squares iso-lines (the shared
-  //    23-C machinery, world-aligned lattice → seam-safe) over the elevation
-  //    field composed from the SKETCHED mountains; where that field is
-  //    essentially flat inside this region, concentric interior-distance bands
-  //    (the §3.5 pre-023 fallback, kept as the documented no-mountain look).
+  // ── Paddy terraces: a region-wide paddy wash + contour-following terrace
+  //    banks. Bank lines are marching-squares iso-lines (world-aligned lattice
+  //    → seam-safe) over the elevation field composed from the SKETCHED
+  //    mountains; where that field is essentially flat inside this region,
+  //    concentric interior-distance bands (the no-mountain fallback).
   //    Determinism: elevation is f(mountain seeds/params/rings) and the
   //    fallback is f(region ring); both are pure functions of durable inputs.
   //    Containment: every traced line is clipped to the ring (the linear
-  //    lattice interpolant can nick a curved boundary — the 23-C lesson). ─────
+  //    lattice interpolant can nick a curved boundary). ──────────────────────
   if (fieldType === "paddy-terraces") {
     // The wash IS the ring (mountain-massif precedent: contained by
     // construction, already normalized; mm-quantized on emit).
@@ -374,7 +366,7 @@ export function generateFarmland(
     if (levels.length > 0) {
       for (const c of marchingSquares(bankField, { bbox, step: PADDY_LATTICE_M, levels })) {
         // Position-derived ids (never emission order): the level (dm) + the
-        // clipped run's mm first vertex at 0.1 m resolution (23-C idiom).
+        // clipped run's mm first vertex at 0.1 m resolution.
         const levelKey = Math.round(c.level * 10);
         for (const run of clipPolylineToRegion(region, c.points)) {
           if (run.length < 2) continue;
