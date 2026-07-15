@@ -69,6 +69,7 @@ import {
 } from "./fields";
 import { buildUpstreamWaterField, insideUpstreamChannel } from "./upstream";
 import { macroTerrainField } from "./fields/terrain";
+import { sharedBoundaryHedges, collectAdjacentRings, HEDGE_ADJ_EPS } from "./sharedBoundary";
 import type { GenerationConstraints } from "./types";
 
 type Pt = [number, number];
@@ -617,6 +618,22 @@ export function generateForest(
       const variant = Math.floor(mulberry32(hashSeed(seed, `forest-loner-var-${variety}`, lix, liy))() * 4);
       out.push(treeFeature(seed, "forest-loner", [lix, liy], px, py, variety, sizeN, 2, variant, standConifer));
     }
+  }
+
+  // ── Sketch-adjacency woodland bank (plan 038 item 7): where this forest's
+  //    sketch ring abuts a farmland or park sketch, a hedgerow / woodland-bank
+  //    line runs along the shared edge — computed by the SYMMETRIC hashed rule so
+  //    the neighbour's farm-hedge / park-canopy-rim is bit-identical (seam
+  //    agreement). SKETCH-only (raw fabric rings, never output). No adjacent
+  //    farmland/park in reach ⇒ [] ⇒ byte-identical to the uncoupled forest. ──
+  const { selfRing, others } = collectAdjacentRings(constraints.fabricFeatures, region.id, ["farmland", "park"]);
+  for (const line of sharedBoundaryHedges(selfRing, region.id, others, HEDGE_ADJ_EPS)) {
+    out.push({
+      type: "Feature",
+      id: hashSeed(seed, "forest-hedgerow", Math.round(line[0][0] * 10), Math.round(line[0][1] * 10), line.length),
+      geometry: { type: "LineString", coordinates: line },
+      properties: { generatorId: "forest-canopy-rim", type: "forest-canopy-rim", forestType: variety, hedgerow: true },
+    });
   }
 
   return out;

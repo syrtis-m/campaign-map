@@ -67,6 +67,7 @@ import { distanceToBoundary, insetRing, clipPolylineToRegion, type ProcgenRegion
 import { q, harmonicBlobRing, blobFeature, spanQuad } from "./waterEmit";
 import { indexFabricConstraints } from "./fabricConstraints";
 import { buildUpstreamConstraints, buildUpstreamWaterField, insideUpstreamChannel, splitLineOutsideChannel } from "./upstream";
+import { sharedBoundaryHedges, collectAdjacentRings, HEDGE_ADJ_EPS } from "./sharedBoundary";
 import { fractalNoise2D } from "./world/noise";
 import {
   signedDistancePolygon,
@@ -975,6 +976,23 @@ export function generatePark(
         emitTreeAt(px, py, "park-tree", ix, iy);
       }
     }
+  }
+
+  // ── Sketch-adjacency edge (plan 038 item 7): where this park's sketch ring
+  //    abuts a forest sketch the two canopies read CONTINUOUS across the seam
+  //    (a shared canopy-rim, no hard fade line between them); where it abuts a
+  //    farmland sketch the same line reads as a hedgerow. Either way it is the
+  //    SAME line the neighbour derives (symmetric hashed agreement), emitted as a
+  //    `park-canopy-rim` tagged with the adjacency. SKETCH-only (raw fabric
+  //    rings). No adjacent forest/farmland in reach ⇒ [] ⇒ byte-identical. ──────
+  const adj = collectAdjacentRings(constraints.fabricFeatures, region.id, ["forest", "farmland"]);
+  for (const line of sharedBoundaryHedges(adj.selfRing, region.id, adj.others, HEDGE_ADJ_EPS)) {
+    out.push({
+      type: "Feature",
+      id: hashSeed(seed, "park-adjacency-rim", Math.round(line[0][0] * 10), Math.round(line[0][1] * 10), line.length),
+      geometry: { type: "LineString", coordinates: line },
+      properties: { generatorId: "park-canopy-rim", type: "park-canopy-rim", parkType: variety, hedgerow: true },
+    });
   }
 
   return out;

@@ -60,8 +60,8 @@ describe("procgen registry", () => {
 });
 
 describe("river v2 (plan 035) — default-off slope coupling, stage 0 hydrology", () => {
-  it("river is at contract version 2 (the default flip is byte-visible for a mountain-crossing river)", () => {
-    expect(algorithmById("river")!.currentVersion).toBe(2);
+  it("river is at contract version 3 (plan 038 item 3 tributary rank; v2 was the slopeSensitivity default flip)", () => {
+    expect(algorithmById("river")!.currentVersion).toBe(3);
   });
 
   it("slopeSensitivity defaults to 0 — terrain coupling is opt-in", () => {
@@ -100,10 +100,12 @@ describe("consumption declarations (plan 033-C)", () => {
   > = {
     city: { kinds: ["water", "river", "road", "wall", "farmland", "park", "district"], margin: 1500, cost: "expensive" },
     river: { kinds: ["water", "river", "mountain"], margin: 30, cost: "medium" },
-    forest: { kinds: [], margin: 0, cost: "cheap" },
-    park: { kinds: ["road"], margin: 30, cost: "medium" },
+    // plan 038 item 4 (mountain terrain read) + item 7 (forest↔farmland/park
+    // shared-boundary hedgerow, HEDGE_ADJ_EPS margin 8).
+    forest: { kinds: ["mountain", "farmland", "park"], margin: 8, cost: "cheap" },
+    park: { kinds: ["road", "forest", "farmland"], margin: 30, cost: "medium" },
     wall: { kinds: ["road"], margin: 0, cost: "medium" },
-    farmland: { kinds: ["mountain"], margin: 0, cost: "medium" },
+    farmland: { kinds: ["mountain", "forest", "park"], margin: 8, cost: "medium" },
     mountain: { kinds: [], margin: 0, cost: "cheap" },
     // plan 036 terrain stamps: field-only add/replace, read no other sketch.
     relief: { kinds: [], margin: 0, cost: "cheap" },
@@ -121,7 +123,9 @@ describe("consumption declarations (plan 033-C)", () => {
   });
 
   it("a no-consumption algorithm declares an empty set and a 0 margin", () => {
-    for (const id of ["forest", "mountain"]) {
+    // forest joined the consumers in plan 038 (mountain terrain + sketch
+    // adjacency); mountain/relief/landform stay pure field producers.
+    for (const id of ["mountain", "relief", "landform"]) {
       const alg = algorithmById(id)!;
       expect(alg.consumesSketch).toEqual([]);
       expect(alg.influenceMargin).toBe(0);
@@ -170,8 +174,8 @@ describe("cycle guard — settlement consumers produce nothing the city consumes
 });
 
 describe("farmland peri-urban (plan 035-C) — stage 4, wired settlement + elevation", () => {
-  it("farmland is at contract version 3 (plan 037 added the river channel exclusion)", () => {
-    expect(algorithmById("farmland")!.currentVersion).toBe(3);
+  it("farmland is at contract version 4 (plan 038 riverine long-lots + terrain slope-gating + sketch adjacency)", () => {
+    expect(algorithmById("farmland")!.currentVersion).toBe(4);
   });
 
   it("farmland sits at stage 4, consumes elevation + settlement + water (plan 037), produces NOTHING", () => {
@@ -197,8 +201,8 @@ describe("farmland peri-urban (plan 035-C) — stage 4, wired settlement + eleva
 });
 
 describe("park split (plan 035) — variety drives the stage", () => {
-  it("park is at contract version 4 (plan 037 added the river channel exclusion)", () => {
-    expect(algorithmById("park")!.currentVersion).toBe(4);
+  it("park is at contract version 5 (plan 038 item 7 sketch adjacency; v4 was the river channel exclusion)", () => {
+    expect(algorithmById("park")!.currentVersion).toBe(5);
   });
 
   it("urban-park resolves to stage 4, consumes settlement + water (plan 037), produces NOTHING", () => {

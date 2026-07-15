@@ -75,6 +75,7 @@ import { marchingSquares, sdfPolygon, type Field } from "./fields";
 import { macroTerrainField } from "./fields/terrain";
 import { q, blobFeature } from "./waterEmit";
 import { buildUpstreamConstraints, buildUpstreamWaterField, insideUpstreamChannel, splitLineOutsideChannel } from "./upstream";
+import { sharedBoundaryHedges, collectAdjacentRings, HEDGE_ADJ_EPS } from "./sharedBoundary";
 import type { GenerationConstraints } from "./types";
 
 type Pt = [number, number];
@@ -824,6 +825,23 @@ export function generateFarmland(
         });
       }
     }
+  }
+
+  // ── Sketch-adjacency hedgerow (plan 038 item 7): where this farmland's sketch
+  //    ring abuts a forest or park sketch, a hedgerow line runs along the shared
+  //    edge — the SAME line the neighbour's forest-canopy-rim / park-canopy-rim
+  //    derives (symmetric hashed agreement). SKETCH-only (raw fabric rings);
+  //    emitted directly (NOT via the region-clipping emitHedge — the seam line
+  //    must stay bit-exact with the neighbour). No adjacent forest/park in reach
+  //    ⇒ [] ⇒ byte-identical to the uncoupled generator. ────────────────────────
+  const adj = collectAdjacentRings(constraints.fabricFeatures, region.id, ["forest", "park"]);
+  for (const line of sharedBoundaryHedges(adj.selfRing, region.id, adj.others, HEDGE_ADJ_EPS)) {
+    out.push({
+      type: "Feature",
+      id: hashSeed(seed, "farm-woodland-bank", Math.round(line[0][0] * 10), Math.round(line[0][1] * 10), line.length),
+      geometry: { type: "LineString", coordinates: line },
+      properties: { generatorId: "farm-hedge", type: "farm-hedge", fieldType, hedging, woodlandBank: true },
+    });
   }
 
   return out;

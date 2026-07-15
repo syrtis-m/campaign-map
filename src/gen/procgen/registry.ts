@@ -454,17 +454,18 @@ export const FOREST_TILE_GENERATOR_IDS: readonly string[] = contractGids(FOREST_
 const forestAlgorithm: ProcgenAlgorithm = {
   id: "forest",
   label: "Forest",
-  // Version 3 (plan 038 item 4): terrain reading — the forest now composes the
-  // MACRO terrain field from the sketched MOUNTAINS (`macroTerrainField`) and
-  // reshapes the wood by relative elevation: a timberline thins the canopy + drops
-  // trees above the treeline, upslope stands carry `standConifer`, and the canopy
-  // sags denser in hollows. A forest over a flat campaign (or a region with < the
-  // relief floor) is byte-identical to v2 (golden unchanged); real relief changes
-  // bytes ⇒ the bump gates adoption. Reading the mountain SKETCH adds it to
-  // `consumesSketch` (compact support ⇒ a disjoint mountain is byte-inert, margin 0).
+  // Version 4 (plan 038 item 7): sketch adjacency — where the forest ring abuts a
+  // farmland or park SKETCH, a woodland-bank / hedgerow line runs along the shared
+  // edge, computed by the SYMMETRIC hashed rule so the neighbour's line is
+  // bit-identical (`sharedBoundary.ts`). Adds farmland/park to `consumesSketch`
+  // (influenceMargin = HEDGE_ADJ_EPS 8: a region farther than eps cannot share a
+  // boundary ⇒ byte-inert). No adjacent farmland/park in reach ⇒ byte-identical
+  // to v3.
+  // Version 3 (plan 038 item 4): terrain reading — timberline thinning + drop,
+  // conifer-upslope `standConifer`, contour-sag; reads the mountain SKETCH.
   // Version 2 (plan 037, river → forest): the `water` consumption WIRED — no
   // canopy/tree inside the generated channel + a riparian density ramp.
-  currentVersion: 3,
+  currentVersion: 4,
   appliesTo: ["forest"],
   // Stage 2 (vegetation): no canopy in the river → consumes `water` (WIRED, plan
   // 037). Produces `vegetation` for the city's growth-cost bump. NEVER consumes
@@ -474,12 +475,16 @@ const forestAlgorithm: ProcgenAlgorithm = {
   stage: 2,
   produces: ["vegetation"],
   consumes: ["water"],
-  // Raw sketch reads: the sketched MOUNTAINS' elevation field (plan 038 item 4
-  // timberline/conifer-upslope/contour-sag). The field is compact-support (0
-  // outside the mountain ring), so a disjoint mountain is byte-inert ⇒ margin 0.
-  // The `consumes: ["water"]` above is a DAG OUTPUT edge, not a raw-sketch read.
-  consumesSketch: ["mountain"],
-  influenceMargin: 0,
+  // Raw sketch reads: the sketched MOUNTAINS' elevation field (item 4
+  // timberline/conifer-upslope/contour-sag; compact support, byte-inert when
+  // disjoint) + adjacent FARMLAND/PARK rings (item 7 shared-boundary hedgerow,
+  // within HEDGE_ADJ_EPS). The `consumes: ["water"]` above is a DAG OUTPUT edge,
+  // not a raw-sketch read.
+  consumesSketch: ["mountain", "farmland", "park"],
+  // 8 = HEDGE_ADJ_EPS (adjacency reach). A region whose bbox is farther than this
+  // cannot put a ring vertex within eps of ours ⇒ byte-inert (the mountain read
+  // is compact-support, so 8 bounds it too).
+  influenceMargin: 8,
   costClass: "cheap",
   paramsSchema: forestParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: FOREST_PRESETS,
@@ -530,11 +535,18 @@ export const PARK_TILE_GENERATOR_IDS: readonly string[] = contractGids(PARK_STYL
 const parkAlgorithm: ProcgenAlgorithm = {
   id: "park",
   label: "Park",
-  // Version 4 (plan 037, river → park): the declared `water` consumption is now
-  // WIRED — no canopy/tree/path/lawn-dressing inside the generated channel, and
-  // a pond anchored in the channel is dropped (pond placement avoids the water).
-  // A park with NO upstream water is byte-identical to v3 (golden unchanged); one
-  // over a river channel changes bytes ⇒ the bump gates adoption.
+  // Version 5 (plan 038 item 7): sketch adjacency — where the park ring abuts a
+  // forest sketch the two canopies read CONTINUOUS across the seam, and where it
+  // abuts a farmland sketch the same shared-edge line reads as a hedgerow; both
+  // are the SAME line the neighbour derives (symmetric hashed agreement,
+  // `sharedBoundary.ts`). Adds forest/farmland to `consumesSketch` (the existing
+  // 30 m road margin already covers the 8 m adjacency reach). No adjacent
+  // forest/farmland in reach ⇒ byte-identical to v4. (Park pond-at-low-point,
+  // plan 038 item 4, was DEFERRED — the pond is entangled with the interiorPole-
+  // anchored radial composition; see the plan-038 report.)
+  // Version 4 (plan 037, river → park): the `water` consumption WIRED — no
+  // canopy/tree/path/lawn-dressing inside the generated channel; a pond anchored
+  // in the channel is dropped.
   // Version 3 (plan 035, park split): the `urban-park` variety joined the
   // schema/varieties. Rural varieties are byte-identical to v2 (the golden is
   // unchanged — bump is bookkeeping for the schema/variety surface); one
@@ -542,7 +554,7 @@ const parkAlgorithm: ProcgenAlgorithm = {
   // pressure for a second id).
   // Version 2: blobFeature mm-quantizes its ring (D5), snapping the
   // formal-garden bed / japanese bridge / court coordinates to sub-mm.
-  currentVersion: 4,
+  currentVersion: 5,
   appliesTo: ["park"],
   // Rural varieties: stage 2 (vegetation), same band as forest — a park pond
   // sits away from a river channel → consumes `water` (WIRED, plan 037);
@@ -552,12 +564,12 @@ const parkAlgorithm: ProcgenAlgorithm = {
   stage: 2,
   produces: ["vegetation"],
   consumes: ["water"],
-  // Park reads road only: a path enters where a sketched road meets the ring
-  // (ROAD_ENTRANCE_THRESH_M = 30, an exact `<=` cutoff). Same for BOTH roles
-  // (the harness verifies per-algorithm): urban-park's street alignment reads
-  // GENERATED settlement output via `constraints.upstream`, never a raw sketch,
-  // so it changes nothing here.
-  consumesSketch: ["road"],
+  // Park reads road (a path enters where a sketched road meets the ring,
+  // ROAD_ENTRANCE_THRESH_M = 30) + adjacent FOREST/FARMLAND rings (item 7
+  // shared-boundary line, within HEDGE_ADJ_EPS 8 ≤ the 30 m margin). urban-park's
+  // street alignment reads GENERATED settlement via `constraints.upstream`, never
+  // a raw sketch, so it changes nothing here.
+  consumesSketch: ["road", "forest", "farmland"],
   influenceMargin: 30,
   costClass: "medium",
   // PARK SPLIT (plan 035): variety drives the stage — `urban-park` sits in the
@@ -734,13 +746,15 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   stage: 4,
   produces: [],
   consumes: ["elevation", "settlement", "water"],
-  // Farmland reads the sketched mountains' elevation field (paddy-terraces
-  // contours). The field is zero outside the mountain ring (compact support)
-  // and gates on in-region relief, so a disjoint mountain is byte-inert: margin
-  // 0. The city reads a raw farmland SKETCH, but that is the CITY's
-  // consumesSketch, not farmland's.
-  consumesSketch: ["mountain"],
-  influenceMargin: 0,
+  // Farmland reads the sketched mountains' elevation field (paddy contours +
+  // item-4 slope-gating; compact support, byte-inert when disjoint) + adjacent
+  // FOREST/PARK rings (item 7 shared-boundary hedgerow, within HEDGE_ADJ_EPS).
+  // The city reads a raw farmland SKETCH, but that is the CITY's consumesSketch,
+  // not farmland's.
+  consumesSketch: ["mountain", "forest", "park"],
+  // 8 = HEDGE_ADJ_EPS (item 7 adjacency reach); bounds the compact-support
+  // mountain read too. Beyond it, byte-inert.
+  influenceMargin: 8,
   costClass: "medium",
   paramsSchema: farmlandParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
   presets: FARMLAND_PRESETS,
