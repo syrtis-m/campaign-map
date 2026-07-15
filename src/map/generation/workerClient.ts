@@ -70,7 +70,8 @@ export class GenerationWorkerClient {
     regionId: string,
     ring: [number, number][],
     params: Record<string, unknown>,
-    constraints: GenerationConstraints
+    constraints: GenerationConstraints,
+    spine?: [number, number][]
   ): Promise<GeoJSON.Feature[]> {
     if (!this.worker) return Promise.reject(new Error("worker terminated"));
     const requestId = this.nextRequestId++;
@@ -81,6 +82,9 @@ export class GenerationWorkerClient {
       seed,
       regionId,
       ring,
+      // Present only for line-kind regions (031-D); a polygon region omits it so
+      // the worker rebuilds from `ring` — payload stays minimal and unchanged.
+      ...(spine ? { spine } : {}),
       params,
       constraints,
     };

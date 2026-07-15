@@ -2,7 +2,44 @@
 
 *Updated after every gate run. A fresh session should be able to resume from CLAUDE.md + this file alone.*
 
-## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Next: the pipeline arc (plans 031–038, ratified same day) or plan 039. Plans 020–028 complete.
+## Status: plans 029 + 030 COMPLETE (2026-07-14) — the versioned-determinism + rearchitecture arc is done. Pipeline arc (031–038) STARTED: plan 031 COMPLETE (2026-07-15). Plans 020–028 complete.
+
+## Plan 031 — pipeline hotfixes (2026-07-15, COMPLETE — headless-only per Jonah 2026-07-14)
+Four fixes from `plans/research-generation-pipeline.md` §3; mostly byte-identical,
+verified in Vitest only (no live gates this arc).
+- **[x] 031-A — network once per forced regen (P1)** (`cebb66f`): `generateRegionTile`
+  under `force` recomputed the whole-region network once PER TILE (T× waste + T
+  duplicate network records). Now force consults the (preloaded) cache like the
+  non-force path — the first tile computes + writes, every later tile of the pass
+  re-clips only; `generateRegion` clears the region's stale network from vault +
+  shared map so the first tile recomputes fresh. Proof: `generatorRunCount` delta
+  === 1 on a ~9-tile city regen; exactly ONE raw network record in generated.jsonl;
+  output byte-identical.
+- **[x] 031-B — batching parity** (`02f0e07`): flush / cascadeDownstream /
+  cascadeFromRoot / applyPendingCascade now compute ONE fingerprint map + read ONE
+  shared cache view and thread both through every region regen (like replay), and
+  wrap the pass in a repaint batch (coalesced to 1 paint). buildRegionUpstream
+  serves fresh upstream from the shared view (0 extra IO). Byte-identical by
+  construction. Proof (FakeHost gateway/repaint counters): 1 fp pass + 1
+  host.vault.readCached + 1 repaint per river→city flush; batched output ==
+  from-scratch replay. (removeCached's per-region file rewrite — P6 — is plan 032.)
+- **[x] 031-C — stage-ordered raw channel (P2/P3, CORRECTNESS)** (`5557ba6`): the
+  raw-sketch reach walked affected regions in FABRIC FILE ORDER (roots in QUEUE
+  ORDER), so a downstream stamped fresh over stale-upstream bytes survived reloads.
+  Now `affected ∪ roots` merge into ONE `(stage,id)` walk (`forceRegenInStageOrder`);
+  cascade still seeds from region-edit roots only (fan-out = plan 033). Only
+  incorrectly-stale regions change bytes. Proof: adversarial city-before-river file
+  order ⇒ river regenerates first (`forceRegenOrder`, fails on the pre-fix walk);
+  fingerprint-fresh⇒bytes-fresh property; reversed-file-order determinism.
+- **[x] 031-D — line-kind regions through the worker** (`<this commit>`): the worker
+  job now carries `region.spine` (plain `Pt[]` + a localized zod schema); the worker
+  rebuilds the corridor via `makeSpine`+`makeCorridorRegion` (shared pure
+  `reconstructJobRegion`), so river/wall regen leaves the main thread. Main-thread
+  fallback retained (no worker ⇒ `algorithm.generate`). Proof: JSON-round-tripped
+  spine job produces byte-identical output vs the main-thread build, for river AND
+  wall; polygon path + guard + malformed-spine zod throw covered.
+- **STOP conditions honored**: no upstream threaded into a cache-HIT path; no
+  consumption-aware invalidation / unified pass (032–034 untouched).
 
 ## Plan 030 — rearchitecture waves (2026-07-14, COMPLETE)
 - **030-A DONE** (docs slice `9bb4328` + 4-agent sweep integrated, close `c3f77e6`):

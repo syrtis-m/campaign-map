@@ -607,12 +607,22 @@ export class MapController {
     const algorithm = algorithmById(block.algorithm);
     return (region, constraints) => {
       this.generatorRunCounter++;
-      // Spine (line-kind) regions run on the MAIN thread: the worker protocol
-      // reconstructs a region from `region.ring` via makeRegion and would lose
-      // `region.spine` — and rivers are geometry-light, so the direct path is
-      // both correct and cheap. Polygon regions keep the worker path unchanged.
-      if (worker && !region.spine) {
-        return worker.generateRegion(block.algorithm, block.seed, region.id, region.ring, block.params, constraints);
+      // Both polygon AND line-kind (river/wall) regions run in the worker when
+      // one is available: the job now carries `region.spine` as plain data
+      // (plan 031-D), so the worker rebuilds the corridor region and river/wall
+      // regen leaves the main thread. The main-thread `algorithm.generate` path
+      // is retained as the fallback when no worker is up (headless tests, worker
+      // load failure) — byte-identical to the worker output by construction.
+      if (worker) {
+        return worker.generateRegion(
+          block.algorithm,
+          block.seed,
+          region.id,
+          region.ring,
+          block.params,
+          constraints,
+          region.spine?.points
+        );
       }
       if (!algorithm) throw new Error(`unknown procgen algorithm: ${block.algorithm}`);
       return algorithm.generate(block.seed, region, block.params, constraints);
