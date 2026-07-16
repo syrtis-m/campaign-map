@@ -18,7 +18,7 @@
 
 ## Phase 1 — Yes-and core, vault-native
 - **Notes ⇄ map reconciliation**: vault watcher on `map:` frontmatter → in-memory flatbush index → GeoJSON sources. Create/rename/delete/move note ↔ pin updates live. Zod validation, warning badges for bad frontmatter.
-- Google-Maps interaction grammar (architecture §3b): click pin → place card (note preview via Obsidian renderer, open/edit/center actions); click empty map → dropped pin + "Add location here" tooltip → quick-add modal (name + type, culture-consistent suggestions) → note created; right-click → native context menu; hover tooltips. Drag pin → frontmatter geometry updates.
+- Google-Maps interaction grammar (architecture §3b): left-click pin → no popup (amended Jonah 2026-07-15 — place card retired from left-click; open/center/connect/visibility live on the right-click menu); click empty map → dropped pin + "Add location here" tooltip → quick-add modal (name + type, culture-consistent suggestions) → note created; right-click → native context menu; hover tooltips. Drag pin → frontmatter geometry updates.
 - **`obsidian-native` default theme**: MapLibre style generated from the active theme's CSS variables, regenerated on `css-change` — map matches the user's Obsidian look out of the box.
 - Cartographic defaults land here (quality-bar F1/F5): importance ranks per type, auto zoom-ranges, collision priority.
 - Wikilink completion for locations everywhere (they're just notes); map search = quick-switcher-style modal, flyTo on select.

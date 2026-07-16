@@ -393,14 +393,17 @@ survive renames and vanish with a deleted endpoint.
 
 **The interaction grammar is Google Maps'** (locked decision) — zero learning curve:
 
-- **Click a pin → place card.** Anchored popup: name, type icon, note preview rendered
-  by Obsidian's own markdown renderer (embeds/wikilinks/theme CSS just work). Actions:
-  Open note (adjacent pane) · Edit · Center. Click elsewhere dismisses.
+- **Left-click a pin → nothing** (amended, Jonah 2026-07-15 — "it pops up a little menu …
+  annoying as hell"). The place card is retired from left-click; a bare left-click on a
+  location pin is a deliberate no-op (the hover tooltip already shows the name). Every
+  action it used to offer now lives on the **right-click** Menu — that is the one place
+  location UI opens. The note *preview* was display-only, not an action, and is dropped.
 - **Click empty map → dropped pin** + one primary action **"+ Add location here"** →
   quick-add modal (name + type) → note created, pin becomes real. This IS the ≤5 s
   yes-and flow. Esc/click-away dismisses.
-- **Right-click → native Obsidian `Menu`**: Add location here · Generate surroundings ·
-  Measure · Copy coordinates; on a sketch feature: Edit shape / region settings.
+- **Right-click → native Obsidian `Menu`**: on a location pin: Open note (adjacent pane) ·
+  Center · Connect to… · Visibility (wide/mid/close); then Add location here · Copy
+  coordinates · Generate surroundings; on a sketch feature: Edit shape / region settings.
 - **Hover pin → name tooltip**; hover targets ≥24 px regardless of icon size.
 - **Search modal → flyTo** with eased camera; the selected feature pulses on arrival.
 
