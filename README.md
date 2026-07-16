@@ -2,7 +2,7 @@
 
 Campaign Map gives your Obsidian vault a Google-Maps-style map. You pan and zoom it
 like any web map, but everything on it belongs to *your campaign*: every pin is a
-note in your vault, every road and river is a shape you drew, and whole cities,
+note in your vault, every shape is one you drew or asked for, and whole cities,
 forests, and mountain ranges can be generated on demand inside boundaries you sketch.
 
 It's built for the solo GM running "yes-and": a player asks about a tavern that
@@ -182,7 +182,7 @@ map offers to generate inside it:
 |---|---|
 | district | a whole city: streets, blocks, building footprints, plazas, walls with gates — in 12 street-pattern presets from medieval warren to Barcelona-style chamfered grid |
 | river | a natural channel: meanders, braiding, banks, islands, confluences, deltas |
-| forest | canopy with clearings and thousands of individually placed trees |
+| forest | canopy with clearings and individually placed, varied trees |
 | park | designed grounds: paths, lawns, ponds — formal, wild, or Japanese-garden |
 | farmland | field patterns: strips, patchwork, orchards, rice terraces that follow the terrain |
 | wall | fortifications: curtain walls, palisades, bastions, towers, gates, moats |
@@ -255,6 +255,9 @@ connections:
 
 It renders as a themed line between the pins, survives renames, and disappears if
 either endpoint is deleted — because it's just note data, like everything else.
+Lines are straight and undirected for now; `type` and `label` are stored in the
+note but not yet drawn (curved paths, arrowheads, and travel-time labels are
+planned).
 
 ---
 
@@ -323,7 +326,8 @@ Guarantees worth knowing:
 - **Undo** (in sketch mode) reverses the last map edit; multi-step undo is still on
   the roadmap.
 - All pins currently render as uniform dots — per-type icons are planned.
-- Very long Obsidian sessions can slow the renderer; reopening the window clears it.
+- Very long Obsidian sessions can slow the renderer; restarting Obsidian clears it
+  (reopening just the window doesn't).
 - The plugin is desktop-first; it's written to keep mobile possible but isn't
   tested there.
 
