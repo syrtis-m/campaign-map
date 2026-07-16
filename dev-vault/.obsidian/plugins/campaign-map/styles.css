@@ -386,6 +386,24 @@
 /* Selected-feature panel (plan 020 §9): a small overlay under the sketch bar
    showing the shape's kind, editable name, and — for a procgen region — the
    city controls. Native-Obsidian tokens so it reads like the sub-bar. */
+/* Drag-to-extrude height readout HUD (plan 040): the exact elevation while you
+   drag the extrude grip — modeling-software convention. */
+.campaign-map-height-readout {
+  position: absolute;
+  top: 92px;
+  left: 260px;
+  z-index: 7;
+  padding: 4px 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-normal, #eee);
+  background: var(--background-secondary, #222);
+  border: 1px solid var(--interactive-accent, #7c6fff);
+  border-radius: 5px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
 .campaign-map-sketch-selection {
   position: absolute;
   top: 92px;
@@ -464,6 +482,49 @@
 .campaign-map-sketch-procgen-label {
   font-size: 11px;
   color: var(--text-faint, #888);
+}
+
+/* Replace-over-add advisory: a landform whose replace flattens mountain/relief
+   add-stamps under it. Non-blocking — a persistent, muted-warning hint line. */
+.campaign-map-sketch-selection-warning {
+  margin: 4px 0 2px;
+  padding: 4px 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-warning, #d08770);
+  background: var(--background-modifier-error-hover, rgba(208, 135, 112, 0.12));
+  border-left: 2px solid var(--text-warning, #d08770);
+  border-radius: 3px;
+}
+
+/* Schema-driven procgen param controls (RegionProcgenModal + selection panel). */
+.campaign-map-param-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* Param labels are longer than the terse geometry rows ("Slope sensitivity"),
+   so give them room and let the control take the rest. */
+.campaign-map-param-controls .campaign-map-sketch-selection-label {
+  flex: 0 0 118px;
+}
+
+.campaign-map-param-number,
+.campaign-map-param-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border, #3a3a3a);
+  background: var(--background-primary, #1e1e1e);
+  color: var(--text-normal, #ddd);
+}
+
+.campaign-map-param-toggle {
+  margin-right: auto;
 }
 
 .campaign-map-sketch-procgen-actions {

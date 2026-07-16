@@ -1,6 +1,8 @@
 ---
 map: cradle
-geometry: [1.26, -2.52]
+geometry:
+  - 0.5987548828125
+  - -3.003384373753562
 type: landmark
 visibility: close
 connections:

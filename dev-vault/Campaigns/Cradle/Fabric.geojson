@@ -3,43 +3,6 @@
   "features": [
     {
       "type": "Feature",
-      "id": "cradle-relief-ne-spur",
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            1.26,
-            1.62
-          ],
-          [
-            2.34,
-            2.34
-          ],
-          [
-            3.42,
-            2.88
-          ]
-        ]
-      },
-      "properties": {
-        "kind": "relief",
-        "name": "Heights Shoulder",
-        "procgen": {
-          "algorithm": "relief",
-          "seed": 2152871852,
-          "version": 1,
-          "params": {
-            "polarity": "ridge",
-            "height": 420,
-            "halfWidth": 560,
-            "apron": 460
-          },
-          "presetId": "ridge"
-        }
-      }
-    },
-    {
-      "type": "Feature",
       "id": "cradle-relief-downs",
       "geometry": {
         "type": "LineString",
@@ -148,43 +111,6 @@
             "height": 440,
             "halfWidth": 620,
             "apron": 500
-          },
-          "presetId": "ridge"
-        }
-      }
-    },
-    {
-      "type": "Feature",
-      "id": "cradle-relief-hill",
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            -2.16,
-            0.54
-          ],
-          [
-            -1.62,
-            1.08
-          ],
-          [
-            -1.08,
-            1.26
-          ]
-        ]
-      },
-      "properties": {
-        "kind": "relief",
-        "name": "House Hill",
-        "procgen": {
-          "algorithm": "relief",
-          "seed": 2002036431,
-          "version": 1,
-          "params": {
-            "polarity": "ridge",
-            "height": 300,
-            "halfWidth": 440,
-            "apron": 360
           },
           "presetId": "ridge"
         }
@@ -306,106 +232,6 @@
             "edgeRaggedness": 0.7
           },
           "presetId": "dead-wood"
-        }
-      }
-    },
-    {
-      "type": "Feature",
-      "id": "cradle-district-apartments",
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [
-          [
-            [
-              -3.42,
-              1.8
-            ],
-            [
-              -2.952,
-              1.848388
-            ],
-            [
-              -2.484,
-              1.751336
-            ],
-            [
-              -2.016,
-              1.938118
-            ],
-            [
-              -1.548,
-              1.819194
-            ],
-            [
-              -1.08,
-              1.8
-            ],
-            [
-              -1.0187060000000001,
-              1.395
-            ],
-            [
-              -1.02012,
-              0.99
-            ],
-            [
-              -1.0298859999999999,
-              0.585
-            ],
-            [
-              -1.08,
-              0.18
-            ],
-            [
-              -1.548,
-              0.137344
-            ],
-            [
-              -2.016,
-              0.17024
-            ],
-            [
-              -2.484,
-              0.183934
-            ],
-            [
-              -2.952,
-              0.151284
-            ],
-            [
-              -3.42,
-              0.18
-            ],
-            [
-              -3.5171419999999998,
-              0.585
-            ],
-            [
-              -3.464466,
-              0.99
-            ],
-            [
-              -3.484466,
-              1.395
-            ],
-            [
-              -3.42,
-              1.8
-            ]
-          ]
-        ]
-      },
-      "properties": {
-        "kind": "district",
-        "name": "Apartment Blocks",
-        "procgen": {
-          "algorithm": "city",
-          "seed": 357515206,
-          "version": 3,
-          "params": {
-            "profile": "euro-continental"
-          },
-          "presetId": "euro-continental"
         }
       }
     },
@@ -767,84 +593,6 @@
             "invert": false
           },
           "presetId": "plateau"
-        }
-      }
-    },
-    {
-      "type": "Feature",
-      "id": "cradle-relief-ne",
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            1.2758377522415856,
-            1.8606808584449084
-          ],
-          [
-            2.163718897653581,
-            3.2662756962989477
-          ],
-          [
-            3.4138622795065316,
-            3.9885880652552004
-          ],
-          [
-            3.4396199981002553,
-            5.294471900583218
-          ]
-        ]
-      },
-      "properties": {
-        "kind": "relief",
-        "name": "The North Heights",
-        "procgen": {
-          "algorithm": "relief",
-          "seed": 107722281,
-          "version": 1,
-          "params": {
-            "polarity": "ridge",
-            "height": 900,
-            "halfWidth": 390,
-            "apron": 850
-          },
-          "presetId": "ridge"
-        }
-      }
-    },
-    {
-      "type": "Feature",
-      "id": "cradle-relief-central",
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            -0.6792485372929775,
-            -0.7679635409810714
-          ],
-          [
-            0.54,
-            -2.16
-          ],
-          [
-            0.18058677652555843,
-            -3.8640439092948498
-          ]
-        ]
-      },
-      "properties": {
-        "kind": "relief",
-        "name": "The Spine",
-        "procgen": {
-          "algorithm": "relief",
-          "seed": 377894685,
-          "version": 1,
-          "params": {
-            "polarity": "ridge",
-            "height": 620,
-            "halfWidth": 700,
-            "apron": 560
-          },
-          "presetId": "ridge"
         }
       }
     },
@@ -1389,71 +1137,6 @@
     },
     {
       "type": "Feature",
-      "id": "fabric-mrms13wr-4asjfi",
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            -0.045049846545595074,
-            2.7892746972530773
-          ],
-          [
-            -0.4187361429213752,
-            1.8041830941809565
-          ],
-          [
-            -0.4982438655553949,
-            0.9060063002322636
-          ],
-          [
-            -0.045049846545595074,
-            0.3256359312519095
-          ],
-          [
-            1.5928092396997329,
-            0.015557565880087054
-          ],
-          [
-            2.6741142675110723,
-            0.4846473501265791
-          ],
-          [
-            3.7077146617440064,
-            1.192185824618349
-          ],
-          [
-            4.534594977129558,
-            1.3114189241048138
-          ],
-          [
-            5.425081470621251,
-            1.4306463436358001
-          ],
-          [
-            6.212207924690887,
-            1.5975542062558645
-          ]
-        ]
-      },
-      "properties": {
-        "kind": "river",
-        "procgen": {
-          "algorithm": "river",
-          "seed": 1032814328,
-          "version": 3,
-          "params": {
-            "windiness": 0.85,
-            "braiding": 0.5,
-            "width": 20,
-            "widthGrowth": 0.7,
-            "braidBias": 0.2,
-            "slopeSensitivity": 0.5
-          }
-        }
-      }
-    },
-    {
-      "type": "Feature",
       "id": "fabric-mrms2uuy-9a8a4d",
       "geometry": {
         "type": "LineString",
@@ -1719,6 +1402,362 @@
             "density": 0.6,
             "clearings": 0.18,
             "edgeRaggedness": 0.5
+          }
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "cradle-district-apartments",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -3.42,
+              1.8
+            ],
+            [
+              -2.952,
+              1.848388
+            ],
+            [
+              -2.484,
+              1.751336
+            ],
+            [
+              -2.016,
+              1.938118
+            ],
+            [
+              -1.548,
+              1.819194
+            ],
+            [
+              -1.08,
+              1.8
+            ],
+            [
+              -1.0187060000000001,
+              1.395
+            ],
+            [
+              -1.02012,
+              0.99
+            ],
+            [
+              -1.0298859999999999,
+              0.585
+            ],
+            [
+              -1.08,
+              0.18
+            ],
+            [
+              -1.548,
+              0.137344
+            ],
+            [
+              -2.016,
+              0.17024
+            ],
+            [
+              -2.484,
+              0.183934
+            ],
+            [
+              -2.952,
+              0.151284
+            ],
+            [
+              -3.42,
+              0.18
+            ],
+            [
+              -3.5171419999999998,
+              0.585
+            ],
+            [
+              -3.464466,
+              0.99
+            ],
+            [
+              -3.484466,
+              1.395
+            ],
+            [
+              -3.42,
+              1.8
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "district",
+        "name": "Apartment Blocks",
+        "procgen": {
+          "algorithm": "city",
+          "seed": 357515206,
+          "version": 3,
+          "params": {
+            "profile": "na-grid"
+          },
+          "presetId": "euro-continental"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "cradle-relief-central",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -0.6792485372929775,
+            -0.7679635409810714
+          ],
+          [
+            0.54,
+            -2.16
+          ],
+          [
+            0.18058677652555843,
+            -3.8640439092948498
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "relief",
+        "name": "The Spine",
+        "procgen": {
+          "algorithm": "relief",
+          "seed": 377894685,
+          "version": 1,
+          "params": {
+            "polarity": "ridge",
+            "height": 620,
+            "halfWidth": 700,
+            "apron": 560
+          },
+          "presetId": "ridge"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fabric-mrnpt03w-588ai2",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -5.6304931640625,
+            3.486006446505584
+          ],
+          [
+            -4.1363525390625,
+            2.9046388185851555
+          ],
+          [
+            -4.2681884765625,
+            1.4884800029826124
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "relief",
+        "procgen": {
+          "algorithm": "relief",
+          "seed": 2342511801,
+          "version": 1,
+          "params": {
+            "polarity": "ridge",
+            "height": 703,
+            "halfWidth": 180,
+            "apron": 220
+          }
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "cradle-relief-hill",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -2.16,
+            0.54
+          ],
+          [
+            -1.62,
+            1.08
+          ],
+          [
+            -1.08,
+            1.26
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "relief",
+        "name": "House Hill",
+        "procgen": {
+          "algorithm": "relief",
+          "seed": 2002036431,
+          "version": 1,
+          "params": {
+            "polarity": "valley",
+            "height": 322,
+            "halfWidth": 440,
+            "apron": 360
+          },
+          "presetId": "ridge"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "cradle-relief-ne-spur",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            1.26,
+            1.62
+          ],
+          [
+            2.34,
+            2.34
+          ],
+          [
+            3.42,
+            2.88
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "relief",
+        "name": "Heights Shoulder",
+        "procgen": {
+          "algorithm": "relief",
+          "seed": 2152871852,
+          "version": 1,
+          "params": {
+            "polarity": "ridge",
+            "height": 687,
+            "halfWidth": 560,
+            "apron": 460
+          },
+          "presetId": "ridge"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "cradle-relief-ne",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            1.73583984375,
+            2.7565043855432663
+          ],
+          [
+            2.5927734375,
+            3.9080988818941194
+          ],
+          [
+            3.4138622795065316,
+            3.9885880652552004
+          ],
+          [
+            4.39453125,
+            3.4750403827564043
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "relief",
+        "name": "The North Heights",
+        "procgen": {
+          "algorithm": "relief",
+          "seed": 107722281,
+          "version": 1,
+          "params": {
+            "polarity": "ridge",
+            "height": 1064,
+            "halfWidth": 81,
+            "apron": 390
+          },
+          "presetId": "ridge"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fabric-mrms13wr-4asjfi",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            3.0220947265441964,
+            3.826947339498531
+          ],
+          [
+            1.50787353515625,
+            3.798483975036973
+          ],
+          [
+            -0.4187361429213752,
+            1.8041830941809565
+          ],
+          [
+            -0.4982438655553949,
+            0.9060063002322636
+          ],
+          [
+            -0.045049846545595074,
+            0.3256359312519095
+          ],
+          [
+            1.5928092396997329,
+            0.015557565880087054
+          ],
+          [
+            2.6741142675110723,
+            0.4846473501265791
+          ],
+          [
+            3.7077146617440064,
+            1.192185824618349
+          ],
+          [
+            4.534594977129558,
+            1.3114189241048138
+          ],
+          [
+            5.425081470621251,
+            1.4306463436358001
+          ],
+          [
+            6.212207924690887,
+            1.5975542062558645
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "river",
+        "procgen": {
+          "algorithm": "river",
+          "seed": 1032814328,
+          "version": 3,
+          "params": {
+            "windiness": 0.85,
+            "braiding": 0.5,
+            "width": 20,
+            "widthGrowth": 0.7,
+            "braidBias": 0.2,
+            "slopeSensitivity": 0.5
           }
         }
       }

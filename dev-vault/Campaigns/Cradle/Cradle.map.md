@@ -1,10 +1,14 @@
 ---
 map-campaign: true
 crs: fictional
-theme: modern-clean
+theme: parchment
 seed: 20931
 scaleMetersPerUnit: 500
-bounds: [-9.2, -9.2, 9.2, 9.2]
+bounds:
+  - -9.2
+  - -9.2
+  - 9.2
+  - 9.2
 terrain:
   campAmp: 140
   seaDatum: 0
