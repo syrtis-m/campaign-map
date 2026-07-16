@@ -262,11 +262,14 @@ export class TerrainContourManager {
   }
 
   /** Drop the cached engine (e.g. on campaign switch) so the next update rebuilds
-   * from the new campaign's field. */
+   * from the new campaign's field. Bumps `runId` so an update() still awaiting the
+   * OLD campaign's leaves fails its post-await staleness check and never paints
+   * those leaves into the new campaign's (restyled, repopulated) source. */
   reset(): void {
     this.engine = null;
     this.engineKey = null;
     this.rangeDigest = null;
     this.reliefRange = 0;
+    this.runId++;
   }
 }

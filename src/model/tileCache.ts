@@ -215,8 +215,7 @@ export async function getCachedTile(app: App, campaignFolder: string, key: strin
  * effect. Only the shards a key touches are read/written; sibling shards
  * (other regions, world) are never rewritten (research P6).
  */
-export async function removeCachedTiles(app: App, campaignFolder: string, keys: string[]): Promise<void> {
-  await ensureMigrated(app, campaignFolder);
+export function removeCachedTiles(app: App, campaignFolder: string, keys: string[]): Promise<void> {
   const byShard = new Map<string, Set<string>>();
   for (const key of keys) {
     const base = cacheShardBasename(key);
@@ -224,28 +223,46 @@ export async function removeCachedTiles(app: App, campaignFolder: string, keys: 
     if (set.size === 0) byShard.set(base, set);
     set.add(key);
   }
+  // Each shard's read-filter-rewrite MUST ride the SAME per-shard write chain
+  // `appendCachedTile` uses. This rewrite is a non-atomic read→write straddling
+  // any concurrent append to the same shard (a forward pass that dropped-then-
+  // regenerates a region, or two interleaved passes): without serialization the
+  // rewrite reads a snapshot taken BEFORE the append, then clobbers the appended
+  // record on write — silently losing a cache record the serialization chain
+  // exists (invariant #16) to protect. Bypassing it was the H1 gap append closed.
+  const ops: Promise<void>[] = [];
   for (const [base, dropSet] of byShard) {
     const path = `${cacheDir(campaignFolder)}/${base}`;
-    if (!(await app.vault.adapter.exists(path))) continue;
-    const raw = await app.vault.adapter.read(path);
-    const kept = new Map<string, string>(); // key → last raw line (compaction)
-    for (const line of raw.split("\n")) {
-      if (!line.trim()) continue;
-      let key: unknown;
-      try {
-        key = (JSON.parse(line) as { key?: unknown }).key;
-      } catch {
-        continue;
+    const prev = writeChains.get(path) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      await ensureMigrated(app, campaignFolder);
+      if (!(await app.vault.adapter.exists(path))) return;
+      const raw = await app.vault.adapter.read(path);
+      const kept = new Map<string, string>(); // key → last raw line (compaction)
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        let key: unknown;
+        try {
+          key = (JSON.parse(line) as { key?: unknown }).key;
+        } catch {
+          continue;
+        }
+        if (typeof key !== "string" || dropSet.has(key)) continue;
+        kept.set(key, line);
       }
-      if (typeof key !== "string" || dropSet.has(key)) continue;
-      kept.set(key, line);
-    }
-    if (kept.size === 0) {
-      await app.vault.adapter.remove(path);
-    } else {
-      await app.vault.adapter.write(path, [...kept.values()].join("\n") + "\n");
-    }
+      if (kept.size === 0) {
+        await app.vault.adapter.remove(path);
+      } else {
+        await app.vault.adapter.write(path, [...kept.values()].join("\n") + "\n");
+      }
+    });
+    writeChains.set(
+      path,
+      next.catch(() => {})
+    );
+    ops.push(next);
   }
+  return Promise.all(ops).then(() => undefined);
 }
 
 /** Deleting the cache must be harmless — the next request just regenerates

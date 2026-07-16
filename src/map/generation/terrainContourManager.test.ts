@@ -127,6 +127,37 @@ describe("TerrainContourManager — global relief off the composed field", () =>
     }
   });
 
+  it("reset() during an in-flight update never paints the old campaign's leaves (race-audit)", async () => {
+    // Campaign switch calls reset() while an off-thread contour fill may still be
+    // awaiting its worker leaves. Without invalidating that run, the stale leaves
+    // resolve and setData paints them into the NEW campaign's (restyled) source.
+    // reset() must bump the runId so the in-flight run fails its staleness check.
+    const view = fakeMap({ west: 0, east: 400, south: 0, north: 400 });
+    let releaseLeaf!: (feats: GeoJSON.Feature[]) => void;
+    const leafGate = new Promise<GeoJSON.Feature[]>((r) => (releaseLeaf = r));
+    const heldWorker = {
+      computeContourLeaf: (): Promise<GeoJSON.Feature[]> => leafGate,
+    };
+    const mgr = new TerrainContourManager({
+      sourceId: "terrain-contour",
+      scaleMetersPerUnit: 1,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      getMap: () => view.map as any,
+      getSnapshot: () => ({ digest: "old-campaign", inputs: inputsFor([relief("r", [[40, 200], [360, 200]])]) }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      getWorker: () => Promise.resolve(heldWorker as any),
+    });
+    const inFlight = mgr.update(); // dispatches leaf jobs, then awaits the gated worker
+    await Promise.resolve(); // let update() reach its await
+    mgr.reset(); // campaign switch: must invalidate the in-flight run
+    releaseLeaf([
+      { type: "Feature", id: "stale", properties: { generatorId: "terrain-contour" }, geometry: { type: "LineString", coordinates: [[0, 0], [1, 1]] } },
+    ]);
+    await inFlight;
+    // The stale leaves must NOT have been painted into the (post-switch) source.
+    expect(view.last).toBeNull();
+  });
+
   it("emits coordinates in DISPLAY units (meters ÷ scale)", async () => {
     // Two managers over the IDENTICAL meter viewport [0,400] (so they tile the
     // field identically) but different scales: scale 1's display bounds are

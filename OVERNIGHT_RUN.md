@@ -1,5 +1,73 @@
 # OVERNIGHT RUN — pipeline arc 031→039 (2026-07-14 → 2026-07-15)
 
+## RACE AUDIT (2026-07-15) — Jonah: "what other race conditions are there?"
+
+Systematic sweep of every async boundary + shared mutable state (all of MapController's
+async methods, the four debounce timers, the worker queue, campaignDemProtocol globals,
+terrainContourManager, MapView lifecycle, the tileCache/demCache write paths), scored
+against ARCHITECTURE §13.12's H1–H6. Method: inventory → trace a concrete interleave →
+CONFIRMED (failing-first test or code trace) vs THEORETICAL. The three async bugs fixed
+earlier today (73853a0 create-vs-reconcile, 046daef toggle retry, the parallel agent's
+vertex/flush/reload work) were NOT re-touched here — that surface is owned elsewhere; I
+audited its seams and report the answers below but changed no MapController flush/reload/
+vertex code.
+
+### Ranked table
+
+| # | Seam | Interleave | Sev | Status | Guard |
+|---|------|-----------|-----|--------|-------|
+| 1 | `tileCache.removeCachedTiles` bypassed the per-shard write-chain | A drop/rewrite reads the shard, a concurrent `appendCachedTile` (a forced pass's network record, or two interleaved passes) lands, the rewrite writes back its **pre-append** snapshot → the appended cache record is silently lost | durable cache-record loss (regenerable ⇒ self-heals to an extra recompute) | **CONFIRMED — FIXED** | H1: route the rewrite through the SAME `writeChains` per-shard chain `append` uses (invariant #16) |
+| 2 | `main.getGenerationWorker` double-init | Cold open fires DEM-tile + contour-leaf + region-replay worker requests concurrently, all before `create()`'s async `adapter.read` resolves; each spawns its own `Worker`, losers leaked (onunload terminates only the stored one) | leaked worker thread (resource) | **CONFIRMED — FIXED** | Memoize the in-flight CREATION promise, not just the resolved client |
+| 3 | `terrainContourManager.reset()` didn't invalidate an in-flight `update()` | Campaign switch calls reset() while an off-thread contour fill is awaiting worker leaves; reset() left `runId` untouched so the stale leaves pass the post-await staleness check and `setData` paints campaign A's contours into B's (restyled) source | visual (transient stale contours) | **CONFIRMED — FIXED** | H1/teardown: `runId++` in reset() so the in-flight run supersedes |
+| 4 | Concurrent `runForwardPass` (no mutex/epoch) | The debounced external-fabric reload's pass can fire WHILE a panel-edit pass awaits its worker jobs; both mutate `sessionCache` (`.set`/`.delete`), `pendingPass`, `outdatedRegions`, `previewedRegions`, `regionPaintedStage`. Deterministic bytes self-heal the cache; the bite is `pendingPass` clobber (pass B overwrites A's deferred set → A's regions stay `outdated`-badged until an unrelated trigger) | stale-serve (stuck badge); benign in the common case | **CONFIRMED-structural — FILED** (owned by flush/reload agent; fix > 30-line budget) | Serialize passes through a promise chain, or a pass-epoch that supersedes an in-flight pass on a newer trigger |
+| 5 | `beginCampaign` clears render/manifest/fabric/cache on switch but NOT the pending/badge sets | `pendingConstraintFeatures`, `pendingRegionRegen`, `pendingPass`, `outdatedRegions`, `needsAdoption`, `previewedRegions` carry A→B; a pending flush/apply fires against B (id-filtered to a near-no-op) and B shows a spurious "Apply pending cascade" / stale badges | stale-UI | **CONFIRMED — FILED** (in MapController.ts, the parallel agent's actively-edited file — not touched to avoid a shared-checkout collision) | Extend `beginCampaign`'s `switched` block to clear these six |
+
+### Task Q4 — completeness of today's guards (audited, no change made)
+
+- **73853a0 baseline CAS covers create AND delete AND undo, not create-only.** The guard
+  is reference-identity (`this.fabricCollection !== baseline`), and delete/undo reassign
+  the collection through the immutable `withFeature`/`withoutFeature` helpers, so any
+  self-write that lands during the disk-READ window is caught generically. **Caveat:** the
+  CAS only spans the read window (MapController:2339→2354); a self-write landing AFTER
+  `this.fabricCollection = loaded` (2402) is reconciled by the follow-up armed reload, not
+  the CAS. Adequate, but that later window rests entirely on the re-arm — worth a note in
+  the parallel agent's fix.
+- **Toggle retry DOES cancel on campaign switch.** setCampaign → `terrainToggle.reset()` →
+  `dispose()` → `cancelRetry()`. Caveat: `reset()` only runs when the switch also rebuilds
+  the style (theme/underlay/first-apply); a **same-theme** campaign switch skips it (the
+  `if (this.map && (isFirstApply || themeChanged || underlayChanged))` gate). It self-heals
+  — the toggle re-busts via the `demTilesDigest` compare and the contour engine rebuilds
+  off the digest baked into `engineKey` — but "terrain is per-session" is violated visually
+  for one frame across a same-theme switch. Low severity; filed as a note, not a fix.
+- **The persistent cache view is NOT independently guarded against two passes.** Plan 034's
+  "one pass" is a per-pass invariant, not a cross-pass mutex — see #4.
+
+### Audited, guards adequate / no race
+
+- **campaignDemProtocol module globals** — `providers`/`pngCache`/`inFlightLattice` are
+  keyed by `campaignId`; `inFlightLattice` clears in a `finally`; the encode semaphore
+  releases in a `finally` and survives an abort (the shared compute runs to completion).
+  No cross-campaign corruption. Provider re-registration mid-serve just supersedes the
+  next request's digest — old bytes are last-write-wins, deterministic.
+- **terrainContourManager overlapping updates** — the `runId` gate + the locally-captured
+  `engine` make a superseded settle drop its paint correctly.
+- **MapView debounce timers** — all three cancelled on `onClose`; NOT on switch, but the
+  `campaign?.id` re-checks + `liveRegionIds`/id filtering make a cross-campaign fire a
+  near-no-op. (Clearing them on switch too would be tidier — minor.)
+- **appendCachedTile / appendDemTile racing appends** — already serialized via per-file
+  write-chains (existing demCache test + the new tileCache test).
+
+### What I fixed vs filed
+- **Fixed (3, all outside the flush/reload/vertex surface, guard-pattern applications):**
+  `src/model/tileCache.ts` (#1), `src/main.ts` (#2), `src/map/generation/terrainContourManager.ts` (#3).
+- **Filed as recommendations (2):** #4 concurrent-pass serialization (flush/reload agent),
+  #5 `beginCampaign` pending/badge clears (MapController).
+- **Tests:** `src/model/tileCache.test.ts` (NEW — also fills the invariant-#16 gap: the
+  referenced `tileCache.test.ts` did not exist; racing append-vs-remove is failing-first
+  proven) · `terrainContourManager.test.ts` (+1, reset-invalidation, failing-first proven)
+  · `src/main.raceAudit.test.ts` + `src/controller/passConcurrency.raceAudit.test.ts`
+  (`.skip` + `TODO(race-audit)` — #2 needs an obsidian-Plugin harness, #4's fix isn't mine).
+
 ## LIVE-TESTING SESSION FIXES (2026-07-15 afternoon, all pushed, suite 1319/1319)
 - `2e7e342` contours at ALL zooms: interval capped at relief-range/10 (nice-number snapped,
   digest-keyed, byte-identical at close zooms; overview 4→12–18 lines).

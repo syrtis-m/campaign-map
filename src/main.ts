@@ -49,6 +49,9 @@ export default class CampaignMapPlugin extends Plugin {
   private campaignStates = new Map<string, CampaignState>();
   private rescanQueued = false;
   private workerClient: GenerationWorkerClient | null = null;
+  /** In-flight worker creation, memoized so concurrent first-callers share ONE
+   * worker (see getGenerationWorker). */
+  private workerClientPromise: Promise<GenerationWorkerClient> | null = null;
   private workerLastResultValue: GeoJSON.Feature[] | null = null;
   private lastRescanMs = 0;
 
@@ -94,9 +97,17 @@ export default class CampaignMapPlugin extends Plugin {
   async getGenerationWorker(): Promise<GenerationWorkerClient | null> {
     if (this.workerClient) return this.workerClient;
     try {
-      this.workerClient = await GenerationWorkerClient.create(this.app);
+      // Memoize the in-flight CREATION, not just the resolved client. A cold
+      // campaign open fires DEM-tile, contour-leaf, AND region-replay worker
+      // requests concurrently — all before `create()`'s async `adapter.read`
+      // resolves — so a bare `if (this.workerClient)` guard let each spawn its
+      // own Worker, leaving the losers leaked (onunload only terminates the one
+      // stored). Sharing the single creation promise makes exactly one worker.
+      if (!this.workerClientPromise) this.workerClientPromise = GenerationWorkerClient.create(this.app);
+      this.workerClient = await this.workerClientPromise;
       return this.workerClient;
     } catch (err) {
+      this.workerClientPromise = null; // let a later call retry after a transient failure
       console.error("Campaign Map: generation worker unavailable, falling back to main-thread generation", err);
       return null;
     }
@@ -371,6 +382,8 @@ export default class CampaignMapPlugin extends Plugin {
 
   onunload(): void {
     this.workerClient?.terminate();
+    this.workerClient = null;
+    this.workerClientPromise = null;
   }
 
   getCampaign(id: string): ParsedCampaign | undefined {
