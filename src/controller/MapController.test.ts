@@ -65,6 +65,14 @@ function repaintMirror(host: FakeHost) {
   return { paintedStageIds, painted, applyRepaint, replay };
 }
 
+/** Render ids in a painted set that belong to a region. Generated render ids are
+ * tile-key-namespaced (`region:<regionId>:<x>:<y>#<i>`) for MapLibre updateData
+ * uniqueness, so region membership is a prefix test, NOT a raw-id set lookup
+ * (raw `regionFeatureIds` are position-hashed integers). */
+function regionRenderIds(ids: Iterable<string>, regionId: string): string[] {
+  return [...ids].filter((id) => id.startsWith(`region:${regionId}:`));
+}
+
 /** The park fixture used by the stage-migration tests: strictly inside `RING`
  * so an `urban-park` variety finds the city's generated `settlement` upstream. */
 const PARK_RING: [number, number][] = [
@@ -351,7 +359,7 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
 
     // Paint everything generated so far (the store still holds the park).
     for (const s of host.repaintGeneratedStages) applyRepaint(s);
-    expect([...parkIds].every((id) => painted.has(id))).toBe(true); // park is drawn
+    expect(regionRenderIds(painted, park.featureId).length).toBeGreaterThan(0); // park is drawn
 
     // Delete the park; drive the delete's repaint through the same mirror.
     host.repaintGeneratedStages.length = 0;
@@ -360,7 +368,7 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
     for (const s of host.repaintGeneratedStages) applyRepaint(s);
 
     // The drawn park fabric must be GONE from the painted source…
-    expect([...parkIds].some((id) => painted.has(id))).toBe(false);
+    expect(regionRenderIds(painted, park.featureId).length).toBe(0);
     // …and the unpaint must target the stage the park was painted at (4).
     expect(host.repaintGeneratedStages).toContain(4);
     // The render store dropped it too (controller-level view).
@@ -397,7 +405,7 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
     const mirror = repaintMirror(host);
     mirror.replay();
     // The city-park is drawn, its ids live in the stage-2 bucket.
-    expect([...cityParkIds].every((id) => mirror.paintedStageIds.get(2)?.has(id))).toBe(true);
+    expect(regionRenderIds(mirror.paintedStageIds.get(2) ?? [], park.featureId).length).toBeGreaterThan(0);
 
     // Migrate variety city-park→urban-park (stage 2→4).
     host.repaintGeneratedStages.length = 0;
@@ -408,11 +416,10 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
     expect(host.repaintGeneratedStages).toContain(2);
     expect(host.repaintGeneratedStages).toContain(4);
     // …so the stale city-park ids are GONE from the stage-2 bucket (the ghost)…
-    expect([...cityParkIds].some((id) => mirror.paintedStageIds.get(2)?.has(id))).toBe(false);
+    expect(regionRenderIds(mirror.paintedStageIds.get(2) ?? [], park.featureId).length).toBe(0);
     // …and the region now paints at stage 4.
-    const urbanIds = new Set(host.controller.regionFeatureIds(park.featureId));
-    expect(urbanIds.size).toBeGreaterThan(0);
-    expect([...urbanIds].every((id) => mirror.paintedStageIds.get(4)?.has(id))).toBe(true);
+    expect(host.controller.regionFeatureIds(park.featureId).length).toBeGreaterThan(0);
+    expect(regionRenderIds(mirror.paintedStageIds.get(4) ?? [], park.featureId).length).toBeGreaterThan(0);
   });
 
   it("the REVERSE migration urban-park→city-park (stage 4→2) unpaints the stale stage-4 fabric", async () => {
@@ -434,7 +441,7 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
 
     const mirror = repaintMirror(host);
     mirror.replay();
-    expect([...urbanIds].every((id) => mirror.paintedStageIds.get(4)?.has(id))).toBe(true);
+    expect(regionRenderIds(mirror.paintedStageIds.get(4) ?? [], park.featureId).length).toBeGreaterThan(0);
 
     // Migrate urban-park→city-park (stage 4→2).
     host.repaintGeneratedStages.length = 0;
@@ -444,11 +451,10 @@ describe("MapController — PowerPoint-style sketch edits (procgen41)", () => {
     expect(host.repaintGeneratedStages).toContain(4);
     expect(host.repaintGeneratedStages).toContain(2);
     // The stale urban-park ids are gone from the stage-4 bucket…
-    expect([...urbanIds].some((id) => mirror.paintedStageIds.get(4)?.has(id))).toBe(false);
+    expect(regionRenderIds(mirror.paintedStageIds.get(4) ?? [], park.featureId).length).toBe(0);
     // …and the region now paints at stage 2.
-    const cityParkIds = new Set(host.controller.regionFeatureIds(park.featureId));
-    expect(cityParkIds.size).toBeGreaterThan(0);
-    expect([...cityParkIds].every((id) => mirror.paintedStageIds.get(2)?.has(id))).toBe(true);
+    expect(host.controller.regionFeatureIds(park.featureId).length).toBeGreaterThan(0);
+    expect(regionRenderIds(mirror.paintedStageIds.get(2) ?? [], park.featureId).length).toBeGreaterThan(0);
   });
 
   it("a NON-migrating park param edit repaints exactly its one stage (no over-repaint)", async () => {
@@ -1750,7 +1756,14 @@ describe("MapController — param-edit repaint (Jonah 2026-07-15)", () => {
     );
     const mirror = geometryPaintMirror(host);
     mirror.drive(); // paint everything generated so far (the river is stage 0)
-    const idsBefore = new Set(host.controller.regionFeatureIds(featureId));
+    // Snapshot the RENDER ids (tile-key-namespaced), not the raw region ids — the
+    // painted source is keyed by render id.
+    const idsBefore = new Set(
+      regionRenderIds(
+        host.controller.displayGenerated().map((f) => String(f.id)),
+        featureId
+      )
+    );
     expect(idsBefore.size).toBeGreaterThan(0);
     const paintedBefore = mirror.geomFor(idsBefore);
 

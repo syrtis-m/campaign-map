@@ -1,42 +1,74 @@
-import { describe, it } from "vitest";
-
 /**
- * RACE-AUDIT (2026-07-15): concurrent `runForwardPass` invocations share mutable
- * controller state with no serialization.
+ * RACE-AUDIT item 4 (2026-07-15) — FIXED. Concurrent `runForwardPass`
+ * invocations used to share mutable controller state (`sessionCache` force-drops,
+ * `pendingPass`, `outdatedRegions` / `needsAdoption` / `previewedRegions` /
+ * `regionPaintedStage`) with no serialization: a panel edit's pass and the
+ * debounced external-fabric reload's pass could interleave. The fix chains every
+ * pass behind the previous through `passChain`, so pass bodies never overlap.
  *
- * `runForwardPass` (MapController) is `async` and holds no mutex/epoch. Multiple
- * triggers reduce to it without ordering: `setRegionParams`/`setRegionPreset`,
- * `adoptAllRegions`, `applyPendingCascade`, and — the reachable overlap — the
- * debounced external-fabric reload (`reloadFabricFromDisk` → runForwardPass) that
- * can fire WHILE a panel edit's pass is still awaiting its worker jobs. Two passes
- * then interleave over shared fields:
- *   - `sessionCache` (the 032-B view): pass A `.delete`s a region's network record
- *     (force-drop) while pass B iterates/reads it — extra recompute; converges only
- *     because bytes are deterministic (benign UNLESS the fabric moved between them).
- *   - `pendingPass`: an over-budget pass B overwrites A's deferred set; A's deferred
- *     regions stay `outdatedRegions`-badged until an unrelated later trigger clears
- *     them (stuck-badge — stale-serve severity).
- *   - `outdatedRegions` / `needsAdoption` / `previewedRegions` / `regionPaintedStage`:
- *     add/delete interleavings leave inconsistent badge/paint state (visual).
- *
- * Rated CONFIRMED-structural (no guard exists) but the harmful window needs two
- * genuinely-concurrent passes; the deterministic-bytes property makes the common
- * case self-healing, so the durable-corruption risk is bounded to the fabric-moved
- * -mid-pass case already covered by the reconcile CAS (73853a0).
- *
- * FIX NOT APPLIED HERE — it belongs on `runForwardPass` and its reload caller,
- * which the parallel MapController flush/reload agent owns, and a proper guard
- * (serialize passes through a promise chain, or an epoch that supersedes an
- * in-flight pass on a newer trigger) is > the ~30-line guard-application budget of
- * this audit. Filed as a recommendation in OVERNIGHT_RUN.md § RACE AUDIT.
- *
- * TODO(race-audit): once passes are serialized, add a FakeHost test that fires an
- * over-budget `setRegionParams` pass and a `reloadFabricFromDisk` pass
- * concurrently and asserts a single coherent `pendingPass` + no stuck
- * `outdatedRegions`.
+ * These tests witness the invariant directly (peak concurrency stays 1) and prove
+ * the deferred-cascade state stays coherent across overlapping over-budget passes.
  */
-describe("concurrent runForwardPass shared-state interleave (race-audit)", () => {
-  it.skip("serializes overlapping passes so pendingPass/outdatedRegions stay coherent (fix owned by the flush/reload agent)", () => {
-    // Documented above; recommendation only.
+import { describe, it, expect } from "vitest";
+import { FakeHost } from "./FakeHost";
+
+const RING: [number, number][] = [
+  [10, -26],
+  [26, -26],
+  [26, -10],
+  [10, -10],
+];
+const RIVER_LINE: [number, number][] = [
+  [6, -30],
+  [16, -20],
+  [24, -12],
+];
+
+function cityHost(): FakeHost {
+  const host = new FakeHost({ zoom: 10 });
+  host.begin();
+  return host;
+}
+
+describe("concurrent runForwardPass shared-state interleave (race-audit item 4)", () => {
+  it("serializes overlapping passes — pass bodies never run concurrently", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+
+    // Launch two passes WITHOUT awaiting between them (genuinely overlapping):
+    // unserialized, both bodies would enter and interleave at their first await.
+    await Promise.all([
+      host.controller.regenerateRegionById(river.featureId),
+      host.controller.regenerateRegionById(city.featureId),
+    ]);
+
+    expect(host.controller.passConcurrencyPeak).toBe(1);
+  });
+
+  it("overlapping over-budget passes leave a COHERENT pendingPass + outdated badge (no stuck ghosts)", async () => {
+    const host = cityHost();
+    const river = await host.controller.createSpineForTest(RIVER_LINE, "river", "river", { windiness: 0.5 }, "R");
+    const city = await host.controller.createRegionForTest(RING, "city", { profile: "euro-medieval" }, "C");
+
+    // Budget below the city's cost so any pass touching the river defers the city.
+    host.controller.overrideCascadeCostBudgetForTest(3);
+
+    // Two over-budget river edits fired concurrently. Serialized, they run in
+    // launch order and the SECOND leaves the authoritative deferred set.
+    await Promise.all([
+      host.controller.setRegionParams(river.featureId, { windiness: 0.9 }),
+      host.controller.setRegionParams(river.featureId, { windiness: 0.1 }),
+    ]);
+
+    expect(host.controller.passConcurrencyPeak).toBe(1);
+    // Coherent bill: exactly the city deferred, badge matches pendingPass.
+    expect(host.controller.hasPendingCascade).toBe(true);
+    expect(host.controller.outdatedRegionIds()).toEqual([city.featureId]);
+
+    // The held bill applies cleanly and clears — no stuck outdated ghost.
+    await host.controller.applyPendingCascade();
+    expect(host.controller.hasPendingCascade).toBe(false);
+    expect(host.controller.outdatedRegionIds()).toEqual([]);
   });
 });

@@ -369,6 +369,18 @@ export class MapController {
       this.fabricLoadedFor = null;
       this.regionPaintedStage.clear();
       this.sessionCache = null; // drop the previous campaign's cache view
+      // Race-audit item 5 (2026-07-15): the pending-work + badge sets are NOT
+      // campaign-scoped state and MUST reset on a switch — otherwise campaign A's
+      // queued regen / deferred cascade / adoption + outdated badges leak into B
+      // (spurious "needs adoption" / "apply pending" prompts against ids that
+      // don't exist in B, and a stale preview flag). Mirrors the render/cache
+      // clears above.
+      this.pendingConstraintFeatures = [];
+      this.pendingRegionRegen.clear();
+      this.pendingPass = null;
+      this.outdatedRegions.clear();
+      this.needsAdoption.clear();
+      this.previewedRegions.clear();
     }
     this.campaign = campaign;
     return { switched };
@@ -492,13 +504,39 @@ export class MapController {
     return this.fabricCollection.features.find((f) => f.id === id);
   }
 
+  /** Render-space feature for the `generated` MapLibre source: unit-transformed
+   * AND its id namespaced by the owning tile key. A generated feature that spans
+   * a tile boundary is clipped into every covered tile under the SAME
+   * (position-hashed) feature id, so the flattened collection carries DUPLICATE
+   * ids. MapLibre's staged `updateData` (032-D) requires globally-unique ids
+   * (`isUpdateableGeoJSON`); a single duplicate makes the ENTIRE source
+   * non-updateable, so every staged repaint throws in the worker and silently
+   * keeps the PRE-edit bytes — a moved vertex regenerates the store but never
+   * repaints (the reported bug). The tile key is stable across regens (region id
+   * + tile coords) and the feature id is position-hashed, so the namespaced
+   * render id is deterministic and its `updateData` diff stays minimal. The
+   * per-tile POSITION disambiguates the residual intra-tile collision (a
+   * generated feature id is unique per REGION, but a tile can hold two clips
+   * that hash to the same id, or an id-less feature) — generation is
+   * deterministic, so the position is stable across a re-clip of an unchanged
+   * region and only churns for a region that actually regenerated. */
+  private renderFeature(key: string, index: number, f: GeoJSON.Feature, scale: number): GeoJSON.Feature {
+    const t = transformFeatureUnits(f, (n) => metersToUnits(n, scale));
+    return { ...t, id: `${key}#${index}` };
+  }
+
   /** Display-space (fictional units) generated features — matches what's
-   * rendered/queryable on the map (MapView paints these, main.ts exposes them). */
+   * rendered/queryable on the map (MapView paints these, main.ts exposes them).
+   * Render ids are tile-key-namespaced for global uniqueness (see
+   * `renderFeature`). */
   displayGenerated(): GeoJSON.Feature[] {
-    const all = this.allLoadedFeatures();
-    if (!this.campaign) return all;
+    if (!this.campaign) return this.allLoadedFeatures();
     const scale = this.campaign.config.scaleMetersPerUnit;
-    return all.map((f) => transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+    const out: GeoJSON.Feature[] = [];
+    for (const [key, feats] of this.loadedTiles) {
+      feats.forEach((f, i) => out.push(this.renderFeature(key, i, f, scale)));
+    }
+    return out;
   }
 
   /** The DAG stage a render-store key belongs to (032-D): a region key
@@ -528,20 +566,22 @@ export class MapController {
         arr = [];
         out.set(stage, arr);
       }
-      for (const f of feats) arr.push(transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+      feats.forEach((f, i) => arr.push(this.renderFeature(key, i, f, scale)));
     }
     return out;
   }
 
   /** Display-space generated features for ONE DAG stage (032-D) — the host
-   * repaints just these via an incremental `updateData` diff. */
+   * repaints just these via an incremental `updateData` diff. Render ids are
+   * tile-key-namespaced (see `renderFeature`) so the staged `updateData` diff
+   * matches the full-paint id tracking. */
   displayGeneratedForStage(stage: number): GeoJSON.Feature[] {
     if (!this.campaign) return [];
     const scale = this.campaign.config.scaleMetersPerUnit;
     const out: GeoJSON.Feature[] = [];
     for (const [key, feats] of this.loadedTiles) {
       if (this.stageOfRenderKey(key) !== stage) continue;
-      for (const f of feats) out.push(transformFeatureUnits(f, (n) => metersToUnits(n, scale)));
+      feats.forEach((f, i) => out.push(this.renderFeature(key, i, f, scale)));
     }
     return out;
   }
@@ -1293,6 +1333,55 @@ export class MapController {
     }
   }
 
+  /** Serializes forward passes (race-audit item 4, 2026-07-15). A pass is
+   * `async` and mutates shared session state as it awaits worker jobs —
+   * `sessionCache` force-drops, `pendingPass`, `outdatedRegions` /
+   * `needsAdoption` / `previewedRegions` / `regionPaintedStage`. Two passes can
+   * genuinely overlap: a panel edit's pass and the debounced external-fabric
+   * reload's pass (`reloadFabricFromDisk` can fire WHILE a `setRegionParams` /
+   * `applyPendingCascade` pass still awaits generation). Interleaved, pass B
+   * overwrites A's `pendingPass` (A's deferred regions stay stuck-badged) and
+   * the two race over the cache view. Chaining every pass behind the previous
+   * one (waiting for it to SETTLE — success or failure) makes each pass observe
+   * a consistent snapshot. Safe from deadlock: a pass never triggers another
+   * pass within its own await graph (`generateRegion` and the deferred-hydrate
+   * branch never re-enter `runForwardPass`). */
+  private passChain: Promise<void> = Promise.resolve();
+  private passInFlight = 0;
+  private passConcurrencyPeakCounter = 0;
+  /** Gate surface (race-audit item 4): the peak number of forward-pass BODIES
+   * executing at once this session. Serialization holds iff this stays 1. */
+  get passConcurrencyPeak(): number {
+    return this.passConcurrencyPeakCounter;
+  }
+
+  private runForwardPass(
+    input: Parameters<MapController["runForwardPassInner"]>[0]
+  ): Promise<Map<string, GeoJSON.Feature[]>> {
+    const run = this.passChain.then(() => this.trackPass(input));
+    // Keep the chain alive whatever this pass's outcome — a rejected pass must
+    // not wedge every later one.
+    this.passChain = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  /** Runs one pass body while tracking peak concurrency (the serialization
+   * invariant's witness). */
+  private async trackPass(
+    input: Parameters<MapController["runForwardPassInner"]>[0]
+  ): Promise<Map<string, GeoJSON.Feature[]>> {
+    this.passInFlight++;
+    this.passConcurrencyPeakCounter = Math.max(this.passConcurrencyPeakCounter, this.passInFlight);
+    try {
+      return await this.runForwardPassInner(input);
+    } finally {
+      this.passInFlight--;
+    }
+  }
+
   /**
    * THE forward pass (plan 034) — the single code path every regen trigger
    * reduces to: `markDirty(roots) → runForwardPass`. It supersedes the pre-034
@@ -1323,7 +1412,7 @@ export class MapController {
    * `applyPendingCascade`). Returns the meter-space features per regenerated
    * region id.
    */
-  private async runForwardPass(input: {
+  private async runForwardPassInner(input: {
     /** Regions whose OWN block/geometry changed (the GM's direct edit) — always
      * applied, never deferred, always recomputed. */
     regionRoots?: string[];
