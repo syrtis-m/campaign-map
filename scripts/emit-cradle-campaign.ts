@@ -25,7 +25,7 @@
  * each block to its algorithm's CURRENT contract version) + the whole-collection
  * validator — no src file is modified.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type {
@@ -813,6 +813,17 @@ function locationNote(pin: CradlePin): string {
 
 // ─── Emit ────────────────────────────────────────────────────────────────────
 function main(): void {
+  // GUARD (Jonah 2026-07-15): the Cradle is now HAND-AUTHORED in-app (farmland,
+  // rivers, forests added beyond this emitter's output). Re-emitting would
+  // DELETE that work. This script is retired as a one-shot bootstrap — it
+  // refuses to overwrite an existing campaign unless --force is passed.
+  if (existsSync(join(CAMPAIGN_DIR, "Fabric.geojson")) && !process.argv.includes("--force")) {
+    console.error(
+      "REFUSING to overwrite dev-vault/Campaigns/Cradle — it contains hand-authored work " +
+        "(Jonah 2026-07-15). Pass --force ONLY if you truly intend to reset the campaign."
+    );
+    process.exit(1);
+  }
   mkdirSync(LOCATIONS_DIR, { recursive: true });
 
   const fabric = buildCradleFabric();
