@@ -112,7 +112,10 @@ export const CITY_STYLE_CONTRACT: readonly BucketStyle[] = [
   { gid: "city-parcel", mark: "line", role: "built", z: 13 },
   { gid: "city-footprint", mark: "fill", role: "built", z: 12 },
   { gid: "city-landmark", mark: "fill", role: "built", z: 14 },
-  { gid: "city-district", mark: "fill", role: "built-accent", z: 11 },
+  // Unpainted (Jonah 2026-07-16, "no underlying color — it should just be the
+  // city"): the district wash blob is still emitted/cached (a theme could
+  // re-enable it) but draws nothing — the city IS its streets/blocks/buildings.
+  { gid: "city-district", mark: "fill", role: "built-accent", z: 11, unpainted: true },
 ];
 
 /** River. Bucket order matches `RIVER_TILE_GENERATOR_IDS`. */

@@ -98,7 +98,9 @@ describe("consumption declarations (plan 033-C)", () => {
     string,
     { kinds: string[]; margin: number; cost: "cheap" | "medium" | "expensive" }
   > = {
-    city: { kinds: ["water", "river", "road", "wall", "farmland", "park", "district"], margin: 1500, cost: "expensive" },
+    // v4 (2026-07-16): + mountain/relief/landform — the no-city-underwater
+    // land mask reads the composed macro terrain (terrainStampSupport reach).
+    city: { kinds: ["water", "river", "road", "wall", "farmland", "park", "district", "mountain", "relief", "landform"], margin: 1500, cost: "expensive" },
     // Ruling 2026-07-15: the terrain readers gain relief/landform (the composed
     // global terrain field, not a mountain polygon). The terrain-stamp kinds use
     // a PER-FEATURE reach (`terrainStampSupport`), so `margin` still governs only

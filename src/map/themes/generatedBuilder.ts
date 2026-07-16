@@ -357,14 +357,6 @@ const RECIPES: Record<string, Recipe> = {
       paint: { "fill-color": roles.ground, "fill-opacity": 1, "fill-antialias": false },
     }),
   ],
-  "city-district": (roles) => [
-    L({
-      id: "generated-district",
-      type: "fill",
-      filter: gidFilter("city-district"),
-      paint: { "fill-color": roles["built-accent"], "fill-opacity": 0.09 },
-    }),
-  ],
   "city-footprint": (roles) => [
     L({
       id: "generated-footprint",

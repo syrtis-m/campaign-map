@@ -61,9 +61,14 @@ export function fabricLayers(tokens: ThemeTokens): LayerSpecification[] {
       filter: kindFilter("district"),
       // Low opacity is load-bearing: a heavier district fill turned the
       // near-black neon base into a purple slab (see generatedLayers.ts).
+      // GENERATED districts drop the wash entirely (Jonah 2026-07-16, "no
+      // underlying color — it should just be the city"): once a procgen block
+      // is attached, the streets/blocks/buildings ARE the district's visual;
+      // an inert (not-yet-generated) district keeps the wash so the drawn
+      // shape stays visible.
       paint: {
         "fill-color": tokens.fabricDistrict,
-        "fill-opacity": 0.18,
+        "fill-opacity": ["case", ["has", "procgen"], 0, 0.18],
         "fill-outline-color": tokens.fabricDistrict,
       },
     },

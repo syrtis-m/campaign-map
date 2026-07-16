@@ -24,8 +24,9 @@ import {
 } from "./styleContract";
 import type { FabricKind } from "../../model/fabric";
 import type { GenerationConstraints } from "../types";
-import type { ProcgenRegion } from "../region";
+import { makeRegion, type ProcgenRegion } from "../region";
 import type { Stage, ConstraintKind } from "./dag";
+import { macroTerrainField } from "../fields/terrain";
 import { generateRiver, riverMaxOffset } from "../river";
 import { generateForest, FOREST_VARIETIES } from "../forest";
 import { generatePark, PARK_VARIETIES } from "../park";
@@ -233,7 +234,118 @@ const cityParamsSchema = z.object({
     .max(20000)
     .optional()
     .describe("How far inside the boundary (meters) the terrain leveling fades back to natural ground."),
+  /** Feature-scale multiplier (2026-07-16, "some cities read too small"): the
+   * generator runs in a world shrunk by 1/scale and its output is blown back
+   * up, so streets/blocks/buildings all render `scale`× larger while still
+   * filling the same drawn boundary. OPTIONAL — absent ⇒ 1 ⇒ byte-identical
+   * (the absent-param-reproduces-old-bytes discipline). */
+  scale: z
+    .number()
+    .min(0.5)
+    .max(4)
+    .optional()
+    .describe("Feature size multiplier: streets, blocks and buildings draw this many times larger inside the same boundary (1 = realistic for the campaign scale). Raise it when a city reads too small for its spot."),
 });
+
+// ── City helpers: feature scaling + the land mask ────────────────────────────
+
+/** Map every coordinate of a GeoJSON geometry through `fn` (pure, recursive). */
+function mapCoords(coords: unknown, fn: (p: [number, number]) => [number, number]): unknown {
+  if (!Array.isArray(coords)) return coords;
+  if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+    return fn(coords as [number, number]);
+  }
+  return coords.map((c) => mapCoords(c, fn));
+}
+
+function scaleGeometry<T extends GeoJSON.Feature>(feature: T, k: number): T {
+  const g = feature.geometry as { type: string; coordinates?: unknown };
+  if (!g || g.coordinates === undefined) return feature;
+  return {
+    ...feature,
+    geometry: { ...g, coordinates: mapCoords(g.coordinates, ([x, y]) => [x * k, y * k]) },
+  } as T;
+}
+
+/** Scale a city OUTPUT feature back to world meters: geometry ×k plus the
+ * street `width` property (paint width ramps read it in meters). */
+function scaleCityFeature(feature: GeoJSON.Feature, k: number): GeoJSON.Feature {
+  const scaled = scaleGeometry(feature, k);
+  const width = (feature.properties as Record<string, unknown> | null)?.width;
+  if (typeof width === "number") {
+    return { ...scaled, properties: { ...scaled.properties, width: width * k } };
+  }
+  return scaled;
+}
+
+/** Shrink every geometric constraint into the scaled gen space (worldBounds,
+ * canon pins, fabric sketches, upstream artifacts). Non-geometric fields pass
+ * through. The city generator reads no terrain field, so `terrainBase` /
+ * `campaignSeed` passing through unscaled is sound today — revisit if a city
+ * coupling ever samples the composed terrain during generation. */
+function scaleConstraints(constraints: GenerationConstraints, k: number): GenerationConstraints {
+  const sf = <T extends GeoJSON.Feature>(f: T): T => scaleGeometry(f, k);
+  const upstream = constraints.upstream
+    ? Object.fromEntries(
+        Object.entries(constraints.upstream).map(([key, feats]) => [
+          key,
+          Array.isArray(feats) ? feats.map((f) => sf(f as GeoJSON.Feature)) : feats,
+        ])
+      )
+    : undefined;
+  return {
+    ...constraints,
+    worldBounds: {
+      minX: constraints.worldBounds.minX * k,
+      minY: constraints.worldBounds.minY * k,
+      maxX: constraints.worldBounds.maxX * k,
+      maxY: constraints.worldBounds.maxY * k,
+    },
+    canonFeatures: constraints.canonFeatures?.map(sf),
+    fabricFeatures: constraints.fabricFeatures?.map(sf),
+    upstream: upstream as GenerationConstraints["upstream"],
+  };
+}
+
+/** Ground must clear the sea datum by this much (m) to count as buildable —
+ * the sea landform pins water to EXACTLY the datum, and the shoreline band
+ * ramps land smoothly down to it. */
+const CITY_SEA_FREEBOARD_M = 0.5;
+
+/** Sample points for the land-mask vote: up to `n` evenly-spaced vertices of
+ * the feature's first coordinate run (ring or line). */
+function maskSamplePoints(feature: GeoJSON.Feature, n: number): [number, number][] {
+  const g = feature.geometry as { type: string; coordinates?: unknown };
+  let run: unknown = g?.coordinates;
+  while (Array.isArray(run) && Array.isArray(run[0]) && typeof (run[0] as unknown[])[0] !== "number") run = run[0];
+  if (!Array.isArray(run) || run.length === 0) return [];
+  const pts = run as [number, number][];
+  if (typeof pts[0]?.[0] !== "number") return [];
+  const out: [number, number][] = [];
+  const step = Math.max(1, Math.floor(pts.length / n));
+  for (let i = 0; i < pts.length; i += step) out.push(pts[i]);
+  return out;
+}
+
+/** Drop city fabric that sits underwater (composed macro terrain below the
+ * campaign sea datum): majority vote over sampled vertices, so features
+ * straddling the shoreline trim to a ragged natural edge. No terrain field
+ * (flat base, no stamps) ⇒ identity ⇒ byte-identical to pre-v4. */
+function maskCityToLand(feats: GeoJSON.Feature[], constraints: GenerationConstraints): GeoJSON.Feature[] {
+  const field = macroTerrainField(constraints.fabricFeatures, constraints.terrainBase, constraints.campaignSeed);
+  if (!field) return feats;
+  // A sea landform pins its water to EXACTLY the datum (replace target ==
+  // seaDatum), so a strict `< datum` test never fires — ground must clear the
+  // swash line by a freeboard margin to count as buildable land.
+  const shoreline = (constraints.terrainBase?.seaDatum ?? 0) + CITY_SEA_FREEBOARD_M;
+  return feats.filter((f) => {
+    const pts = maskSamplePoints(f, 6);
+    if (pts.length === 0) return true;
+    let wet = 0;
+    for (const [x, y] of pts) if (field(x, y).v < shoreline) wet++;
+    return wet * 2 <= pts.length; // strictly-majority-wet drops
+  });
+}
 
 /** City presets: each profile becomes a template of the `city` algorithm.
  * Preset id === profile id (they are 1:1 today); a preset's `params` is exactly
@@ -266,6 +378,15 @@ const cityAlgorithm: ProcgenAlgorithm = {
   // added there). A city with NO upstream vegetation AND no contained region is
   // byte-identical to v1 (golden unchanged); either coupling present changes
   // bytes ⇒ the bump gates adoption.
+  // Version 4 (2026-07-16): NO CITY UNDERWATER — output is masked to land
+  // (composed macro terrain ≥ the campaign sea datum, majority vote per
+  // feature), and the terrain-stamp kinds join consumesSketch so a sea/relief
+  // edit near the district invalidates it (per-feature terrainStampSupport
+  // reach, the forest/farmland pattern). A `scale` param joins the schema
+  // (absent ⇒ 1 ⇒ byte-identical — it alone would not have bumped). A city
+  // with no terrain field (flat base, no stamps) is byte-identical to v3
+  // (golden unchanged); one overlapping water changes bytes ⇒ the bump gates
+  // adoption.
   // Version 3 (plans 038 + 039 §1.1, coupling wave 2): (038.1) bank-tangent
   // street alignment + building-only setback near the generated river channel;
   // (038.5) an in-region sketched road forces a gate where it crosses the wall
@@ -277,7 +398,7 @@ const cityAlgorithm: ProcgenAlgorithm = {
   // channel / no in-region road crossing a wall / no adjacent district / no
   // market pin is byte-identical to v2; any trigger present changes bytes ⇒ the
   // bump gates adoption.
-  currentVersion: 3,
+  currentVersion: 4,
   appliesTo: ["district"],
   // Stage 3 (settlement): bridges over the meandered channel + a growth-cost
   // bump from canopy → consumes water + vegetation. Produces `settlement` for
@@ -292,7 +413,9 @@ const cityAlgorithm: ProcgenAlgorithm = {
   // becomes a hole (perimeter frontage + hashed entrances). Containment gap is 0,
   // so the existing 1500 m margin covers it; an adjacent/overlapping (non-
   // contained) park/district is byte-inert (033-A harness verifies).
-  consumesSketch: ["water", "river", "road", "wall", "farmland", "park", "district"],
+  // v4: + mountain/relief/landform — the land mask reads the composed macro
+  // terrain, so terrain-stamp edits within their support must invalidate.
+  consumesSketch: ["water", "river", "road", "wall", "farmland", "park", "district", "mountain", "relief", "landform"],
   influenceMargin: 1500,
   costClass: "expensive",
   paramsSchema: cityParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
@@ -309,10 +432,32 @@ const cityAlgorithm: ProcgenAlgorithm = {
   },
   tileGeneratorIds: DOMAIN_TILE_GENERATOR_IDS,
   generate(seed, region, params, constraints): GeoJSON.Feature[] {
-    const { profile, center, seamBoulevard, growthRings } = cityParamsSchema.parse(params);
+    const { profile, center, seamBoulevard, growthRings, scale } = cityParamsSchema.parse(params);
     const overrides =
       seamBoulevard !== undefined || growthRings !== undefined ? { seamBoulevard, growthRings } : undefined;
-    return generateCityNetwork(seed, region, profile, constraints, center, overrides);
+    let feats: GeoJSON.Feature[];
+    if (typeof scale === "number" && scale !== 1) {
+      // FEATURE SCALE (2026-07-16): run the pure generator in a world shrunk
+      // by 1/scale (region, center and every constraint geometry), then blow
+      // the output back up — streets/blocks/buildings come out `scale`× larger
+      // yet still fill the same drawn boundary. Deterministic (a fixed affine
+      // map on both sides of a pure function); street `width` properties scale
+      // with the geometry so paint ramps stay proportionate.
+      const inv = 1 / scale;
+      const shrunkRegion = makeRegion(region.id, region.ring.map(([x, y]) => [x * inv, y * inv] as [number, number]));
+      const shrunkCenter = center ? ([center[0] * inv, center[1] * inv] as [number, number]) : undefined;
+      const raw = generateCityNetwork(seed, shrunkRegion, profile, scaleConstraints(constraints, inv), shrunkCenter, overrides);
+      feats = raw.map((f) => scaleCityFeature(f, scale));
+    } else {
+      feats = generateCityNetwork(seed, region, profile, constraints, center, overrides);
+    }
+    // NO CITY UNDERWATER (2026-07-16, v4): where the composed macro terrain
+    // sits below the campaign sea datum (a sea landform / low base), city
+    // fabric is dropped — a district ring drawn across a shoreline generates
+    // only on land. Majority vote over sampled vertices, so shoreline-crossing
+    // blocks trim to a ragged natural edge. A campaign with no terrain field
+    // (flat base, no stamps) skips entirely ⇒ byte-identical to v3.
+    return maskCityToLand(feats, constraints);
   },
 };
 
