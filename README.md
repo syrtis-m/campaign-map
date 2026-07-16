@@ -9,9 +9,10 @@ It's built for the solo GM running "yes-and": a player asks about a tavern that
 didn't exist ten seconds ago, and in under five seconds it's a real note in your
 vault **and** a searchable pin on the map.
 
-One engine covers three kinds of campaign: **fictional worlds** (fantasy or
-otherwise, at any scale), **real cities** (offline street maps of actual places),
-and **stylized cities** (a noir Dishonored-esque port, a neon sprawl).
+One engine covers two kinds of campaign — **fictional worlds** (any genre, any
+scale: a fantasy realm, a noir port city, a neon sprawl) and **real cities**
+(offline street maps of actual places) — and themes carry the genre, so the same
+map can look like a parchment atlas or a gaslamp case file.
 
 ---
 
