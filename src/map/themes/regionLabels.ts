@@ -1,6 +1,7 @@
 import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "./tokens";
 import type { FabricFeature } from "../../model/fabric";
+import type { CampaignConfig } from "../../model/campaignConfig";
 import { invertedSeaBounds, invertedSeaLandHoles, invertedSeaLabelPoint } from "../invertedSea";
 
 /**
@@ -205,4 +206,32 @@ export function regionLabelPointFeatures(
     });
   }
   return { type: "FeatureCollection", features: out };
+}
+
+/**
+ * The ONE place MapView.refreshFabric builds the `region-labels` source data —
+ * extracted so the live wiring is testable off-DOM (an ItemView can't be driven
+ * headlessly, so the `CampaignConfig → RegionLabelOptions` threading used to have
+ * no test; the inverted-sea label placement lived only in the helper's unit test).
+ * Pure: derives the campaign context an inverted sea needs (box bounds, real-CRS
+ * flag, sea datum) from the loaded config, then delegates to
+ * `regionLabelPointFeatures`.
+ *
+ * `config` is optional because on first campaign open `refreshFabric` can fire
+ * before the config is threaded (source-exists guard aside). That is SAFE for the
+ * inverted-sea label: its placement is DATA-driven (the feature's
+ * `procgen.params.invert`), never opts-driven — an absent config only widens the
+ * fallback bounds; it never reverts to the mid-island ring centroid. So the first
+ * derivation already lands in open water; a later refresh with the config present
+ * only refines WHERE in the water.
+ */
+export function regionLabelSourceData(
+  features: readonly FabricFeature[],
+  config?: Pick<CampaignConfig, "bounds" | "crs" | "terrain">
+): GeoJSON.FeatureCollection {
+  return regionLabelPointFeatures(features, {
+    cfgBounds: config?.bounds,
+    isReal: config?.crs === "real",
+    seaDatum: config?.terrain?.seaDatum ?? 0,
+  });
 }

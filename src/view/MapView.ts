@@ -34,7 +34,7 @@ import {
   waterPolylinesFromFabric,
   WATER_AVOIDANCE_METERS,
 } from "../map/themes/labelPlacement";
-import { REGION_LABEL_LAYER_ID, REGION_LABEL_SOURCE_ID, regionLabelOpacityRamp, regionLabelPointFeatures } from "../map/themes/regionLabels";
+import { REGION_LABEL_LAYER_ID, REGION_LABEL_SOURCE_ID, regionLabelOpacityRamp, regionLabelSourceData } from "../map/themes/regionLabels";
 import { SketchController } from "./SketchController";
 import { computeScaleBar, defaultFictionalBounds } from "../map/fictionalCRS";
 import { smoothPolyline } from "../map/fabricSmooth";
@@ -1758,14 +1758,7 @@ export class MapView extends ItemView {
     // authoritative; skipped silently if the style has no such source.
     const labelSource = this.map.getSource(REGION_LABEL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     if (labelSource) {
-      const cfg = this.campaign?.config;
-      labelSource.setData(
-        regionLabelPointFeatures(this.controller.fabric.features, {
-          cfgBounds: cfg?.bounds,
-          isReal: cfg?.crs === "real",
-          seaDatum: cfg?.terrain?.seaDatum ?? 0,
-        })
-      );
+      labelSource.setData(regionLabelSourceData(this.controller.fabric.features, this.campaign?.config));
     }
   }
 

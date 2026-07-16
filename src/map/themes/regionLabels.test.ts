@@ -4,10 +4,12 @@ import {
   regionLabelLayers,
   regionLabelOpacityRamp,
   regionLabelPointFeatures,
+  regionLabelSourceData,
   REGION_LABEL_LAYER_ID,
   REGION_LABEL_SOURCE_ID,
   REGION_LABEL_OPACITY,
 } from "./regionLabels";
+import type { CampaignConfig } from "../../model/campaignConfig";
 import { PARCHMENT } from "./tokens";
 import { layerGroupOf } from "./layerOrder";
 import type { FabricFeature } from "../../model/fabric";
@@ -157,6 +159,93 @@ describe("regionLabelPointFeatures — one centroid point per named region", () 
       cfgBounds: [-100, -100, 100, 100],
       seaDatum: 0,
     });
+    expect((fc.features[0].geometry as GeoJSON.Point).coordinates).toEqual([2, 2]);
+  });
+});
+
+// ─── Live-wiring regression (the "mid-island THE DEEP" bug) ────────────────────
+//
+// The inverted-sea label was correct in `regionLabelPointFeatures` (unit-tested),
+// but the CampaignConfig → RegionLabelOptions threading MapView.refreshFabric does
+// had NO test — an ItemView can't be driven headlessly. `regionLabelSourceData` is
+// that threading extracted; these tests are the integration guard: a Cradle-shaped
+// inverted sea (island coast at the box centre) must NEVER be labelled mid-island,
+// on the first derivation or any later one, config present OR not.
+describe("regionLabelSourceData — MapView.refreshFabric label wiring", () => {
+  // Ray-cast point-in-polygon (the label must land OUTSIDE the drawn coast ring).
+  const insideRing = (ring: number[][], x: number, y: number): boolean => {
+    let c = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  };
+
+  // Cradle-shaped inverted sea: a square island coast centred on the box origin (so
+  // the naive ring centroid ([0,0]) is the one spot that is NOT water), sized to sit
+  // WITHIN the campaign box — the real relationship (the Cradle coast fits inside its
+  // [-9.2, 9.2] bounds and even inside the [-8,-6,8,6] fallback box).
+  const coast = [
+    [-4, -4],
+    [4, -4],
+    [4, 4],
+    [-4, 4],
+    [-4, -4],
+  ];
+  const seaFeature = {
+    type: "Feature",
+    id: "sea",
+    geometry: { type: "Polygon", coordinates: [coast] },
+    properties: {
+      kind: "landform",
+      name: "The Deep",
+      procgen: { algorithm: "landform", seed: 1, version: 1, params: { mode: "sea", band: 5, invert: true } },
+    },
+  } as unknown as FabricFeature;
+
+  const config = {
+    crs: "fictional",
+    bounds: [-40, -40, 40, 40],
+    terrain: { campAmp: 0, seaDatum: 0, grade: false },
+  } as unknown as CampaignConfig;
+
+  const deepPoint = (fc: GeoJSON.FeatureCollection): [number, number] => {
+    const f = fc.features.find((x) => x.properties?.name === "The Deep")!;
+    return (f.geometry as GeoJSON.Point).coordinates as [number, number];
+  };
+
+  it("threads config bounds/crs/seaDatum so the inverted-sea label lands in WATER, not mid-island", () => {
+    const [x, y] = deepPoint(regionLabelSourceData([seaFeature], config));
+    expect(insideRing(coast, x, y)).toBe(false); // outside the island coast = water
+    expect(x).toBeGreaterThanOrEqual(-100);
+    expect(x).toBeLessThanOrEqual(100);
+  });
+
+  it("first-load safety: even an ABSENT config (defensive edge) lands a normal coast in water, never the ring centroid", () => {
+    // On a genuine first open `this.campaign` is set BEFORE loadFabric fires the
+    // repaint, so refreshFabric always sees the config — there is no one-refresh lag
+    // that flashes the mid-island centroid. This exercises the defensive absent-config
+    // path anyway: placement is DATA-driven (procgen.params.invert), not opts-driven,
+    // so a normally-sized coast (inside the [-8,-6,8,6] fallback box) still lands in
+    // open water. (A coast LARGER than the fallback box is the sole edge where the
+    // pole-of-inaccessibility falls back to box-centre — not reachable in practice,
+    // since the config that bounds the water is present.)
+    const [x, y] = deepPoint(regionLabelSourceData([seaFeature], undefined));
+    expect(insideRing(coast, x, y)).toBe(false);
+    // Definitely NOT the naive centroid (0,0) that the old ring-centroid path gave.
+    expect(Math.hypot(x, y)).toBeGreaterThan(0);
+  });
+
+  it("a normal (non-inverted) region keeps its centroid through the wiring", () => {
+    const farm = {
+      type: "Feature",
+      id: "farm",
+      geometry: { type: "Polygon", coordinates: [[[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]]] },
+      properties: { kind: "farmland", name: "Green Acres" },
+    } as unknown as FabricFeature;
+    const fc = regionLabelSourceData([farm], config);
     expect((fc.features[0].geometry as GeoJSON.Point).coordinates).toEqual([2, 2]);
   });
 });
