@@ -24,14 +24,25 @@ import type {
  * leaves a camera move enqueues run AHEAD of the DEM tiles the 3D view actually
  * needs (Jonah: "new 3D geography takes a long while to appear"). The client now
  * holds jobs in a priority queue and only feeds the worker its highest-priority
- * pending job when it frees up, so DEM tiles + GM region edits jump the contour
- * backlog. Region generation stays TOP (a GM edit must never lag); DEM + world
- * tiles match it; contour leaves (a background overlay) are last. */
+ * pending job when it frees up.
+ *
+ * Region generation is STRICTLY above the DEM-tile / world-tile tier (Jonah
+ * 2026-07-15, Cradle: "after drawing a river i can't see it"). A cold Cradle view
+ * has dozens of 128² DEM tile jobs (50–450 ms each) already queued; when both
+ * region-gen AND DEM sat at the SAME priority, a GM's freshly-drawn river waited
+ * FIFO behind that entire tile backlog before its channel could paint. A GM edit
+ * is a direct, explicit request — it must PREEMPT the tile backlog at the next job
+ * boundary. So: region 0 (a GM edit — never lags) > DEM + world tiles 1 (3D nav /
+ * base fill — interactive but background to an edit) > contour leaves 2 (a
+ * background overlay — yields to everything). Same-priority jobs keep FIFO. */
+const REGION_PRIORITY = 0;
+const TILE_PRIORITY = 1;
+const CONTOUR_PRIORITY = 2;
 const JOB_PRIORITY: Record<string, number> = {
-  "procgen-region": 0, // a GM edit — interactive, must not lag
-  "dem-tile": 0, // 3D terrain — interactive
-  default: 0, // world-tier tile generation (TileJob has no `kind`)
-  "contour-leaf": 2, // background contour overlay — yields to the above
+  "procgen-region": REGION_PRIORITY, // a GM edit — must preempt the tile backlog
+  "dem-tile": TILE_PRIORITY, // 3D terrain — interactive, but yields to a GM edit
+  default: TILE_PRIORITY, // world-tier tile generation (TileJob has no `kind`)
+  "contour-leaf": CONTOUR_PRIORITY, // background contour overlay — yields to the above
 };
 
 interface QueuedJob {

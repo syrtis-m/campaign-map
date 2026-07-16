@@ -45,7 +45,7 @@ describe("GenerationWorkerClient — priority queue", () => {
     const dem = client.computeDemTile(EMPTY_TERRAIN, 6, 24, 36, 128, 50, 25);
     expect(fake.posted.length).toBe(1); // both still queued — worker busy
 
-    // Free the worker: the DEM tile (priority 0) must be picked ahead of the
+    // Free the worker: the DEM tile (priority 1) must be picked ahead of the
     // still-queued contour leaf (priority 2), even though it was enqueued LAST.
     fake.completeLast();
     await busy;
@@ -74,6 +74,37 @@ describe("GenerationWorkerClient — priority queue", () => {
     await region;
     fake.completeLast();
     await contour;
+  });
+
+  it("a GM river (region-gen) PREEMPTS a DEM-tile backlog — dispatched next, not FIFO-last (Bug B: Cradle river invisible)", async () => {
+    // The Cradle repro: a cold view has dozens of DEM tiles already queued when
+    // the GM finishes drawing a river. Region-gen (priority 0) must jump the whole
+    // DEM backlog (priority 1) at the next job boundary — otherwise the river's
+    // channel paints only after every tile drains ("i can't see it").
+    const fake = new FakeWorker();
+    const client = GenerationWorkerClient.__forTest(fake as unknown as Worker);
+
+    // Occupy the worker, then flood the queue with 20 DEM tiles.
+    const busy = client.computeDemTile(EMPTY_TERRAIN, 6, 0, 0, 128, 50, 25);
+    const demJobs: Promise<number[]>[] = [];
+    for (let i = 0; i < 20; i++) demJobs.push(client.computeDemTile(EMPTY_TERRAIN, 6, i + 1, 0, 128, 50, 25));
+    expect(fake.posted.length).toBe(1); // 20 DEM tiles queued behind the busy one
+
+    // The GM draws a river: region-gen arrives LAST but must dispatch NEXT.
+    const river = client.generateRegion("river", 7, "riv", [[0, 0], [1, 1]], {}, EMPTY_CONSTRAINTS, [[0, 0], [1, 1]]);
+
+    fake.completeLast();
+    await busy;
+    expect(fake.posted.length).toBe(2);
+    expect(fake.posted[1].kind).toBe("procgen-region"); // preempted all 20 DEM tiles
+
+    // After the river, the DEM backlog resumes in FIFO order.
+    fake.completeLast();
+    await river;
+    expect(fake.posted[2].kind).toBe("dem-tile");
+    // Drain the rest so no promise dangles.
+    for (let i = 0; i < 20; i++) fake.completeLast();
+    await Promise.all(demJobs);
   });
 
   it("same-priority jobs keep FIFO order (stable)", async () => {
