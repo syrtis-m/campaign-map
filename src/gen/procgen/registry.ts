@@ -194,28 +194,45 @@ export const CITY_PROFILE_IDS = [
 ] as const satisfies readonly ProfileId[];
 
 const cityParamsSchema = z.object({
-  profile: z.enum(CITY_PROFILE_IDS),
+  profile: z.enum(CITY_PROFILE_IDS).describe("Street-network style: which real-world city pattern the streets, blocks and plaza follow."),
   /** na-grid: promote the quadrant-collision seam into ONE wide diagonal
    * boulevard (Market Street). DEFAULT off. Read only by the `city` generator. */
-  seamBoulevard: z.boolean().optional(),
+  seamBoulevard: z
+    .boolean()
+    .optional()
+    .describe("Grid profile only: turn the seam where the two street grids collide into one wide diagonal boulevard."),
   /** euro-medieval: number of successive walls/ring-roads — 1 (default) or 2 (a
    * second, older inner ring, the Paris Châtelet reading). */
-  growthRings: z.union([z.literal(1), z.literal(2)]).optional(),
+  growthRings: z
+    .union([z.literal(1), z.literal(2)])
+    .optional()
+    .describe("Medieval profile only: how many wall/ring-road rings the town grew through \u2014 2 adds an older inner ring."),
   /** Optional GM-placed generation center, gen-space meters, mm-quantized by the
    * host. Present ⇒ the plaza + arterial star anchor here instead of the computed
    * `generationCenter(region)`, so a boundary vertex edit leaves the skeleton in
    * place and only the rim adapts. Absent ⇒ automatic center. If a later edit
    * moves the boundary so this point falls outside the ring, generation falls
    * back to the automatic center deterministically. */
-  center: z.tuple([z.number().finite(), z.number().finite()]).optional(),
+  center: z
+    .tuple([z.number().finite(), z.number().finite()])
+    .optional()
+    .describe("GM-placed generation center (drag the \u25c6 handle on the map): the plaza and main streets anchor here."),
   /** City-site grading (plan 036-D, ratified DEFAULT OFF): level the district
    * interior toward the elevation at `center`, fading to natural ground at the
    * rim. Read ONLY by `terrainAt` (the contour/DEM surface) — the `city`
    * generator's street/block output ignores it, so an ABSENT `grade` reproduces
    * pre-036 bytes exactly and no version bump is needed (param-over-bump). */
-  grade: z.boolean().optional(),
+  grade: z
+    .boolean()
+    .optional()
+    .describe("Level the terrain under the district toward the center\u2019s elevation, fading back to natural ground at the edge (affects contours and 3D only)."),
   /** Grading falloff band (meters) inside the ring; absent ⇒ default. */
-  gradeBand: z.number().positive().max(20000).optional(),
+  gradeBand: z
+    .number()
+    .positive()
+    .max(20000)
+    .optional()
+    .describe("How far inside the boundary (meters) the terrain leveling fades back to natural ground."),
 });
 
 /** City presets: each profile becomes a template of the `city` algorithm.
@@ -304,11 +321,11 @@ const cityAlgorithm: ProcgenAlgorithm = {
 /** River params. All knobs default to the simplest behavior: a plain straight
  * uniform channel. */
 const riverParamsSchema = z.object({
-  windiness: z.number().min(0).max(1).default(0),
-  braiding: z.number().min(0).max(1).default(0),
-  width: z.number().positive().max(500).default(12),
-  widthGrowth: z.number().min(0).max(4).default(0),
-  braidBias: z.number().min(0).max(1).default(0),
+  windiness: z.number().min(0).max(1).default(0).describe("0\u20131: how strongly the channel meanders side to side from the sketched line."),
+  braiding: z.number().min(0).max(1).default(0).describe("0\u20131: how often the channel splits into parallel strands around islands."),
+  width: z.number().positive().max(500).default(12).describe("Base channel width in meters (also sets how deep the default carve cuts)."),
+  widthGrowth: z.number().min(0).max(4).default(0).describe("How much the channel widens toward the mouth (0 = constant width)."),
+  braidBias: z.number().min(0).max(1).default(0).describe("0\u20131: pushes braiding toward the mouth (1 = braids mostly near the end, delta-style)."),
   /** Terrain-slope coupling strength — steep ground (from the sketched
    * mountains' elevation field) straightens the meander. DEFAULT 0 (coupling
    * OFF, plan 035 river v2): a river is a canon stroke that terrain conforms to,
@@ -318,7 +335,12 @@ const riverParamsSchema = z.object({
    * where a river crosses composed terrain. The opt-in reads the global
    * macro-terrain field (`macroTerrainField` — relief/landform stamps + base fBm
    * over the raw sketch, never the mountain generator's output). */
-  slopeSensitivity: z.number().min(0).max(1).default(0),
+  slopeSensitivity: z
+    .number()
+    .min(0)
+    .max(1)
+    .default(0)
+    .describe("0\u20131: how strongly steep terrain straightens the meanders. 0 = the river ignores terrain entirely."),
   /** GM-editable per-vertex carve DEPTH (m), aligned to the sketch spine
    * vertices (plan 040 river depths). Absent (default) ⇒ the uniform
    * width-derived incision `riverCarveDepth(width)` — byte-identical to a river
@@ -328,7 +350,10 @@ const riverParamsSchema = z.object({
    * downhill flow is still guaranteed by the carve's cumulative-min (a river can
    * never flow uphill regardless of the GM's input). A length mismatch or a
    * non-finite entry is ignored (falls back to uniform). */
-  depths: z.array(z.number()).optional(),
+  depths: z
+    .array(z.number())
+    .optional()
+    .describe("Per-vertex gorge depth in meters, edited with the on-map depth grips \u2014 water still always flows downhill."),
 });
 
 /** River presets. Params are the whole truth; the "delta weights braiding
@@ -440,10 +465,10 @@ const riverAlgorithm: ProcgenAlgorithm = {
 /** Forest params. All knobs have sensible defaults so a bare `{}` validates to
  * a reasonable mixed woodland. */
 const forestParamsSchema = z.object({
-  variety: z.enum(FOREST_VARIETIES).default("mixed"),
-  density: z.number().min(0).max(1).default(0.6),
-  clearings: z.number().min(0).max(1).default(0.15),
-  edgeRaggedness: z.number().min(0).max(1).default(0.5),
+  variety: z.enum(FOREST_VARIETIES).default("mixed").describe("Tree-cover family \u2014 sets the canopy look and the theme\u2019s tint."),
+  density: z.number().min(0).max(1).default(0.6).describe("0\u20131: how much of the sketched area the canopy fills."),
+  clearings: z.number().min(0).max(1).default(0.15).describe("0\u20131: how many open glades break up the canopy."),
+  edgeRaggedness: z.number().min(0).max(1).default(0.5).describe("0\u20131: how ragged the outer canopy edge is (0 = smooth hull)."),
 });
 
 /** Forest presets. Params are the whole truth; `variety` is carried onto
@@ -527,9 +552,12 @@ const forestAlgorithm: ProcgenAlgorithm = {
  * city park. `variety` drives layout (like the city algorithm's `profile`),
  * never a preset-id branch; `pond` is a bool, `pathDensity` 0–1. */
 const parkParamsSchema = z.object({
-  variety: z.enum(PARK_VARIETIES).default("city-park"),
-  pathDensity: z.number().min(0).max(1).default(0.5),
-  pond: z.boolean().default(false),
+  variety: z
+    .enum(PARK_VARIETIES)
+    .default("city-park")
+    .describe("Park composition family \u2014 formal axes, curved city paths, street-aligned urban park, wild common, or a Japanese circuit."),
+  pathDensity: z.number().min(0).max(1).default(0.5).describe("0\u20131: how dense the path web is."),
+  pond: z.boolean().default(false).describe("Include a pond (with an island and bridge where the composition allows)."),
 });
 
 /** Park presets. Params are the whole truth; `japanese-garden` forces
@@ -625,10 +653,13 @@ const parkAlgorithm: ProcgenAlgorithm = {
  * curtain wall. `style` drives layout (like the city `profile` / park
  * `variety`), never a preset-id branch. */
 const wallParamsSchema = z.object({
-  style: z.enum(WALL_STYLES).default("curtain-wall"),
-  towerSpacing: z.number().min(15).max(400).default(60),
-  moat: z.boolean().default(false),
-  gatehouseScale: z.number().min(0.2).max(3).default(1),
+  style: z
+    .enum(WALL_STYLES)
+    .default("curtain-wall")
+    .describe("Construction style: stone curtain wall with towers, timber palisade (no towers), or an angular star-fort trace."),
+  towerSpacing: z.number().min(15).max(400).default(60).describe("Distance in meters between towers along the wall."),
+  moat: z.boolean().default(false).describe("Dig a water moat just outside the wall (bridged at the gates)."),
+  gatehouseScale: z.number().min(0.2).max(3).default(1).describe("Size multiplier for the gatehouses (1 = standard)."),
 });
 
 /** Wall presets. Params are the whole truth; `palisade` carries `towerSpacing`
@@ -713,11 +744,14 @@ const wallAlgorithm: ProcgenAlgorithm = {
  * reasonable patchwork. `fieldType` drives layout (like the city `profile` /
  * park `variety`), never a preset-id branch. */
 const farmlandParamsSchema = z.object({
-  fieldType: z.enum(FARMLAND_TYPES).default("enclosed-patchwork"),
-  fieldSize: z.number().min(0).max(1).default(0.5),
-  hedging: z.enum(HEDGING_KINDS).default("hedgerows"),
-  laneDensity: z.number().min(0).max(1).default(0.5),
-  farmsteads: z.number().min(0).max(1).default(0.4),
+  fieldType: z
+    .enum(FARMLAND_TYPES)
+    .default("enclosed-patchwork")
+    .describe("Field pattern family \u2014 medieval strips, hedged patchwork, rectilinear grid sections, orchard rows, or contour-following paddies."),
+  fieldSize: z.number().min(0).max(1).default(0.5).describe("0\u20131: typical field size (0 = many small plots, 1 = a few large ones)."),
+  hedging: z.enum(HEDGING_KINDS).default("hedgerows").describe("What separates the fields: hedgerows, fences, or nothing."),
+  laneDensity: z.number().min(0).max(1).default(0.5).describe("0\u20131: how dense the farm-lane web is."),
+  farmsteads: z.number().min(0).max(1).default(0.4).describe("0\u20131: how many farmstead buildings dot the fields."),
 });
 
 /** Farmland presets. `paddy-terraces` is the field-coupled variant:
@@ -838,9 +872,17 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
  * reasonable alpine massif. `terrain` drives layout (like the city `profile` /
  * park `variety`), never a preset-id branch. */
 const mountainParamsSchema = z.object({
-  terrain: z.enum(MOUNTAIN_TERRAINS).default("alpine"),
-  amplitude: z.number().min(0).max(1).default(0.6),
-  roughness: z.number().min(0).max(1).default(0.5),
+  terrain: z
+    .enum(MOUNTAIN_TERRAINS)
+    .default("alpine")
+    .describe("Mountain family \u2014 alpine ridges, terraced mesa, or rolling hills; sets the character of the height field."),
+  amplitude: z
+    .number()
+    .min(0)
+    .max(1)
+    .default(0.6)
+    .describe("0\u20131: overall height of the massif (0 \u2248 200 m foothills, 1 \u2248 1400 m walls)."),
+  roughness: z.number().min(0).max(1).default(0.5).describe("0\u20131: how jagged the surface detail is."),
 });
 
 /** Mountain presets. Params are the whole truth; `terrain` is carried onto
@@ -908,16 +950,34 @@ const mountainAlgorithm: ProcgenAlgorithm = {
 /** Relief params: a signed cross-profile stamp read by `terrainAt`. `polarity`
  * drives layout (ridge raises, valley lowers), never a preset-id branch. */
 const reliefParamsSchema = z.object({
-  polarity: z.enum(RELIEF_POLARITIES).default(RELIEF_DEFAULTS.polarity),
-  height: z.number().positive().max(4000).default(RELIEF_DEFAULTS.height),
-  halfWidth: z.number().positive().max(20000).default(RELIEF_DEFAULTS.halfWidth),
+  polarity: z
+    .enum(RELIEF_POLARITIES)
+    .default(RELIEF_DEFAULTS.polarity)
+    .describe("Ridge raises the ground along the drawn line; valley lowers it."),
+  height: z
+    .number()
+    .positive()
+    .max(4000)
+    .default(RELIEF_DEFAULTS.height)
+    .describe("Peak height (or valley depth) in meters along the drawn line \u2014 the extrude grip edits this too."),
+  halfWidth: z
+    .number()
+    .positive()
+    .max(20000)
+    .default(RELIEF_DEFAULTS.halfWidth)
+    .describe("Core width in meters (the GUI presents halfWidth + apron as one total \u2018width\u2019 \u2014 the terrain reads only their sum)."),
   /** Foothill apron (meters): a skirt that decays the cross-profile to 0 over
    * `halfWidth + apron` instead of hitting 0 at `halfWidth`, so a stamp rises out
    * of foothills rather than as a vertical-walled mesa in 3D. OPTIONAL — absent ⇒
    * 0 ⇒ byte-identical to the pre-apron stamp (no version bump; the
    * absent-param-reproduces-old-bytes discipline). The `reliefReach`/corridor/
    * support all fold it in. */
-  apron: z.number().min(0).max(20000).optional(),
+  apron: z
+    .number()
+    .min(0)
+    .max(20000)
+    .optional()
+    .describe("Foothill skirt in meters beyond the half-width (the GUI presents halfWidth + apron as one total \u2018width\u2019)."),
 });
 
 const RELIEF_PRESETS: readonly ProcgenPreset[] = [
@@ -970,16 +1030,35 @@ const reliefAlgorithm: ProcgenAlgorithm = {
  * drives the default target (plateau raises, basin lowers, sea → seaDatum);
  * `priority` (Q4) makes id-order last-wins overridable where masks overlap. */
 const landformParamsSchema = z.object({
-  mode: z.enum(LANDFORM_MODES).default(LANDFORM_DEFAULTS.mode),
-  target: z.number().finite().optional(),
-  band: z.number().min(0).max(20000).default(LANDFORM_DEFAULTS.band),
-  priority: z.number().int().default(LANDFORM_DEFAULTS.priority),
+  mode: z
+    .enum(LANDFORM_MODES)
+    .default(LANDFORM_DEFAULTS.mode)
+    .describe("Plateau raises the interior to a target height, basin lowers it, sea drops it to the campaign\u2019s sea level."),
+  target: z
+    .number()
+    .finite()
+    .optional()
+    .describe("Target elevation in meters the interior is pulled to \u2014 leave empty for the mode\u2019s default (plateau 400, basin \u2212200, sea = sea level)."),
+  band: z
+    .number()
+    .min(0)
+    .max(20000)
+    .default(LANDFORM_DEFAULTS.band)
+    .describe("Width in meters of the rim over which the terrain blends from natural ground to the target \u2014 the on-map band grip edits this too."),
+  priority: z
+    .number()
+    .int()
+    .default(LANDFORM_DEFAULTS.priority)
+    .describe("Where landforms overlap, the higher priority wins."),
   /** Island-from-coastline (plan 041): on a `sea` stamp, draw the COAST (the land
    * boundary) and treat the ring's EXTERIOR as sea instead of its interior — the
    * natural gesture for an island. OPTIONAL — absent/false ⇒ the drawn ring's
    * interior is the sea (the pre-041 behavior), byte-identical (no version bump).
    * Ignored for plateau/basin (only sea inverts). */
-  invert: z.boolean().optional(),
+  invert: z
+    .boolean()
+    .optional()
+    .describe("Island coast: you drew the SHORELINE \u2014 everything outside it becomes sea instead of the inside (sea mode only)."),
 });
 
 const LANDFORM_PRESETS: readonly ProcgenPreset[] = [

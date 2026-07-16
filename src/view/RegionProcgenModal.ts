@@ -63,7 +63,12 @@ export class RegionProcgenModal extends Modal {
     // they reflect the new values. Pre-selected from the theme default.
     if (this.algorithm.presets.length > 0) {
       const selected = matchingPresetId(this.algorithm, this.params) ?? this.algorithm.presets[0].id;
-      new Setting(this.contentEl).setName("Template").addDropdown((dd) => {
+      new Setting(this.contentEl)
+        .setName("Template")
+        .setTooltip(
+          "Quick-fill: picking a template sets every knob below to that preset\u2019s values \u2014 you can still tweak them before generating."
+        )
+        .addDropdown((dd) => {
         for (const preset of this.algorithm.presets) dd.addOption(preset.id, preset.label);
         dd.setValue(selected);
         dd.onChange((id) => {
@@ -85,6 +90,7 @@ export class RegionProcgenModal extends Modal {
       .addButton((btn) =>
         btn
           .setButtonText(`Generate ${this.algorithm.label.toLowerCase()}`)
+          .setTooltip("Generate inside the drawn boundary \u2014 you can re-roll, tweak or remove it any time from the shape\u2019s edit panel.")
           .setCta()
           .onClick(() => {
             this.submitted = true;
@@ -92,7 +98,12 @@ export class RegionProcgenModal extends Modal {
             this.onSubmit({ params: this.params });
           })
       )
-      .addButton((btn) => btn.setButtonText("Keep as plain shape").onClick(() => this.close()));
+      .addButton((btn) =>
+        btn
+          .setButtonText("Keep as plain shape")
+          .setTooltip("No generation \u2014 the drawn shape stays as plain fabric; you can generate later from its edit panel.")
+          .onClick(() => this.close())
+      );
   }
 
   onClose(): void {

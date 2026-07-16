@@ -87,3 +87,21 @@ describe("algorithmSupportsCenter — schema-derived center capability", () => {
     }
   });
 });
+
+describe("param tooltips — every knob documents itself (2026-07-16)", () => {
+  it("EVERY param of EVERY algorithm carries a zod .describe() tooltip", () => {
+    for (const a of allAlgorithms()) {
+      for (const spec of paramFieldSpecs(a.paramsSchema)) {
+        expect(
+          spec.description && spec.description.length > 10,
+          `${a.id}.${spec.key} needs a .describe() — edit menus render it as the hover tooltip`
+        ).toBe(true);
+      }
+    }
+  });
+  it("the presented relief width control carries its own tooltip", () => {
+    const relief = algorithmById("relief")!;
+    const width = presentedParamSpecs("relief", relief.paramsSchema).find((s) => s.key === "width")!;
+    expect(width.description).toContain("meters");
+  });
+});

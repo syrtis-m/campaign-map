@@ -18,8 +18,13 @@
  */
 import { z } from "zod";
 
-/** A single rendered control derived from one zod schema field. */
-export type ParamFieldSpec =
+/** A single rendered control derived from one zod schema field. The optional
+ * `description` (the field's zod `.describe()` text, GM-facing) renders as a
+ * hover tooltip on the control row — every edit menu gets help text straight
+ * from the schema, so a new param can't ship without a place for its docs. */
+export type ParamFieldSpec = ParamFieldSpecBase & { description?: string };
+
+type ParamFieldSpecBase =
   | {
       key: string;
       label: string;
@@ -59,6 +64,7 @@ export function humanizeKey(key: string): string {
 
 interface ZodDefLike {
   typeName?: string;
+  description?: string;
   innerType?: { _def: ZodDefLike };
   defaultValue?: () => unknown;
   checks?: { kind: string; value?: number; inclusive?: boolean }[];
@@ -71,12 +77,14 @@ type ZodFieldLike = { _def: ZodDefLike };
 
 /** Strip ZodOptional/ZodDefault/ZodNullable wrappers to the core type, tracking
  * the default value the outermost ZodDefault (if any) supplies. */
-function unwrap(field: ZodFieldLike): { core: ZodFieldLike; def: unknown } {
+function unwrap(field: ZodFieldLike): { core: ZodFieldLike; def: unknown; description?: string } {
   let node = field;
   let def: unknown = undefined;
+  let description: string | undefined;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const d = node._def;
+    if (description === undefined && typeof d.description === "string") description = d.description;
     if (d.typeName === "ZodDefault") {
       if (def === undefined && typeof d.defaultValue === "function") def = d.defaultValue();
       node = d.innerType as ZodFieldLike;
@@ -86,7 +94,8 @@ function unwrap(field: ZodFieldLike): { core: ZodFieldLike; def: unknown } {
       break;
     }
   }
-  return { core: node, def };
+  if (description === undefined && typeof node._def.description === "string") description = node._def.description;
+  return { core: node, def, description };
 }
 
 function numberStep(min: number | undefined, max: number | undefined, integer: boolean): number | "any" {
@@ -99,7 +108,12 @@ function numberStep(min: number | undefined, max: number | undefined, integer: b
 
 function specForField(key: string, field: ZodFieldLike): ParamFieldSpec {
   const label = humanizeKey(key);
-  const { core, def } = unwrap(field);
+  const { core, def, description } = unwrap(field);
+  const spec = specForCore(key, label, core, def);
+  return description !== undefined ? { ...spec, description } : spec;
+}
+
+function specForCore(key: string, label: string, core: ZodFieldLike, def: unknown): ParamFieldSpec {
   const d = core._def;
   switch (d.typeName) {
     case "ZodNumber": {
@@ -203,6 +217,13 @@ export function renderParamControls(
     if (spec.kind === "point" || spec.kind === "handle" || spec.kind === "unsupported") continue;
     const row = document.createElement("div");
     row.className = rowClass;
+    // Schema-derived tooltip (the field's zod .describe() text): hovering any
+    // part of the row explains what the knob does — GMs shouldn't need to know
+    // the generator internals to read an edit menu.
+    if (spec.description) {
+      row.title = spec.description;
+      row.setAttribute("aria-label", spec.description);
+    }
     const label = document.createElement("span");
     label.className = "campaign-map-sketch-selection-label";
     label.textContent = spec.label;
@@ -291,7 +312,13 @@ export function presentedParamSpecs(kind: string, schema: unknown): ParamFieldSp
   for (const s of specs) {
     if (s.key === "apron") continue;
     if (s.key === "halfWidth" && s.kind === "number") {
-      out.push({ ...s, key: "width", label: "width (ridge line → fade-out, m)" });
+      out.push({
+        ...s,
+        key: "width",
+        label: "width (ridge line → fade-out, m)",
+        description:
+          "Total distance in meters from the ridge line to where the relief fades to nothing — drag the on-map band grip or edit it here.",
+      });
       continue;
     }
     out.push(s);
