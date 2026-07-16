@@ -27,7 +27,7 @@ import { buildTensorField, sampleFieldAngle, type TensorFieldParams } from "./te
 
 type Pt = [number, number];
 
-// Tuning within docs/06 §3 ranges, denser than the ambient street grid — a
+// Tuning within docs/quality-bar.md pinned defaults ranges, denser than the ambient street grid — a
 // GM-drawn avenue implies a built-up corridor.
 export const CORRIDOR_SMOOTH_ITERATIONS = 2;
 export const CORRIDOR_SEED_CELL_SIZE = 40;

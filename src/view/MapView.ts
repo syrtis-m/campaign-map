@@ -1321,7 +1321,7 @@ export class MapView extends ItemView {
 
   /** Apply a cross-layer cascade the confirm cap deferred — the non-modal
    * affordance for the "that edit affects N downstream regions" Notice
-   * (a command, not a modal — modals hang CLI automation, docs/05). */
+   * (a command, not a modal — modals hang CLI automation, docs/dev-workflow.md). */
   async applyPendingCascade(): Promise<void> {
     return this.controller.applyPendingCascade();
   }
@@ -1368,7 +1368,7 @@ export class MapView extends ItemView {
     const { config } = this.campaign;
     const genre = genreForCampaign(config.crs, config.theme);
     const worldBounds = boundsToBBox(config.bounds ?? defaultFictionalBounds());
-    // Region-based naming (docs/04 F5): suggestions reflect whichever
+    // Region-based naming (docs/quality-bar.md F5): suggestions reflect whichever
     // culture territory the clicked point falls in, not one culture for the
     // whole campaign.
     const culture = cultureAt(config.seed, point[0], point[1], worldBounds, genre, config.namingCultures);
@@ -1516,7 +1516,7 @@ export class MapView extends ItemView {
 
   /** The render store (generation-space features, keyed by tier/region tile),
    * re-surfaced from the controller for the CLI eval-testing surface: gate
-   * scripts iterate `view.loadedTiles.forEach(...)` directly (docs/05). */
+   * scripts iterate `view.loadedTiles.forEach(...)` directly (docs/dev-workflow.md). */
   get loadedTiles(): Map<string, GeoJSON.Feature[]> {
     return this.controller.renderStore;
   }
@@ -1532,14 +1532,14 @@ export class MapView extends ItemView {
     return this.controller.displayGenerated();
   }
 
-  /** Test surface (docs/05): does a tolerant hit-test at a screen point find a
+  /** Test surface (docs/dev-workflow.md): does a tolerant hit-test at a screen point find a
    * canon feature? Returns the location id or null. */
   hitTestCanonAt(x: number, y: number): string | null {
     const f = this.pickFeatureNear(new maplibregl.Point(x, y), CANON_HIT_LAYERS);
     return (f?.properties?.id as string | undefined) ?? null;
   }
 
-  /** Test surface (docs/05): drives the "Connect to..." write path without
+  /** Test surface (docs/dev-workflow.md): drives the "Connect to..." write path without
    * needing to click through the place-card popup + search modal, so gates
    * can assert the `connections` source gains a rendered feature. */
   async connectForTest(fromPath: string, toBasename: string): Promise<void> {

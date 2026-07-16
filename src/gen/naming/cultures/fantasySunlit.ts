@@ -1,6 +1,6 @@
 import type { NamingCulture } from "../culture";
 
-/** Bright agrarian-plains fantasy — softer than fantasy-brackish's harsh coast; regional contrast per docs/04 F5. */
+/** Bright agrarian-plains fantasy — softer than fantasy-brackish's harsh coast; regional contrast per docs/quality-bar.md F5. */
 export const fantasySunlit: NamingCulture = {
   id: "fantasy-sunlit",
   genre: "fantasy",

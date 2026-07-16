@@ -519,7 +519,7 @@ export class MapController {
   /** The live render store, generation-space (meters), keyed
    * `${tier|region:<id>}:${x}:${y}`. Exposed so MapView can re-surface it as
    * `view.loadedTiles` for the CLI eval-testing surface — gate scripts
-   * (procgen41, phase3) iterate it directly (docs/05). Read-only by contract. */
+   * (procgen41, phase3) iterate it directly (docs/dev-workflow.md). Read-only by contract. */
   get renderStore(): Map<string, GeoJSON.Feature[]> {
     return this.loadedTiles;
   }
@@ -1362,7 +1362,7 @@ export class MapController {
    * a 40-region continental cascade (~cost 80) or 10 cities (cost 40) defers,
    * while 10 farmlands (cost 20) or a city ringed by a handful of parks/farmland
    * (~cost 18) applies inline. Non-modal: a Notice + the `applyPendingCascade`
-   * command/test-API (no modal — they hang CLI automation, docs/05). */
+   * command/test-API (no modal — they hang CLI automation, docs/dev-workflow.md). */
   private static readonly CASCADE_COST_BUDGET = 24;
   /** The region ids a cost-capped pass DEFERRED (the billed set), held for
    * `applyPendingCascade`. The GM's own edit (the roots) already applied when

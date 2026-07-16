@@ -5,7 +5,7 @@
 things those documents carried that the code cannot: the **determinism engineering
 rules (D1–D6)** and the **design rationale** — why the pipeline is shaped the way it
 is. What the system currently does lives in ARCHITECTURE.md; how to work on it lives
-in docs/05; the code is the truth for everything else.*
+in docs/dev-workflow.md; the code is the truth for everything else.*
 
 ## 1. The determinism contract (versioned — plan 029)
 

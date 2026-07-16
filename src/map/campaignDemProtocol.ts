@@ -349,7 +349,7 @@ export function ensureCampaignDemProtocol(): void {
 }
 
 /**
- * Headless twin of one protocol tile request, minus the PNG encode (docs/05:
+ * Headless twin of one protocol tile request, minus the PNG encode (docs/dev-workflow.md:
  * every GM flow needs a modal-free eval path; PNG bytes are deliberately outside
  * the determinism contract). Runs the FULL resolve path — provider snapshot,
  * digest-checked cache read, compute, persisted append — exactly as a MapLibre

@@ -24,7 +24,7 @@ STOP="$CTRL/STOP"
 LOGDIR="$CTRL/logs"
 mkdir -p "$LOGDIR"
 
-# One PHASE per invocation (docs/08 rule 2): each run is a fresh cold `claude`
+# One PHASE per invocation (CLAUDE.md §Multi-session rule 2): each run is a fresh cold `claude`
 # process that reconstructs state from disk, does exactly ONE box, and exits —
 # the while-loop below re-invokes for the next box and stops when zero remain.
 # This keeps every process's context window flat and bounds a kill to ≤1 phase.

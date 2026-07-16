@@ -1,10 +1,10 @@
-# 07 — External-agent note contract ("the LLM hook")
+# External-agent note contract ("the LLM hook")
 
-docs/03 Phase 5 wants: *"LLM hook: agent-in-vault reads campaign markdown, emits
-valid location notes ('populate this district with 5 shops')."*
+The intent (original roadmap, Phase 5): *"LLM hook: agent-in-vault reads campaign
+markdown, emits valid location notes ('populate this district with 5 shops')."*
 
 This plugin ships no LLM/API integration — no settings tab, no key storage,
-no network call (see plan 010). It doesn't need one to satisfy Phase 5's
+no network call (see plan 010). It doesn't need one to satisfy that
 intent, because **canon = notes** (CLAUDE.md): the vault is the source of
 truth and the map is a view over it. Any external agent that already has
 read/write access to the vault — an LLM-in-a-loop, a script, a human typing —
@@ -29,7 +29,9 @@ export const LocationFrontmatterSchema = z.object({
   type: z.string().min(1).default("custom"),
   aliases: z.array(z.string()).optional(),
   importance: z.number().int().min(1).max(9).optional(),
-  "zoom-range": z.tuple([z.number(), z.number()]).optional(),
+  "zoom-range": z.tuple([z.number(), z.number()]).optional(), // legacy; no longer gates labels
+  visibility: z.enum(["wide", "mid", "close"]).optional(),    // explicit label-visibility field
+  focus: z.enum(["deep", "medium", "shallow"]).optional(),    // back-compat legacy bucket
   icon: z.string().optional(),
   connections: z.array(ConnectionSchema).optional(),
 });
@@ -50,10 +52,12 @@ const ConnectionSchema = z.union([
 |---|---|---|
 | `map` | yes | The campaign's id (`campaign.id` — the same value every other location note under that campaign already carries; copy it from a sibling note or the campaign's config file). |
 | `geometry` | yes | Either a `[x, y]` point tuple **in the campaign's own units** (fictional campaigns: fake lng/lat in the campaign's bounded box, `scaleMetersPerUnit` per campaign; real-city campaigns: real lng/lat), or a vault-relative path string to a sidecar `.geojson` for non-point geometry (CLAUDE.md: "complex geometry → sidecar .geojson"). Most agent-emitted notes should just emit a point. |
-| `type` | yes (defaults to `"custom"` if omitted) | One of `LOCATION_TYPES` (`src/model/locationNote.ts`'s `TYPE_TAXONOMY` keys): `nation/region`, `city`, `town`, `village`, `route`, `water-feature`, `district`, `street(named)`, `landmark`, `shop/tavern/venue`, `residence/minor`, `custom`. Each type carries pinned `importance`/`zoomMin`/`zoomMax` defaults (docs/06 §3) — an agent should not need to invent styling, just pick the closest type. |
+| `type` | yes (defaults to `"custom"` if omitted) | One of `LOCATION_TYPES` (`src/model/locationNote.ts`'s `TYPE_TAXONOMY` keys): `nation/region`, `city`, `town`, `village`, `route`, `water-feature`, `district`, `street(named)`, `landmark`, `shop/tavern/venue`, `residence/minor`, `custom`. `type` is **semantic only** (naming, future icons) — it carries a pinned `importance` default and a visibility *hint*, but never gates labels at runtime. An agent should not invent styling; just pick the closest type. |
+| `visibility` | no | `wide` \| `mid` \| `close` — at which focus level the location's **name** first appears (the dot always renders). This is the explicit, sole runtime label gate (plan 015). Omit for the global default `mid`. |
 | `aliases` | no | Alternate names, array of strings. |
 | `importance` | no | Integer 1–9 (1 = highest, wins label collisions). Omit to use the type's default — don't fight the cartographic discipline (CLAUDE.md product bar). |
-| `zoom-range` | no | `[min, max]` visibility override. Omit to use the type's default. |
+| `zoom-range` | no | **Legacy** `[min, max]` — retained for incidental camera math only; it no longer gates label visibility. Don't emit it; use `visibility`. |
+| `focus` | no | **Legacy** raw bucket (`deep`/`medium`/`shallow`) from before the `visibility` field; accepted for back-compat. Don't emit it. |
 | `icon` | no | Icon identifier string. |
 | `connections` | no | Array of either a bare target basename string, or `{ to, type?, label? }`. Point-crawl edges (plan 004/005) — used for roads/paths/relationships between locations. |
 

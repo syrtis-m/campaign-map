@@ -34,4 +34,4 @@ live in `src/map/themes/roleColors.ts` and are byte-pinned by `styleGolden.test.
 No host code runs here: no cache, no worker, no lifecycle, no undo, no adoption.
 It never substitutes for a live smoke gate. Generator work order: **playground
 (tune + judge) → unit/fuzz (T0/T1) → the Obsidian loop for the host-integration
-slice** (docs/05).
+slice** (docs/dev-workflow.md).

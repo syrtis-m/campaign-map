@@ -41,7 +41,7 @@ Three **content layers** with strictly different lifetimes, one z-order
 | layer | contents | source of truth | lifetime / editability |
 |---|---|---|---|
 | 3 (top) | **Locations** — note-backed pins | `Locations/*.md` frontmatter | the notes themselves; rename/delete a note ⇒ the map follows |
-| 2 | **Sketch** — GM-drawn shapes (road, wall, river, water, district, park, forest, farmland, mountain) | `<campaign>/Fabric.geojson` | selectable/editable any time, PowerPoint-style (vertex handles + property panel) |
+| 2 | **Sketch** — GM-drawn shapes (road, wall, river, water, district, park, forest, farmland, mountain, relief, landform) | `<campaign>/Fabric.geojson` | selectable/editable any time, PowerPoint-style (vertex handles + property panel) |
 | 1 (bottom) | **Procgen fabric** — generated output | regenerable `.mapcache/` only | never edited directly; only via the sketch shape or params that drive it |
 
 The key inversion (plan 020): **a sketched shape IS the generation request.** A district
@@ -230,17 +230,21 @@ Host lifecycle code consults the registry only — never `if (kind === "district
 Adding an algorithm = registry entry + params schema + pure generator + theme layers;
 zero new host lifecycle code.
 
-Registered algorithms and their stages:
+Registered algorithms and their stages (stage order per plan 035: hydrology above
+terrain — a river channel is an *input* to the elevation stamps that carve around
+it, so it computes first):
 
-| algorithm | kind | stage | produces → consumes | generator |
+| algorithm | kind | stage | produces ← consumes | generator |
 |---|---|---|---|---|
-| mountain | polygon | 0 elevation | elevation ← ∅ | `gen/mountain.ts` (massif, hachures, peaks). Contours are NOT a mountain feature — iso-lines trace the campaign-wide composed terrain field as a global viewport-keyed surface (`gen/fields/terrainContours.ts` → the `terrain-contour` paint role), rendering everywhere the field has relief (Jonah 2026-07-15) |
-| river | line | 1 hydrology | water ← elevation | `gen/river.ts` (meanders/braiding/width growth, banks, islands, confluences, estuary, oxbows) |
+| river | line | 0 hydrology | water ← ∅ | `gen/river.ts` (meanders/braiding/width growth, banks, islands, confluences, estuary, oxbows; its spine also carves the terrain field's valley) |
+| mountain | polygon | 1 elevation | elevation ← ∅ | `gen/mountain.ts` (massif, hachures, peaks). Contours are NOT a mountain feature — iso-lines trace the campaign-wide composed terrain field as a global viewport-keyed surface (`gen/fields/terrainContours.ts` → the `terrain-contour` paint role), rendering everywhere the field has relief (Jonah 2026-07-15) |
+| relief | line | 1 elevation | elevation ← ∅ | terrain stamp only (`tileGeneratorIds: []` — no vector fabric; contours/DEM are its render) — a ridge/valley corridor of `height` over ±halfWidth |
+| landform | polygon | 1 elevation | elevation ← ∅ | terrain stamp only — plateau/basin/sea to a `target` elevation; `sea` + `invert` turns the ring's *exterior* into ocean (island-from-coastline, plan 041) |
 | forest | polygon | 2 vegetation | vegetation ← water | `gen/forest.ts` (Thomas-cluster trees, marching-squares cloud canopy with clearing holes) |
-| park | polygon | 2 vegetation | vegetation ← water | `gen/park.ts` (variety-driven layouts incl. japanese-garden; paths, pond, court, rocks) |
-| farmland | polygon | 2 (grouped) | ∅ ← elevation | `gen/farmland.ts` (strips/patchwork/grid/orchard/paddy-terraces) |
-| city | polygon | 3 settlement | settlement ← water, vegetation | `gen/citynet/**` (§6.3) |
-| wall | line | 4 detail | detail ← settlement | `gen/wall.ts` (curtain/palisade/bastioned; towers, gates, moat) |
+| park | polygon | 2 vegetation | vegetation ← water | `gen/park.ts` (variety-driven layouts incl. japanese-garden; paths, pond, court, rocks; `urban-park` re-homes to stage 4 via `dagRoleFor`) |
+| city | polygon | 3 settlement | settlement ← water, vegetation | `gen/citynet/**` (§6.3); v5 clips to a geometric water mask (sketched water / sea landforms / inverted-coast exterior — never the elevation field, so dry basins stay buildable) and scales via a shrink-world `scale` param wrapper |
+| farmland | polygon | 4 detail | ∅ ← elevation, settlement, water | `gen/farmland.ts` (strips/patchwork/grid/orchard/paddy-terraces; paddy banks trace the true composed-terrain contours) |
+| wall | line | 5 detail | detail ← settlement, water | `gen/wall.ts` (curtain/palisade/bastioned; towers, gates, water-gates, moat) |
 
 ### 6.2 Regions, spines, and the cross-layer cascade
 
@@ -393,11 +397,16 @@ survive renames and vanish with a deleted endpoint.
 
 **The interaction grammar is Google Maps'** (locked decision) — zero learning curve:
 
-- **Left-click a pin → nothing** (amended, Jonah 2026-07-15 — "it pops up a little menu …
-  annoying as hell"). The place card is retired from left-click; a bare left-click on a
-  location pin is a deliberate no-op (the hover tooltip already shows the name). Every
-  action it used to offer now lives on the **right-click** Menu — that is the one place
-  location UI opens. The note *preview* was display-only, not an action, and is dropped.
+- **Left-click a pin dot → nothing** (amended, Jonah 2026-07-15 — "it pops up a little
+  menu … annoying as hell"). The place card is retired from left-click; a bare left-click
+  on a location pin is a deliberate no-op (the hover tooltip already shows the name).
+  Every action it used to offer now lives on the **right-click** Menu — that is the one
+  place location UI opens. The note *preview* was display-only, not an action, and is
+  dropped. **Left-click a location's *name* → opens its note in a split** (2026-07-16) —
+  an action, not a popup, mirroring the menu's "Open note". Canon hit-testing targets the
+  real layer ids (`CANON_HIT_LAYERS`: `canon-point` + the three `canon-label-*` buckets)
+  — `pickFeatureNear` silently drops nonexistent layer ids, which is how label clicks
+  once fell through to planting dropped pins.
 - **Click empty map → dropped pin** + one primary action **"+ Add location here"** →
   quick-add modal (name + type) → note created, pin becomes real. This IS the ≤5 s
   yes-and flow. Esc/click-away dismisses.
@@ -473,7 +482,7 @@ documented local/re-downloadable), mobile (Vault/DataAdapter APIs only, never `f
 
 ## 9. Testing & dev workflow (what an agent actually runs)
 
-Tiers (docs/05 — binding cadence, Jonah 2026-07-13):
+Tiers (docs/dev-workflow.md — binding cadence, Jonah 2026-07-13):
 
 | tier | when | what |
 |---|---|---|
@@ -507,15 +516,14 @@ and host integration still go through the Obsidian loop.
 The live inner loop (host/theme/integration): `npm run build` → `obsidian
 plugin:reload id=campaign-map` (never `plugin:enable` — silent no-op) → drive via
 `eval`/`command` → `obsidian dev:errors` must be clean → `obsidian dev:screenshot` and
-**actually view the png** (the docs/04 screenshot test: no label collisions, no seams,
-no voids, no default fonts, genre identifiable in 3 s). Full pitfall list: docs/05
+**actually view the png** (the docs/quality-bar.md screenshot test: no label collisions, no seams,
+no voids, no default fonts, genre identifiable in 3 s). Full pitfall list: docs/dev-workflow.md
 §Hard-won pitfalls.
 
-State files for multi-session/autonomous work: `PROGRESS.md` (log), `DECISIONS.md`
-(rulings + rationale), `plans/NNN-*.md`
-(numbered feature plans, each with a cold-start §0), `review/` (Tier-B items),
-`GOAL.md`, docs/06 (autonomous protocol), docs/07 (LLM note-emission contract), docs/08
-(loop-run pattern).
+State files for multi-session/autonomous work: `PROGRESS.md` (slim current state),
+`DECISIONS.md` (rulings + rationale, append-only), `plans/NNN-*.md` (numbered feature
+plans, each with a cold-start §0), `review/` (Tier-B items + archived run journals).
+The protocol itself lives in CLAUDE.md §Multi-session / autonomous work.
 
 ---
 
@@ -654,7 +662,7 @@ a test, an assert, or (marked *policy*) a review-time rule with no mechanical gu
     crash (degenerate geometry skipped and counted). — *enforced:* model schema tests;
     import-parser tests; reconcile gates.
 14. Vault/DataAdapter APIs only; never Node `fs`. — *enforced:* mobile-emulation smoke
-    (docs/05); *policy* in review.
+    (docs/dev-workflow.md); *policy* in review.
 15. All map-originated writes append to the mutation log and are undoable. —
     *enforced:* undo round-trip tests in `MapController.test.ts` + mutationLog tests.
 16. Never bypass `appendCachedTile`; cache appends serialize through the per-file
@@ -799,7 +807,7 @@ isn't loaded yet → a bounded one-shot source-ready retry (≤5), so terrain re
 ### 13.4 Draw a new shape → procgen offer → attach
 `addSketchedFeature` (MapController:2475): stash → `repaintFabric` → fire-and-forget
 `persistFabric("sketch-add")` (**self-write #1** to `Fabric.geojson`) →
-`queueConstraintRegen` (arms the 400 ms flush). If the GM accepts the procgen offer,
+`queueConstraintRegen` (arms the 100 ms flush). If the GM accepts the procgen offer,
 `attachProcgenAndGenerate` → `setRegionProcgen` (MapController:1859): attach the block →
 `saveFabric` (**self-write #2**) → `repaintFabric` → log `sketch-procgen-set` → **one**
 `runForwardPass` with the region as root.
@@ -990,9 +998,11 @@ contour leaves the rebuild DOMINATED (hence the worker field memo above).
   name the space at every boundary; the one sanctioned stage read is `dagRoleFor`.
 - **H5 — priority inversion on the single worker.** Cheap background jobs (contour leaves,
   a cold DEM backlog) running ahead of the thing the GM is waiting for. *Precedent*: the
-  region-0 > tile-1 > contour-2 priority queue with `maxInFlight = 1` (`e43e7b2`,
-  workerClient.ts). *Rule*: a direct GM request preempts background fills at the next job
-  boundary.
+  region-0 > tile-1 > contour-2 priority queue (`e43e7b2`, workerClient.ts;
+  `maxInFlight = 2` since 2026-07-16 — one computing + one queued worker-side so a
+  congested main thread can't starve the worker, at the cost of one extra job of
+  preemption latency). *Rule*: a direct GM request preempts background fills at the next
+  job boundary.
 - **H6 — poisoned in-flight / errored-tile entries.** A failed shared compute that never
   clears its in-flight entry, or a rejected handler that marks a MapLibre tile permanently
   `errored` (never re-requested). *Precedents*: the in-flight dedupe map cleared in a
@@ -1003,10 +1013,13 @@ contour leaves the rebuild DOMINATED (hence the worker field memo above).
 
 ## 14. Where to read more
 
-- `docs/01` (research) · `docs/03` (roadmap, historical) · `docs/04` (quality bar) ·
-  `docs/05` (dev workflow + test tiers) · `docs/06`–`08` (autonomous protocol, LLM
-  note contract, loop pattern) · `docs/procgen-design.md` (D1–D6 determinism doctrine
-  + the city-pipeline design rationale, merged from the old procgen design docs).
+- `CLAUDE.md` — the standards doc: locked decisions, conventions, perf/testing bars,
+  and the documentation map (which doc owns what).
+- `docs/quality-bar.md` (failure modes + acceptance criteria + pinned aesthetic
+  defaults) · `docs/dev-workflow.md` (dev loops, test tiers, board runner, pitfalls) ·
+  `docs/procgen-design.md` (D1–D6 determinism doctrine + city-pipeline rationale) ·
+  `docs/note-contract.md` (the frontmatter contract for external note-emitting agents).
 - `plans/README.md` + `plans/NNN-*.md` — the plan ledger; 020 defined the current
-  architecture; 029/030 the versioned-determinism + rearchitecture arc.
+  architecture; 029/030 the versioned-determinism + rearchitecture arc; 031–039 the
+  pipeline/perf arc.
 - `PROGRESS.md`, `DECISIONS.md` — live state; read before resuming autonomous work.

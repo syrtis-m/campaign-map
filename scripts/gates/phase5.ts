@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-// Phase 5 Tier A gate — keepsakes & force multipliers (docs/03 Phase 5).
+// Phase 5 Tier A gate — keepsakes & force multipliers (the original roadmap Phase 5).
 // Covers what unit tests can't: the live export pipelines (poster PNG, atlas
 // PDF) actually writing files to the vault, the point-crawl/session/connection
 // render layers being present, and the replay/populate/import command surfaces

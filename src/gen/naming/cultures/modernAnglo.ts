@@ -1,7 +1,7 @@
 import type { NamingCulture } from "../culture";
 
 /**
- * Real-city overlay: person-name + generic (docs/06 §3). `mid` used to
+ * Real-city overlay: person-name + generic (docs/quality-bar.md pinned defaults). `mid` used to
  * include a bare "s" (no trailing space) — `pre + "s" + suf` concatenates
  * with no word boundary at all ("Mill" + "s" + "Corner Shop" =
  * "MillsCorner Shop"), producing garbled run-together names. Dropped it;

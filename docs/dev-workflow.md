@@ -1,4 +1,6 @@
-# Dev Workflow: Building & Testing with the Obsidian CLI
+# Dev workflow — the two dev loops, test tiers, and hard-won pitfalls
+
+*Two loops, in order of preference: the **playground** (instant, headless — where all procgen iteration starts) and the **Obsidian CLI loop** (live app — host, themes, integration, gates); then the T0–T3 test-tier cadence, the board runner, and the pitfall list. CLAUDE.md carries the one-paragraph summary; this doc is the full protocol.*
 
 *The [official Obsidian CLI](https://help.obsidian.md/cli) (Obsidian 1.12.7+ installer, enable in Settings → General → Command line interface) lets coding agents build, reload, drive, and verify the plugin without a human clicking. The app must be running; commands hit the live instance. There is also a ready-made [obsidian-cli agent skill](https://github.com/kepano/obsidian-skills/blob/main/skills/obsidian-cli/SKILL.md) — install it alongside the MapLibre skills.*
 
@@ -21,7 +23,7 @@ minutes to milliseconds, so it is the FIRST stop for any procgen work:
 - **Seed sweeps**: scrub seeds (◀ ▶ / random) to judge variety and robustness before
   writing a fuzz assertion.
 - **Preset review**: one click renders every preset side-by-side at the current seed —
-  the fastest way to check a new preset reads distinctly (docs/04 genre test).
+  the fastest way to check a new preset reads distinctly (docs/quality-bar.md genre test).
 - **Region robustness**: circle / square / blob / concave-L region shapes and spine
   shapes for line-kind algorithms — eyeball containment and concave behavior live.
 
@@ -63,7 +65,7 @@ obsidian dev:errors                             # MUST be empty
 obsidian dev:screenshot path=shots/latest.png   # then LOOK at it (Read the png)
 ```
 
-A change is not done until: `dev:errors` is clean, and the screenshot has been *viewed* and passes the [quality bar](04-quality-bar.md) screenshot test. `dev:screenshot` is how the screenshot test stops being aspirational and becomes a check you actually run.
+A change is not done until: `dev:errors` is clean, and the screenshot has been *viewed* and passes the [quality bar](quality-bar.md) screenshot test. `dev:screenshot` is how the screenshot test stops being aspirational and becomes a check you actually run.
 
 ## Driving the app for tests
 
@@ -113,7 +115,7 @@ obsidian dev:mobile on && obsidian dev:errors && obsidian dev:mobile off
 | Perceptual (headless) | **`npm run perceptual`**, no Obsidian | Pinned (algorithm, preset, seed, region) tuples rendered by a pure-TS rasterizer → PNGs pixel-diffed against approved goldens in `shots/perceptual/` (>0.5% differing pixels fails). Re-approve with `npm run perceptual -- --accept` alongside a version bump, and EYEBALL the new goldens at acceptance — never auto-accept |
 | Model/validators | Vitest | Zod schemas, frontmatter parse round-trips |
 | Live smoke | **The 5-gate smoke set** (`scripts/gates/`) | What headless tiers cannot prove: smokeBoot (plugin boots, every style-builder path loads live), phase1 (reconcile round-trip), smokeProcgen (sketch→generate→paint→replay, explicit-only, glyph lifecycle), version29 (migration/adoption), phase5 (exports write files) |
-| Visual judgment | CLI screenshots | The docs/04 screenshot test — a release judgment, not a per-commit gate; playground + perceptual carry the per-commit visual net |
+| Visual judgment | CLI screenshots | The quality-bar.md screenshot test — a release judgment, not a per-commit gate; playground + perceptual carry the per-commit visual net |
 
 Unit tests need no Obsidian and stay fast — that's why generators are host-agnostic. Integration tests are a bash/TS script of CLI calls with exit-code assertions; run before any commit touching `src/map/`, reconciliation, or themes.
 
@@ -133,7 +135,7 @@ Testing used to mean "run the whole board," which cost an afternoon. It no longe
 - **`npm test` is the FAST tier** (target <30 s): everything except the slow fuzz/stress tests, which live in `*.fuzz.test.ts` and run via **`npm run test:fuzz`** at T1+. Run the fuzz tier whenever a **generator's behavior actually changed**; skip it for docs/UI-only edits. Together `npm test` + `npm run test:fuzz` cover the identical set of tests — every test is in exactly one tier.
 - **Change-scoped gates (T2):** `npm run gates:changed` intersects `git diff --name-only` (vs the last green board, stored in `.lastgreenboard`; override with `--ref=<sha>`) against `scripts/gates/coverage.json` and runs only the gates whose globs match. It **escalates to the full board automatically** when a determinism-critical path changes (`src/gen/region.ts`, `src/gen/rng.ts`, any `clip.ts`, `src/model/tileCache.ts`) — which is why it is no longer a per-commit requirement: during generator-heavy plans it escalates almost every time, re-proving the world per commit. Determinism safety is instead carried by the fast tier's byte-identity/golden tests per generator and the plan-end board.
 - **Board-flake rule:** a live gate that FAILS inside a board but passes standalone immediately after is an **environment flake** (long-lived-renderer degradation, plan 021-B — known, mitigated, not fully fixed). Log it (gate name + both results) in PROGRESS.md, count the gate green, and do **not** re-run the whole board to chase a clean sweep — disjoint flakes across re-runs burn ~6 min each and prove nothing new.
-- **Screenshot judgment stays mandatory where visual** (docs/04's screenshot test is untouched — the tiers make room for it by removing everything else from the critical path). Never mark visual work done without reading the png. For GENERATOR visuals, do the iterating in the playground (instant re-render beats a build+reload+screenshot cycle per data point) and reserve the in-app screenshot for the final theme-paint judgment — the playground's shim paint can't stand in for themes.
+- **Screenshot judgment stays mandatory where visual** (quality-bar.md's screenshot test is untouched — the tiers make room for it by removing everything else from the critical path). Never mark visual work done without reading the png. For GENERATOR visuals, do the iterating in the playground (instant re-render beats a build+reload+screenshot cycle per data point) and reserve the in-app screenshot for the final theme-paint judgment — the playground's shim paint can't stand in for themes.
 - **Commit-message tag records the tier that ran:** `[gate: T1 …]` for a phase commit, `[gate: full board N/M]` for the plan-end T3. A commit that only ran T0 says so.
 
 ## The board runner (`npm run board`)

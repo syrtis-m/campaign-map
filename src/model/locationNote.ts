@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Type taxonomy defaults (docs/06 §3, pinned — not to be reinvented per campaign).
+ * Type taxonomy defaults (docs/quality-bar.md pinned defaults, pinned — not to be reinvented per campaign).
  * importance: 1 = highest (rendered/labeled first, wins collisions).
  * zoom: [min, max] visible range; max=Infinity means "and up".
  */

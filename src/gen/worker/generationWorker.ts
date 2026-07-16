@@ -1,5 +1,5 @@
 /**
- * Web Worker entry point (docs/02 §5: "Generation runs in a Web Worker...
+ * Web Worker entry point (ARCHITECTURE.md: "Generation runs in a Web Worker...
  * so the map tab never stutters"). Dispatches tile-generation requests to
  * the pure generators in src/gen/ — this file is the ONLY thing in src/gen/
  * that isn't itself host-agnostic (it uses postMessage/self), which is why

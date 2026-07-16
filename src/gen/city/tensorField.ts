@@ -23,7 +23,7 @@ export interface Tensor2 {
 interface RadialBasis {
   cx: number;
   cy: number;
-  decay: number; // 0.1-0.4 per docs/06 tuning range
+  decay: number; // 0.1-0.4 per docs/quality-bar.md tuning range
 }
 
 export interface TensorFieldParams {

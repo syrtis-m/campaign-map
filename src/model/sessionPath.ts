@@ -1,7 +1,7 @@
 import type { ParsedLocation } from "./locationNote";
 
 /**
- * Per-session travel paths (Phase 5, docs/03): session notes already
+ * Per-session travel paths (Phase 5, the original roadmap): session notes already
  * wikilink the locations a party visited, in the order the GM typed them —
  * so a session's route is just those links resolved to points, in
  * appearance order. Pure parser: no vault/DOM access, easy to snapshot-test

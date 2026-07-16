@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Generates SDF glyph PBFs (MapLibre glyphs protocol) from OFL TTFs in assets/fonts/src/.
-// One stack per theme font (docs/06 §3 pinned table). Alegreya/Oswald are variable fonts —
+// One stack per theme font (docs/quality-bar.md pinned defaults pinned table). Alegreya/Oswald are variable fonts —
 // fontnik/freetype reads their default-weight instance; there is no separate static Bold
 // cut upstream, so bold-ness for those two is approximated with size/halo, not font-weight.
 import fontnik from "fontnik";

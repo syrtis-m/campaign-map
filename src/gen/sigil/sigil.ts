@@ -1,6 +1,6 @@
 /**
- * Seeded SVG sigil composition (docs/03 Phase 3a) — mid location-art tier
- * between custom vault images and theme template icons (docs/02 §4).
+ * Seeded SVG sigil composition (the original roadmap (Phase 3a)) — mid location-art tier
+ * between custom vault images and theme template icons (ARCHITECTURE.md).
  * Pure/headless: same seed → byte-identical SVG string, forever.
  */
 import { mulberry32, pick } from "../rng";

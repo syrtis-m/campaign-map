@@ -55,7 +55,7 @@ export default class CampaignMapPlugin extends Plugin {
   private workerLastResultValue: GeoJSON.Feature[] | null = null;
   private lastRescanMs = 0;
 
-  // Test API surface (docs/05): app.plugins.plugins['campaign-map']
+  // Test API surface (docs/dev-workflow.md): app.plugins.plugins['campaign-map']
   get map(): MapView["map"] {
     return this.activeMapView()?.map ?? null;
   }
@@ -73,7 +73,7 @@ export default class CampaignMapPlugin extends Plugin {
   get workerLastResult(): GeoJSON.Feature[] | null {
     return this.workerLastResultValue;
   }
-  // Perf gate surface (docs/06 §2: "index rebuild time <1s for 500-note
+  // Perf gate surface (CLAUDE.md perf standards: "index rebuild time <1s for 500-note
   // campaigns") — wall-clock ms of the most recent rescanAll() pass.
   get rescanTimeMs(): number {
     return this.lastRescanMs;
@@ -431,7 +431,7 @@ export default class CampaignMapPlugin extends Plugin {
     if (this.rescanQueued) return;
     this.rescanQueued = true;
     // Coalesce bursts (e.g. rename touching multiple cache entries) into one pass;
-    // still comfortably inside the 500ms reconcile budget (docs/06 §2).
+    // still comfortably inside the 500ms reconcile budget (CLAUDE.md perf standards).
     setTimeout(() => {
       this.rescanQueued = false;
       this.rescanAll();

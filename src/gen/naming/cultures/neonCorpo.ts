@@ -1,6 +1,6 @@
 import type { NamingCulture } from "../culture";
 
-/** Portmanteau + kana-esque syllables + Inc/Corp (docs/06 §3). */
+/** Portmanteau + kana-esque syllables + Inc/Corp (docs/quality-bar.md pinned defaults). */
 export const neonCorpo: NamingCulture = {
   id: "neon-corpo",
   genre: "neon",

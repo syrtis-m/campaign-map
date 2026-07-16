@@ -113,7 +113,7 @@ export interface RegionFingerprintInput {
  * cost. The replacement below is a pure-TS two-lane 32-bit hash (Math.imul, no
  * BigInt) — same byte budget, a constant cheap op per byte instead of a BigInt
  * multiply. Perf is asserted as this budget (bytes-per-pass), never wall-clock
- * (docs/06: throttled numbers only), so the assertion is machine-stable. */
+ * (docs/quality-bar.md: throttled numbers only), so the assertion is machine-stable. */
 let hashedBytesTotal = 0;
 /** Total bytes fed to the hasher since `resetHashByteBudget` — the 033-B budget
  * counter surface. */

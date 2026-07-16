@@ -6,7 +6,7 @@ import type { TerrainBaseParams } from "./fields/terrain";
 /**
  * Shared constraints contract for every Phase 3+ generator: `(seed, bbox,
  * constraints) => Feature[]`. Threaded from line one (not retrofitted) per
- * docs/02 §5 — canon geometry feeds generators as constraints, and generators
+ * ARCHITECTURE.md — canon geometry feeds generators as constraints, and generators
  * never overwrite canon.
  */
 export interface GenerationConstraints {

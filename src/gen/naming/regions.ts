@@ -1,5 +1,5 @@
 /**
- * Naming cultures as regions (docs/04 F5, Azgaar's model): each region
+ * Naming cultures as regions (docs/quality-bar.md F5, Azgaar's model): each region
  * carries a phoneme/style profile. Rather than graph flood-fill from seeded
  * culture centers (order-dependent BFS — the same coupling class that
  * breaks streamline/Poisson determinism), culture territory is assigned by

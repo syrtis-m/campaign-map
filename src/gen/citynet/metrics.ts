@@ -1,6 +1,6 @@
 /**
  * City-network metrics: a PURE measurement pass over the feature set
- * `generateCityNetwork` emits, turning a chunk of the docs/04 "screenshot test"
+ * `generateCityNetwork` emits, turning a chunk of the docs/quality-bar.md "screenshot test"
  * from vibes into numbers. It reads features only — it never generates, never
  * mutates, and imposes NO determinism obligations of its own beyond being a
  * deterministic function of its inputs (D6).

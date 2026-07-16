@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-// Phase 1 Tier A gate — yes-and core, vault-native (docs/03 Phase 1, docs/06 §2).
+// Phase 1 Tier A gate — yes-and core, vault-native (the original roadmap Phase 1, CLAUDE.md perf standards).
 import { readFileSync, existsSync } from "node:fs";
 import { Gate, obsidian, obsidianRaw, evalJs, clearErrors, devErrors, screenshot } from "../lib/cli.js";
 

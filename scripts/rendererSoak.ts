@@ -4,7 +4,7 @@
 // timing proxy each cycle, and logs the cycle number at first failure.
 //
 // This is the investigation instrument, not a gate. It reproduces (or fails to
-// reproduce) the long-session degradation described in docs/05 §pitfalls:
+// reproduce) the long-session degradation described in docs/dev-workflow.md §pitfalls:
 // `isStyleLoaded()` → false everywhere, `idle` stops firing, only a full
 // process quit clears it. Prime suspect (advisor 2026-07-12): MapLibre `Map`/GL
 // contexts surviving `plugin:reload` because the view's `onClose` teardown isn't

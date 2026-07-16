@@ -296,7 +296,7 @@ describe("hasher (plan 033-B) — two-lane 32-bit, budget counter", () => {
     // The budget counter is the perf surface: a fingerprint pass hashes the
     // whole quantized ring, so a 10k-vertex ring costs ~O(vertices) bytes. We
     // assert the counter tracks that WORK (bytes/pass) rather than wall-clock,
-    // per docs/06 (throttled numbers only) — the hasher swap keeps this budget
+    // per docs/quality-bar.md (throttled numbers only) — the hasher swap keeps this budget
     // identical while dropping the per-byte BigInt multiply.
     const smallRing: [number, number][] = [
       [0, 0],

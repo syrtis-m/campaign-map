@@ -5,7 +5,7 @@
 // is a client script (`tsx scripts/gates/<id>.ts`) driving that shared app via
 // the CLI; the board never relaunches Obsidian between gates UNLESS a health
 // probe says the renderer degraded (the long-session bug: `isStyleLoaded()` →
-// false everywhere, `idle` stops firing — see docs/05 §pitfalls). Process
+// false everywhere, `idle` stops firing — see docs/dev-workflow.md §pitfalls). Process
 // quit+relaunch is delegated to `scripts/relaunch-obsidian.sh`.
 //
 // RETRY ATTRIBUTION (the crux — plan 021 §2.3, advisor 2026-07-12):

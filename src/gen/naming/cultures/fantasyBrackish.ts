@@ -1,6 +1,6 @@
 import type { NamingCulture } from "../culture";
 
-/** Harsh coastal fantasy: consonant clusters, -haven/-wick/-mire (docs/06 §3). */
+/** Harsh coastal fantasy: consonant clusters, -haven/-wick/-mire (docs/quality-bar.md pinned defaults). */
 export const fantasyBrackish: NamingCulture = {
   id: "fantasy-brackish",
   genre: "fantasy",

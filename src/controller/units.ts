@@ -51,7 +51,7 @@ export function transformFeatureUnits(feature: GeoJSON.Feature, fn: (n: number) 
 /**
  * `GENERATION_TILE_SIZE` is anchored at the generation-space world origin
  * with a fixed size, not to the campaign's own bounds — so a tile can
- * legitimately extend past a small campaign's edges (docs/06 §3 tuning
+ * legitimately extend past a small campaign's edges (docs/quality-bar.md pinned defaults tuning
  * ranges are sized in meters, campaigns can be much smaller than one tile).
  * Filter emitted features to those actually touching `worldBounds` so
  * generated fabric doesn't visibly spill beyond the campaign's own box.

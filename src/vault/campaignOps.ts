@@ -69,8 +69,8 @@ function frontmatterLines(fm: Record<string, unknown>, name: string): string[] {
   return lines;
 }
 
-/** Vault layout matches docs/02 §3 exactly: <folder>/<Name>.map.md, Locations/,
- * Sessions/ (organizational only, never read by code — see docs/02).
+/** Vault layout matches ARCHITECTURE.md exactly: <folder>/<Name>.map.md, Locations/,
+ * Sessions/ (organizational only, never read by code — see ARCHITECTURE.md).
  * Fabric.geojson and Generated.json are created lazily on first write (their
  * stores return empty defaults when absent), so they are intentionally NOT
  * scaffolded here. Frontmatter is validated against CampaignConfigSchema before

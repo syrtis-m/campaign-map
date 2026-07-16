@@ -61,7 +61,7 @@ export function generateSettlements(
   );
   const genre = constraints.namingGenre ?? "fantasy";
 
-  // Pre-named at generation time (region-based naming, docs/03 3a feeding 3c)
+  // Pre-named at generation time (region-based naming, the naming-region model)
   // so generated pins never read as blank/generic.
   const features: GeoJSON.Feature[] = candidates.map((s) => {
     const culture = cultureAt(campaignSeed, s.x, s.y, constraints.worldBounds, genre, constraints.namingCultureIds);

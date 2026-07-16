@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Preflight: verify environment before any build work. Fails fast with remediation.
-# See docs/06-autonomous-build.md §1.
+# See docs/dev-workflow.md §Setup.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

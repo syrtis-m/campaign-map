@@ -35,7 +35,7 @@ export function tileKey(campaignSeed: number, tileX: number, tileY: number, zoom
  * runs at, from the zoom the GM is looking at — generation itself is
  * explicit-only, never dispatched from pan/zoom. Both tiers reuse the same
  * `GENERATION_TILE_SIZE` grid — these are small fictional campaigns
- * (docs/06), not continents, so a separate coarser world-tile grid isn't
+ * (docs/quality-bar.md), not continents, so a separate coarser world-tile grid isn't
  * needed yet; the cache key's `zoom`/generatorId fields already make this
  * additive, not a format break, if that changes later.
  *

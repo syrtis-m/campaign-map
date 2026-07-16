@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fetches OFL-licensed font source files into assets/fonts/src/ (gitignored — regenerate
-# via this script, not committed). docs/06 §4 asset manifest / §3 pinned per-theme fonts.
+# via this script, not committed). docs/quality-bar.md pinned defaults asset manifest / §3 pinned per-theme fonts.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 

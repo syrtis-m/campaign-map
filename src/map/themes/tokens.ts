@@ -1,5 +1,5 @@
 /**
- * Pinned theme tokens (docs/06 §3) — exact values; agent may tune ±10% L/C in OKLCH,
+ * Pinned theme tokens (docs/quality-bar.md pinned defaults) — exact values; agent may tune ±10% L/C in OKLCH,
  * logged in DECISIONS.md, never hue. ≤8 semantic colors per theme (quality-bar F6).
  */
 export interface ThemeTokens {

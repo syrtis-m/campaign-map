@@ -1,6 +1,6 @@
 import type { NamingCulture } from "../culture";
 
-/** Street-level grit — contrast to neon-corpo's corporate polish per docs/04 F5 (corporate zone vs street zone). */
+/** Street-level grit — contrast to neon-corpo's corporate polish per docs/quality-bar.md F5 (corporate zone vs street zone). */
 export const neonStreet: NamingCulture = {
   id: "neon-street",
   genre: "neon",
