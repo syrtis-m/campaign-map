@@ -105,6 +105,7 @@ import {
 import { cascadeOrder, downstreamClosure, upstreamEdges, type DagNode } from "../gen/procgen/dag";
 import { isCacheRecordFresh, regionFingerprint } from "../gen/cache/fingerprint";
 import { mountainHeightField, type MountainTerrain } from "../gen/mountain";
+import { pluralize } from "../util/pluralize";
 import { terrainAt, demVerticalScale, terrainStampSupport, TERRAIN_FIELD_VERSION, type ElevationField, type TerrainBaseParams } from "../gen/fields";
 import type { GeneratorId, SerializableTerrainInputs } from "../gen/worker/generationWorker";
 import type { GenerationWorkerClient } from "../map/generation/workerClient";
@@ -1479,7 +1480,7 @@ export class MapController {
       const label = algo?.label ?? "region";
       counts.set(label, (counts.get(label) ?? 0) + 1);
     }
-    const parts = [...counts.entries()].map(([label, n]) => `${n} ${label.toLowerCase()}${n === 1 ? "" : "s"}`);
+    const parts = [...counts.entries()].map(([label, n]) => `${n} ${pluralize(label.toLowerCase(), n)}`);
     this.host.notices.notify(`Campaign Map: cascade regenerated ${parts.join(", ")}`);
   }
 
