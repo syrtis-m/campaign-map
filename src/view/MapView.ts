@@ -60,9 +60,9 @@ import { generateRegionTile, generateTile, type GenerationContext } from "../map
 import { TerrainContourManager } from "../map/generation/terrainContourManager";
 import { TERRAIN_CONTOUR_SOURCE_ID } from "../map/themes/terrainContourLayer";
 import { UNDERLAY_LAYER_ID, type UnderlayDescriptor } from "../map/themes/underlayLayer";
-import { algorithmForKind, matchingPresetId, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
+import { algorithmForKind, algorithmSupportsCenter, matchingPresetId, presetById, type ProcgenAlgorithm } from "../gen/procgen/registry";
 import { RegionProcgenModal } from "./RegionProcgenModal";
-import { paramFieldSpecs, renderParamControls } from "./paramControls";
+import { presentedParamSpecs, presentedParams, presentedParamPatch, renderParamControls } from "./paramControls";
 import { landformReplaceAdvisoryMessage, warnLandformReplaceOverlap } from "./terrainAdvisory";
 import { invertedSeaBounds, invertedSeaLandHoles, invertedSeaDonutRings } from "../map/invertedSea";
 import {
@@ -625,6 +625,23 @@ export class MapView extends ItemView {
         src.setTiles([campaignDemUrlTemplate(this.campaign!.id)]);
       } catch {
         /* best-effort cache bust */
+      }
+    }
+    // An ACTIVE 3D mesh holds its own terrain tile/render cache that a source
+    // `setTiles` reload does NOT invalidate — measured 2026-07-16 (Jonah:
+    // "after generate relief I have to toggle show-3d off/on to see it"): the
+    // source recomputed its stale tiles but the mesh kept rendering the old
+    // surface until a toggle re-applied `setTerrain`. Re-apply it here so a
+    // terrain edit made while pitched shows immediately. Cheap relative to the
+    // bust itself: unchanged tiles re-serve from the PNG memo; only the mesh
+    // rebuild is new work, and that rebuild IS the point.
+    const terrain = this.map?.getTerrain();
+    if (terrain) {
+      try {
+        this.map!.setTerrain(null);
+        this.map!.setTerrain(terrain);
+      } catch {
+        /* best-effort — the pitch handler re-converges relief mode */
       }
     }
   }
@@ -1964,7 +1981,12 @@ export class MapView extends ItemView {
         const feature = this.controller.fabricFeature(featureId);
         if (!feature) return;
         const live = feature.properties.procgen?.params ?? {};
-        void this.setRegionParams(featureId, { ...live, ...params });
+        // Presented → schema translation (relief `width` → halfWidth/apron).
+        const patch: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(params)) {
+          Object.assign(patch, presentedParamPatch(feature.properties.kind, k, v));
+        }
+        void this.setRegionParams(featureId, { ...live, ...patch });
       },
       onGeometryPreview: (featureId, geometry) => {
         // Preview mode (plan 034-D): per debounce PAUSE of the drag, repaint
@@ -2355,7 +2377,7 @@ export class MapView extends ItemView {
     if (!this.heightReadoutEl) {
       this.heightReadoutEl = this.contentEl.createDiv({ cls: "campaign-map-height-readout" });
     }
-    this.heightReadoutEl.setText(formatBandReadout(param as "halfWidth" | "apron" | "band", value));
+    this.heightReadoutEl.setText(formatBandReadout(param as "width" | "band", value));
   }
 
   /** Arms the debounced constraint/region regen ("sketch a river, streets
@@ -2565,18 +2587,24 @@ export class MapView extends ItemView {
     // towerSpacing/moat, relief height/halfWidth, city grade, …). A change reads
     // the LIVE params (they may have shifted) and runs the full setRegionParams
     // commit path (validate → log → regen), then rebuilds the panel.
-    const specs = paramFieldSpecs(algorithm.paramsSchema);
+    // PRESENTED specs/values (relief: one `width` control instead of the
+    // confusing halfWidth+apron split — the field only reads their sum).
+    const kindForParams = feature.properties.kind;
+    const specs = presentedParamSpecs(kindForParams, algorithm.paramsSchema);
     const paramsEl = section.createDiv({ cls: "campaign-map-param-controls" });
-    renderParamControls(paramsEl, specs, block.params, (key, value) => {
+    renderParamControls(paramsEl, specs, presentedParams(kindForParams, block.params), (key, value) => {
       const live = this.controller.fabricFeature(feature.id)?.properties.procgen;
       if (!live) return;
-      void this.setRegionParams(feature.id, { ...live.params, [key]: value }).then(() =>
-        this.refreshSelectionPanel()
-      );
+      void this.setRegionParams(feature.id, {
+        ...live.params,
+        ...presentedParamPatch(kindForParams, key, value),
+      }).then(() => this.refreshSelectionPanel());
     });
-    // Center hint: drag the diamond handle to place the plaza.
-    // Polygon regions only — spine (line) algorithms have no center concept.
-    const isPolygonRegion = feature.geometry.type === "Polygon";
+    // Center hint: drag the diamond handle to place the plaza. Only where the
+    // algorithm's params schema HAS a center (city) — a relief/landform/forest
+    // generator never reads one, so the hint (and the ◆ handle,
+    // effectiveRegionCenterDisplay) must not appear (Jonah 2026-07-16).
+    const isPolygonRegion = feature.geometry.type === "Polygon" && algorithmSupportsCenter(algorithm);
     const hasCenter = isPolygonRegion && "center" in block.params;
     if (isPolygonRegion) {
       section.createDiv({

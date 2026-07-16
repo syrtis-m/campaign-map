@@ -5,17 +5,20 @@
  * place + drive the band-edge grips.
  *
  * A relief/landform stamp's *effective band* is the ground footprint its
- * cross-profile reaches: relief → the `halfWidth` corridor (+ the fainter
- * `halfWidth + apron` skirt) around the spine; landform → the `band` transition
- * ring inset inside the polygon. This module offsets the base geometry to draw
- * that footprint and reports which param each draggable edge SETS.
+ * cross-profile reaches: relief → the ±`width` fade-out corridor around the
+ * spine (ONE presented value = halfWidth + apron, 2026-07-16 — the field's
+ * profile is a single smoothstep over the sum, so the raw split never
+ * surfaces); landform → the `band` transition ring inset inside the polygon.
+ * This module offsets the base geometry to draw that footprint and reports
+ * which presented param each draggable edge SETS.
  *
  * NB: this is DISPLAY-ONLY ghost geometry, never persisted and never fed to a
  * generator — so the offsetting is a plain deterministic per-segment normal
  * offset (miter joins, bevel fallback). It draws in the base geometry's own
- * planar units; the caller converts metres → units before calling. The drag
- * only ever WRITES an existing zod param (`halfWidth`/`apron`/`band`) through
- * the normal `setRegionParams` path, so determinism (D1–D6) is untouched.
+ * planar units; the caller converts metres → units before calling. A drag
+ * commit is translated to zod params (`presentedParamPatch`) and written
+ * through the normal `setRegionParams` path, so determinism (D1–D6) is
+ * untouched.
  */
 import type { FabricKind } from "../model/fabric";
 
@@ -178,11 +181,11 @@ export function ringInsetNormal(openRing: Pt[]): { anchor: Pt; normal: Pt } {
   return { anchor: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], normal: inward };
 }
 
-/** A single draggable band edge: which param it SETS, the ghost-outline offset
- * (metres) it is drawn at, its offset bounds, and whether it is the fainter
- * (apron) skirt line. */
+/** A single draggable band edge: which presented param it SETS, the
+ * ghost-outline offset (metres) it is drawn at, its offset bounds, and whether
+ * it is a fainter secondary line. */
 export interface BandEdge {
-  param: "halfWidth" | "apron" | "band";
+  param: "width" | "band";
   /** Offset from the base geometry the ghost line + grip are drawn at (m). */
   offsetMeters: number;
   minOffset: number;
@@ -190,7 +193,7 @@ export interface BandEdge {
   faint: boolean;
 }
 
-const BAND_MAX_M = 20000; // matches the zod schema caps (halfWidth/apron/band)
+const BAND_MAX_M = 20000; // matches the zod schema caps (halfWidth/band)
 
 function num(v: unknown, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -198,17 +201,17 @@ function num(v: unknown, fallback: number): number {
 
 /**
  * The draggable band edges for a stamp kind's current param values. relief →
- * the `halfWidth` corridor edge + the `halfWidth + apron` skirt edge; landform →
- * the `band` ring edge. Any other kind ⇒ no band (empty).
+ * ONE `width` edge at the total reach (2026-07-16 — the field's cross-profile
+ * is a single smoothstep over `halfWidth + apron`, so the two schema params
+ * are a pure SUM: two grips were one knob in disguise, and Jonah found them
+ * "very confusing". The GM edits the one thing the terrain actually responds
+ * to: how far the relief reaches from its ridge line); landform → the `band`
+ * ring edge. Any other kind ⇒ no band (empty).
  */
 export function bandEdges(kind: FabricKind, params: Record<string, unknown>): BandEdge[] {
   if (kind === "relief") {
-    const hw = Math.max(1, num(params.halfWidth, 180));
-    const apron = Math.max(0, num(params.apron, 0));
-    return [
-      { param: "halfWidth", offsetMeters: hw, minOffset: 1, maxOffset: BAND_MAX_M, faint: false },
-      { param: "apron", offsetMeters: hw + apron, minOffset: hw, maxOffset: hw + BAND_MAX_M, faint: true },
-    ];
+    const width = Math.max(1, num(params.width, Math.max(1, num(params.halfWidth, 180)) + Math.max(0, num(params.apron, 0))));
+    return [{ param: "width", offsetMeters: width, minOffset: 1, maxOffset: BAND_MAX_M, faint: false }];
   }
   if (kind === "landform") {
     const band = Math.max(0, num(params.band, 120));
@@ -217,22 +220,21 @@ export function bandEdges(kind: FabricKind, params: Record<string, unknown>): Ba
   return [];
 }
 
-/** Starting param values (metres) a controller tracks live during band drags. */
+/** Starting param values (metres) a controller tracks live during band drags.
+ * Relief exposes the PRESENTED `width` (= halfWidth + apron), never the raw
+ * schema split. */
 export function bandValuesFromParams(kind: FabricKind, params: Record<string, unknown>): Record<string, number> {
-  if (kind === "relief") return { halfWidth: Math.max(1, num(params.halfWidth, 180)), apron: Math.max(0, num(params.apron, 0)) };
+  if (kind === "relief")
+    return { width: Math.max(1, num(params.halfWidth, 180)) + Math.max(0, num(params.apron, 0)) };
   if (kind === "landform") return { band: Math.max(0, num(params.band, 120)) };
   return {};
 }
 
-/** Map a band edge's new OFFSET (m) back to the param it SETS. The apron edge is
- * drawn at `halfWidth + apron`, so its param is `offset − halfWidth`. */
-export function bandParamFromOffset(
-  param: "halfWidth" | "apron" | "band",
-  offsetMeters: number,
-  halfWidth: number
-): { key: string; value: number } {
-  if (param === "halfWidth") return { key: "halfWidth", value: Math.max(1, Math.round(offsetMeters)) };
-  if (param === "apron") return { key: "apron", value: Math.max(0, Math.round(offsetMeters - halfWidth)) };
+/** Map a band edge's new OFFSET (m) back to the presented param it SETS.
+ * (Translation of a presented `width` back into the persisted halfWidth/apron
+ * schema split happens at the commit boundary — `presentedParamPatch`.) */
+export function bandParamFromOffset(param: "width" | "band", offsetMeters: number): { key: string; value: number } {
+  if (param === "width") return { key: "width", value: Math.max(1, Math.round(offsetMeters)) };
   return { key: "band", value: Math.max(0, Math.round(offsetMeters)) };
 }
 
@@ -249,8 +251,7 @@ export function offsetFromBandDrag(
   return Math.max(minOffset, Math.min(maxOffset, Math.round(startOffset + deltaPx * metresPerPixel)));
 }
 
-/** Live readout for a band drag ("width 180 m" / "apron 220 m" / "band 120 m"). */
-export function formatBandReadout(param: "halfWidth" | "apron" | "band", value: number): string {
-  const label = param === "halfWidth" ? "width" : param;
-  return `${label} ${Math.abs(Math.round(value))} m`;
+/** Live readout for a band drag ("width 400 m" / "band 120 m"). */
+export function formatBandReadout(param: "width" | "band", value: number): string {
+  return `${param} ${Math.abs(Math.round(value))} m`;
 }

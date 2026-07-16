@@ -268,3 +268,52 @@ export function renderParamControls(
     parent.appendChild(row);
   }
 }
+
+// ─── Presented params (relief width unification, 2026-07-16) ─────────────────
+// Relief's persisted schema keeps BOTH `halfWidth` and `apron` (byte-compat for
+// existing fabrics — an untouched stamp re-parses identically, no version bump),
+// but the FIELD's cross-profile is one smoothstep over their SUM
+// (`reliefField`: reach = halfWidth + apron), so two controls were one knob in
+// disguise (Jonah 2026-07-16: "very confusing"). Every GUI surface (selection
+// panel, creation modal, band grip) therefore presents ONE `width` — the total
+// distance from the ridge line to where the relief fades to nothing — and a
+// commit translates it back to `{ halfWidth: width, apron: 0 }`, which is
+// byte-identical terrain for equal sums (the profile depends only on the sum;
+// the segment hash's nearest() is exact under any cellSize).
+
+/** The GM-facing control specs for an algorithm's schema, per sketch kind:
+ * relief collapses halfWidth+apron into one `width` spec (same numeric
+ * constraints as halfWidth); everything else passes through unchanged. */
+export function presentedParamSpecs(kind: string, schema: unknown): ParamFieldSpec[] {
+  const specs = paramFieldSpecs(schema);
+  if (kind !== "relief") return specs;
+  const out: ParamFieldSpec[] = [];
+  for (const s of specs) {
+    if (s.key === "apron") continue;
+    if (s.key === "halfWidth" && s.kind === "number") {
+      out.push({ ...s, key: "width", label: "width (ridge line → fade-out, m)" });
+      continue;
+    }
+    out.push(s);
+  }
+  return out;
+}
+
+/** The presented VALUES for the specs above: relief mirrors the live sum into
+ * `width` so the control shows the stamp's true reach. */
+export function presentedParams(kind: string, params: Record<string, unknown>): Record<string, unknown> {
+  if (kind !== "relief") return params;
+  const hw = typeof params.halfWidth === "number" && Number.isFinite(params.halfWidth) ? params.halfWidth : 180;
+  const apron = typeof params.apron === "number" && Number.isFinite(params.apron) ? params.apron : 0;
+  return { ...params, width: Math.max(1, hw) + Math.max(0, apron) };
+}
+
+/** Translate ONE presented-control edit into the schema-param patch to merge
+ * into the live params: relief `width` → `{ halfWidth: width, apron: 0 }`
+ * (byte-identical field for equal sums); everything else is a passthrough. */
+export function presentedParamPatch(kind: string, key: string, value: unknown): Record<string, unknown> {
+  if (kind === "relief" && key === "width" && typeof value === "number") {
+    return { halfWidth: Math.max(1, Math.round(value)), apron: 0 };
+  }
+  return { [key]: value };
+}

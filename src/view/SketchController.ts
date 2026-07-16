@@ -222,7 +222,7 @@ export class SketchController {
    * at grab, and the offset baseline. Null when no band drag is in flight. */
   private bandDrag: {
     index: number;
-    param: "halfWidth" | "apron" | "band";
+    param: "width" | "band";
     startClientX: number;
     startClientY: number;
     screenNormal: PlanarPt;
@@ -893,30 +893,25 @@ export class SketchController {
   }
 
   /** Display-only ghost outlines of the effective band a relief/landform stamp
-   * reaches (plan 040 Phase 2): relief → the ±halfWidth corridor (solid ghost)
-   * + the fainter ±(halfWidth+apron) skirt; landform → the inset band ring.
-   * Offset in the base geometry's planar units (metres ÷ metresPerUnit); pure
-   * `offsetPolyline`/`insetRing`. Draping onto terrain is fine — the band IS a
-   * ground footprint. */
+   * reaches (plan 040 Phase 2): relief → the ±width fade-out edge (one pair —
+   * the profile is a single smoothstep over the total reach, 2026-07-16);
+   * landform → the inset band ring. Offset in the base geometry's planar units
+   * (metres ÷ metersPerUnit); pure `offsetPolyline`/`insetRing`. Draping onto
+   * terrain is fine — the band IS a ground footprint. */
   private bandGhostFeatures(): GeoJSON.Feature[] {
     if (!this.edit?.band) return [];
     const { values, metersPerUnit } = this.edit.band;
     const toUnits = (m: number): number => m / metersPerUnit;
     const out: GeoJSON.Feature[] = [];
     if (this.edit.kind === "relief") {
-      const hw = toUnits(bandEdges("relief", values)[0].offsetMeters);
-      const outer = toUnits(bandEdges("relief", values)[1].offsetMeters);
+      const width = toUnits(bandEdges("relief", values)[0].offsetMeters);
       const line = (coords: PlanarPt[], ghost: string): GeoJSON.Feature => ({
         type: "Feature",
         geometry: { type: "LineString", coordinates: coords },
         properties: { ghost },
       });
-      out.push(line(offsetPolyline(this.edit.vertices, hw), "band"));
-      out.push(line(offsetPolyline(this.edit.vertices, -hw), "band"));
-      if (outer > hw + 1e-9) {
-        out.push(line(offsetPolyline(this.edit.vertices, outer), "band-faint"));
-        out.push(line(offsetPolyline(this.edit.vertices, -outer), "band-faint"));
-      }
+      out.push(line(offsetPolyline(this.edit.vertices, width), "band"));
+      out.push(line(offsetPolyline(this.edit.vertices, -width), "band"));
     } else if (this.edit.kind === "landform") {
       const d = safeInsetDistance(this.edit.vertices, toUnits(values.band ?? 0));
       if (d > 1e-9) {
@@ -1326,12 +1321,11 @@ export class SketchController {
     const { param, screenNormal, metresPerPixel, startOffset, startValues } = this.bandDrag;
     // Signed pixel travel along the outward screen normal (widen = positive).
     const deltaPx = (e.clientX - this.bandDrag.startClientX) * screenNormal[0] + (e.clientY - this.bandDrag.startClientY) * screenNormal[1];
-    // Bounds are stable against the drag's start params (halfWidth doesn't move
-    // under an apron drag).
+    // Bounds are stable against the drag's start params.
     const edge = bandEdges(this.edit.kind, startValues).find((x) => x.param === param);
     if (!edge) return;
     const offset = offsetFromBandDrag(startOffset, deltaPx, metresPerPixel, edge.minOffset, edge.maxOffset);
-    const upd = bandParamFromOffset(param, offset, startValues.halfWidth ?? 0);
+    const upd = bandParamFromOffset(param, offset);
     this.edit.band.values[upd.key] = upd.value;
     this.renderDraft(); // live ghost re-offset + grip reposition (no regen)
     this.handlers.onBandDrag?.(this.edit.featureId, param, upd.value);

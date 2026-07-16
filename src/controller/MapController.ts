@@ -100,6 +100,7 @@ import {
   dagRoleFor,
   migrateParamsForAdoption,
   presetById,
+  algorithmSupportsCenter,
   type ProcgenAlgorithm,
 } from "../gen/procgen/registry";
 import { cascadeOrder, downstreamClosure, upstreamEdges, type DagNode } from "../gen/procgen/dag";
@@ -866,10 +867,15 @@ export class MapController {
     return undefined;
   }
 
-  /** The effective generation center of a procgen region in DISPLAY units. */
+  /** The effective generation center of a procgen region in DISPLAY units.
+   * Null for algorithms whose params schema has no `center` (relief, landform,
+   * forest, …) — their generators never read one, so the host must not grow
+   * the ◆ center handle (Jonah 2026-07-16). */
   effectiveRegionCenterDisplay(feature: FabricFeature): [number, number] | null {
     const block = feature.properties.procgen;
-    if (!block || !this.campaign || !algorithmById(block.algorithm)) return null;
+    if (!block || !this.campaign) return null;
+    const algorithm = algorithmById(block.algorithm);
+    if (!algorithm || !algorithmSupportsCenter(algorithm)) return null;
     const region = this.buildRegionFromFeature(feature);
     if (!region) return null;
     const scale = this.campaign.config.scaleMetersPerUnit;
@@ -3363,6 +3369,9 @@ export class MapController {
     if (!feature || !block) return false;
     const algorithm = algorithmById(block.algorithm);
     if (!algorithm) return false;
+    // A center is only meaningful where the params schema carries one — the
+    // generator would silently ignore it anywhere else (zod strips it).
+    if (!algorithmSupportsCenter(algorithm)) return false;
     if (centerDisplay === null && !("center" in block.params)) return false; // already automatic — no-op
     const base = await this.consentToRegenerate(feature, block, algorithm);
     if (!base) {

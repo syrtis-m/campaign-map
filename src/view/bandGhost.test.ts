@@ -105,16 +105,16 @@ describe("ringInsetNormal", () => {
 });
 
 describe("bandEdges", () => {
-  it("relief → a halfWidth corridor edge + a fainter halfWidth+apron skirt edge", () => {
+  it("relief → ONE width edge at the total reach (halfWidth + apron — the field reads only the sum)", () => {
     const edges = bandEdges("relief", { halfWidth: 180, apron: 220 });
-    expect(edges).toHaveLength(2);
-    expect(edges[0]).toMatchObject({ param: "halfWidth", offsetMeters: 180, faint: false });
-    expect(edges[1]).toMatchObject({ param: "apron", offsetMeters: 400, faint: true, minOffset: 180 });
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({ param: "width", offsetMeters: 400, faint: false, minOffset: 1 });
   });
 
-  it("relief with no apron ⇒ the skirt edge coincides with the corridor (offset === halfWidth)", () => {
+  it("relief with no apron ⇒ the width edge is the halfWidth alone", () => {
     const edges = bandEdges("relief", { halfWidth: 180 });
-    expect(edges[1].offsetMeters).toBe(180);
+    expect(edges).toHaveLength(1);
+    expect(edges[0].offsetMeters).toBe(180);
   });
 
   it("landform → a single band ring edge", () => {
@@ -128,27 +128,23 @@ describe("bandEdges", () => {
 });
 
 describe("bandValuesFromParams", () => {
-  it("relief carries halfWidth+apron; landform carries band", () => {
-    expect(bandValuesFromParams("relief", { halfWidth: 200, apron: 50 })).toEqual({ halfWidth: 200, apron: 50 });
+  it("relief carries the presented width (= halfWidth + apron); landform carries band", () => {
+    expect(bandValuesFromParams("relief", { halfWidth: 200, apron: 50 })).toEqual({ width: 250 });
     expect(bandValuesFromParams("landform", { band: 90 })).toEqual({ band: 90 });
   });
   it("falls back to sane defaults when a param is missing", () => {
-    expect(bandValuesFromParams("relief", {})).toEqual({ halfWidth: 180, apron: 0 });
+    expect(bandValuesFromParams("relief", {})).toEqual({ width: 180 });
     expect(bandValuesFromParams("landform", {})).toEqual({ band: 120 });
   });
 });
 
 describe("bandParamFromOffset", () => {
-  it("halfWidth edge → the halfWidth param (min 1)", () => {
-    expect(bandParamFromOffset("halfWidth", 250, 180)).toEqual({ key: "halfWidth", value: 250 });
-    expect(bandParamFromOffset("halfWidth", 0, 180)).toEqual({ key: "halfWidth", value: 1 });
-  });
-  it("apron edge → offset − halfWidth (min 0)", () => {
-    expect(bandParamFromOffset("apron", 400, 180)).toEqual({ key: "apron", value: 220 });
-    expect(bandParamFromOffset("apron", 150, 180)).toEqual({ key: "apron", value: 0 }); // inside halfWidth ⇒ 0
+  it("width edge → the presented width (min 1); schema translation happens at commit", () => {
+    expect(bandParamFromOffset("width", 250)).toEqual({ key: "width", value: 250 });
+    expect(bandParamFromOffset("width", 0)).toEqual({ key: "width", value: 1 });
   });
   it("band edge → the band param", () => {
-    expect(bandParamFromOffset("band", 90, 0)).toEqual({ key: "band", value: 90 });
+    expect(bandParamFromOffset("band", 90)).toEqual({ key: "band", value: 90 });
   });
 });
 
@@ -162,8 +158,7 @@ describe("offsetFromBandDrag", () => {
 
 describe("formatBandReadout", () => {
   it("labels each param and appends metres", () => {
-    expect(formatBandReadout("halfWidth", 180)).toBe("width 180 m");
-    expect(formatBandReadout("apron", 220)).toBe("apron 220 m");
+    expect(formatBandReadout("width", 400)).toBe("width 400 m");
     expect(formatBandReadout("band", 120)).toBe("band 120 m");
   });
 });

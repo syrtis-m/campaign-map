@@ -1045,6 +1045,16 @@ export function algorithmForKind(kind: FabricKind): ProcgenAlgorithm | undefined
   return REGISTRY.find((a) => a.appliesTo.includes(kind));
 }
 
+/** Does this algorithm's params schema accept a GM-placed generation `center`?
+ * Drives the host's center-handle/panel affordance (Jonah 2026-07-16: a relief
+ * or landform must not grow a city-center ◆ its generator never reads).
+ * SCHEMA-derived — params are the whole truth (invariant #10), so the schema
+ * key IS the capability; no per-algorithm flag to drift out of sync. */
+export function algorithmSupportsCenter(algorithm: ProcgenAlgorithm): boolean {
+  const shape = (algorithm.paramsSchema as unknown as { shape?: Record<string, unknown> }).shape;
+  return !!shape && "center" in shape;
+}
+
 /** Every registered algorithm, in registry order. Read-only enumeration for
  * hosts (adopt-all), scripts (goldens), and contract tests. */
 export function allAlgorithms(): readonly ProcgenAlgorithm[] {

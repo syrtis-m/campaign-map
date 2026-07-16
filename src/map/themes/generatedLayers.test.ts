@@ -8,21 +8,24 @@ import { assertLayerOrder } from "./layerOrder";
 /** Every generated feature `type` must be painted in EVERY theme — a missing
  * entry means invisible output that passes every non-visual gate. Coverage
  * guard for the river types. */
-// Water-hued fills that must stay EXACTLY fabricRiver (hue discipline): channel
-// + the junction/mouth features + oxbow lakes.
-const RIVER_WATER_FILL_IDS = [
-  "generated-river-channel",
-  "generated-river-confluence",
-  "generated-river-distributary",
-  "generated-river-estuary",
-  "generated-river-oxbow",
+// The ONE water-hued fill (2026-07-16 merge): channel + the junction/mouth
+// features + oxbow lakes all paint byte-identically, so they share a single
+// match-filtered layer. The five gids it must cover are the coverage guard —
+// a gid missing from the filter would be emitted-but-invisible.
+const RIVER_WATER_LAYER_ID = "generated-river-water";
+const RIVER_WATER_GIDS = [
+  "river-channel",
+  "river-confluence",
+  "river-distributary",
+  "river-estuary",
+  "river-oxbow",
 ] as const;
-// All river layers needing paint in every theme: bank casing (line) + water
-// fills + island/point-bar (land/silt fills) + the ford/rapids/falls glyph
-// (symbol).
+// All river layers needing paint in every theme: bank casing (line) + the
+// merged water fill + island/point-bar (land/silt fills) + the
+// ford/rapids/falls glyph (symbol).
 const RIVER_LAYER_IDS = [
   "generated-river-bank",
-  ...RIVER_WATER_FILL_IDS,
+  RIVER_WATER_LAYER_ID,
   "generated-river-island",
   "generated-river-point-bar",
   "generated-river-glyph",
@@ -84,9 +87,9 @@ describe("generatedLayers — river bank/channel/island/junction/dressing paint 
     }
   });
 
-  it("depth idiom order: bank UNDER channel; island, point-bar and glyph ABOVE channel", () => {
+  it("depth idiom order: bank UNDER the water fill; island, point-bar and glyph ABOVE it", () => {
     const ids = generatedLayers(PARCHMENT).map((l) => l.id);
-    const channel = ids.indexOf("generated-river-channel");
+    const channel = ids.indexOf(RIVER_WATER_LAYER_ID);
     expect(ids.indexOf("generated-river-bank")).toBeLessThan(channel);
     expect(ids.indexOf("generated-river-island")).toBeGreaterThan(channel);
     expect(ids.indexOf("generated-river-point-bar")).toBeGreaterThan(channel);
@@ -104,7 +107,7 @@ describe("generatedLayers — river bank/channel/island/junction/dressing paint 
     it(`${id}: bank, channel, junction/mouth water, island, point-bar and glyph all paint (existing tokens only)`, () => {
       const layers = generatedLayers(tokens);
       // Channel water and island land must read differently.
-      const channel = fillColor(layers.find((l) => l.id === "generated-river-channel")!);
+      const channel = fillColor(layers.find((l) => l.id === RIVER_WATER_LAYER_ID)!);
       const island = fillColor(layers.find((l) => l.id === "generated-river-island")!);
       expect(channel, `${id}: channel and island share a color`).not.toBe(island);
       // Bank casing: a deliberate DARKER stroke of the channel hue (the
@@ -112,13 +115,16 @@ describe("generatedLayers — river bank/channel/island/junction/dressing paint 
       const bank = bankLineColor(layers.find((l) => l.id === "generated-river-bank")!);
       expect(bank.length).toBeGreaterThan(0);
       expect(bank, `${id}: bank casing must differ from the channel fill`).not.toBe(channel);
-      // Every water-hued fill (channel + confluence/distributary/estuary/oxbow)
-      // stays EXACTLY the theme's river token (hue discipline: water-hued paint
-      // never drifts, so overlaps never artifact).
-      for (const wid of RIVER_WATER_FILL_IDS) {
-        expect(fillColor(layers.find((l) => l.id === wid)!), `${id}: ${wid} must be fabricRiver`).toBe(
-          tokens.fabricRiver.toLowerCase()
-        );
+      // The merged water fill stays EXACTLY the theme's river token (hue
+      // discipline: water-hued paint never drifts, so overlaps never artifact)
+      // and its match filter covers ALL five water gids — a gid missing from
+      // the filter would be emitted-but-invisible in every theme.
+      expect(channel, `${id}: water fill must be fabricRiver`).toBe(tokens.fabricRiver.toLowerCase());
+      const waterFilter = JSON.stringify(
+        (layers.find((l) => l.id === RIVER_WATER_LAYER_ID) as { filter?: unknown }).filter
+      );
+      for (const gid of RIVER_WATER_GIDS) {
+        expect(waterFilter, `${id}: water filter must cover ${gid}`).toContain(`"${gid}"`);
       }
       // Point bar = a silt tone distinct from BOTH the channel water and the
       // land island (a warm beach, not water, not plain ground).
@@ -233,7 +239,7 @@ describe("generatedLayers — forest canopy/clearing/glyph-tree paint coverage",
 
   it("forest layers sit after river and before park, keeping the generated- prefix z-stack", () => {
     const ids = generatedLayers(PARCHMENT).map((l) => l.id);
-    expect(ids.indexOf("generated-forest-canopy")).toBeGreaterThan(ids.indexOf("generated-river-channel"));
+    expect(ids.indexOf("generated-forest-canopy")).toBeGreaterThan(ids.indexOf(RIVER_WATER_LAYER_ID));
     expect(ids.indexOf("generated-forest-tree")).toBeLessThan(ids.indexOf("generated-park-lawn"));
     expect(() => assertLayerOrder(generatedLayers(PARCHMENT))).not.toThrow();
   });

@@ -1,7 +1,7 @@
 import { App, Modal, Setting } from "obsidian";
 import type { ProcgenAlgorithm } from "../gen/procgen/registry";
 import { matchingPresetId, presetById } from "../gen/procgen/registry";
-import { paramFieldSpecs, renderParamControls } from "./paramControls";
+import { presentedParamSpecs, presentedParams, presentedParamPatch, renderParamControls } from "./paramControls";
 
 export interface RegionProcgenChoice {
   params: Record<string, unknown>;
@@ -43,15 +43,18 @@ export class RegionProcgenModal extends Modal {
       cls: "setting-item-description",
     });
 
-    const specs = paramFieldSpecs(this.algorithm.paramsSchema);
+    // PRESENTED specs/values (relief: one `width` control — the field reads
+    // only halfWidth+apron's sum, so the raw split never surfaces in the GUI).
+    const paramKind = this.algorithm.appliesTo[0];
+    const specs = presentedParamSpecs(paramKind, this.algorithm.paramsSchema);
     // The per-param container is filled AFTER the Template dropdown (below), but
     // `renderParams` is closed over by the dropdown's onChange, so declare it here.
     let paramsEl: HTMLDivElement | null = null;
     const renderParams = (): void => {
       if (!paramsEl) return;
       paramsEl.empty();
-      renderParamControls(paramsEl, specs, this.params, (key, value) => {
-        this.params = { ...this.params, [key]: value };
+      renderParamControls(paramsEl, specs, presentedParams(paramKind, this.params), (key, value) => {
+        this.params = { ...this.params, ...presentedParamPatch(paramKind, key, value) };
       });
     };
 

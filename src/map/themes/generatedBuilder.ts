@@ -442,11 +442,33 @@ const RECIPES: Record<string, Recipe> = {
       paint: { "line-color": riverDarken(roles.water, 0.3), "line-width": 1.6 },
     }),
   ],
-  "river-channel": (roles) => [waterFill("generated-river-channel", "river-channel", roles)],
-  "river-confluence": (roles) => [waterFill("generated-river-confluence", "river-confluence", roles)],
-  "river-distributary": (roles) => [waterFill("generated-river-distributary", "river-distributary", roles)],
-  "river-estuary": (roles) => [waterFill("generated-river-estuary", "river-estuary", roles)],
-  "river-oxbow": (roles) => [waterFill("generated-river-oxbow", "river-oxbow", roles)],
+  // Channel + junction/mouth/oxbow water: five contract buckets, ONE layer
+  // (2026-07-16). All five paint byte-identically (EXACTLY the theme river hue
+  // at opacity 1 — the hue discipline: overlaps never artifact) and sit
+  // contiguously in contract z (18–22), so a single match-filtered fill
+  // preserves both paint and z-order while shedding four layers from every
+  // per-frame walk and every `generated` setData bucket pass (precedent: the
+  // city-street ∪ sketch-corridor merge above). The merged layer occupies
+  // river-channel's slot (z 18, the lowest of the five); the other four
+  // recipes deliberately emit nothing.
+  "river-channel": (roles) => [
+    L({
+      id: "generated-river-water",
+      type: "fill",
+      filter: [
+        "match",
+        ["get", "generatorId"],
+        ["river-channel", "river-confluence", "river-distributary", "river-estuary", "river-oxbow"],
+        true,
+        false,
+      ],
+      paint: { "fill-color": roles.water, "fill-opacity": 1 },
+    }),
+  ],
+  "river-confluence": () => [], // painted by generated-river-water (river-channel's slot)
+  "river-distributary": () => [], // painted by generated-river-water
+  "river-estuary": () => [], // painted by generated-river-water
+  "river-oxbow": () => [], // painted by generated-river-water
   "river-island": (roles) => [
     L({
       id: "generated-river-island",
@@ -862,13 +884,6 @@ const RECIPES: Record<string, Recipe> = {
     ];
   },
 };
-
-/** Water-hued channel fills (channel/confluence/distributary/estuary/oxbow) —
- * all EXACTLY the river hue at full opacity (hue discipline: overlaps never
- * artifact). */
-function waterFill(id: string, gid: string, roles: RoleColors): LayerSpecification {
-  return L({ id, type: "fill", filter: gidFilter(gid), paint: { "fill-color": roles.water, "fill-opacity": 1 } });
-}
 
 /** A bucket the recipe table doesn't name: paint it generically from its mark +
  * role at full opacity. The property that lets a new contract bucket paint in

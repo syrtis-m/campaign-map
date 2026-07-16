@@ -378,7 +378,9 @@ describe("SketchController — river per-vertex depth grips (plan 040 river dept
 });
 
 const RELIEF_BAND_LINE: FabricGeometry = { type: "LineString", coordinates: [[0, 0], [4, 0]] };
-function selectReliefWithBand(c: SketchController, values = { halfWidth: 180, apron: 220 }) {
+// The presented band value for a relief is ONE width (= halfWidth + apron —
+// the field reads only the sum; 2026-07-16 unification).
+function selectReliefWithBand(c: SketchController, values = { width: 180 }) {
   c.setTool("select");
   c.select({ id: "R1", geometry: RELIEF_BAND_LINE, kind: "relief", center: null, band: { values: { ...values }, metersPerUnit: 50 } });
 }
@@ -388,16 +390,16 @@ function selectLandformWithBand(c: SketchController, band = 120) {
 }
 
 describe("SketchController — band ghost + edge grips (plan 040 Phase 2)", () => {
-  it("paints the ±halfWidth corridor + fainter ±(halfWidth+apron) skirt for a relief", () => {
+  it("paints ONE ±width fade-out pair for a relief (no separate apron skirt)", () => {
     const { map, c } = makeController();
     c.activate("relief");
     selectReliefWithBand(c);
     const feats = map.draftFeatures() as { properties?: { ghost?: string }; geometry: { type: string; coordinates: [number, number][] } }[];
     const band = feats.filter((f) => f.properties?.ghost === "band");
     const faint = feats.filter((f) => f.properties?.ghost === "band-faint");
-    expect(band).toHaveLength(2); // both corridor sides
-    expect(faint).toHaveLength(2); // both apron-skirt sides
-    // Horizontal spine, metersPerUnit 50 ⇒ halfWidth 180 m = 3.6 units on ±y.
+    expect(band).toHaveLength(2); // both sides of the one width edge
+    expect(faint).toHaveLength(0); // the two-edge split is gone
+    // Horizontal spine, metersPerUnit 50 ⇒ width 180 m = 3.6 units on ±y.
     const ys = band.flatMap((f) => f.geometry.coordinates.map((c2) => c2[1])).sort((a, b) => a - b);
     expect(ys[0]).toBeCloseTo(-3.6, 9);
     expect(ys[ys.length - 1]).toBeCloseTo(3.6, 9);
@@ -411,17 +413,17 @@ describe("SketchController — band ghost + edge grips (plan 040 Phase 2)", () =
     expect(feats.filter((f) => f.properties?.ghost === "band")).toHaveLength(1);
   });
 
-  it("grows one band grip per edge (relief: 2, landform: 1)", () => {
+  it("grows one band grip per edge (relief: 1, landform: 1)", () => {
     const { c } = makeController();
     c.activate("relief");
     selectReliefWithBand(c);
-    expect(c.bandGripElements).toHaveLength(2);
+    expect(c.bandGripElements).toHaveLength(1);
     expect(c.bandGripElements[0].style.width).toBe("13px"); // the small band grip
     selectLandformWithBand(c);
     expect(c.bandGripElements).toHaveLength(1);
   });
 
-  it("dragging the halfWidth grip out widens the corridor and commits once on release", () => {
+  it("dragging the width grip out widens the fade-out and commits once on release", () => {
     const { c, bandDrags, bandCommits } = makeController();
     c.activate("relief");
     selectReliefWithBand(c);
@@ -429,22 +431,10 @@ describe("SketchController — band ghost + edge grips (plan 040 Phase 2)", () =
     grip.fire("pointerdown", ptr(200)); // client-Y baseline
     // Screen normal is (0,−1) for a horizontal spine; metres/px = 50/10 = 5.
     grip.fire("pointermove", ptr(100)); // 100 px UP → +500 m → 180 → 680
-    expect(c.bandParamValues?.halfWidth).toBe(680);
-    expect(bandDrags.at(-1)).toEqual({ id: "R1", param: "halfWidth", value: 680 });
+    expect(c.bandParamValues?.width).toBe(680);
+    expect(bandDrags.at(-1)).toEqual({ id: "R1", param: "width", value: 680 });
     grip.fire("pointerup", ptr(100));
-    expect(bandCommits).toEqual([{ id: "R1", params: { halfWidth: 680 } }]);
-  });
-
-  it("dragging the apron grip sets apron = outer − halfWidth", () => {
-    const { c, bandCommits } = makeController();
-    c.activate("relief");
-    selectReliefWithBand(c); // halfWidth 180, apron 220 ⇒ outer edge 400
-    const grip = c.bandGripElements[1] as unknown as { fire(t: string, e: unknown): void };
-    grip.fire("pointerdown", ptr(200));
-    grip.fire("pointermove", ptr(100)); // +500 m → outer 400 → 900 → apron 900−180 = 720
-    expect(c.bandParamValues?.apron).toBe(720);
-    grip.fire("pointerup", ptr(100));
-    expect(bandCommits).toEqual([{ id: "R1", params: { apron: 720 } }]);
+    expect(bandCommits).toEqual([{ id: "R1", params: { width: 680 } }]);
   });
 
   it("dragging the landform band grip inward resizes band and commits once", () => {
@@ -467,19 +457,19 @@ describe("SketchController — band ghost + edge grips (plan 040 Phase 2)", () =
     grip.fire("pointerdown", ptr(200));
     grip.fire("pointerup", ptr(200)); // released without moving
     expect(bandCommits).toHaveLength(0);
-    expect(c.bandParamValues?.halfWidth).toBe(180);
+    expect(c.bandParamValues?.width).toBe(180);
   });
 
-  it("clamps the halfWidth grip to its min on a big inward drag", () => {
+  it("clamps the width grip to its min on a big inward drag", () => {
     const { c, bandCommits } = makeController();
     c.activate("relief");
     selectReliefWithBand(c);
     const grip = c.bandGripElements[0] as unknown as { fire(t: string, e: unknown): void };
     grip.fire("pointerdown", ptr(200));
     grip.fire("pointermove", ptr(400)); // 200 px DOWN → −1000 m → clamped to min 1
-    expect(c.bandParamValues?.halfWidth).toBe(1);
+    expect(c.bandParamValues?.width).toBe(1);
     grip.fire("pointerup", ptr(400));
-    expect(bandCommits).toEqual([{ id: "R1", params: { halfWidth: 1 } }]);
+    expect(bandCommits).toEqual([{ id: "R1", params: { width: 1 } }]);
   });
 
   it("no band grips for a non-terrain shape; deselect tears them down (no leaked DOM)", () => {
@@ -489,7 +479,7 @@ describe("SketchController — band ghost + edge grips (plan 040 Phase 2)", () =
     c.select({ id: "D1", geometry: POLY, kind: "district", center: null });
     expect(c.bandGripElements).toHaveLength(0);
     selectReliefWithBand(c);
-    expect(c.bandGripElements).toHaveLength(2);
+    expect(c.bandGripElements).toHaveLength(1);
     c.clearSelection();
     expect(c.bandGripElements).toHaveLength(0);
   });
