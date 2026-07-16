@@ -10,7 +10,7 @@
  *  4. RAPID TOGGLES: off-while-retry-pending never resurrects the mesh.
  */
 import { describe, it, expect } from "vitest";
-import { TerrainToggle, type TerrainTogglePort } from "./terrainToggle";
+import { TerrainToggle, type TerrainTogglePort, type MeshMode } from "./terrainToggle";
 
 /** A fake map+field port with settable pitch/digest/source-readiness and full
  * call/listener accounting — the terrain equivalent of terrainRefresh's spy
@@ -22,10 +22,10 @@ function fakePort(opts: { digest?: string | null; pitch?: number; sourceReady?: 
     digest: opts.digest ?? "d1",
     pitch: opts.pitch ?? 0,
     sourceReady: opts.sourceReady ?? true,
-    meshActive: false,
+    meshMode: "off" as MeshMode,
     hillshadeVisible: false,
   };
-  const calls = { bust: 0, register: 0, setMeshOn: 0, setMeshOff: 0, setHillshade: 0 };
+  const calls = { bust: 0, register: 0, setMeshOn: 0, setMeshFlat: 0, setMeshOff: 0, setHillshade: 0 };
   const pitchHandlers = new Set<() => void>();
   const sourceReadyHandlers = new Set<() => void>();
   const port: TerrainTogglePort = {
@@ -35,15 +35,16 @@ function fakePort(opts: { digest?: string | null; pitch?: number; sourceReady?: 
       state.hillshadeVisible = v;
     },
     getPitch: () => state.pitch,
-    isMeshActive: () => state.meshActive,
-    setMesh: (on) => {
-      if (on) {
+    meshMode: () => state.meshMode,
+    setMesh: (mode) => {
+      if (mode !== "off") {
         if (!state.sourceReady) throw new Error("terrain source not loaded");
-        calls.setMeshOn++;
-        state.meshActive = true;
+        if (mode === "on") calls.setMeshOn++;
+        else calls.setMeshFlat++;
+        state.meshMode = mode;
       } else {
         calls.setMeshOff++;
-        state.meshActive = false;
+        state.meshMode = "off";
       }
     },
     bustDemTiles: () => void calls.bust++,
@@ -146,23 +147,43 @@ describe("TerrainToggle — no leaks across N cycles", () => {
 });
 
 describe("TerrainToggle — pitch-adaptive relief convergence", () => {
-  it("top-down shows hillshade + no mesh; pitched shows mesh + hides hillshade", () => {
+  it("top-down shows hillshade over a FLAT resident mesh; pitched raises it + hides hillshade", () => {
     const h = fakePort({ digest: "d1", pitch: 0 });
     const t = new TerrainToggle(h.port);
     t.setEnabled(true);
     expect(h.state.hillshadeVisible).toBe(true);
-    expect(h.state.meshActive).toBe(false);
+    expect(h.state.meshMode).toBe("flat"); // resident, exaggeration 0 — caches stay warm
 
-    // Pitch the camera → the registered pitch handler re-applies relief.
+    // Pitch the camera → the registered pitch handler re-applies relief: the
+    // SAME resident mesh is raised (an exaggeration flip, never a rebuild).
     h.state.pitch = 40;
     for (const fn of h.pitchHandlers) fn();
     expect(h.state.hillshadeVisible).toBe(false);
-    expect(h.state.meshActive).toBe(true);
+    expect(h.state.meshMode).toBe("on");
 
-    // Disable → both off.
+    // Back to top-down: flat again — no teardown (the pop-in-delay fix).
+    h.state.pitch = 0;
+    for (const fn of h.pitchHandlers) fn();
+    expect(h.state.hillshadeVisible).toBe(true);
+    expect(h.state.meshMode).toBe("flat");
+    expect(h.calls.setMeshOff).toBe(0); // never torn down while enabled
+
+    // Disable → torn down.
     t.setEnabled(false);
     expect(h.state.hillshadeVisible).toBe(false);
-    expect(h.state.meshActive).toBe(false);
+    expect(h.state.meshMode).toBe("off");
+  });
+
+  it("pitch crossings while enabled NEVER tear the mesh down (the pop-in-delay fix)", () => {
+    const h = fakePort({ digest: "d1", pitch: 30 });
+    const t = new TerrainToggle(h.port);
+    t.setEnabled(true);
+    for (let i = 0; i < 10; i++) {
+      h.state.pitch = i % 2 === 0 ? 0 : 45;
+      for (const fn of h.pitchHandlers) fn();
+    }
+    expect(h.calls.setMeshOff).toBe(0);
+    expect(h.state.meshMode).toBe("on"); // ended pitched
   });
 
   it("applyReliefMode is idempotent (repeat calls don't re-set the mesh)", () => {
@@ -172,7 +193,7 @@ describe("TerrainToggle — pitch-adaptive relief convergence", () => {
     const on1 = h.calls.setMeshOn;
     t.applyReliefMode();
     t.applyReliefMode();
-    expect(h.calls.setMeshOn).toBe(on1); // already active ⇒ no re-set
+    expect(h.calls.setMeshOn).toBe(on1); // already converged ⇒ no re-set
   });
 });
 
@@ -182,12 +203,12 @@ describe("TerrainToggle — reliability (source-not-ready retry)", () => {
     const t = new TerrainToggle(h.port);
     t.setEnabled(true);
     // setMesh threw (source not loaded) ⇒ mesh not up yet, one retry pending.
-    expect(h.state.meshActive).toBe(false);
+    expect(h.state.meshMode).toBe("off");
     expect(h.sourceReadyHandlers.size).toBe(1);
 
     h.fireSourceReady();
     // Retry fired → mesh is now up, no residual listener.
-    expect(h.state.meshActive).toBe(true);
+    expect(h.state.meshMode).toBe("on");
     expect(h.sourceReadyHandlers.size).toBe(0);
     expect(t.listenerCount).toBe(1); // just the pitch handler
   });
@@ -204,7 +225,7 @@ describe("TerrainToggle — reliability (source-not-ready retry)", () => {
 
     // Source finally loads: no stray handler, mesh stays down.
     h.fireSourceReady();
-    expect(h.state.meshActive).toBe(false);
+    expect(h.state.meshMode).toBe("off");
     expect(t.listenerCount).toBe(0);
   });
 

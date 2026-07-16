@@ -778,15 +778,23 @@ Pure viewport motion. **No procgen, ever** (invariant #4 — `generatorRunCount`
 generation**. Enable: re-point the provider (idempotent), then bust the retained DEM tiles
 **only if** the elevation digest moved while terrain was off (`demTilesDigest` compare) —
 otherwise reuse the decoded tiles + PNG memo (a plain on/off/on is a pure re-show). Relief
-is **pitch-adaptive**: top-down → 2D hillshade, pitched → 3D mesh (never both — maplibre
-4.7.1 smears a draped hillshade over an active mesh). `setMesh` may throw when the DEM
-source isn't loaded yet → a bounded one-shot source-ready retry (≤5), so terrain reliably
+is **pitch-adaptive over a RESIDENT mesh** (2026-07-16): while enabled, the terrain object
+never tears down — top-down sets `exaggeration: 0` (flat drape ⇒ the 2D hillshade renders
+clean; the 4.7.1 smear needs actual relief under the drape) and shows hillshade; pitched
+restores the exaggeration and hides it. A pitch crossing is a ~2 ms render-uniform flip
+with ZERO tile refetches — the old design `setTerrain(null)`'d at top-down, which drops
+MapLibre's terrain tile/render caches, so tilting back refetched + re-decoded + re-meshed
+the whole viewport (the "pops away and takes a while to pop in" report). Mesh modes:
+`on` / `flat` / `off` (`MeshMode`); the port reads the ACTUAL mode from `getTerrain()` so
+convergence survives a `setStyle` wiping terrain. `setMesh` may throw when the DEM source
+isn't loaded yet → a bounded one-shot source-ready retry (≤5), so terrain reliably
 "comes back".
 
 - **Hazards fixed**: the unconditional `setTiles` on every enable (full viewport
   refetch+decode+mesh-rebuild) was the "massive hit"; the swallowed-throw-never-retry was
-  the "sometimes doesn't come back". `markDemTilesFresh` keeps the toggle's retained-tile
-  digest in lockstep with the render-chokepoint bust so the two never double-bust.
+  the "sometimes doesn't come back"; the top-down mesh teardown was the pop-in delay.
+  `markDemTilesFresh` keeps the toggle's retained-tile digest in lockstep with the
+  render-chokepoint bust so the two never double-bust.
 
 ### 13.4 Draw a new shape → procgen offer → attach
 `addSketchedFeature` (MapController:2475): stash → `repaintFabric` → fire-and-forget

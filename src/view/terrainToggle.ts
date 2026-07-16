@@ -2,7 +2,9 @@
  * Terrain-toggle lifecycle — the host-agnostic brain behind the "show 3D" button.
  *
  * THE BUGS THIS FIXES (Jonah 2026-07-15: "toggling the show-3d button causes a
- * massive performance hit and is unreliable in getting things back up").
+ * massive performance hit and is unreliable in getting things back up";
+ * 2026-07-16: "looking straight down pops the 3D away and it takes a while to
+ * pop back in").
  *
  *  1. MASSIVE HIT — every enable unconditionally `setTiles`'d the raster-DEM
  *     source, which drops MapLibre's whole tile cache and reloads every viewport
@@ -20,11 +22,27 @@
  *     and re-derive relief state idempotently so it converges deterministically
  *     from `enabled` + pitch.
  *
+ *  3. TOP-DOWN POP + SLOW RE-RAISE — the pitch-adaptive swap used to TEAR DOWN
+ *     the mesh (`setTerrain(null)`) at top-down and rebuild it from scratch on
+ *     the next tilt: MapLibre drops the terrain tile/render caches with the
+ *     terrain object, so tilting again refetched + re-decoded + re-meshed the
+ *     whole viewport (seconds). Fix: while 3D is ENABLED the mesh stays
+ *     RESIDENT at every pitch — top-down just sets `exaggeration: 0` (a
+ *     render-time uniform: measured 2–3 ms, zero tile refetches). The drape
+ *     surface is flat at exaggeration 0, so the hillshade renders clean (the
+ *     4.7.1 smear needs actual relief under the drape); tilting back restores
+ *     the exaggeration instantly.
+ *
  * Kept free of Obsidian / MapLibre imports (a thin `TerrainTogglePort` is the
  * seam) so the gate drives the full lifecycle — digest-gated bust, pitch-adaptive
  * relief, source-ready retry, listener symmetry across N cycles — headlessly with
  * a fake port. Mirrors `terrainRefresh.ts`.
  */
+
+/** The mesh's lifecycle state: `on` = raised (pitched view), `flat` = resident
+ * but exaggeration 0 (top-down — caches stay warm so a tilt re-raises in ms),
+ * `off` = torn down (3D disabled). */
+export type MeshMode = "on" | "flat" | "off";
 
 /** The host seam: every method is a live read/act against the current map, so the
  * port can be built before the map exists (lazy closures, as MapView wires it). */
@@ -34,13 +52,17 @@ export interface TerrainTogglePort {
   hasHillshadeLayer: () => boolean;
   setHillshadeVisible: (visible: boolean) => void;
   /** Current camera pitch, degrees. Relief is pitch-adaptive: top-down → 2D
-   * hillshade, pitched → 3D mesh (they never render together — see MapView). */
+   * hillshade over the FLAT resident mesh, pitched → the raised mesh with
+   * hillshade hidden (a raised mesh under the draped hillshade smears —
+   * maplibre-gl 4.7.1; a flat one doesn't). */
   getPitch: () => number;
-  /** Is a 3D terrain mesh currently active (`map.getTerrain() != null`)? */
-  isMeshActive: () => boolean;
-  /** Set (true) / clear (false) the 3D mesh. MAY THROW on set when the DEM source
-   * isn't loaded yet — the caller catches and schedules a source-ready retry. */
-  setMesh: (on: boolean) => void;
+  /** The CURRENT mesh mode read from the live map (`getTerrain()` null → "off";
+   * exaggeration > 0 → "on"; else "flat") — truth, never cached, so convergence
+   * survives a `setStyle` wiping the terrain behind our back. */
+  meshMode: () => MeshMode;
+  /** Apply a mesh mode. MAY THROW for "on"/"flat" when the DEM source isn't
+   * loaded yet — the caller catches and schedules a source-ready retry. */
+  setMesh: (mode: MeshMode) => void;
   /** Force MapLibre to drop + refetch retained DEM tiles (`setTiles` → reload).
    * The expensive op — gated behind a digest move. */
   bustDemTiles: () => void;
@@ -121,39 +143,44 @@ export class TerrainToggle {
 
   /**
    * Converge relief to the current state — idempotent, safe to call on every
-   * pitch/settle and after a restyle. OFF ⇒ no hillshade, no mesh. ON + top-down
-   * ⇒ hillshade, no mesh. ON + pitched ⇒ mesh, hillshade hidden. The two relief
-   * layers never render together (maplibre-gl 4.7.1 smears a draped hillshade
-   * over an active mesh — see MapView).
+   * pitch/settle and after a restyle. OFF ⇒ no hillshade, mesh torn down.
+   * ON + top-down ⇒ hillshade over the FLAT resident mesh (exaggeration 0 —
+   * caches stay warm, no smear on a flat drape). ON + pitched ⇒ the raised
+   * mesh, hillshade hidden (a raised mesh under the draped hillshade smears —
+   * maplibre-gl 4.7.1). Pitch crossings are exaggeration flips on the SAME
+   * resident terrain: ~2 ms, zero refetches (bug 3 above).
    */
   applyReliefMode(): void {
     if (!this.port.hasHillshadeLayer()) return;
     const pitched = this.port.getPitch() > 0.5;
-    const wantMesh = this.enabled && pitched;
     const wantHillshade = this.enabled && !pitched;
     this.port.setHillshadeVisible(wantHillshade);
-    const active = this.port.isMeshActive();
-    if (wantMesh && !active) {
-      this.trySetMesh();
-    } else if (!wantMesh && active) {
+    const want: MeshMode = !this.enabled ? "off" : pitched ? "on" : "flat";
+    const actual = this.port.meshMode();
+    if (want === actual) {
+      // Already converged — cancel any stale pending retry (a toggle-off while
+      // a retry was queued must not resurrect the mesh; a satisfied raise must
+      // not re-fire).
+      this.cancelRetry();
+      return;
+    }
+    if (want === "off") {
       try {
-        this.port.setMesh(false);
+        this.port.setMesh("off");
       } catch {
         /* clearing never depends on source readiness */
       }
       this.cancelRetry();
     } else {
-      // Already in the wanted mesh state — cancel any stale pending retry (a
-      // toggle-off while a retry was queued must not resurrect the mesh).
-      if (!wantMesh) this.cancelRetry();
+      this.trySetMesh(want);
     }
   }
 
-  /** Try to raise the mesh; on the source-not-ready throw, schedule a bounded
-   * one-shot retry instead of silently leaving terrain off. */
-  private trySetMesh(): void {
+  /** Try to apply a live mesh mode; on the source-not-ready throw, schedule a
+   * bounded one-shot retry instead of silently leaving terrain off. */
+  private trySetMesh(mode: "on" | "flat"): void {
     try {
-      this.port.setMesh(true);
+      this.port.setMesh(mode);
       this.retryCount = 0;
       this.cancelRetry();
     } catch {

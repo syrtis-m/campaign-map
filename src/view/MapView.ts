@@ -242,14 +242,24 @@ export class MapView extends ItemView {
         }
       },
       getPitch: () => this.map?.getPitch() ?? 0,
-      isMeshActive: () => !!this.map?.getTerrain(),
-      setMesh: (on) => {
+      meshMode: () => {
+        const t = this.map?.getTerrain();
+        if (!t) return "off";
+        return (t.exaggeration ?? 0) > 0 ? "on" : "flat";
+      },
+      setMesh: (mode) => {
         if (!this.map || !this.campaign) return;
-        if (on) {
-          this.map.setTerrain({ source: `dem-${this.campaign.id}`, exaggeration: MapView.TERRAIN_EXAGGERATION });
-        } else {
+        if (mode === "off") {
           this.map.setTerrain(null);
+          return;
         }
+        // "flat" keeps the terrain object (and its tile/render caches) RESIDENT
+        // at exaggeration 0 — a pitch crossing is a ~2 ms uniform flip instead
+        // of a teardown + full refetch/decode/mesh rebuild (toggle bug 3).
+        this.map.setTerrain({
+          source: `dem-${this.campaign.id}`,
+          exaggeration: mode === "on" ? MapView.TERRAIN_EXAGGERATION : 0,
+        });
       },
       bustDemTiles: () => {
         if (this.campaign) this.bustDemTileCache(`dem-${this.campaign.id}`);
