@@ -88,6 +88,10 @@ export {
   // Per-tile terrain digest — scoped DEM cache invalidation so an extrude
   // re-derives only the tiles the edited stamp reaches (not the whole viewport).
   perTileTerrainDigest,
+  // Provable carve-reach bound (2026-07-16): the closed-form envelope + per-river
+  // reach that scope a river's digest inclusion to the tiles its carve can move.
+  carveReachEnvelope,
+  riverCarveReach,
   // TEST SEAM: disable the carve fast-reject to prove it is byte-identical to a
   // full nearest-spiral evaluation.
   __setCarveFastReject,

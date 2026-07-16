@@ -31,13 +31,13 @@
  * coupling" shortcut check `hasTerrainRelief` first.
  */
 import { fbmEroded, type HeightSample, type ElevationField } from "./elevation";
-import { elevationFieldFromFabric } from "./mountainField";
+import { elevationFieldFromFabric, AMP_MIN_M, AMP_MAX_M } from "./mountainField";
 import { pointInRingClosed } from "./sdf";
 import { tileLngLatBounds, TERRAIN_FIELD_VERSION } from "./dem";
 import { SegmentHash } from "../segmentHash";
 import type { BBox } from "../spatialHash";
 import type { FabricFeature } from "../../model/fabric";
-import { buildRiverCenterline, type RiverParams } from "../river";
+import { buildRiverCenterline, riverMaxOffset, type RiverParams } from "../river";
 import { makeSpine, type Spine } from "../region";
 
 type Pt = [number, number];
@@ -327,6 +327,111 @@ function stampFingerprint(f: FabricFeature): string {
   });
 }
 
+// ─── Provable carve-reach bound (scoped river digest, 2026-07-16) ────────────
+// The carve is inert (`smin` returns `pre` unchanged, byte-exact) once
+// `bed ≥ pre + CARVE_SMIN_K` (polySmin h ≥ 1). The bed at distance `d` from the
+// centerline is `floor + CARVE_BANK_SLOPE·max(0, d − hw)` with
+// `floor ≥ min(pre along the centerline) − maxDepth`. So the carve can only move
+// the field within
+//   d < hw + (preMax + K − (preMin − maxDepth)) / CARVE_BANK_SLOPE
+// of the centerline, and the centerline stays within `riverMaxOffset(params)` of
+// the sketched spine (river.ts: every displacement term individually clamped —
+// the same bound invariant #8's corridor containment rides on). `preMax`/`preMin`
+// come from a PROVABLE envelope of the pre-carve surface — closed-form sums of
+// stamp amplitude ceilings, never a grid-sampled estimate (a grid can under-read
+// a peak between samples; an under-read reach would serve stale bytes and break
+// invariant #6):
+//   base    — `fbmEroded` is a convex combination of value-noise octaves, each in
+//             [0,1), so B ∈ [seaDatum − |campAmp|, seaDatum + |campAmp|].
+//   mountain — |A·mask·terrace(n)| ≤ A = AMP_MIN_M + amplitude·(AMP_MAX_M −
+//             AMP_MIN_M) (mask, terrace-of-fbm ∈ [0,1]); counted on BOTH sides
+//             (± A) rather than auditing terrace's sign — over-inclusion is safe.
+//   relief  — |sign·height·bump| ≤ height (bump ∈ [0,1]), signed by polarity.
+//   landform — replace lerps toward its target, so the post-replace surface lies
+//             in [min(addStage, targets), max(addStage, targets)].
+// Every bound OVER-estimates reach; the only cost of slack is a river folding
+// into a few more tiles' digests than strictly necessary.
+
+/** Provable min/max envelope of the PRE-CARVE surface (base + adds + replaces)
+ * over the whole campaign — closed-form over durable params (defensively parsed
+ * exactly like the field builders, so a malformed stamp gets the same defaults
+ * the field itself would use). */
+export function carveReachEnvelope(
+  features: FabricFeature[],
+  base: TerrainBaseParams
+): { surfMax: number; surfMin: number } {
+  const datum = base.seaDatum ?? 0;
+  const amp = Math.abs(base.campAmp ?? 0);
+  let addPos = 0;
+  let addNeg = 0;
+  let targetMax = -Infinity;
+  let targetMin = Infinity;
+  for (const f of features) {
+    const block = f.properties.procgen;
+    if (!block) continue;
+    const p = block.params as Record<string, unknown>;
+    if (block.algorithm === "mountain") {
+      const a = typeof p.amplitude === "number" && Number.isFinite(p.amplitude) ? p.amplitude : 0.6;
+      const A = AMP_MIN_M + clamp01(a) * (AMP_MAX_M - AMP_MIN_M);
+      addPos += A;
+      addNeg += A;
+    } else if (block.algorithm === "relief") {
+      const h = Math.abs(num(p.height, RELIEF_DEFAULTS.height));
+      if (p.polarity === "valley") addNeg += h;
+      else addPos += h;
+    } else if (block.algorithm === "landform") {
+      const mode = (LANDFORM_MODES as readonly string[]).includes(p.mode as string)
+        ? (p.mode as LandformMode)
+        : LANDFORM_DEFAULTS.mode;
+      const target = typeof p.target === "number" && Number.isFinite(p.target) ? p.target : undefined;
+      const t = landformTarget({ mode, target, band: 0, priority: 0 }, datum);
+      if (t > targetMax) targetMax = t;
+      if (t < targetMin) targetMin = t;
+    }
+  }
+  return {
+    surfMax: Math.max(datum + amp + addPos, targetMax),
+    surfMin: Math.min(datum - amp - addNeg, targetMin),
+  };
+}
+
+/** Defensive river-params parse shared by the reach bound — mirrors
+ * `riverCarvesFromFabric` exactly so the bound describes the same carve the
+ * field builds (defaults 0, width clamped ≥ 4). */
+function riverParamsOf(f: FabricFeature): RiverParams {
+  const p = (f.properties.procgen?.params ?? {}) as Record<string, unknown>;
+  const width = Math.max(4, num(p.width, 12));
+  return {
+    windiness: clamp01(num(p.windiness, 0)),
+    braiding: clamp01(num(p.braiding, 0)),
+    width,
+    widthGrowth: Math.max(0, num(p.widthGrowth, 0)),
+    braidBias: clamp01(num(p.braidBias, 0)),
+    slopeSensitivity: clamp01(num(p.slopeSensitivity, 0)),
+  };
+}
+
+/** A provable upper bound (meters) on how far this river's carve can move the
+ * field, measured from the SKETCHED spine's bbox: centerline stray
+ * (`riverMaxOffset`) + channel half-width + the gorge wall's climb from the
+ * worst-case bed floor to the worst-case surface. Monotone in every envelope
+ * term, so slack only ever widens it (over-inclusion, never a false miss). */
+export function riverCarveReach(f: FabricFeature, env: { surfMax: number; surfMin: number }): number {
+  const params = riverParamsOf(f);
+  // Worst-case incision: the uniform depth, or any per-vertex depth override —
+  // the cumulative-min bed can only be LOWERED by a deeper vertex.
+  let maxDepth = riverCarveDepth(params.width);
+  const rawDepths = (f.properties.procgen?.params as Record<string, unknown> | undefined)?.depths;
+  if (Array.isArray(rawDepths)) {
+    for (const d of rawDepths) {
+      if (typeof d === "number" && Number.isFinite(d) && d > maxDepth) maxDepth = d;
+    }
+  }
+  const bedFloor = env.surfMin - maxDepth;
+  const climb = (env.surfMax + CARVE_SMIN_K - bedFloor) / CARVE_BANK_SLOPE;
+  return riverMaxOffset(params) + params.width + Math.max(0, climb);
+}
+
 /**
  * The per-tile terrain digest: base params + K + campaign seed + grade-enable,
  * plus the id-sorted fingerprints of every durable terrain stamp whose
@@ -343,19 +448,22 @@ function stampFingerprint(f: FabricFeature): string {
  *                sea folds into every tile's digest (its exterior reach is global).
  *   - graded district → the grade band (a safe over-estimate; grade fades to
  *                natural ground by the rim, so it is really bbox-bounded).
- *   - river carve → ALWAYS included (global). The carve's horizontal reach is
- *                terrain-dependent — a gorge wall can climb an adjacent massif for
- *                hundreds of metres — with no cheap sound UPPER bound, so scoping a
- *                river risks a false-miss (stale bytes, a determinism-law
- *                violation). Global inclusion is the maximally-inclusive safe
- *                choice, and it does NOT dilute the extrude win: an extrude edits a
- *                relief/landform stamp, never a river, so a far tile's river
- *                entries are unchanged ⇒ that tile still cache-hits. (A bounded
- *                carve reach could scope rivers later — a follow-up.)
+ *   - river carve → `riverCarveReach` (2026-07-16, was global): a provable
+ *                closed-form over-estimate — centerline stray + half-width + the
+ *                gorge wall's worst-case climb from the envelope's bed floor to
+ *                its surface ceiling (see the bound's derivation above). Editing
+ *                a river now re-derives only the tiles its carve can reach.
+ *                A river IN reach of the tile additionally pulls its BED INPUTS
+ *                into the digest: the bed and the meandered centerline sample the
+ *                macro surface along the corridor, so a stamp near the SPINE
+ *                moves this tile's bytes through the bed even when the stamp
+ *                itself is far from the tile. (Closed 2026-07-16 — under global
+ *                river inclusion this was a latent stale-serve: the river's own
+ *                fingerprint doesn't change when a spine-adjacent relief does.)
  *
- * Enumeration-order-stable (id-sorted) — the fold discipline. Cheap string,
- * compared not persisted. Carries `TERRAIN_FIELD_VERSION` so a field-math change
- * re-derives every tile.
+ * Enumeration-order-stable (id-sorted, deduped) — the fold discipline. Cheap
+ * string, compared not persisted. Carries `TERRAIN_FIELD_VERSION` so a
+ * field-math change re-derives every tile.
  */
 export function perTileTerrainDigest(
   features: FabricFeature[],
@@ -375,13 +483,28 @@ export function perTileTerrainDigest(
     minY: Math.min(south, north) * scaleMetersPerUnit,
     maxY: Math.max(south, north) * scaleMetersPerUnit,
   };
-  const hits: string[] = [];
+  // Shared by every river in the loop; built lazily so river-free campaigns
+  // (the common case) never pay it.
+  let env: { surfMax: number; surfMin: number } | null = null;
+  const hits = new Set<string>();
   for (const f of features) {
     const alg = f.properties.procgen?.algorithm;
     if (!alg) continue;
     if (alg === "river") {
-      // Global (see doc): a river always contributes to every tile's digest.
-      hits.push(stampFingerprint(f));
+      env ??= carveReachEnvelope(features, base);
+      const reach = riverCarveReach(f, env);
+      if (!bboxTouches(stampBBox(f), tile, reach)) continue;
+      hits.add(stampFingerprint(f));
+      // BED INPUTS (see doc): every terrain stamp whose support can touch this
+      // river's corridor (spine bbox + centerline stray) feeds the bed/centerline
+      // and therefore this tile's bytes wherever the carve is active.
+      const corridor = riverMaxOffset(riverParamsOf(f));
+      const spineBox = stampBBox(f);
+      for (const g of features) {
+        const support = terrainStampSupport(g);
+        if (support === null) continue;
+        if (bboxTouches(stampBBox(g), spineBox, support + corridor)) hits.add(stampFingerprint(g));
+      }
       continue;
     }
     let reach: number | null;
@@ -398,10 +521,10 @@ export function perTileTerrainDigest(
       reach = null; // not a terrain-field input ⇒ never in the digest
     }
     if (reach === null) continue;
-    if (bboxTouches(stampBBox(f), tile, reach)) hits.push(stampFingerprint(f));
+    if (bboxTouches(stampBBox(f), tile, reach)) hits.add(stampFingerprint(f));
   }
-  hits.sort();
-  return `t${TERRAIN_FIELD_VERSION}|k${k}|b${base.campAmp}:${base.seaDatum}|s${campaignSeed}|g${gradeEnabled ? 1 : 0}|${hits.join("|")}`;
+  const sorted = [...hits].sort();
+  return `t${TERRAIN_FIELD_VERSION}|k${k}|b${base.campAmp}:${base.seaDatum}|s${campaignSeed}|g${gradeEnabled ? 1 : 0}|${sorted.join("|")}`;
 }
 
 /** A relief stamp's ADD contribution: `sign·height·bump(d/reach)` where `d` is
