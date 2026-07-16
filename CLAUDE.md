@@ -3,7 +3,7 @@
 Obsidian plugin: Google-Maps-style map tab for tabletop campaigns (fantasy, real-city modern, stylized Dishonored-esque). Campaign data lives in the vault. Solo-GM, "yes-and": locations invented mid-session become notes + map pins in ≤5 seconds.
 
 ## Read first
-- `ARCHITECTURE.md` — the system map (data model, procgen engine, host, rendering, §12 invariants — the single home for invariants)
+- `ARCHITECTURE.md` — the system map (data model, procgen engine, host, rendering, §12 invariants — the single home for invariants; §13 GM-action → event cascade — the perf reference: what each GM action triggers, its debounces/worker priorities/cache reads/repaints/hazards)
 - `docs/procgen-design.md` — determinism doctrine (D1–D6), seam safety, city-pipeline rationale
 - `docs/01-sota-research.md` — prior art, techniques, sources (incl. Obsidian plugin landscape)
 - `docs/04-quality-bar.md` — failure modes + acceptance criteria; the "screenshot test"

@@ -585,7 +585,14 @@ always-visible is a locked product decision — the fix space is paint, not gati
 whole-collection `setData` on regen. Generation runs in the worker so the map thread
 never stutters; region networks are computed once and clipped, so cost scales with
 region count, not tile count. The renderer degrades over very long sessions (known,
-mitigated by the board's health probes; root-cause work tracked in plan 021).
+mitigated by the board's health probes; root-cause work tracked in plan 021) — the
+2026-07-15 terrain sessions found one concrete cause and fixed it (the `dem.jsonl`
+whole-file re-parse per tile request; §13 hazard H1).
+
+**For the per-GM-action event cascade — what each thing a GM does triggers, in what
+order, on which thread, and the hazards each path has hit — see §13.** That section is
+the authoritative reference for anyone doing performance work; this section is the
+one-paragraph model.
 
 ---
 
@@ -659,7 +666,307 @@ a test, an assert, or (marked *policy*) a review-time rule with no mechanical gu
     stages are not allowed. Operators move to a shared home only on their second
     consumer. — *policy* (the 030-C convention), checked at review.
 
-## 13. Where to read more
+## 13. GM action → event cascade (the performance reference)
+
+This is the authoritative map of **what each GM action triggers**: its debounces, its
+synchronous main-thread work, the worker jobs it posts (and at what priority), the
+caches it reads and writes, the staged repaints it emits, the derived-surface refreshes
+it fans out to (DEM digest, contour leaves, region labels, underlay), and the
+hazards/races each path has actually hit (fixed ones cite their commit). Written for the
+agent tuning performance — read it before touching any of the terrain, worker, cache, or
+repaint paths. Where behaviour and this section disagree, the code wins; file:line
+anchors name the owner.
+
+**The moving parts, once.** Four independent debounce timers live on the *view*
+(`MapView`), armed via the controller's render sink so the pure controller owns no
+`window`: **preview** 250 ms (`sketchPreviewTimer`, MapView:1907), **sketch-regen flush**
+400 ms (`armSketchRegen`, MapView:2293), **external-fabric reload** 500 ms
+(`armFabricReload`, MapView:2304), plus MapLibre's own `moveend` → contour refresh
+(MapView:852). One **generation worker** (single-threaded, `maxInFlight = 1`) serves a
+**priority queue** (`workerClient.ts`): `procgen-region` = 0 (a GM edit — preempts the
+backlog) > `dem-tile` / world-tile = 1 > `contour-leaf` = 2, FIFO within a priority. One
+**persistent cache view** per campaign open (`sessionCache`, read from disk once, mutated
+through `.set`/`.delete` — MapController:450) backs the vector `generated.jsonl`; a
+**separate** `dem.jsonl` view (WeakMap-per-`App`, `demCache.ts`) backs the DEM lattice.
+Repaints **coalesce per touched stage** inside `withRepaintBatch` (MapController:429),
+upstream stage first. Every terrain-affecting mutation converges on **one** DEM+contour
+refresh via the digest chokepoint (`terrainRefresh.ts`, wired into both `repaintGenerated`
+and `repaintFabric`, MapView:328/334). The composed-elevation **digest** (`elevationDigest`,
+MapController:3044) is the single "did the surface move?" signal — a pure fold over every
+terrain-affecting input, id-sorted; it excludes generator-version pins (the field is
+version-independent) so a pure city repaint or a version-only adopt is a no-op.
+
+Two `stage` numbers exist for a region and must not be confused: the **static**
+`algorithm.stage` (registry) and the **params-aware** `dagRoleFor(algorithm, params).stage`
+(e.g. an `urban-park` re-homes 2→4). Repaint/unpaint must always target the params-aware
+stage the region was *actually painted at* (`regionPaintedStage`), or a staged `updateData`
+diff drops the wrong stage and fabric ghosts (fixed `4705e84`/`0579d4c`; MapController:418,
+1936).
+
+### 13.1 Open a campaign / switch campaigns
+`setCampaign` (MapView:391) → `beginCampaign` (drops prior render store/manifest/fabric on
+a genuine switch) → `terrainRefresh.seedBaseline()` (baseline the digest so the *first*
+real mutation triggers, not the initial consistent paint) → `loadFabric` (one disk read,
+zod-validated; invalid features → badge, never dropped) → on switch, `terrainToggle.reset()`
++ `terrainContourManager.reset()` (terrain is per-session, never carried) → `setStyle` on
+first-apply / theme / underlay change → `replayGeneratedManifest`.
+
+- **Replay pass** (`replayGeneratedManifest`, MapController:2180; once per campaign id):
+  world-tier entries hydrate from cache or deterministically regenerate; region tier runs
+  through the **one** `runForwardPass` shared with every live trigger. One fingerprint pass
+  classifies each region against its cached network record: **fresh / pinned-old** → hydrate
+  (cache-hit clip or pinned-old serve-or-badge, **zero** generator runs), **record missing**
+  → protected root (always regenerates — deleting `.mapcache/` must stay harmless),
+  **fp-stale with cache** → *deferrable* root (no GM edit behind it, so the **cost cap** may
+  hold it: serve stale bytes + outdated badge instead of a recompute storm). Replay is
+  `quiet` (no cascade toast) and `hydrateDeferred` (paints held regions from stale cache).
+- **DEM provider registration** happens inside `buildStyle` for fictional campaigns
+  (`registerDemProviderFor`, MapView:663/679) — the provider closes over
+  `campaignElevationSnapshot`, re-read live per tile request, so no tile is stale after a
+  later edit. Registration also builds the `TerrainContourManager`.
+- **Cost cap**: Σ `costClass` over the billed (fp-stale, non-root) set; budget **24** (city
+  = 4 expensive; river/park/wall/farmland = 2 medium; mountain/forest = 1 cheap). Over
+  budget → roots only regenerate, the rest defer to `pendingPass` + "Apply pending cascade".
+- **Cold tile fill**: no generation on open beyond replay; the map's first paint requests
+  DEM + contour tiles on the initial camera, which stream in through the worker queue
+  (§13.2). `generatorRunCount` never moves for tile fills — they are field evaluation.
+- **Hazards**: campaign-switched-mid-load / mid-replay is guarded everywhere by an
+  `if (this.campaign?.id !== campaign.id) return` re-check after every await. `manifestReplayedFor`
+  makes replay idempotent per campaign.
+
+### 13.2 Pan / zoom (2D, and with 3D on)
+Pure viewport motion. **No procgen, ever** (invariant #4 — `generatorRunCount` stays flat).
+
+- **Tile requests**: MapLibre requests `campaigndem://…/{z}/{x}/{y}` for the hillshade
+  raster-DEM source (and the 3D mesh reads the same tiles) as the camera enters new tiles.
+  Each request → `resolveTilePng` (`campaignDemProtocol.ts`): per-tile **digest** check
+  against the `dem.jsonl` view (in-memory, O(1)); a hit with a matching digest+res+K serves
+  the cached int lattice; a **PNG-byte LRU** (512 entries, keyed `campaign:key:digest`)
+  makes a revisit a pure serve (no lattice recompute, no re-encode). A miss → in-flight
+  **dedupe** map → worker `dem-tile` job (priority 1) with an 8 s timeout → main-thread
+  `demTileLattice` fallback (byte-identical). The RGBA fill + PNG encode run behind a
+  **concurrency semaphore** (`MAX_CONCURRENT_ENCODES = 3`) so a cold burst spreads across
+  event-loop turns instead of starving one frame. Abort: a camera move rejects the handler
+  with `AbortError` (MapLibre unloads the tile *retryable*), while the shared compute lives
+  on to warm the cache.
+- **Contour leaf recompute on settle**: `moveend` → `refreshTerrainContours` →
+  `TerrainContourManager.update` (MapView:852, terrainContourManager.ts). It picks a
+  world-aligned tile-span LOD (`TILES_ACROSS = 6`), traces only newly-seen leaves
+  **lazily** in the worker (`contour-leaf`, priority 2) with an LRU (256 leaves) and a
+  main-thread fallback, and `setData`s the union (capped `MAX_TILES_PER_UPDATE = 96`). The
+  interval keys on the campaign's relief **range** (memoized per digest, never the
+  viewport) so a pan never re-intervals; a stale `runId` drops a superseded paint.
+- **Retention caches**: 512 decoded DEM tiles + the PNG LRU keep "once 3D, stays 3D" —
+  revisits don't rebuild the mesh (`9f09160`).
+- **3D on** adds nothing to the *request* path — the mesh consumes the same DEM tiles; a
+  cold camera move that must fill 9 tiles went ≈4.4 s → ≈1 s after the 3D package
+  (worker fill + retention + res 128).
+- **Hazards**: a non-abort rejection used to *permanently* error a tile ("doesn't
+  reappear") — fixed by always-retryable tiles + timeout fallback (`f5a942d`). Per-tile
+  digests (not the campaign-wide digest) keep a pan from re-deriving untouched tiles
+  (`a246459`).
+
+### 13.3 Toggle 3D / relief
+`TerrainToggle.setEnabled` (`terrainToggle.ts`) — **visibility + mesh only, never
+generation**. Enable: re-point the provider (idempotent), then bust the retained DEM tiles
+**only if** the elevation digest moved while terrain was off (`demTilesDigest` compare) —
+otherwise reuse the decoded tiles + PNG memo (a plain on/off/on is a pure re-show). Relief
+is **pitch-adaptive**: top-down → 2D hillshade, pitched → 3D mesh (never both — maplibre
+4.7.1 smears a draped hillshade over an active mesh). `setMesh` may throw when the DEM
+source isn't loaded yet → a bounded one-shot source-ready retry (≤5), so terrain reliably
+"comes back".
+
+- **Hazards fixed**: the unconditional `setTiles` on every enable (full viewport
+  refetch+decode+mesh-rebuild) was the "massive hit"; the swallowed-throw-never-retry was
+  the "sometimes doesn't come back". `markDemTilesFresh` keeps the toggle's retained-tile
+  digest in lockstep with the render-chokepoint bust so the two never double-bust.
+
+### 13.4 Draw a new shape → procgen offer → attach
+`addSketchedFeature` (MapController:2475): stash → `repaintFabric` → fire-and-forget
+`persistFabric("sketch-add")` (**self-write #1** to `Fabric.geojson`) →
+`queueConstraintRegen` (arms the 400 ms flush). If the GM accepts the procgen offer,
+`attachProcgenAndGenerate` → `setRegionProcgen` (MapController:1859): attach the block →
+`saveFabric` (**self-write #2**) → `repaintFabric` → log `sketch-procgen-set` → **one**
+`runForwardPass` with the region as root.
+
+- **The self-write vs. reconcile-watcher race** (`73853a0`): both persists fire the vault
+  `modify` event, which arms the 500 ms external-fabric reload (§13.8). That reload's disk
+  read can be *in flight* across the second self-write, so it reads an **older** snapshot
+  (before the procgen block was attached). Adopting it would revert the just-attached block
+  — the region falls back to a plain sketch, its freshly generated tiles orphan
+  (bucketed to `WORLD_STAGE`, dropped from the staged repaint), and it never paints. The
+  guard: a **compare-and-swap** in `reloadFabricFromDisk` (MapController:2353) — if the
+  in-memory `fabricCollection !== baseline` snapshot taken before the read, bail and re-arm
+  (the self-write already armed a follow-up reload that reconciles against consistent
+  bytes). Plus the normalize-through-schema self-write guard (MapController:2370) that
+  byte-compares the reparsed disk collection against the in-memory one so an ordinary
+  self-write is a no-op reload.
+- **Worker jobs**: the region job runs at priority 0, preempting any DEM/contour backlog at
+  the next job boundary (`e43e7b2` — "after drawing a river I can't see it" was the river
+  waiting FIFO behind a cold tile backlog).
+- **Terrain stamps** (relief/landform/mountain): the attach's `repaintFabric`/`repaintGenerated`
+  moves the elevation digest → the chokepoint busts DEM + refreshes contours automatically
+  (§13.10), no per-kind wiring.
+
+### 13.5 Edit params via panel / preset change
+`setRegionParams` (MapController:2735) / `setRegionPreset` (2755) → **consent gate**
+(a pinned-old region needs adoption first; decline cancels the edit) → zod-validate params
+→ `setRegionProcgen` → `saveFabric` + log → **one** `runForwardPass` rooted at the region
+(root recomputes unconditionally; transitive downstream regenerates in one `(stage, id)`
+walk, fp-inert dependents skip). Staged repaints coalesce per touched stage. A property-only
+change (name) short-circuits with no regen (MapController:2704).
+
+### 13.6 Drag: vertex / extrude-height / band / depth / center handles
+The per-frame vs. on-release split is the whole performance story of dragging.
+
+- **Vertex / midpoint drag** → `onGeometryPreview` (MapView:1902): a **250 ms trailing**
+  debounce paints **only the root region** via `previewRegionGeometry` (MapController:2512)
+  — ephemeral render state, **no cache append, no fingerprint, no downstream, no log**. On
+  **release** → `onGeometryEdit` cancels the preview timer and runs `commitGeometryEdit`
+  with `{ debounce: true }` → the 400 ms flush → **one** full `runForwardPass` (root +
+  transitive downstream). A pinned-old region previews nothing (consent belongs to the
+  commit path).
+- **Extrude-height grip** (relief/landform): a **screen-space DOM overlay** grip
+  (`9c40c9e` — vertical at any pitch). Per frame → `onHeightDrag` shows only a ±m readout
+  (**no regen**). Release → `onHeightCommit` (MapView:1872) maps the signed value to params
+  and runs the normal `setRegionParams` path (validate/log/cascade, one commit —
+  undo/cascade-free during the drag).
+- **Band grips** (halfWidth/apron/band) → per frame `onBandDrag` re-offsets the ghost
+  outline in the controller + readout (no regen); release → `onBandCommit` → `setRegionParams`.
+- **Depth grips** (per river-spine vertex) → per frame `onDepthDrag` readout; release →
+  `onDepthCommit` merges the monotone-clamped depths array → `setRegionParams`. (Downhill is
+  structural: cumulative-min bed source→mouth.)
+- **Center handle** → `onCenterEdit` → `setRegionCenter` (MapController:3079): validated
+  inside the ring (else "using automatic center"), then the `setRegionProcgen` commit path.
+- **Rule**: every grip does **readout-only per frame** and **one validated commit on
+  release**. Only vertex drag paints a live preview (root-only, throwaway bytes).
+
+### 13.7 Delete / clear-generated / re-roll / undo
+All converge on the same drop + forward-pass chokepoints.
+
+- **Delete a shape** (`deleteFabricFeature`, MapController:2484): drop from collection →
+  `selectionInvalidated` → `repaintFabric` → `dropRegionCacheAndUnpaint` (drops the network
+  record + every per-tile clip key + render-store tiles, repaints the region's **params-aware**
+  stage, `4705e84`) → `persistFabric("sketch-remove")` → `queueConstraintRegen` (the
+  removed feature still dirties its footprint downstream). A terrain stamp delete moves the
+  digest → the chokepoint flips the 3D area back to 2D immediately (`21a46d2` — the "takes a
+  long time to go back to 2D" fix; previously delete didn't route through
+  `refreshTerrainIfEnabled`).
+- **Clear-generated** (`stripRegionProcgen` / `removeGeneratedCityHere`): `dropRegionCacheAndUnpaint`
+  then strip the block — the shape stays, the fabric is gone.
+- **Re-roll** (`rerollRegion`, MapController:2769): consent gate → new seed
+  (`hashSeed(seed,"reroll")`) → `setRegionProcgen` → forward pass. Vertex edits keep the
+  seed; only re-roll replaces it (invariant #7).
+- **Undo** (`undoLastEdit`/`undoInSketchMode`): reverses the last log entry; a procgen
+  region touched by the undo goes through `dropRegionCacheAndUnpaint` before re-running the
+  pass. Because delete/create/undo/adopt all land on `repaintFabric`/`repaintGenerated`, the
+  terrain chokepoint covers them with no per-path enumeration.
+- **Stage-migration double-repaint**: when a region's params-aware stage changed since its
+  last paint, `repaintRegionStage` repaints **both** the old and new stage so the old
+  stage's diff drops the migrated ids (`0579d4c`).
+
+### 13.8 External `Fabric.geojson` edit (sync / script / hand-edit)
+`noteExternalFabricChange` → `armFabricReload` (500 ms coalescing — longer than the
+sketch-regen timer so a multi-file sync settles) → `reloadFabricFromDisk`
+(MapController:2329). Re-read at the zod boundary; **self-write guard** normalizes both
+sides through `FabricCollectionSchema` and byte-compares (a self-write or byte-identical
+external write ⇒ no reload); **compare-and-swap** guards the create-path race (§13.4);
+**malformed** (bad JSON / all features invalid) → badge + **retain** the last good fabric
+(never blank on a truncated mid-sync file). Otherwise diff before/after: deleted regions
+drop-and-unpaint + ride along as sources; changed/new regions become forward-pass roots;
+raw sketch changes become sources → **one** `runForwardPass`. The terrain chokepoint picks
+up any stamp change off the repaint signal (`5de4c69`). Note: this exists *because*
+`loadFabric` early-returns for an already-loaded campaign (Cradle learning — external edits
+were invisible until campaign switch/reload).
+
+### 13.9 Adopt / apply-pending-cascade / cost-cap decline
+- **Adopt a pinned-old region** (`adoptRegion` / `adoptAllRegions`, MapController:1798/1816):
+  raises the version pin to `currentVersion` and regenerates at the new contract — the
+  *only* thing that raises a pin (a plugin update never silently changes an existing
+  region). Adoption is version-only; it does **not** move the elevation digest (which
+  excludes version pins), so it never busts DEM/contours.
+- **Apply-pending-cascade** (`applyPendingCascade`, MapController:1496): re-runs the exact
+  deferred pass (same roots + sketch edits) **uncapped** — deterministic, so byte-identical
+  to an undeferred pass. Clears the outdated badges.
+- **Cost-cap decline**: the pass regenerated only the protected roots, deferred the billed
+  set to `pendingPass`, marked them `outdatedRegions` (badge), and toasted. Deferred records
+  stay fp-stale and serve-with-badge until Apply.
+
+### 13.10 Base-terrain Apply / underlay / theme switch
+- **Base-terrain Apply** (036-D campAmp/seaDatum/grade): flows through `setCampaign` with a
+  `terrainBaseChanged` diff (MapView:399); no `setStyle` rebuild for a terrain-only change,
+  so `refreshTerrainIfEnabled` → `terrainRefresh.refreshNow()` explicitly re-registers the
+  provider + busts the DEM tile cache + refreshes contours. Moving campAmp>0 adds ~5-octave
+  base fBm to every DEM tile (~300 ms/tile one-time, dev machine).
+- **Underlay change** (plan 041 reference image: attach / move corners / opacity /
+  visibility) → spliced into the style at build time → rides the same `setStyle` rebuild as
+  a theme/basemap change (rare, explicit; reuses the asserted `layerOrder` z-stack).
+- **Theme switch / css-change** → `setStyle` **wipes every source** and rebuilds paint from
+  the theme's role map. After `styledata`: re-register glyphs, `refreshSource` +
+  `refreshGeneratedSource` (re-push the render store into the empty baked sources),
+  `applyFocusReveal`, re-apply the terrain toggle (setStyle rebuilds hillshade default-hidden
+  and drops the mesh), repopulate the emptied `terrain-contour` source. `setStyle` is the
+  heaviest single host op — a full style rebuild + every source re-`setData` — reserved for
+  genuine theme/basemap/underlay/css changes, never a routine edit.
+
+### 13.11 Performance ground truth (measured 2026-07-15; **dev-machine numbers — Surface Pro is the budget**)
+
+| quantity | measured | source / commit |
+|---|---|---|
+| DEM tile, 256² res, river campaign | ≈961 ms; **river carve = 79%** of it | afternoon session; carve reject `6b032e2` |
+| River carve, one meander tile | 2065 → **453 ms** after occupancy-grid far-field reject (byte-proven) | `6b032e2` |
+| Far-field DEM stall (relief+landform, 4 rivers) | >120 s/tile → ~300 ms after byte-exact bbox reject | `7fa7ea4`, `f215840` |
+| `DEM_TILE_RES` 256 → 128 | ~**3.8×** fewer samples/tile (one-line revert if hillshade reads soft) | `0ee8a41` |
+| Residual base fBm (campAmp>0), per tile | ~300 ms one-time (5-octave) | afternoon session |
+| **`dem.jsonl` whole-file re-parse per request** (the "slow even when nothing generates" smoking gun) | 91 ms → **2+ s** as the append-only log grows; fixed to **1 read/session** (persistent view + compact-on-load) | `d1ddd15` |
+| Fingerprint hasher (two-lane 32-bit) | 56 → **975 MB/s** (17.3×) | plan 033, `fp1→fp3` |
+| Cold 9-tile camera move (3D) | ≈4.4 s → **≈1 s** | 3D package (`f5a942d`+`a246459`+`9f09160`) |
+| PNG-byte LRU / decoded-tile retention | 512 / 512 entries | `campaignDemProtocol.ts`, `9f09160` |
+| Encode concurrency semaphore | 3 concurrent | `campaignDemProtocol.ts` |
+| Worker DEM timeout → main-thread fallback | 8000 ms | `campaignDemProtocol.ts` |
+| Cost-cap budget / weights | 24 / cheap 1, medium 2, expensive 4 (city) | MapController:1220 |
+| Cache-cost win (per-region shards) | fixture city 55 tile records → 1 network shard (~721 KB); ~170 MB/17 regions was the clip-record bulk | plan 032 |
+| Contour per-settle cap / leaf LRU | `MAX_TILES_PER_UPDATE` 96 / 256 leaves | terrainContourManager.ts |
+
+Disproven-in-passing (don't re-chase): field-rebuild-per-job (~1%), payload clone (~0.1 ms).
+
+### 13.12 Hazard patterns (each with its precedent fix)
+
+- **H1 — async read straddling a write.** An awaited read (disk, worker) can span a
+  concurrent mutation and then clobber it. *Precedents*: the DEM whole-file re-parse
+  (`d1ddd15` — read once into a session view); the reconcile disk read straddling the
+  procgen self-write (`73853a0` — compare-and-swap on the pre-read baseline). *Rule*: snapshot
+  the pre-read state and bail-or-merge if it changed; re-check `campaign?.id` after every await.
+- **H2 — unconditional cache busts.** Busting a cache when the inputs didn't move pays a
+  full refetch/decode/rebuild for nothing. *Precedents*: the 3D toggle's unconditional
+  `setTiles` (`terrainToggle.ts` — bust only on a digest move); the terrain-refresh
+  chokepoint firing only when `elevationDigest` actually changed (`terrainRefresh.ts`).
+  *Rule*: gate every bust behind a digest/fingerprint compare; keep the "what the retained
+  tiles reflect" digest in lockstep across all bust paths (`markDemTilesFresh`).
+- **H3 — per-frame heavy work during a drag.** Regenerating downstream on every mouse move
+  storms the worker and the cache. *Precedent*: preview mode (root-only, ephemeral, 250 ms
+  debounce) + all grips readout-only per frame, one commit on release (plan 034-D, MapView
+  drag handlers). *Rule*: per frame = cheap render/readout; commit = one debounced pass.
+- **H4 — units / frame mismatch.** Sampling one field in gen-space meters and another in
+  display units, or reading the static stage where the params-aware stage is meant.
+  *Precedents*: contour leaves are traced in meters and converted `meters/scale` to display —
+  the exact inverse of `demTileLattice`'s `lng·scale` sampling (terrainContourManager.ts);
+  the params-aware-vs-static stage bug that ghosted deleted fabric (`4705e84`). *Rule*:
+  name the space at every boundary; the one sanctioned stage read is `dagRoleFor`.
+- **H5 — priority inversion on the single worker.** Cheap background jobs (contour leaves,
+  a cold DEM backlog) running ahead of the thing the GM is waiting for. *Precedent*: the
+  region-0 > tile-1 > contour-2 priority queue with `maxInFlight = 1` (`e43e7b2`,
+  workerClient.ts). *Rule*: a direct GM request preempts background fills at the next job
+  boundary.
+- **H6 — poisoned in-flight / errored-tile entries.** A failed shared compute that never
+  clears its in-flight entry, or a rejected handler that marks a MapLibre tile permanently
+  `errored` (never re-requested). *Precedents*: the in-flight dedupe map cleared in a
+  `finally`; always-retryable tiles + abort-as-unload (`f5a942d`). *Rule*: clear shared
+  state in `finally`; a transient failure must leave the tile retryable.
+
+---
+
+## 14. Where to read more
 
 - `docs/01` (research) · `docs/03` (roadmap, historical) · `docs/04` (quality bar) ·
   `docs/05` (dev workflow + test tiers) · `docs/06`–`08` (autonomous protocol, LLM

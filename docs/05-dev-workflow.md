@@ -195,7 +195,11 @@ npm run board -- --probe-fail-at=N     # inject ONE probe failure at the Nth gat
   further distorts "feels smooth"). Perf claims need numbers under CPU
   throttle (frame times during a scripted pan, `setData` durations), not
   vibes. Known unmeasured hotspots: always-visible footprints/parcels (~12k
-  fills), whole-collection `setData` on regen.
+  fills), whole-collection `setData` on regen. **Before any perf work on the
+  terrain / worker / cache / repaint paths, read ARCHITECTURE.md §13 (GM action →
+  event cascade)** — the authoritative map of what each GM action triggers, its
+  debounces, worker-job priorities, cache reads/writes, staged repaints, and the
+  hazard patterns each path has hit.
 - **Determinism is per-machine, not cross-machine.** V8's transcendental
   functions aren't guaranteed bit-identical across architectures — which is
   fine because `.mapcache/` is local, sync-excluded, and disposable. Never
