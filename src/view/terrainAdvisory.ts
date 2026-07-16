@@ -10,21 +10,69 @@
  * Host-agnostic (no Obsidian import) so the gate drives it headlessly: the notice
  * fires through the injected `notify` seam (MapView passes the real `new Notice`).
  * The message string is the SAME one MapView shows in the panel and hands to the
- * Notice — build it once, here.
+ * Notice — build it once, here. The message is ACTIONABLE (Jonah 2026-07-15: the
+ * old "overlaps N terrain stamps" was impenetrable re: what to do): it names the
+ * stamps when ≤3, says what will happen, and lists the fixes.
+ *
+ * `scaleMetersPerUnit` is threaded straight through to `landformReplaceOverlaps`,
+ * which needs it to compare a stamp's METER support reach against DISPLAY-unit
+ * fabric geometry in one frame (the false-positive bug — see terrain.ts).
  */
 import type { FabricFeature } from "../model/fabric";
 import { landformReplaceOverlaps } from "../gen/fields/terrain";
 
+const LANDFORM_MODE_WORDS = new Set(["plateau", "basin", "sea"]);
+
+/** The landform's mode word for the copy ("plateau" / "basin" / "sea"), or the
+ * generic "landform" when the persisted mode is absent/unknown. */
+function modeWord(landform: FabricFeature): string {
+  const mode = (landform.properties.procgen?.params as { mode?: unknown } | undefined)?.mode;
+  return typeof mode === "string" && LANDFORM_MODE_WORDS.has(mode) ? mode : "landform";
+}
+
+/** A single overlapping stamp's display token: its quoted name, else a generic
+ * "an unnamed ridge/mountain" by kind. */
+function stampToken(f: FabricFeature | undefined): string {
+  const name = f?.properties.name?.trim();
+  if (name) return `'${name}'`;
+  const alg = f?.properties.procgen?.algorithm;
+  return alg === "relief" ? "an unnamed ridge" : "an unnamed mountain";
+}
+
+/** Join tokens as a readable list: "A", "A and B", "A, B and C". */
+function joinTokens(tokens: string[]): string {
+  if (tokens.length <= 1) return tokens[0] ?? "";
+  if (tokens.length === 2) return `${tokens[0]} and ${tokens[1]}`;
+  return `${tokens.slice(0, -1).join(", ")} and ${tokens[tokens.length - 1]}`;
+}
+
 /** The advisory MESSAGE for a landform, or `null` when it overlaps no add-stamp
  * (or isn't a qualifying non-inverted replace landform). The headless-testable
  * core — MapView renders this same string in the panel and passes it to `notify`.
- * Wording flagged for Jonah (see the task report). */
-export function landformReplaceAdvisoryMessage(landform: FabricFeature, features: FabricFeature[]): string | null {
-  const hits = landformReplaceOverlaps(landform, features);
+ * Copy flagged for Jonah (see the task report). */
+export function landformReplaceAdvisoryMessage(
+  landform: FabricFeature,
+  features: FabricFeature[],
+  scaleMetersPerUnit: number
+): string | null {
+  const hits = landformReplaceOverlaps(landform, features, scaleMetersPerUnit);
   if (hits.length === 0) return null;
-  const name = landform.properties.name?.trim() || "(unnamed)";
+  const mode = modeWord(landform);
   const n = hits.length;
-  return `landform '${name}' overlaps ${n} terrain stamp${n === 1 ? "" : "s"} — replace stamps flatten add-stamps inside them`;
+  // Name the stamps when ≤3 (actionable — the GM can see WHICH stamps); past that
+  // a bare count reads cleaner than a long list.
+  let what: string;
+  if (n <= 3) {
+    const byId = new Map(features.map((f) => [String(f.id), f]));
+    what = `overlaps ${joinTokens(hits.map((id) => stampToken(byId.get(id))))}`;
+  } else {
+    what = `overlaps ${n} ridge/mountain stamps`;
+  }
+  return (
+    `⚠ This ${mode} ${what} and will flatten them where they intersect. ` +
+    `If unintended: reshape or shrink this ${mode}, or delete it and raise the terrain ` +
+    `with ridges instead. (Advisory — nothing is blocked.)`
+  );
 }
 
 /** Fire the advisory Notice IFF `landform` overlaps mountain/relief add-stamps.
@@ -33,9 +81,10 @@ export function landformReplaceAdvisoryMessage(landform: FabricFeature, features
 export function warnLandformReplaceOverlap(
   landform: FabricFeature,
   features: FabricFeature[],
+  scaleMetersPerUnit: number,
   notify: (message: string) => void
 ): string | null {
-  const message = landformReplaceAdvisoryMessage(landform, features);
+  const message = landformReplaceAdvisoryMessage(landform, features, scaleMetersPerUnit);
   if (message) notify(message);
   return message;
 }

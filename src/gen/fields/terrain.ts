@@ -241,8 +241,22 @@ function bboxTouches(stamp: BBox, tile: BBox, reach: number): boolean {
  * `terrainStampSupport` (mountain 0, relief halfWidth+apron): an add-stamp whose
  * field is provably 0 over the whole ring never triggers the advisory. PURE — the
  * bbox test only; never blocks, never alters bytes.
+ *
+ * UNIT FRAME (Cradle bug 2026-07-15): fabric `features` geometry is in DISPLAY
+ * units (fake lng/lat), but `terrainStampSupport` returns its reach in METERS (the
+ * durable params are meters, never unit-scaled). Comparing the two directly
+ * inflated the reach by `scaleMetersPerUnit`× (500× on the Cradle) so a stamp
+ * kilometres away read as overlapping. Both operands must live in ONE frame: the
+ * meter reach is converted to display units (`/ scaleMetersPerUnit`) before it is
+ * added to the display-unit bboxes — the same discipline the DAG/fingerprint sites
+ * apply, there by converting the geometry to meters. Pass the campaign's
+ * `scaleMetersPerUnit` (a meters-per-unit campaign uses 1 ⇒ the two frames coincide).
  */
-export function landformReplaceOverlaps(landform: FabricFeature, features: FabricFeature[]): string[] {
+export function landformReplaceOverlaps(
+  landform: FabricFeature,
+  features: FabricFeature[],
+  scaleMetersPerUnit: number
+): string[] {
   const block = landform.properties.procgen;
   if (
     landform.properties.kind !== "landform" ||
@@ -256,17 +270,47 @@ export function landformReplaceOverlaps(landform: FabricFeature, features: Fabri
   const lfBox = stampBBox(landform);
   if (!Number.isFinite(lfBox.minX)) return [];
   const lfId = String(landform.id);
+  // Reach arrives in METERS; the bboxes are in DISPLAY units — convert the reach
+  // into the geometry's frame so the grow-and-touch test compares like with like.
+  const metersToUnits = 1 / Math.max(1e-9, scaleMetersPerUnit);
   const hits: string[] = [];
   for (const f of features) {
     if (String(f.id) === lfId) continue;
     const alg = f.properties.procgen?.algorithm;
     if (alg !== "mountain" && alg !== "relief") continue;
     if (f.geometry.type !== "Polygon" && f.geometry.type !== "LineString") continue;
-    const reach = terrainStampSupport(f) ?? 0; // mountain 0, relief halfWidth+apron
-    if (bboxTouches(stampBBox(f), lfBox, reach)) hits.push(String(f.id));
+    const reachMeters = terrainStampSupport(f) ?? 0; // mountain 0, relief halfWidth+apron (meters)
+    const reachUnits = reachMeters * metersToUnits;
+    if (bboxTouches(stampBBox(f), lfBox, reachUnits)) hits.push(String(f.id));
   }
   hits.sort();
   return hits;
+}
+
+/**
+ * Does this landform stamp RE-RAISE land above the sea datum — i.e. should it read
+ * as DRY LAND (an island / plateau standing out of an inverted sea's water),
+ * rather than water? True for a NON-inverted landform whose resolved replace target
+ * is strictly above `seaDatum` (a default plateau raises to 400; a default basin
+ * drops to −200, so it does NOT). An inverted sea (`invert:true`) is water by
+ * definition ⇒ false; a non-landform ⇒ false. Resolves the target through the same
+ * `landformTarget` the field uses (single source of truth), defensively parsing the
+ * durable params. The inverted-sea DISPLAY donut (MapView paint + region label
+ * placement) cuts a hole for every OTHER feature this returns true for that lies in
+ * the sea's exterior, so the island renders as land, not water.
+ */
+export function landformRaisesLandAbove(feature: FabricFeature, seaDatum: number): boolean {
+  const block = feature.properties.procgen;
+  if (feature.properties.kind !== "landform" || block?.algorithm !== "landform") return false;
+  const p = block.params as Record<string, unknown>;
+  if (p.mode === "sea" && p.invert === true) return false; // inverted sea IS the water
+  const mode = (
+    typeof p.mode === "string" && (LANDFORM_MODES as readonly string[]).includes(p.mode)
+      ? p.mode
+      : LANDFORM_DEFAULTS.mode
+  ) as LandformMode;
+  const target = typeof p.target === "number" && Number.isFinite(p.target) ? p.target : undefined;
+  return landformTarget({ mode, target, band: 0, priority: 0 }, seaDatum) > seaDatum;
 }
 
 /** Fingerprint one terrain stamp's durable identity (matches `elevationDigest`'s

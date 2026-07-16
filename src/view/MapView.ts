@@ -63,6 +63,7 @@ import { algorithmForKind, matchingPresetId, presetById, type ProcgenAlgorithm }
 import { RegionProcgenModal } from "./RegionProcgenModal";
 import { paramFieldSpecs, renderParamControls } from "./paramControls";
 import { landformReplaceAdvisoryMessage, warnLandformReplaceOverlap } from "./terrainAdvisory";
+import { invertedSeaBounds, invertedSeaLandHoles, invertedSeaDonutRings } from "../map/invertedSea";
 import {
   heightHandleDescriptor,
   heightParamsFromValue,
@@ -1746,8 +1747,7 @@ export class MapView extends ItemView {
       if (f.properties.kind === "road" && f.geometry.type === "LineString") {
         geometry = { ...f.geometry, coordinates: smoothPolyline(f.geometry.coordinates as [number, number][]) };
       } else if (invertedSea && f.geometry.type === "Polygon") {
-        const coast = f.geometry.coordinates[0] as number[][];
-        geometry = { type: "Polygon", coordinates: this.invertedSeaDonut(coast) };
+        geometry = { type: "Polygon", coordinates: this.invertedSeaDonut(f) };
       }
       return { ...f, geometry, properties: props };
     });
@@ -1757,48 +1757,36 @@ export class MapView extends ItemView {
     // per-tile). Derived from the raw collection so region names/geometry stay
     // authoritative; skipped silently if the style has no such source.
     const labelSource = this.map.getSource(REGION_LABEL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (labelSource) labelSource.setData(regionLabelPointFeatures(this.controller.fabric.features));
+    if (labelSource) {
+      const cfg = this.campaign?.config;
+      labelSource.setData(
+        regionLabelPointFeatures(this.controller.fabric.features, {
+          cfgBounds: cfg?.bounds,
+          isReal: cfg?.crs === "real",
+          seaDatum: cfg?.terrain?.seaDatum ?? 0,
+        })
+      );
+    }
   }
 
   /**
    * Bounds-donut display geometry for an inverted sea (plan 041): outer ring =
-   * campaign box, hole = the drawn coast ring, so the fabric water fill paints
-   * everything OUTSIDE the coast. Bounded by the campaign box (config.bounds, else
-   * the fictional default, else a generous expansion of the coast bbox for a real
-   * campaign). Winding-agnostic: MapLibre's earcut fill treats ring[0] as the outer
-   * boundary and the rest as holes. Display-only — persisted geometry stays the
-   * drawn coast ring. */
-  private invertedSeaDonut(coast: number[][]): number[][][] {
+   * campaign box, hole = the drawn coast ring, PLUS a hole for every OTHER landform
+   * that re-raises land above the sea datum and lies in the exterior (Cradle bug
+   * 2026-07-15 — an islet plateau out in the water was painted as water because
+   * only the main coast was cut). So the fabric water fill paints everything
+   * OUTSIDE the coast and OUTSIDE each island, and each island renders as land with
+   * its wash/contours on top. Geometry + hole selection live in the shared,
+   * host-agnostic `invertedSea` helper (same donut the region label builder uses).
+   * Display-only — persisted geometry stays the drawn coast ring; elevation is
+   * untouched (`exteriorMaskField` is the arithmetic source of truth). */
+  private invertedSeaDonut(feature: FabricFeature): number[][][] {
+    const coast = feature.geometry.type === "Polygon" ? (feature.geometry.coordinates[0] as number[][]) : [];
     const cfg = this.campaign?.config;
-    let b: [number, number, number, number];
-    if (cfg?.bounds) {
-      b = cfg.bounds;
-    } else if (cfg?.crs !== "real") {
-      b = defaultFictionalBounds();
-    } else {
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      for (const [x, y] of coast) {
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-      }
-      const dx = maxX - minX || 1;
-      const dy = maxY - minY || 1;
-      b = [minX - dx * 5, minY - dy * 5, maxX + dx * 5, maxY + dy * 5];
-    }
-    const [minX, minY, maxX, maxY] = b;
-    const outer: number[][] = [
-      [minX, minY],
-      [maxX, minY],
-      [maxX, maxY],
-      [minX, maxY],
-      [minX, minY],
-    ];
-    return [outer, coast];
+    const bounds = invertedSeaBounds(cfg?.bounds, cfg?.crs === "real", coast);
+    const seaDatum = cfg?.terrain?.seaDatum ?? 0;
+    const landHoles = invertedSeaLandHoles(feature, this.controller.fabric.features, seaDatum);
+    return invertedSeaDonutRings(bounds, coast, landHoles);
   }
 
   /** Draft-preview accent for the sketch controller — the same accent token
@@ -2383,9 +2371,12 @@ export class MapView extends ItemView {
     // keep a one-line advisory in view (the Notice is transient — this is the
     // durable reminder that its replace is flattening those stamps).
     if (feature.properties.kind === "landform") {
-      const hint = landformReplaceAdvisoryMessage(feature, this.controller.fabric.features);
+      const scale = this.campaign?.config.scaleMetersPerUnit ?? 1;
+      const hint = landformReplaceAdvisoryMessage(feature, this.controller.fabric.features, scale);
       if (hint) {
-        panel.createDiv({ cls: "campaign-map-sketch-selection-warning", text: `⚠ ${hint}` });
+        // The message already leads with "⚠ " (single canonical string, shared with
+        // the Notice) — render it verbatim, no extra prefix.
+        panel.createDiv({ cls: "campaign-map-sketch-selection-warning", text: hint });
       }
     }
 
@@ -2529,7 +2520,8 @@ export class MapView extends ItemView {
    * the Obsidian Notice seam. */
   private maybeWarnReplaceOverlap(feature: FabricFeature): void {
     if (feature.properties.kind !== "landform") return;
-    warnLandformReplaceOverlap(feature, this.controller.fabric.features, (message) =>
+    const scale = this.campaign?.config.scaleMetersPerUnit ?? 1;
+    warnLandformReplaceOverlap(feature, this.controller.fabric.features, scale, (message) =>
       new Notice(`Campaign Map: ${message}`, 8000)
     );
   }

@@ -1,6 +1,7 @@
 import type { LayerSpecification } from "maplibre-gl";
 import type { ThemeTokens } from "./tokens";
 import type { FabricFeature } from "../../model/fabric";
+import { invertedSeaBounds, invertedSeaLandHoles, invertedSeaLabelPoint } from "../invertedSea";
 
 /**
  * Named-region overview labels — a centroid label for any sketched REGION
@@ -144,16 +145,42 @@ function polygonCentroid(rings: LabelPt[][]): LabelPt {
   return n > 0 ? [sx / n, sy / n] : [0, 0];
 }
 
+/** Is this feature an inverted `sea` landform (drawn ring = coast, water outside)? */
+function isInvertedSea(f: FabricFeature): boolean {
+  if (f.properties.kind !== "landform" || f.properties.procgen?.algorithm !== "landform") return false;
+  const p = f.properties.procgen.params as { mode?: unknown; invert?: unknown } | undefined;
+  return p?.mode === "sea" && p?.invert === true;
+}
+
+/** Campaign context an inverted sea's label needs to find a WATER anchor: the box
+ * bounds it fills + the sea datum that decides which other landforms are islands. */
+export interface RegionLabelOptions {
+  /** `config.bounds` (display units), when set. */
+  cfgBounds?: [number, number, number, number];
+  /** `config.crs === "real"` — governs the coast-bbox-expansion fallback bounds. */
+  isReal?: boolean;
+  /** `config.terrain.seaDatum` (default 0). */
+  seaDatum?: number;
+}
+
 /**
- * Build the `region-labels` source data: ONE centroid POINT feature per named
- * polygon region in the fabric. Line kinds (river/road/wall/relief) and unnamed
- * shapes are skipped — only named area regions get an overview label. This is the
- * dedicated-point-source mechanism that replaces per-tile symbol repetition on
- * the giant `fabric` polygon source; MapView rederives it on every fabric
- * refresh, so a rename / redraw reflects immediately.
+ * Build the `region-labels` source data: ONE POINT feature per named polygon region
+ * in the fabric. Line kinds (river/road/wall/relief) and unnamed shapes are skipped
+ * — only named area regions get an overview label. This is the dedicated-point-source
+ * mechanism that replaces per-tile symbol repetition on the giant `fabric` polygon
+ * source; MapView rederives it on every fabric refresh, so a rename / redraw
+ * reflects immediately.
+ *
+ * INVERTED SEA (Item 3, Cradle bug 2026-07-15): its drawn ring is the island COAST,
+ * so the naive ring centroid lands MID-ISLAND — the one place that is NOT the sea.
+ * When campaign `opts` are supplied, an inverted sea's label is placed in open WATER
+ * instead: the pole-of-inaccessibility over the SAME display donut MapView paints
+ * (box minus coast minus every island), so the label and the water agree. Every
+ * other region keeps its area-weighted centroid.
  */
 export function regionLabelPointFeatures(
-  features: readonly FabricFeature[]
+  features: readonly FabricFeature[],
+  opts: RegionLabelOptions = {}
 ): GeoJSON.FeatureCollection {
   const out: GeoJSON.Feature[] = [];
   for (const f of features) {
@@ -162,10 +189,18 @@ export function regionLabelPointFeatures(
     if (f.geometry.type !== "Polygon") continue;
     const rings = f.geometry.coordinates as LabelPt[][];
     if (rings.length === 0 || rings[0].length < 3) continue;
-    const [x, y] = polygonCentroid(rings);
+    let point: LabelPt;
+    if (isInvertedSea(f)) {
+      const coast = rings[0] as number[][];
+      const bounds = invertedSeaBounds(opts.cfgBounds, opts.isReal ?? false, coast);
+      const holes = invertedSeaLandHoles(f, features, opts.seaDatum ?? 0);
+      point = invertedSeaLabelPoint(bounds, coast, holes) as LabelPt;
+    } else {
+      point = polygonCentroid(rings);
+    }
     out.push({
       type: "Feature",
-      geometry: { type: "Point", coordinates: [x, y] },
+      geometry: { type: "Point", coordinates: [point[0], point[1]] },
       properties: { name },
     });
   }

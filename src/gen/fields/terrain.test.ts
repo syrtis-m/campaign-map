@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { terrainAt, macroTerrainField, hasTerrainRelief, terrainStampSupport, reliefReach, landformReplaceOverlaps } from "./terrain";
+import { terrainAt, macroTerrainField, hasTerrainRelief, terrainStampSupport, reliefReach, landformReplaceOverlaps, landformRaisesLandAbove } from "./terrain";
 import { SegmentHash } from "../segmentHash";
 import { elevationFieldFromFabric } from "./mountainField";
 import type { FabricFeature } from "../../model/fabric";
@@ -605,10 +605,12 @@ describe("landformReplaceOverlaps — a replace landform that flattens add-stamp
     [0, 0],
   ];
 
+  // These fixtures are authored in METERS with a 1:1 scale (scaleMetersPerUnit=1),
+  // so the meter reach and the geometry frame coincide.
   it("reports a mountain whose bbox intersects the landform ring", () => {
     const lf = landform("lf", BOX, { mode: "plateau", target: 400, band: 100 });
     const mtn = mountain("mtn", [[400, 400], [900, 400], [900, 900], [400, 900], [400, 400]]);
-    expect(landformReplaceOverlaps(lf, [lf, mtn])).toEqual(["mtn"]);
+    expect(landformReplaceOverlaps(lf, [lf, mtn], 1)).toEqual(["mtn"]);
   });
 
   it("reports a relief whose support (halfWidth) reaches into the ring, but not one beyond it", () => {
@@ -616,36 +618,117 @@ describe("landformReplaceOverlaps — a replace landform that flattens add-stamp
     // Spine sits 120 m outside the ring's right edge, halfWidth 200 → its band
     // reaches inside ⇒ flagged.
     const near = relief("near", [[1120, 200], [1120, 800]], { polarity: "ridge", height: 300, halfWidth: 200 });
-    expect(landformReplaceOverlaps(lf, [lf, near])).toEqual(["near"]);
+    expect(landformReplaceOverlaps(lf, [lf, near], 1)).toEqual(["near"]);
     // Same spine but halfWidth 50 → its band stops short of the ring ⇒ NOT flagged
     // (support-aware, terrainStampSupport reach).
     const farNarrow = relief("far", [[1120, 200], [1120, 800]], { polarity: "ridge", height: 300, halfWidth: 50 });
-    expect(landformReplaceOverlaps(lf, [lf, farNarrow])).toEqual([]);
+    expect(landformReplaceOverlaps(lf, [lf, farNarrow], 1)).toEqual([]);
   });
 
   it("returns [] when the landform overlaps no add-stamp", () => {
     const lf = landform("lf", BOX, { mode: "plateau", target: 400, band: 100 });
     const mtn = mountain("mtn", [[5000, 5000], [6000, 5000], [6000, 6000], [5000, 6000], [5000, 5000]]);
-    expect(landformReplaceOverlaps(lf, [lf, mtn])).toEqual([]);
+    expect(landformReplaceOverlaps(lf, [lf, mtn], 1)).toEqual([]);
   });
 
   it("an INVERTED sea is silent (it replaces the exterior, not the interior)", () => {
     const inv = landform("inv", BOX, { mode: "sea", target: -500, band: 100, invert: true });
     const mtn = mountain("mtn", [[400, 400], [900, 400], [900, 900], [400, 900], [400, 400]]);
-    expect(landformReplaceOverlaps(inv, [inv, mtn])).toEqual([]);
+    expect(landformReplaceOverlaps(inv, [inv, mtn], 1)).toEqual([]);
   });
 
   it("a non-landform feature returns [] (safe to call on any selection)", () => {
     const mtn = mountain("mtn", BOX);
-    expect(landformReplaceOverlaps(mtn, [mtn])).toEqual([]);
+    expect(landformReplaceOverlaps(mtn, [mtn], 1)).toEqual([]);
     const rv = river("rv", [[0, 0], [100, 0]], { width: 20 });
-    expect(landformReplaceOverlaps(rv, [rv])).toEqual([]);
+    expect(landformReplaceOverlaps(rv, [rv], 1)).toEqual([]);
   });
 
   it("id-sorts multiple overlapping stamps and never lists the landform itself", () => {
     const lf = landform("lf", BOX, { mode: "plateau", target: 400, band: 100 });
     const zMtn = mountain("z-mtn", [[100, 100], [500, 100], [500, 500], [100, 500], [100, 100]]);
     const aRelief = relief("a-relief", [[200, 200], [800, 800]], { polarity: "ridge", height: 200, halfWidth: 150 });
-    expect(landformReplaceOverlaps(lf, [zMtn, lf, aRelief])).toEqual(["a-relief", "z-mtn"]);
+    expect(landformReplaceOverlaps(lf, [zMtn, lf, aRelief], 1)).toEqual(["a-relief", "z-mtn"]);
+  });
+});
+
+describe("landformRaisesLandAbove — is a landform DRY LAND above the sea datum?", () => {
+  type Pt2 = [number, number];
+  const R: Pt2[] = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]];
+
+  it("a default plateau raises land (target 400 > datum 0)", () => {
+    expect(landformRaisesLandAbove(landform("p", R, { mode: "plateau", band: 1 }), 0)).toBe(true);
+  });
+  it("a plateau targeted at/below the datum is NOT land", () => {
+    expect(landformRaisesLandAbove(landform("p", R, { mode: "plateau", target: 0, band: 1 }), 0)).toBe(false);
+    expect(landformRaisesLandAbove(landform("p", R, { mode: "plateau", target: -50, band: 1 }), 0)).toBe(false);
+  });
+  it("a default basin drops below the datum ⇒ not land", () => {
+    expect(landformRaisesLandAbove(landform("b", R, { mode: "basin", band: 1 }), 0)).toBe(false);
+  });
+  it("a basin explicitly raised above the datum IS land", () => {
+    expect(landformRaisesLandAbove(landform("b", R, { mode: "basin", target: 30, band: 1 }), 0)).toBe(true);
+  });
+  it("an inverted sea is water, never land", () => {
+    expect(landformRaisesLandAbove(landform("s", R, { mode: "sea", target: 999, band: 1, invert: true }), 0)).toBe(false);
+  });
+  it("honours a non-zero sea datum", () => {
+    expect(landformRaisesLandAbove(landform("p", R, { mode: "plateau", target: 15, band: 1 }), 20)).toBe(false);
+    expect(landformRaisesLandAbove(landform("p", R, { mode: "plateau", target: 25, band: 1 }), 20)).toBe(true);
+  });
+  it("a non-landform feature is never land", () => {
+    expect(landformRaisesLandAbove(mountain("m", R), 0)).toBe(false);
+  });
+});
+
+// ─── UNIT-FRAME regression (Cradle bug 2026-07-15) ───────────────────────────
+// Fabric geometry is DISPLAY units; `terrainStampSupport` returns METERS. The old
+// detector added the meter reach to display-unit bboxes, inflating it by
+// scaleMetersPerUnit× (500× on the Cradle) so a stamp kilometres away read as
+// overlapping. These fixtures live in display units at scale 500 (Cradle).
+describe("landformReplaceOverlaps — meter reach vs display-unit geometry (scale 500)", () => {
+  type Pt2 = [number, number];
+  const SCALE = 500; // Cradle: 1 display unit = 500 m
+
+  // A ~200 m-across islet plateau ("Lighthouse Rock") near the origin: 0.4 display
+  // units ≈ 200 m across.
+  const ISLET: Pt2[] = [
+    [0, 0],
+    [0.4, 0],
+    [0.4, 0.4],
+    [0, 0.4],
+    [0, 0],
+  ];
+
+  it("the islet plateau does NOT overlap ridges kilometres away (was a 500× false positive)", () => {
+    const islet = landform("islet", ISLET, { mode: "plateau", target: 20, band: 0.2 });
+    // Eight relief ridges on the distant main island, ~10 display units (5 km) off —
+    // far beyond any relief's halfWidth once the reach is measured in the RIGHT frame.
+    const ridges = Array.from({ length: 8 }, (_, i) =>
+      relief(`ridge-${i}`, [[10 + i, 10], [10 + i, 12]], { polarity: "ridge", height: 200, halfWidth: 150 })
+    );
+    expect(landformReplaceOverlaps(islet, [islet, ...ridges], SCALE)).toEqual([]);
+  });
+
+  it("a plateau genuinely covering a ridge IS detected", () => {
+    // Plateau spanning [10,10]..[12,12] display units; the ridge spine runs through it.
+    const plat: Pt2[] = [[10, 10], [12, 10], [12, 12], [10, 12], [10, 10]];
+    const lf = landform("lf", plat, { mode: "plateau", target: 400, band: 0.2 });
+    const ridge = relief("ridge", [[10.5, 10.5], [11.5, 11.5]], { polarity: "ridge", height: 200, halfWidth: 150 });
+    expect(landformReplaceOverlaps(lf, [lf, ridge], SCALE)).toEqual(["ridge"]);
+  });
+
+  it("detects a spine within (halfWidth+apron) of the ring but OUTSIDE its bbox", () => {
+    // Plateau bbox [10,10]..[12,12]. Spine 0.5 display units (250 m) to the right of
+    // the ring edge — outside the ring bbox, but halfWidth 200 m + apron 100 m = 300 m
+    // reach = 0.6 units reaches back into the ring ⇒ flagged. A bbox-only test (reach
+    // 0) would miss it; the meter→unit reach conversion catches it.
+    const plat: Pt2[] = [[10, 10], [12, 10], [12, 12], [10, 12], [10, 10]];
+    const lf = landform("lf", plat, { mode: "plateau", target: 400, band: 0.2 });
+    const spine = relief("spine", [[12.5, 10.5], [12.5, 11.5]], { polarity: "ridge", height: 200, halfWidth: 200, apron: 100 });
+    expect(landformReplaceOverlaps(lf, [lf, spine], SCALE)).toEqual(["spine"]);
+    // Nudge the spine out past the reach (0.7 units = 350 m > 300 m reach) ⇒ silent.
+    const farSpine = relief("far", [[12.7, 10.5], [12.7, 11.5]], { polarity: "ridge", height: 200, halfWidth: 200, apron: 100 });
+    expect(landformReplaceOverlaps(lf, [lf, farSpine], SCALE)).toEqual([]);
   });
 });

@@ -126,6 +126,39 @@ describe("regionLabelPointFeatures — one centroid point per named region", () 
     // The hole is vertically centered, so y stays ~50.
     expect(y).toBeCloseTo(50, 0);
   });
+
+  // ─── Inverted sea (Item 3, Cradle bug 2026-07-15) ──────────────────────────
+  const invertedSea = (id: string, name: string, coast: number[][]): FabricFeature =>
+    ({
+      type: "Feature",
+      id,
+      geometry: { type: "Polygon", coordinates: [coast] },
+      properties: { kind: "landform", name, procgen: { algorithm: "landform", seed: 1, version: 1, params: { mode: "sea", band: 5, invert: true } } },
+    }) as unknown as FabricFeature;
+
+  it("places an inverted sea's label in the WATER (outside the island coast), not mid-island", () => {
+    // Island coast centred at the origin; its drawn ring's centroid is the island
+    // CENTER — the old behaviour put "The Deep" there, the one dry spot.
+    const coast = [[-10, -10], [10, -10], [10, 10], [-10, 10], [-10, -10]];
+    const fc = regionLabelPointFeatures([invertedSea("sea", "The Deep", coast)], {
+      cfgBounds: [-100, -100, 100, 100],
+      seaDatum: 0,
+    });
+    expect(fc.features).toHaveLength(1);
+    const [x, y] = (fc.features[0].geometry as GeoJSON.Point).coordinates;
+    // Outside the island coast bbox ([-10,10]²) and inside the campaign box.
+    expect(Math.abs(x) > 10 || Math.abs(y) > 10).toBe(true);
+    expect(x).toBeGreaterThanOrEqual(-100);
+    expect(x).toBeLessThanOrEqual(100);
+  });
+
+  it("leaves a normal named region's label at its centroid (invert path untouched)", () => {
+    const fc = regionLabelPointFeatures([poly("farm", "Green Acres", unitSquare)], {
+      cfgBounds: [-100, -100, 100, 100],
+      seaDatum: 0,
+    });
+    expect((fc.features[0].geometry as GeoJSON.Point).coordinates).toEqual([2, 2]);
+  });
 });
 
 describe("regionLabelOpacityRamp — campaign-relative fade, not a minzoom gate", () => {
