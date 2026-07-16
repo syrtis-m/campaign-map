@@ -266,6 +266,26 @@ const RECIPES: Record<string, Recipe> = {
       paint: { "fill-color": roles.cultivated, "fill-opacity": 0.7 },
     }),
   ],
+  // Paddy terrace strips (v8): non-overlapping fills between consecutive riser
+  // levels; ALTERNATE strips carry a green-leaning crop tint (parity on the
+  // strip's `band` index) against the gold field wash — the staggered-crop
+  // read of a real terrace flight (green/gold paddies), constant contrast
+  // whatever the riser count. The tint leans toward the vegetation hue because
+  // more of the SAME cultivated color over the 0.7 wash composites invisibly.
+  // Antialias off — the bank line draws the crisp edge on top, and the strips
+  // tessellate on the exact same lattice iso-lines.
+  "farm-paddy": (roles) => [
+    L({
+      id: "generated-farm-paddy",
+      type: "fill",
+      filter: gidFilter("farm-paddy"),
+      paint: {
+        "fill-color": mix(roles.cultivated, roles["vegetation-deep"], 0.45),
+        "fill-opacity": ["case", ["==", ["%", ["get", "band"], 2], 0], 0.35, 0],
+        "fill-antialias": false,
+      },
+    }),
+  ],
   "farm-bank": (roles) => [
     L({
       id: "generated-farm-bank",

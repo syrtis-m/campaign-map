@@ -73,7 +73,7 @@ import {
   clipPolylineToRegion,
   type ProcgenRegion,
 } from "./region";
-import { marchingSquares, sdfPolygon, type Field } from "./fields";
+import { marchingSquares, sdfPolygon, contoursToMultiPolygon, type Field } from "./fields";
 import { macroTerrainField } from "./fields/terrain";
 import { q, blobFeature } from "./waterEmit";
 import { buildUpstreamConstraints, buildUpstreamWaterField, insideUpstreamChannel, splitLineOutsideChannel } from "./upstream";
@@ -188,7 +188,12 @@ const PADDY_MIN_RELIEF_M = 8;
 // contour layer (caught on the first gate screenshots). Capped, paddy banks
 // always read denser than the relief's topo lines; steeper relief honestly
 // means more terraces.
-const PADDY_TARGET_BANDS = 14;
+// v8 (Jonah 2026-07-16, "make it actually do paddy terraces"): 14 bands read
+// as a few stray lines, nothing like a terraced hillside — real risers are a
+// metre or two of height, and the FLIGHT of many nested banks IS the look.
+// 40 targets a dense cascade (relief 60 m → 2 m risers → ~30 banks) while the
+// 25 m cap still stops alpine overlaps from duplicating the topo layer.
+const PADDY_TARGET_BANDS = 40;
 const PADDY_INTERVAL_LADDER = [1, 2, 5, 10, 20, 25] as const;
 // ── Riverine long-lots (Quebec rang / arpent — plan 038 item 2) ──────────────
 // Where the GENERATED river channel is present, the fields WITHIN ~1–2 field
@@ -814,29 +819,62 @@ export function generateFarmland(
     const elev = macroTerrainField(constraints.fabricFeatures, constraints.terrainBase, constraints.campaignSeed);
     // Deterministic relief scan: world-aligned coarse lattice, contained nodes
     // only (pure f(region, field) — no RNG, no iteration-to-convergence).
-    const scan = (f: (x: number, y: number) => number): number => {
-      let max = 0;
+    // Tracks MIN AND MAX (v8): the interval must come from the relief RANGE
+    // inside the region — the old max-only scan fed ABSOLUTE elevation into the
+    // interval, so a paddy on 150 m-high ground computed a "150 m relief" →
+    // coarsest interval → one or two banks (the not-actually-terraces bug,
+    // Jonah 2026-07-16).
+    const scan = (f: (x: number, y: number) => number): { min: number; max: number } => {
+      let min = Infinity;
+      let max = -Infinity;
       const sx0 = Math.floor(bbox.minX / PADDY_SCAN_M) * PADDY_SCAN_M;
       const sy0 = Math.floor(bbox.minY / PADDY_SCAN_M) * PADDY_SCAN_M;
       for (let x = sx0; x <= bbox.maxX; x += PADDY_SCAN_M) {
         for (let y = sy0; y <= bbox.maxY; y += PADDY_SCAN_M) {
           if (distanceToBoundary(region, x, y) <= 0) continue;
           const v = f(x, y);
+          if (v < min) min = v;
           if (v > max) max = v;
         }
       }
-      return max;
+      return min <= max ? { min, max } : { min: 0, max: 0 };
     };
     const elevValue = elev ? (x: number, y: number): number => elev(x, y).v : null;
-    const relief = elevValue ? scan(elevValue) : 0;
+    const elevScan = elevValue ? scan(elevValue) : { min: 0, max: 0 };
+    const relief = elevScan.max - elevScan.min;
     // Pick the bank field: real relief → elevation contours; else concentric
     // interior-distance bands (sdf is + inside — same marching machinery).
     const useElev = elevValue !== null && relief >= PADDY_MIN_RELIEF_M;
-    const bankField = useElev ? elevValue! : sdfPolygon(region.ring);
-    const maxV = useElev ? relief : scan(bankField);
-    const interval = paddyInterval(maxV);
+    const bankFieldRaw = useElev ? elevValue! : sdfPolygon(region.ring);
+    const { min: minV, max: maxV } = useElev ? elevScan : { min: 0, max: scan(bankFieldRaw).max };
+    const interval = paddyInterval(maxV - minV);
+    // Memoize lattice samples: the bank trace + every terrace-shade trace below
+    // sample the SAME world-aligned lattice points, and the composed field is
+    // the expensive part. Keys are exact lattice multiples ⇒ stable strings.
+    const fieldMemo = new Map<string, number>();
+    const bankField = (x: number, y: number): number => {
+      const k = `${x}:${y}`;
+      let v = fieldMemo.get(k);
+      if (v === undefined) {
+        v = bankFieldRaw(x, y);
+        fieldMemo.set(k, v);
+      }
+      return v;
+    };
+    const insideMemo = new Map<string, number>();
+    const insideAt = (x: number, y: number): number => {
+      const k = `${x}:${y}`;
+      let v = insideMemo.get(k);
+      if (v === undefined) {
+        v = distanceToBoundary(region, x, y);
+        insideMemo.set(k, v);
+      }
+      return v;
+    };
+    // Levels start at the first riser ABOVE the region's own floor (minV) — an
+    // absolute-elevation paddy no longer wastes its ladder below the ground.
     const levels: number[] = [];
-    for (let lv = interval; lv < maxV; lv += interval) levels.push(lv);
+    for (let lv = (Math.floor(minV / interval) + 1) * interval; lv < maxV; lv += interval) levels.push(lv);
     if (levels.length > 0) {
       for (const c of marchingSquares(bankField, { bbox, step: PADDY_LATTICE_M, levels })) {
         // Position-derived ids (never emission order): the level (dm) + the
@@ -865,6 +903,59 @@ export function generateFarmland(
           }
         }
       }
+      // ── Terrace strip fills (v8 — "so it actually does paddy terraces"):
+      //    ONE polygon per terrace STRIP (the ground between consecutive riser
+      //    levels, masked to the ring: min(elev − lower, upper − elev,
+      //    insideness) traced at 0 gives closed loops). Strips tessellate the
+      //    region without overlap — adjacent strips share the exact lattice
+      //    iso-line the bank traces, so every strip edge registers on its bank.
+      //    Each carries `band`/`bands`; the theme tints ALTERNATE bands (parity
+      //    paint), the staggered-crop read of a real terrace flight — and the
+      //    same mechanism ladders the concentric fallback rings on flat ground.
+      const grown = {
+        minX: bbox.minX - PADDY_LATTICE_M,
+        minY: bbox.minY - PADDY_LATTICE_M,
+        maxX: bbox.maxX + PADDY_LATTICE_M,
+        maxY: bbox.maxY + PADDY_LATTICE_M,
+      };
+      // A huge sentinel (not Infinity — the mask must stay finite arithmetic)
+      // opens the first strip downward and the last upward, so the strips
+      // cover the WHOLE region: below-first + between-each + above-last.
+      const OPEN = 1e9;
+      const bands = levels.length + 1;
+      for (let k = 0; k < bands; k++) {
+        const lower = k === 0 ? -OPEN : levels[k - 1];
+        const upper = k === levels.length ? OPEN : levels[k];
+        const masked = (x: number, y: number): number => {
+          const v = bankField(x, y);
+          return Math.min(v - lower, upper - v, insideAt(x, y));
+        };
+        const rings: Pt[][] = [];
+        for (const c of marchingSquares(masked, { bbox: grown, step: PADDY_LATTICE_M, levels: [0] })) {
+          if (!c.closed) continue; // an open line can't bound a filled terrace
+          rings.push(c.points);
+        }
+        if (rings.length === 0) continue;
+        const polys = contoursToMultiPolygon(rings).map((poly) =>
+          poly.map((ring) => ring.map(([x, y]) => [q(x), q(y)] as Pt))
+        );
+        const [fx, fy] = polys[0][0][0];
+        const floorLevel = k === 0 ? minV : levels[k - 1];
+        out.push({
+          type: "Feature",
+          id: hashSeed(seed, "farm-paddy", Math.round(floorLevel * 10), Math.round(fx * 10), Math.round(fy * 10)),
+          geometry: { type: "MultiPolygon", coordinates: polys },
+          properties: {
+            generatorId: "farm-paddy",
+            type: "farm-paddy",
+            fieldType,
+            band: k + 1,
+            bands,
+            // The strip's FLOOR level (its downhill bank), a theme/debug hook.
+            elevation: Math.round(floorLevel),
+          },
+        });
+      }
     }
   }
 
@@ -874,7 +965,13 @@ export function generateFarmland(
   const laneEvery = laneDensity >= 0.66 ? 1 : laneDensity >= 0.33 ? 2 : 3;
   const laneXs: number[] = [];
   const laneYs: number[] = [];
-  for (let ix = ix0; ix <= ix1; ix++) {
+  // Paddy terraces get NO rectilinear lane web (v8): straight section lanes
+  // slicing across contour-following banks read as a surveyor's grid stamped
+  // over a terraced hillside (the crosshatch Jonah flagged). Access reads along
+  // the banks themselves; the gate-lane fan below keys off the web's junctions,
+  // so it is skipped with it.
+  const paddyNoLanes = fieldType === "paddy-terraces";
+  for (let ix = paddyNoLanes ? ix1 + 1 : ix0; ix <= ix1; ix++) {
     if (((ix % laneEvery) + laneEvery) % laneEvery !== 0) continue;
     const x = ix * cell;
     laneXs.push(x);
@@ -882,7 +979,7 @@ export function generateFarmland(
       emitLaneRun(run);
     }
   }
-  for (let iy = iy0; iy <= iy1; iy++) {
+  for (let iy = paddyNoLanes ? iy1 + 1 : iy0; iy <= iy1; iy++) {
     if (((iy % laneEvery) + laneEvery) % laneEvery !== 0) continue;
     const y = iy * cell;
     laneYs.push(y);
@@ -1008,8 +1105,21 @@ export function generateFarmland(
   // ── Farmsteads: at lane junctions, a position-hashed cluster of 1–2 building
   //    footprints when the roll clears (1 − farmsteads). ──────────────────────
   if (farmsteads > 0) {
-    for (const x of laneXs) {
-      for (const y of laneYs) {
+    // Paddy (no lane web): the huts roll on a STRIDED subset of the bare
+    // field-lattice corners — same absolute-world identity, just not tied to
+    // (suppressed) junctions, and thinned hard: a terraced hillside carries a
+    // few scattered stilt huts, not a hut per field cell (the un-strided
+    // lattice rolled ~100 on a big region).
+    const steadStride = 3;
+    const strided = (i0: number, i1: number): number[] => {
+      const outIdx: number[] = [];
+      for (let i = i0; i <= i1; i++) if (((i % steadStride) + steadStride) % steadStride === 0) outIdx.push(i * cell);
+      return outIdx;
+    };
+    const steadXs = paddyNoLanes ? strided(ix0, ix1) : laneXs;
+    const steadYs = paddyNoLanes ? strided(iy0, iy1) : laneYs;
+    for (const x of steadXs) {
+      for (const y of steadYs) {
         const ix = Math.round(x / cell);
         const iy = Math.round(y / cell);
         const rng = mulberry32(hashSeed(seed, "farm-stead", ix, iy));

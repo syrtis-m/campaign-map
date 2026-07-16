@@ -2127,6 +2127,26 @@ export class MapView extends ItemView {
 
   private sketchKeydown(ev: KeyboardEvent): void {
     if (!this.sketchMode) return;
+    // Typing in a form field (the selection panel's name/param inputs, a modal
+    // field): every key belongs to the FIELD — Backspace/Delete edit text and
+    // must never delete the selected shape (Jonah 2026-07-16), Cmd-Z is the
+    // field's own undo. Escape leaves the field (back to map focus) instead of
+    // deselecting the shape mid-edit.
+    const target = ev.target as HTMLElement | null;
+    const inEditable =
+      !!target &&
+      (target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target.isContentEditable);
+    if (inEditable) {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        target.blur();
+      }
+      return;
+    }
     if ((ev.metaKey || ev.ctrlKey) && (ev.key === "z" || ev.key === "Z") && !ev.shiftKey) {
       // Intercept before Obsidian's global undo so Cmd/Ctrl-Z means "undo the
       // last sketch" while landscaping.

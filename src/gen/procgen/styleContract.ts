@@ -170,6 +170,10 @@ export const WALL_STYLE_CONTRACT: readonly BucketStyle[] = [
 /** Farmland. Bucket order matches `FARMLAND_TILE_GENERATOR_IDS`. */
 export const FARMLAND_STYLE_CONTRACT: readonly BucketStyle[] = [
   { gid: "farm-field", mark: "fill", role: "cultivated", z: 5 },
+  // Terrace shade fills (paddy v8): per-riser cumulative wash, above the field
+  // wash and under the bank lines they register on (fractional z — a slot
+  // between neighbours, not a renumbering).
+  { gid: "farm-paddy", mark: "fill", role: "cultivated", z: 5.5 },
   { gid: "farm-lane", mark: "line", role: "route", z: 7 },
   { gid: "farm-hedge", mark: "line", role: "vegetation-deep", z: 8 },
   { gid: "farm-building", mark: "fill", role: "built", z: 9 },
