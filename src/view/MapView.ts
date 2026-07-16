@@ -96,6 +96,14 @@ import type CampaignMapPlugin from "../main";
 
 export const VIEW_TYPE_MAP = "campaign-map-view";
 
+/** Every canon hit-test layer: the pin dots + the three zoom-depth LABEL
+ * layers. THE BUG (Jonah 2026-07-16, "can't click the names of locations"):
+ * hit-tests passed the literal "canon-label", which is not a layer id (the
+ * real ids are canon-label-<depth>), and pickFeatureNear silently drops
+ * missing layers — so a click on a name hit NOTHING and fell through to
+ * planting a dropped pin. */
+const CANON_HIT_LAYERS = ["canon-point", "canon-label-deep", "canon-label-medium", "canon-label-shallow"];
+
 /** What each sketch kind DOES, as its toolbar tooltip (Jonah 2026-07-16:
  * "if I'm editing something, I don't necessarily know what each option does").
  * Draw gesture first, consequence second. */
@@ -1527,7 +1535,7 @@ export class MapView extends ItemView {
   /** Test surface (docs/05): does a tolerant hit-test at a screen point find a
    * canon feature? Returns the location id or null. */
   hitTestCanonAt(x: number, y: number): string | null {
-    const f = this.pickFeatureNear(new maplibregl.Point(x, y), ["canon-point", "canon-label"]);
+    const f = this.pickFeatureNear(new maplibregl.Point(x, y), CANON_HIT_LAYERS);
     return (f?.properties?.id as string | undefined) ?? null;
   }
 
@@ -2958,7 +2966,7 @@ export class MapView extends ItemView {
       this.handleSketchClick(e);
       return;
     }
-    const canon = this.pickFeatureNear(e.point, ["canon-point", "canon-label"]);
+    const canon = this.pickFeatureNear(e.point, CANON_HIT_LAYERS);
     // Connection lines only matter when no pin was hit — skip the query otherwise.
     const line = canon
       ? undefined
@@ -2972,12 +2980,18 @@ export class MapView extends ItemView {
     });
     switch (action) {
       case "canon-noop":
-        // Left-click on a location pin: no popup (Jonah 2026-07-15 — "it pops up
-        // a little menu … annoying as hell"). The place card is retired from
-        // left-click; its actions (Open note / Center / Connect to… /
+        // Left-click on a location PIN: no popup (Jonah 2026-07-15 — "it pops
+        // up a little menu … annoying as hell"). The place card is retired
+        // from left-click; its actions (Open note / Center / Connect to… /
         // Visibility) live on the right-click Menu. The hover tooltip already
-        // shows the name, so a bare left-click is a deliberate no-op — and it
-        // must NOT fall through to plant a dropped pin under the pin.
+        // shows the name, so a bare left-click on the dot is a deliberate
+        // no-op — and it must NOT fall through to plant a dropped pin.
+        // The NAME text is different (Jonah 2026-07-16): a label reads as a
+        // link, so clicking it opens the note directly — an action, not a
+        // popup, so the 2026-07-15 ruling stands.
+        if (canon && String(canon.layer?.id ?? "").startsWith("canon-label")) {
+          this.openLocationNote(canon.properties?.id as string | undefined);
+        }
         return;
       case "connection":
         this.showConnectionCard(line!, e.lngLat);
@@ -2987,6 +3001,20 @@ export class MapView extends ItemView {
         return;
       default:
         return;
+    }
+  }
+
+  /** Open a location's note from a label click — same split behavior as the
+   * right-click menu's "Open note", so the map stays visible beside it. */
+  private openLocationNote(locId: string | undefined): void {
+    if (!locId || !this.campaign) return;
+    const location = this.plugin.getCampaignState(this.campaign.id).index.get(locId);
+    if (!location) return;
+    const file = this.app.vault.getAbstractFileByPath(location.path);
+    if (file instanceof TFile) {
+      void this.app.workspace
+        .getLeaf("split")
+        .openFile(file, { state: { mode: "source" }, eState: { focus: true } });
     }
   }
 
@@ -3112,7 +3140,7 @@ export class MapView extends ItemView {
 
   private handleDragStart(e: MapMouseEvent & { features?: MapGeoJSONFeature[] }): void {
     if (!this.map || !this.campaign) return;
-    const feature = this.pickFeatureNear(e.point, ["canon-point", "canon-label"]);
+    const feature = this.pickFeatureNear(e.point, CANON_HIT_LAYERS);
     if (!feature) return;
     const locId = feature.properties?.id as string | undefined;
     const state = this.plugin.getCampaignState(this.campaign.id);

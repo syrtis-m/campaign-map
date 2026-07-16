@@ -368,21 +368,17 @@ describe("farmland generator — paddy-terraces (box 23-E: elevation-coupled ban
         // Linear-interpolation error on the 10 m lattice over the (ridged,
         // fine-octave) field: the interval is CAPPED at 25 m (field-scale
         // terraces), so per-vertex error is bounded by lattice roughness, not
-        // by the interval — allow 1.5 bands worst-case PLUS the v9 domain-warp
-        // displacement (banks are hand-built approximations of the contour:
-        // the trace is exact on the WARPED field, so the true-field error is
-        // slope × the ≤9 m warp). The AVERAGE must still stay a small
-        // fraction of a band above the warp floor (a diagonal grid-following
-        // polyline or an off-by-a-band bug errs at relief scale).
+        // by the interval — allow 1.5 bands worst-case but demand the AVERAGE
+        // stays a small fraction of a band (v10: the warp is gone — banks
+        // trace the TRUE contours again, registered with the topo layer).
         const err = Math.abs(elev(x, y).v - level);
-        // +45: the ≤9 m·√2 warp under a ridged-alpine local slope of ~3 m/m.
-        expect(err).toBeLessThan(interval * 1.5 + 45);
+        expect(err).toBeLessThan(interval * 1.5);
         errSum += err;
         checked++;
       }
     }
     expect(checked).toBeGreaterThan(50);
-    expect(errSum / checked).toBeLessThan(interval * 0.3 + 12);
+    expect(errSum / checked).toBeLessThan(interval * 0.3);
   });
 
   it("is byte-identical across two coupled runs, and keys on the MOUNTAIN's persisted seed", () => {
@@ -412,14 +408,13 @@ describe("farmland generator — paddy-terraces (box 23-E: elevation-coupled ban
       expect(distanceToBoundary(region, x, y)).toBeGreaterThanOrEqual(-1e-3);
     }
     // Fallback banks are iso-distance rings: every vertex of a bank sits at
-    // (about) its level's distance from the boundary — within the lattice
-    // interpolation error PLUS the v9 domain warp (≤9 m of deliberate wobble;
-    // cross-walls run inward by design and are excluded).
+    // (about) its level's distance from the boundary (cross-walls run inward
+    // by design and are excluded).
     for (const bank of bs) {
       if ((bank.properties as { cross?: boolean }).cross) continue;
       const level = (bank.properties as { elevation?: number }).elevation!;
       for (const [x, y] of (bank.geometry as GeoJSON.LineString).coordinates as Pt[]) {
-        expect(Math.abs(distanceToBoundary(region, x, y) - level)).toBeLessThan(10 + 14);
+        expect(Math.abs(distanceToBoundary(region, x, y) - level)).toBeLessThan(10);
       }
     }
     // A mountain ELSEWHERE (no overlap → zero relief here) must leave the

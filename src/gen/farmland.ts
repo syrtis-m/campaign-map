@@ -67,14 +67,13 @@
  * algorithm id — MapController.overlappingRegion).
  */
 import { hashSeed, mulberry32 } from "./rng";
-import { fractalNoise2D } from "./world/noise";
 import {
   distanceToBoundary,
   segmentCrossesBoundary,
   clipPolylineToRegion,
   type ProcgenRegion,
 } from "./region";
-import { marchingSquares, sdfPolygon, contoursToMultiPolygon, fDomainWarp, type Field } from "./fields";
+import { marchingSquares, sdfPolygon, contoursToMultiPolygon, type Field } from "./fields";
 import { macroTerrainField } from "./fields/terrain";
 import { q, blobFeature } from "./waterEmit";
 import { buildUpstreamConstraints, buildUpstreamWaterField, insideUpstreamChannel, splitLineOutsideChannel } from "./upstream";
@@ -196,13 +195,12 @@ const PADDY_MIN_RELIEF_M = 8;
 // 25 m cap still stops alpine overlaps from duplicating the topo layer.
 const PADDY_TARGET_BANDS = 40;
 const PADDY_INTERVAL_LADDER = [1, 2, 5, 10, 20, 25] as const;
-// v9 — organic edges + segmented paddies (Jonah 2026-07-16, "staggered edges,
-// fields segmented like enclosed patchwork"):
-// Domain-warp amplitude/cell for the bank field: terrace walls are hand-built
-// approximations of the contour, so the geometric iso-lines get a small
-// deterministic wobble (the forest-canopy fray idiom, scaled down).
-const PADDY_WARP_AMP_M = 9;
-const PADDY_WARP_OPTS = { octaves: 2, baseCellSize: 70, persistence: 0.5 } as const;
+// v9 — segmented paddies (Jonah 2026-07-16, "staggered edges, fields
+// segmented like enclosed patchwork"). v10 dropped v9's domain warp: warped
+// banks visibly diverged from the global topo contour layer (which traces the
+// TRUE field) — "lines aren't perfectly tracing the contours". The organic
+// read now comes from the cross-wall segmentation alone; banks trace the real
+// contours exactly (same 10 m lattice class as the topo layer itself).
 // Cross-walls: each terrace strip is cut into individual paddies by short
 // walls marched DOWNHILL from the strip's upper bank. Segment length along the
 // bank scales with fieldSize; each level's marks start at a hashed offset, so
@@ -863,19 +861,10 @@ export function generateFarmland(
     // Pick the bank field: real relief → elevation contours; else concentric
     // interior-distance bands (sdf is + inside — same marching machinery).
     const useElev = elevValue !== null && relief >= PADDY_MIN_RELIEF_M;
-    // DOMAIN WARP (v9 — "staggered edges"): terrace walls are hand-built
-    // earthworks that only APPROXIMATE the contour, so a small deterministic
-    // warp of the sample position frays the geometric iso-lines into organic,
-    // wobbling bank edges (the forest-canopy idiom). Banks, strips and the
-    // cross-walls all trace the SAME warped field, so everything stays
-    // registered with everything else.
-    const warpW: Field = (x, y) =>
-      (fractalNoise2D(seed, x, y, "paddy-warp-x", PADDY_WARP_OPTS) - 0.5) * 2 * PADDY_WARP_AMP_M;
-    const warpH: Field = (x, y) =>
-      (fractalNoise2D(seed, x, y, "paddy-warp-y", PADDY_WARP_OPTS) - 0.5) * 2 * PADDY_WARP_AMP_M;
-    const bankFieldRaw = fDomainWarp(useElev ? elevValue! : sdfPolygon(region.ring), warpW, warpH);
-    // Level ladder from the WARPED field (the one actually traced), min AND max.
-    const { min: minV, max: maxV } = scan(bankFieldRaw);
+    // v10: NO field warp — banks must trace the true contours (the global topo
+    // layer traces the same field; a warped copy visibly crossed it).
+    const bankFieldRaw = useElev ? elevValue! : sdfPolygon(region.ring);
+    const { min: minV, max: maxV } = useElev ? elevScan : { min: 0, max: scan(bankFieldRaw).max };
     const interval = paddyInterval(maxV - minV);
     // Memoize lattice samples: the bank trace + every terrace-shade trace below
     // sample the SAME world-aligned lattice points, and the composed field is

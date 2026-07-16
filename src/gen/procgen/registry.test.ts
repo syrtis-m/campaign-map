@@ -98,9 +98,9 @@ describe("consumption declarations (plan 033-C)", () => {
     string,
     { kinds: string[]; margin: number; cost: "cheap" | "medium" | "expensive" }
   > = {
-    // v4 (2026-07-16): + mountain/relief/landform — the no-city-underwater
-    // land mask reads the composed macro terrain (terrainStampSupport reach).
-    city: { kinds: ["water", "river", "road", "wall", "farmland", "park", "district", "mountain", "relief", "landform"], margin: 1500, cost: "expensive" },
+    // v5 (2026-07-16): + landform — the no-city-underwater land mask reads
+    // sea-landform / water GEOMETRY (a dry basin stays land; never the field).
+    city: { kinds: ["water", "river", "road", "wall", "farmland", "park", "district", "landform"], margin: 1500, cost: "expensive" },
     // Ruling 2026-07-15: the terrain readers gain relief/landform (the composed
     // global terrain field, not a mountain polygon). The terrain-stamp kinds use
     // a PER-FEATURE reach (`terrainStampSupport`), so `margin` still governs only
@@ -180,8 +180,8 @@ describe("cycle guard — settlement consumers produce nothing the city consumes
 });
 
 describe("farmland peri-urban (plan 035-C) — stage 4, wired settlement + elevation", () => {
-  it("farmland is at contract version 9 (paddy v9 — warped banks, staggered cross-walls; v8 was range-scoped risers + strips)", () => {
-    expect(algorithmById("farmland")!.currentVersion).toBe(9);
+  it("farmland is at contract version 10 (paddy v10 — true-contour banks + staggered cross-walls; v9's warp removed)", () => {
+    expect(algorithmById("farmland")!.currentVersion).toBe(10);
   });
 
   it("farmland sits at stage 4, consumes elevation + settlement + water (plan 037), produces NOTHING", () => {

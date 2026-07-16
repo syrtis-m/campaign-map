@@ -26,7 +26,8 @@ import type { FabricKind } from "../../model/fabric";
 import type { GenerationConstraints } from "../types";
 import { makeRegion, type ProcgenRegion } from "../region";
 import type { Stage, ConstraintKind } from "./dag";
-import { macroTerrainField } from "../fields/terrain";
+import { landformRaisesLandAbove } from "../fields/terrain";
+import { pointInRingClosed } from "../fields/sdf";
 import { generateRiver, riverMaxOffset } from "../river";
 import { generateForest, FOREST_VARIETIES } from "../forest";
 import { generatePark, PARK_VARIETIES } from "../park";
@@ -307,11 +308,6 @@ function scaleConstraints(constraints: GenerationConstraints, k: number): Genera
   };
 }
 
-/** Ground must clear the sea datum by this much (m) to count as buildable —
- * the sea landform pins water to EXACTLY the datum, and the shoreline band
- * ramps land smoothly down to it. */
-const CITY_SEA_FREEBOARD_M = 0.5;
-
 /** Sample points for the land-mask vote: up to `n` evenly-spaced vertices of
  * the feature's first coordinate run (ring or line). */
 function maskSamplePoints(feature: GeoJSON.Feature, n: number): [number, number][] {
@@ -327,22 +323,82 @@ function maskSamplePoints(feature: GeoJSON.Feature, n: number): [number, number]
   return out;
 }
 
-/** Drop city fabric that sits underwater (composed macro terrain below the
- * campaign sea datum): majority vote over sampled vertices, so features
- * straddling the shoreline trim to a ragged natural edge. No terrain field
- * (flat base, no stamps) ⇒ identity ⇒ byte-identical to pre-v4. */
+/** Even-odd point-in-polygon over a full GeoJSON ring set (outer + holes). */
+function insideEvenOdd(rings: [number, number][][], x: number, y: number): boolean {
+  let inside = false;
+  for (const ring of rings) {
+    const r = ring.length >= 2 && (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1])
+      ? [...ring, ring[0]]
+      : ring;
+    if (pointInRingClosed(r, x, y)) inside = !inside;
+  }
+  return inside;
+}
+
+/** GEOMETRIC water test mirroring the drawn water exactly (invertedSea.ts's
+ * display rule, in gen-space meters): a point is WET iff it is inside a
+ * sketched `water` polygon or a non-inverted `sea` landform, or OUTSIDE an
+ * inverted coast ring (island-from-coastline) and not inside another landform
+ * that re-raises land above the datum (islet plateaus). ELEVATION is
+ * deliberately NOT consulted — a dry basin below the sea datum (a "Deep") is
+ * land, not water (the v4 field-threshold mask flooded exactly that,
+ * Jonah's Apartment Blocks 2026-07-16). Null when the campaign has no water
+ * geometry at all ⇒ the mask is the identity. */
+function buildSeaTest(constraints: GenerationConstraints): ((x: number, y: number) => boolean) | null {
+  const feats = constraints.fabricFeatures ?? [];
+  const datum = constraints.terrainBase?.seaDatum ?? 0;
+  const wetInside: [number, number][][][] = [];
+  const invertedCoasts: [number, number][][][] = [];
+  const landRaisers: [number, number][][][] = [];
+  for (const f of feats) {
+    if (f.geometry.type !== "Polygon") continue;
+    const rings = f.geometry.coordinates as [number, number][][];
+    if (f.properties.kind === "water") {
+      wetInside.push(rings);
+      continue;
+    }
+    const block = f.properties.procgen;
+    if (f.properties.kind === "landform" && block?.algorithm === "landform") {
+      const params = (block.params ?? {}) as Record<string, unknown>;
+      if (params.mode === "sea") {
+        if (params.invert === true) invertedCoasts.push(rings);
+        else wetInside.push(rings);
+      } else if (landformRaisesLandAbove(f, datum)) {
+        landRaisers.push(rings);
+      }
+    }
+  }
+  if (wetInside.length === 0 && invertedCoasts.length === 0) return null;
+  return (x, y) => {
+    for (const w of wetInside) if (insideEvenOdd(w, x, y)) return true;
+    for (const coast of invertedCoasts) {
+      if (!insideEvenOdd(coast, x, y)) {
+        let raised = false;
+        for (const r of landRaisers) {
+          if (insideEvenOdd(r, x, y)) {
+            raised = true;
+            break;
+          }
+        }
+        if (!raised) return true;
+      }
+    }
+    return false;
+  };
+}
+
+/** Drop city fabric that sits in the WATER (the geometric sea test above):
+ * majority vote over sampled vertices, so features straddling the shoreline
+ * trim to a ragged natural edge. No water geometry ⇒ identity ⇒ byte-identical
+ * to pre-mask output. */
 function maskCityToLand(feats: GeoJSON.Feature[], constraints: GenerationConstraints): GeoJSON.Feature[] {
-  const field = macroTerrainField(constraints.fabricFeatures, constraints.terrainBase, constraints.campaignSeed);
-  if (!field) return feats;
-  // A sea landform pins its water to EXACTLY the datum (replace target ==
-  // seaDatum), so a strict `< datum` test never fires — ground must clear the
-  // swash line by a freeboard margin to count as buildable land.
-  const shoreline = (constraints.terrainBase?.seaDatum ?? 0) + CITY_SEA_FREEBOARD_M;
+  const isWet = buildSeaTest(constraints);
+  if (!isWet) return feats;
   return feats.filter((f) => {
     const pts = maskSamplePoints(f, 6);
     if (pts.length === 0) return true;
     let wet = 0;
-    for (const [x, y] of pts) if (field(x, y).v < shoreline) wet++;
+    for (const [x, y] of pts) if (isWet(x, y)) wet++;
     return wet * 2 <= pts.length; // strictly-majority-wet drops
   });
 }
@@ -378,13 +434,16 @@ const cityAlgorithm: ProcgenAlgorithm = {
   // added there). A city with NO upstream vegetation AND no contained region is
   // byte-identical to v1 (golden unchanged); either coupling present changes
   // bytes ⇒ the bump gates adoption.
-  // Version 4 (2026-07-16): NO CITY UNDERWATER — output is masked to land
-  // (composed macro terrain ≥ the campaign sea datum, majority vote per
-  // feature), and the terrain-stamp kinds join consumesSketch so a sea/relief
-  // edit near the district invalidates it (per-feature terrainStampSupport
-  // reach, the forest/farmland pattern). A `scale` param joins the schema
-  // (absent ⇒ 1 ⇒ byte-identical — it alone would not have bumped). A city
-  // with no terrain field (flat base, no stamps) is byte-identical to v3
+  // Version 5 (2026-07-16): the land mask is GEOMETRIC — a point is wet iff
+  // the drawn water covers it (sketched water polygons; sea landforms:
+  // interior, or the exterior of an inverted coast minus land-raising
+  // landforms — invertedSea.ts's display rule). v4's composed-elevation
+  // threshold flooded dry below-datum BASINS (a "Deep" is land). landform +
+  // water in consumesSketch cover the mask's inputs; mountain/relief dropped
+  // (the mask no longer reads the terrain field).
+  // Version 4 (2026-07-16): NO CITY UNDERWATER — output masked to land, and a
+  // `scale` param joins the schema (absent ⇒ 1 ⇒ byte-identical — it alone
+  // would not have bumped). A city with no water is byte-identical to v3
   // (golden unchanged); one overlapping water changes bytes ⇒ the bump gates
   // adoption.
   // Version 3 (plans 038 + 039 §1.1, coupling wave 2): (038.1) bank-tangent
@@ -398,7 +457,7 @@ const cityAlgorithm: ProcgenAlgorithm = {
   // channel / no in-region road crossing a wall / no adjacent district / no
   // market pin is byte-identical to v2; any trigger present changes bytes ⇒ the
   // bump gates adoption.
-  currentVersion: 4,
+  currentVersion: 5,
   appliesTo: ["district"],
   // Stage 3 (settlement): bridges over the meandered channel + a growth-cost
   // bump from canopy → consumes water + vegetation. Produces `settlement` for
@@ -413,9 +472,9 @@ const cityAlgorithm: ProcgenAlgorithm = {
   // becomes a hole (perimeter frontage + hashed entrances). Containment gap is 0,
   // so the existing 1500 m margin covers it; an adjacent/overlapping (non-
   // contained) park/district is byte-inert (033-A harness verifies).
-  // v4: + mountain/relief/landform — the land mask reads the composed macro
-  // terrain, so terrain-stamp edits within their support must invalidate.
-  consumesSketch: ["water", "river", "road", "wall", "farmland", "park", "district", "mountain", "relief", "landform"],
+  // v5: + landform — the geometric land mask reads sea-landform / water
+  // GEOMETRY (never the terrain field), so those edits must invalidate.
+  consumesSketch: ["water", "river", "road", "wall", "farmland", "park", "district", "landform"],
   influenceMargin: 1500,
   costClass: "expensive",
   paramsSchema: cityParamsSchema as unknown as z.ZodType<Record<string, unknown>>,
@@ -959,10 +1018,13 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   // adoption. (Plan 038 items 3/4 — terrain slope-gating / contour strips and
   // forest sketch-adjacency hedgerows — ride this same v4 bump; each stays
   // byte-identical to v3 when its upstream/adjacency is absent.)
-  // Version 9 (2026-07-16, "staggered edges + segmented paddies"): the bank
-  // field gains a small deterministic domain warp (organic hand-built edges)
-  // and each strip is cut into individual paddies by staggered cross-walls
-  // marched downhill from its upper bank. Non-paddy types byte-identical to v8.
+  // Version 10 (2026-07-16): v9's domain warp REMOVED — warped banks visibly
+  // diverged from the global topo contour layer ("lines aren't perfectly
+  // tracing the contours"); banks trace the true macro contours again and the
+  // organic read rides on the cross-wall segmentation alone.
+  // Version 9 (2026-07-16, "staggered edges + segmented paddies"): each strip
+  // is cut into individual paddies by staggered cross-walls marched downhill
+  // from its upper bank. Non-paddy types byte-identical to v8.
   // Version 8 (2026-07-16, "make paddy actually do terraces"): paddy risers
   // interval now comes from the relief RANGE inside the region (the max-only
   // scan fed absolute elevation into the interval — one or two banks on any
@@ -975,7 +1037,7 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   // Version 2 (plan 035, peri-urban move): farmland reads the generated city
   // street network (`upstream.settlement`) — gate lanes radiate from the
   // arterial exits, a field-size gradient runs toward the wall line.
-  currentVersion: 9,
+  currentVersion: 10,
   appliesTo: ["farmland"],
   // Stage 4 (PERI-URBAN, plan 035): farmland is the city's apron, generated
   // AFTER it. Consumes `settlement` (WIRED: lanes orient to the generated
