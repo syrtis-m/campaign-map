@@ -1,6 +1,8 @@
 ---
 map: cradle
-geometry: [1.8, 5.04]
+geometry:
+  - 0.9798941259664389
+  - 5.277219486785512
 type: landmark
 visibility: mid
 ---

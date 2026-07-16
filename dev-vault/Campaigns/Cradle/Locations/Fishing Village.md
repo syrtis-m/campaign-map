@@ -1,12 +1,14 @@
 ---
 map: cradle
-geometry: [3.6, -3.96]
+geometry:
+  - 3.6
+  - -3.96
 type: town
 visibility: wide
 connections:
   - Stinking Light
   - The Ravine
-  - Industrial Port
+  - White Water
 ---
 **#1 · Landing site**
 

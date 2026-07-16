@@ -1,10 +1,13 @@
 ---
 map: cradle
-geometry: [-0.54, 4.14]
+geometry:
+  - -0.54
+  - 4.14
 type: landmark
 visibility: mid
 connections:
   - Stadium
+  - The House
 ---
 **#13 · Restricted**
 

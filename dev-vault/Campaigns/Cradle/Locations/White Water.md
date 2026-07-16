@@ -1,10 +1,11 @@
 ---
 map: cradle
-geometry: [1.62, 0]
+geometry:
+  - 1.62
+  - 0
 type: landmark
 visibility: mid
 connections:
-  - The House
   - Radio Mast
   - Crashed Plane
   - Industrial Port
