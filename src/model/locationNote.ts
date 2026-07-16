@@ -78,14 +78,6 @@ const FOCUS_TO_VISIBILITY: Record<FocusDepth, Visibility> = {
   medium: "mid",
   shallow: "close",
 };
-
-export function visibilityToFocus(v: Visibility): FocusDepth {
-  return VISIBILITY_TO_FOCUS[v];
-}
-export function focusToVisibility(f: FocusDepth): Visibility {
-  return FOCUS_TO_VISIBILITY[f];
-}
-
 const TYPE_FOCUS: Record<string, FocusDepth> = {
   "nation/region": "deep",
   city: "deep",
@@ -136,8 +128,6 @@ export const LocationFrontmatterSchema = z.object({
   icon: z.string().optional(),
   connections: z.array(ConnectionSchema).optional(),
 });
-
-export type LocationFrontmatter = z.infer<typeof LocationFrontmatterSchema>;
 
 export interface ParsedLocation {
   id: string; // vault path, stable per-note identity

@@ -43,30 +43,3 @@ export async function saveGeneratedManifest(
   await app.vault.adapter.write(generatedManifestPath(campaign), JSON.stringify(manifest, null, 2));
 }
 
-/** Load → upsert-by-id → save. Returns the saved manifest. */
-export async function addGeneratedManifestEntry(
-  app: App,
-  campaign: ParsedCampaign,
-  entry: ManifestEntry
-): Promise<GeneratedManifest> {
-  const { manifest } = await loadGeneratedManifest(app, campaign);
-  const next = withEntry(manifest, entry);
-  await saveGeneratedManifest(app, campaign, next);
-  return next;
-}
-
-/** Load → remove-by-id (many) → save. Returns removed entries (for the
- * `clear-area` log record) and the saved manifest. */
-export async function removeGeneratedManifestEntries(
-  app: App,
-  campaign: ParsedCampaign,
-  ids: string[]
-): Promise<{ manifest: GeneratedManifest; removed: ManifestEntry[] }> {
-  const { manifest } = await loadGeneratedManifest(app, campaign);
-  const idSet = new Set(ids);
-  const removed = manifest.entries.filter((e) => idSet.has(e.id));
-  let next = manifest;
-  for (const id of ids) next = withoutEntry(next, id);
-  await saveGeneratedManifest(app, campaign, next);
-  return { manifest: next, removed };
-}

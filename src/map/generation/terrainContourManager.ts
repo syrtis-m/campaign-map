@@ -136,16 +136,38 @@ export interface TerrainContourManagerOptions {
   sourceId: string;
   scaleMetersPerUnit: number;
   getMap: () => maplibregl.Map | null;
-  /** The composed field + digest + plain-data inputs (the DEM's own snapshot). */
-  getSnapshot: () => { digest: string; inputs: SerializableTerrainInputs } | null;
+  /** The composed field + digest + plain-data inputs (the DEM's own snapshot).
+   * `preview: true` marks an ephemeral terrain-draft snapshot (vertex drag):
+   * the relief-range recompute is skipped (the interval cap holds steady mid-
+   * drag) and the update proceeds against the draft inputs as usual. */
+  getSnapshot: () => { digest: string; inputs: SerializableTerrainInputs; preview?: boolean } | null;
   getWorker: () => Promise<GenerationWorkerClient | null>;
   /** LRU capacity in leaves (bounded per 036-B). Default 256. */
   maxLeaves?: number;
 }
 
+/** Leaf-key salt for grade-enabled districts: they move the terrain field but
+ * are not in the per-leaf intersection set (TERRAIN_INPUT_ALGORITHMS), so their
+ * edits must invalidate through the key salt instead. Mirrors the controller's
+ * `elevationDigest` grade filter. Empty when grading is off (the common case). */
+function gradedDistrictSalt(t: SerializableTerrainInputs): string {
+  if (!t.include.grade) return "";
+  const parts = t.features
+    .filter(
+      (f) =>
+        f.properties.kind === "district" &&
+        f.properties.procgen?.algorithm === "city" &&
+        (f.properties.procgen.params as Record<string, unknown> | undefined)?.grade === true
+    )
+    .map((f) => `${f.id}~${f.properties.procgen!.seed}~${JSON.stringify(f.properties.procgen!.params)}~${JSON.stringify(f.geometry.coordinates)}`)
+    .sort();
+  return parts.join("|");
+}
+
 export class TerrainContourManager {
   private engine: TerrainContourLeaves | null = null;
-  private engineKey: string | null = null; // digest + LOD signature the engine was built for
+  private engineKey: string | null = null; // LOD + field-global signature the engine was built for
+  private engineDigest: string | null = null; // full input digest last pushed into the engine
   private runId = 0;
   private readonly maxLeaves: number;
   // Relief range drives the contour-interval cap; it keys on the DURABLE inputs
@@ -187,7 +209,10 @@ export class TerrainContourManager {
     const maxYm = bounds.getNorth() * scale;
     const viewportMeters = Math.max(maxXm - minXm, maxYm - minYm);
     // Relief range for the interval cap — memoized per digest (durable inputs).
-    if (this.rangeDigest !== snapshot.digest) {
+    // Preview snapshots skip it: a mid-drag range wobble must not re-interval
+    // (and re-key) the whole engine, and the recompute is a main-thread grid
+    // sample per tick.
+    if (!snapshot.preview && this.rangeDigest !== snapshot.digest) {
       const t = snapshot.inputs;
       this.reliefRange = estimateReliefRange(t.features, {
         base: t.base,
@@ -198,18 +223,33 @@ export class TerrainContourManager {
     }
     const lod = contourLOD(viewportMeters, this.reliefRange);
 
-    const engineKey = `${snapshot.digest}|span${lod.tileSpan}|int${lod.interval}`;
+    const t = snapshot.inputs;
+    // Engine identity = LOD + the field-global inputs the constructor bakes in
+    // (base/seed/include/version). Feature edits do NOT rebuild the engine —
+    // they swap in via `setInputs`, keeping the leaf LRU so only the leaves the
+    // edit actually reaches retrace (perf, 2026-07-16; previously any terrain
+    // edit keyed the engine on the full digest and retraced every visible leaf).
+    const engineKey = `span${lod.tileSpan}|int${lod.interval}|${JSON.stringify({
+      base: t.base,
+      seed: t.campaignSeed,
+      include: t.include,
+    })}`;
+    const salt = gradedDistrictSalt(t);
     if (!this.engine || this.engineKey !== engineKey) {
-      const t = snapshot.inputs;
       this.engine = new TerrainContourLeaves(t.features, {
         base: t.base,
         campaignSeed: t.campaignSeed,
         include: t.include,
         maxLeaves: this.maxLeaves,
         inputMargin: Math.max(600, lod.tileSpan), // a stamp can reach ~a tile out
+        globalSalt: salt,
         ...lod,
       });
       this.engineKey = engineKey;
+      this.engineDigest = snapshot.digest;
+    } else if (this.engineDigest !== snapshot.digest) {
+      this.engine.setInputs(t.features, salt);
+      this.engineDigest = snapshot.digest;
     }
     const engine = this.engine;
     const inputs = snapshot.inputs;
@@ -268,6 +308,7 @@ export class TerrainContourManager {
   reset(): void {
     this.engine = null;
     this.engineKey = null;
+    this.engineDigest = null;
     this.rangeDigest = null;
     this.reliefRange = 0;
     this.runId++;

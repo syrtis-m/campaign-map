@@ -265,18 +265,3 @@ export function removeCachedTiles(app: App, campaignFolder: string, keys: string
   return Promise.all(ops).then(() => undefined);
 }
 
-/** Deleting the cache must be harmless — the next request just regenerates
- * (CLAUDE.md quality bar: "Deleting .mapcache/ must be harmless"). Removes every
- * cache shard (plus a leftover pre-032 monolith), leaving any sibling
- * `log.jsonl` / `dem.jsonl` untouched. */
-export async function clearGeneratedCache(app: App, campaignFolder: string): Promise<void> {
-  const dir = cacheDir(campaignFolder);
-  if (!(await app.vault.adapter.exists(dir))) return;
-  const listing = await app.vault.adapter.list(dir);
-  for (const filePath of listing.files) {
-    const base = basenameOf(filePath);
-    if (isCacheShard(base) || base === "generated.jsonl") {
-      await app.vault.adapter.remove(filePath);
-    }
-  }
-}

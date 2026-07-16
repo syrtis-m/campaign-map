@@ -231,9 +231,12 @@ export interface RenderSink {
   /** Repaint the `generated` source from the controller's render store. With a
    * `stage` (plan 032-D), repaint ONLY that DAG stage's features — the host
    * scopes an incremental `updateData` diff to it, so repaint cost scales with
-   * the changed stage, not the whole map. Omitted ⇒ full repaint (initial paint
-   * / replay). A batch fires one call per touched stage, upstream stage first. */
-  repaintGenerated(stage?: number): void;
+   * the changed stage, not the whole map. With a `regionId` too (2026-07-16),
+   * the diff narrows further to that ONE region's features — a vertex edit on
+   * one district no longer re-ships every same-stage region to the GPU.
+   * Omitted ⇒ full repaint (initial paint / replay). A batch fires one call per
+   * touched stage (or per touched region within it), upstream stage first. */
+  repaintGenerated(stage?: number, regionId?: string): void;
   /** Repaint the `fabric` source from the controller's fabric collection. */
   repaintFabric(): void;
   /** The pending-generation count changed (loading indicator). */
@@ -323,7 +326,9 @@ export class MapController {
    * the whole map (research P7). */
   private repaintBatchDepth = 0;
   /** Stages touched this batch (032-D); flushed upstream-first on batch exit. */
-  private dirtyStages = new Set<number>();
+  /** Batched repaint scope per touched stage: `null` = whole stage, else the
+   * set of touched region ids (2026-07-16 region-scoped repaint). */
+  private dirtyStages = new Map<number, Set<string> | null>();
   /** Per-region last-painted DAG stage. A params edit can MIGRATE a region's
    * params-aware stage (`dagRoleFor`) — park `city-park`↔`urban-park` re-homes
    * 2↔4. Generation force-drops the region's render keys and repaints only the
@@ -368,6 +373,10 @@ export class MapController {
       this.fabricCollection = emptyFabric();
       this.fabricLoadedFor = null;
       this.regionPaintedStage.clear();
+      this.regionMemo.clear(); // per-campaign feature ids — never serve region A's scan to campaign B
+      this.elevationSnapshotMemo = null;
+      this.previewSnapshotMemo = null;
+      this.terrainDraft = null;
       this.sessionCache = null; // drop the previous campaign's cache view
       // Race-audit item 5 (2026-07-15): the pending-work + badge sets are NOT
       // campaign-scoped state and MUST reset on a switch — otherwise campaign A's
@@ -409,36 +418,50 @@ export class MapController {
   }
 
   /** Repaint the generated layer. Inside a batch, defer — record the touched
-   * `stage` (or a full-repaint request) and flush on batch exit. Outside a
-   * batch it paints immediately, scoped to `stage` when given (032-D). */
-  private repaintGenerated(stage?: number): void {
+   * `stage` (whole-stage, or one region of it when `regionId` is given) and
+   * flush on batch exit. Outside a batch it paints immediately, scoped to
+   * `stage`/`regionId` when given (032-D; region scope 2026-07-16). */
+  private repaintGenerated(stage?: number, regionId?: string): void {
     if (this.repaintBatchDepth > 0) {
-      if (stage === undefined) this.pendingFullRepaint = true;
-      else this.dirtyStages.add(stage);
+      if (stage === undefined) {
+        this.pendingFullRepaint = true;
+      } else {
+        const cur = this.dirtyStages.get(stage);
+        if (regionId === undefined) {
+          this.dirtyStages.set(stage, null); // whole stage (absorbs any region set)
+        } else if (cur === undefined) {
+          this.dirtyStages.set(stage, new Set([regionId]));
+        } else if (cur !== null) {
+          cur.add(regionId);
+        } // cur === null: whole stage already dirty — region is covered
+      }
       return;
     }
-    this.host.render.repaintGenerated(stage);
+    this.host.render.repaintGenerated(stage, regionId);
   }
 
   /** Repaint a region at `newStage`, and — when its params-aware stage MIGRATED
    * since the last paint (a park's `city-park`→`urban-park` re-homes it 2→4, or
    * the reverse) — ALSO repaint the stage it was previously painted at, so that
    * stage's `updateData` diff (032-D) drops the now-migrated feature ids instead
-   * of ghosting them. Inside a forward-pass batch both stages coalesce into the
-   * per-stage flush; a same-stage repaint (the common, non-migrating case) fires
-   * exactly once. `dagRoleFor` is the one sanctioned stage read (registry
-   * §dagRole) — callers pass its result, never `algorithm.stage`. */
+   * of ghosting them. Both calls are REGION-scoped: only this region's features
+   * diff, never its same-stage siblings. Inside a forward-pass batch both stages
+   * coalesce into the per-stage flush; a same-stage repaint (the common,
+   * non-migrating case) fires exactly once. `dagRoleFor` is the one sanctioned
+   * stage read (registry §dagRole) — callers pass its result, never
+   * `algorithm.stage`. */
   private repaintRegionStage(regionId: string, newStage: number): void {
     const prev = this.regionPaintedStage.get(regionId);
-    if (prev !== undefined && prev !== newStage) this.repaintGenerated(prev);
+    if (prev !== undefined && prev !== newStage) this.repaintGenerated(prev, regionId);
     this.regionPaintedStage.set(regionId, newStage);
-    this.repaintGenerated(newStage);
+    this.repaintGenerated(newStage, regionId);
   }
 
   /** Run `fn` as one repaint batch: `repaintGenerated` calls inside collapse to
    * ONE paint PER TOUCHED STAGE on exit, upstream stage first (032-D) — or a
-   * single full paint if any caller asked for one. Reentrant (nested batches
-   * coalesce into the outermost). */
+   * single full paint if any caller asked for one; region-scoped calls within a
+   * stage collapse to one paint per touched region (a whole-stage request
+   * absorbs them). Reentrant (nested batches coalesce into the outermost). */
   private async withRepaintBatch<T>(fn: () => Promise<T>): Promise<T> {
     this.repaintBatchDepth++;
     try {
@@ -447,11 +470,17 @@ export class MapController {
       this.repaintBatchDepth--;
       if (this.repaintBatchDepth === 0) {
         const full = this.pendingFullRepaint;
-        const stages = [...this.dirtyStages].sort((a, b) => a - b);
+        const stages = [...this.dirtyStages.entries()].sort((a, b) => a[0] - b[0]);
         this.pendingFullRepaint = false;
         this.dirtyStages.clear();
-        if (full) this.host.render.repaintGenerated();
-        else for (const s of stages) this.host.render.repaintGenerated(s);
+        if (full) {
+          this.host.render.repaintGenerated();
+        } else {
+          for (const [s, regions] of stages) {
+            if (regions === null) this.host.render.repaintGenerated(s);
+            else for (const rid of regions) this.host.render.repaintGenerated(s, rid);
+          }
+        }
       }
     }
   }
@@ -539,6 +568,13 @@ export class MapController {
     return out;
   }
 
+  /** Memo for `stageOfRenderKey`'s region→stage resolution: the linear fabric
+   * scan per render key made every staged repaint O(keys × regions). The fabric
+   * collection is replaced by reference on any edit, so the reference is the
+   * invalidation signal. */
+  private stageMemoFabric: FabricCollection | null = null;
+  private readonly stageMemo = new Map<string, number>();
+
   /** The DAG stage a render-store key belongs to (032-D): a region key
    * (`region:<id>:…`) → its algorithm's stage; a world-tier key → `WORLD_STAGE`.
    * Drives staged repaint — a repaint scoped to one stage touches only that
@@ -546,11 +582,19 @@ export class MapController {
   private stageOfRenderKey(key: string): number {
     if (!key.startsWith("region:")) return MapController.WORLD_STAGE;
     const id = key.slice("region:".length).split(":")[0];
+    if (this.stageMemoFabric !== this.fabricCollection) {
+      this.stageMemo.clear();
+      this.stageMemoFabric = this.fabricCollection;
+    }
+    const hit = this.stageMemo.get(id);
+    if (hit !== undefined) return hit;
     const feature = this.fabricCollection.features.find((f) => f.id === id);
     const block = feature?.properties.procgen;
     const algo = block ? algorithmById(block.algorithm) : undefined;
     // Params-aware (plan 035): a park's urban-park variety renders at stage 4.
-    return algo && block ? dagRoleFor(algo, block.params).stage : MapController.WORLD_STAGE;
+    const stage = algo && block ? dagRoleFor(algo, block.params).stage : MapController.WORLD_STAGE;
+    this.stageMemo.set(id, stage);
+    return stage;
   }
 
   /** Display-space generated features grouped by DAG stage (032-D) — the host
@@ -580,6 +624,25 @@ export class MapController {
     const scale = this.campaign.config.scaleMetersPerUnit;
     const out: GeoJSON.Feature[] = [];
     for (const [key, feats] of this.loadedTiles) {
+      if (this.stageOfRenderKey(key) !== stage) continue;
+      feats.forEach((f, i) => out.push(this.renderFeature(key, i, f, scale)));
+    }
+    return out;
+  }
+
+  /** Display-space generated features for ONE region at `stage` (2026-07-16
+   * region-scoped repaint) — the host diffs just this region via `updateData`,
+   * so a vertex edit ships one region's features to the GPU, not every
+   * same-stage sibling. The stage check matters for the migration double-paint:
+   * a region repainted at its OLD stage returns [] here (its keys now resolve
+   * to the new stage), so the old stage's diff drops the migrated ids. */
+  displayGeneratedForRegion(stage: number, regionId: string): GeoJSON.Feature[] {
+    if (!this.campaign) return [];
+    const scale = this.campaign.config.scaleMetersPerUnit;
+    const prefix = `region:${regionId}:`;
+    const out: GeoJSON.Feature[] = [];
+    for (const [key, feats] of this.loadedTiles) {
+      if (!key.startsWith(prefix)) continue;
       if (this.stageOfRenderKey(key) !== stage) continue;
       feats.forEach((f, i) => out.push(this.renderFeature(key, i, f, scale)));
     }
@@ -662,9 +725,34 @@ export class MapController {
    * `corridorMaxOffset(params)`, so the generator reads
    * `region.spine` and containment is spine-aware. A block-less line is not a
    * region (a plain inert river) → null. */
+  /** Memo for `buildRegionFromFeature`: `makeRegion`'s interior-distance scan
+   * walks a fixed 10 m lattice over the region bbox (determinism-pinned — its
+   * output feeds generators), which is ~2.5 s for a campaign-sized ring like
+   * Cradle's island coastline. The fingerprint pass rebuilds EVERY region per
+   * pass and click hit-testing rebuilds per click, so uncached this dominated
+   * the whole edit cascade (measured 2026-07-16: ~9 s of a 10 s edit).
+   * Geometry objects are replaced immutably on any edit, so (geometry ref,
+   * params ref, scale) is a sound identity — only the edited feature rebuilds. */
+  private readonly regionMemo = new Map<
+    string,
+    { geom: FabricFeature["geometry"]; params: unknown; scale: number; region: ProcgenRegion | null }
+  >();
+
   buildRegionFromFeature(feature: FabricFeature): ProcgenRegion | null {
     if (!this.campaign) return null;
     const scale = this.campaign.config.scaleMetersPerUnit;
+    // Corridor half-width depends on params (line kinds), so params identity is
+    // part of the key; polygon regions ignore params but the extra check only
+    // costs a false miss.
+    const params = feature.properties.procgen?.params;
+    const hit = this.regionMemo.get(feature.id);
+    if (hit && hit.geom === feature.geometry && hit.params === params && hit.scale === scale) return hit.region;
+    const region = this.buildRegionUncached(feature, scale);
+    this.regionMemo.set(feature.id, { geom: feature.geometry, params, scale, region });
+    return region;
+  }
+
+  private buildRegionUncached(feature: FabricFeature, scale: number): ProcgenRegion | null {
     const g = feature.geometry;
     if (g.type === "Polygon") {
       const ring = g.coordinates[0].map(
@@ -964,6 +1052,17 @@ export class MapController {
         return [];
       }
       this.needsAdoption.delete(feature.id);
+    }
+    // Zero-fabric algorithms (relief/landform — the FIELD is the product;
+    // registry declares `tileGeneratorIds: []` and `generate()` returns [])
+    // have nothing to compute, cache, or clip: skip the per-tile worker
+    // round-trips and empty cache writes entirely (2026-07-16 — the empty
+    // relief root job sat at priority 0 ahead of the DEM tiles the GM was
+    // actually waiting on). The stage repaint still fires so the
+    // terrain-refresh chokepoint observes the digest move.
+    if (algorithm.tileGeneratorIds.length === 0) {
+      this.repaintRegionStage(region.id, dagRoleFor(algorithm, block.params).stage);
+      return [];
     }
     this.pendingGenerations++;
     this.host.render.loadingChanged();
@@ -2618,6 +2717,12 @@ export class MapController {
     if (!base || !block) return false;
     const algorithm = algorithmById(block.algorithm);
     if (!algorithm || this.isPinnedOld(block, algorithm)) return false;
+    // Zero-fabric algorithms (relief/landform — `tileGeneratorIds: []`): there
+    // is no vector network to preview; the live preview surface for terrain
+    // stamps is the draft-elevation contour refresh (`setTerrainPreview`).
+    // Before ANY draft-region build — `makeRegion`'s interior scan on a
+    // campaign-sized ring is seconds of main-thread work per tick.
+    if (algorithm.tileGeneratorIds.length === 0) return true;
     const draft: FabricFeature = { ...base, geometry };
     const region = this.buildRegionFromFeature(draft);
     if (!region) return false;
@@ -2679,6 +2784,73 @@ export class MapController {
     return true;
   }
 
+  // ─── Ephemeral terrain-draft preview (2026-07-16) ────────────────────────
+  // A vertex drag on a terrain stamp previews through the ELEVATION field: the
+  // draft geometry substitutes into a preview-only elevation snapshot that the
+  // contour manager reads (leaf keys scope the retrace to the tiles the stamp
+  // touches). Strictly ephemeral: no cache append, no log, no DEM bust — the
+  // durable digest (`campaignElevationDigest`) never sees the draft, so the
+  // terrain-refresh chokepoint stays quiet until the real commit.
+
+  /** Terrain-stamp algorithms whose geometry moves the composed field. */
+  private static readonly TERRAIN_STAMP_ALGORITHMS = new Set(["mountain", "relief", "landform", "river"]);
+
+  private terrainDraft: { featureId: string; geometry: FabricGeometry; fabricRef: FabricCollection } | null = null;
+  private previewSnapshotMemo: {
+    field: ElevationField;
+    digest: string;
+    inputs: SerializableTerrainInputs;
+    preview: true;
+  } | null = null;
+
+  /** Stage a draft geometry as the elevation preview. Returns true when the
+   * feature is a terrain stamp (the caller should refresh contours); false ⇒
+   * not terrain-affecting, nothing staged. */
+  setTerrainPreview(featureId: string, geometry: FabricGeometry): boolean {
+    const feature = this.fabricCollection.features.find((f) => f.id === featureId);
+    const alg = feature?.properties.procgen?.algorithm;
+    if (!alg || !MapController.TERRAIN_STAMP_ALGORITHMS.has(alg)) return false;
+    this.terrainDraft = { featureId, geometry, fabricRef: this.fabricCollection };
+    return true;
+  }
+
+  /** Drop the draft. Returns true when one was actually staged (the caller
+   * should refresh contours back to the durable surface). A commit clears it
+   * implicitly too: the draft pins the fabric collection it was staged against,
+   * so any durable edit (which replaces the collection) invalidates it. */
+  clearTerrainPreview(): boolean {
+    const had = this.terrainDraft !== null;
+    this.terrainDraft = null;
+    return had;
+  }
+
+  /** The draft-substituted elevation snapshot, or null when no live draft.
+   * `preview: true` tells the contour manager to skip the relief-range
+   * recompute (the interval cap holds steady during a drag). */
+  campaignPreviewElevationSnapshot(): {
+    field: ElevationField;
+    digest: string;
+    inputs: SerializableTerrainInputs;
+    preview: true;
+  } | null {
+    const draft = this.terrainDraft;
+    if (!draft || draft.fabricRef !== this.fabricCollection) return null;
+    const inp = this.elevationInputs({ featureId: draft.featureId, geometry: draft.geometry });
+    if (!inp) return null;
+    const { feats, base, gradeEnabled, campaignSeed } = inp;
+    const digest = this.elevationDigest(feats, base, gradeEnabled, campaignSeed);
+    if (this.previewSnapshotMemo?.digest === digest) return this.previewSnapshotMemo;
+    const include = { relief: true, landform: true, carve: true, grade: gradeEnabled };
+    const field = terrainAt(feats, { base, campaignSeed, include });
+    this.previewSnapshotMemo = {
+      field,
+      digest,
+      inputs: { features: feats, base, campaignSeed, include },
+      preview: true,
+    };
+    return this.previewSnapshotMemo;
+  }
+
   /** Discard an uncommitted preview: re-serve the region's DURABLE state from
    * its cache (fresh fp ⇒ pure re-clip, zero generator runs). Used when a drag
    * is abandoned; a commit clears the preview by overwriting it instead. */
@@ -2708,6 +2880,9 @@ export class MapController {
 
   /** The one commit path for a whole-feature sketch edit (geometry OR name). */
   async commitSketchEdit(before: FabricFeature, after: FabricFeature, opts: { debounce: boolean }): Promise<boolean> {
+    // The durable edit supersedes any live terrain-draft preview (belt — the
+    // draft's fabric-collection pin is the suspenders).
+    this.terrainDraft = null;
     if (!this.campaign) return false;
     const campaign = this.campaign;
     await this.loadFabric();
@@ -3075,7 +3250,7 @@ export class MapController {
    * (which additionally composes the field) and `campaignElevationDigest` (which
    * fingerprints them WITHOUT paying the field construction). `null` when no
    * campaign is loaded. */
-  private elevationInputs(): {
+  private elevationInputs(substitute?: { featureId: string; geometry: FabricGeometry }): {
     feats: FabricFeature[];
     base: TerrainBaseParams;
     gradeEnabled: boolean;
@@ -3083,9 +3258,10 @@ export class MapController {
   } | null {
     if (!this.campaign) return null;
     const scale = this.campaign.config.scaleMetersPerUnit;
-    const feats = this.regionFeatures().map(
-      (f) => transformFeatureUnits(f, (n) => unitsToMeters(n, scale)) as FabricFeature
-    );
+    const feats = this.regionFeatures().map((f) => {
+      const src = substitute && f.id === substitute.featureId ? { ...f, geometry: substitute.geometry } : f;
+      return transformFeatureUnits(src, (n) => unitsToMeters(n, scale)) as FabricFeature;
+    });
     return {
       feats,
       base: this.terrainBase(),
@@ -3108,6 +3284,17 @@ export class MapController {
     return this.elevationDigest(inp.feats, inp.base, inp.gradeEnabled, inp.campaignSeed);
   }
 
+  /** Memo for `campaignElevationSnapshot`, keyed by the composed digest — the
+   * snapshot is re-read per DEM tile request and per contour update, and
+   * `terrainAt`'s setup (river centerline resample, occupancy grid, per-stamp
+   * hashes) is the expensive part. The digest covers every field-moving input,
+   * so a hit is byte-identical by construction. */
+  private elevationSnapshotMemo: {
+    field: ElevationField;
+    digest: string;
+    inputs: SerializableTerrainInputs;
+  } | null = null;
+
   campaignElevationSnapshot(): {
     field: ElevationField;
     digest: string;
@@ -3119,10 +3306,12 @@ export class MapController {
     const inp = this.elevationInputs();
     if (!inp) return null;
     const { feats, base, gradeEnabled, campaignSeed } = inp;
+    const digest = this.elevationDigest(feats, base, gradeEnabled, campaignSeed);
+    if (this.elevationSnapshotMemo?.digest === digest) return this.elevationSnapshotMemo;
     const include = { relief: true, landform: true, carve: true, grade: gradeEnabled };
     const field = terrainAt(feats, { base, campaignSeed, include });
-    const digest = this.elevationDigest(feats, base, gradeEnabled, campaignSeed);
-    return { field, digest, inputs: { features: feats, base, campaignSeed, include } };
+    this.elevationSnapshotMemo = { field, digest, inputs: { features: feats, base, campaignSeed, include } };
+    return this.elevationSnapshotMemo;
   }
 
   /** Fingerprint the composed-terrain inputs: the id-sorted digest of every

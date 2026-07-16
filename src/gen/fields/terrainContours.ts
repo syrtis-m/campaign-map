@@ -16,7 +16,7 @@
  * function of the durable sketch layer, so a leaf is a pure memo.
  */
 import { marchingSquares } from "./marchingSquares";
-import { terrainAt, DEFAULT_TERRAIN_BASE, type TerrainBaseParams, type TerrainOptions } from "./terrain";
+import { terrainAt, terrainStampSupport, DEFAULT_TERRAIN_BASE, type TerrainBaseParams, type TerrainOptions } from "./terrain";
 import type { BBox } from "../spatialHash";
 import type { FabricFeature } from "../../model/fabric";
 
@@ -131,6 +131,12 @@ export interface TerrainContourOptions {
    * change its contours (falloff bands / carve gorges). Any input within this
    * margin is in the tile's cache key. Default 600. */
   inputMargin?: number;
+  /** Salt folded into every leaf's cache key for the terrain inputs a per-leaf
+   * intersection test can't see: base params, campaign seed, field version,
+   * grade-enabled districts. When it changes, every leaf's key mismatches and
+   * retraces; when only a stamp's geometry changes, only the leaves that stamp
+   * intersects retrace. Default "". */
+  globalSalt?: string;
 }
 
 interface Leaf {
@@ -163,9 +169,11 @@ function inputDigest(f: FabricFeature): string {
 }
 
 export class TerrainContourLeaves {
-  private readonly opts: Required<Omit<TerrainContourOptions, "include">>;
-  private readonly field: (x: number, y: number) => { v: number };
-  private readonly inputs: { feature: FabricFeature; bbox: BBox }[];
+  private readonly opts: Required<Omit<TerrainContourOptions, "include" | "globalSalt">>;
+  private readonly include: TerrainOptions["include"];
+  private field: (x: number, y: number) => { v: number };
+  private inputs: { feature: FabricFeature; bbox: BBox; reach: number }[];
+  private globalSalt: string;
   private readonly leaves = new Map<string, Leaf>();
   private readonly inflight = new Map<string, Promise<GeoJSON.Feature[]>>();
   computedLeaves = 0;
@@ -184,11 +192,48 @@ export class TerrainContourLeaves {
       maxLeaves: Math.max(1, opts.maxLeaves),
       inputMargin: opts.inputMargin ?? 600,
     };
+    this.include = opts.include;
+    this.globalSalt = opts.globalSalt ?? "";
+    const built = this.buildFieldAndInputs(features);
+    this.field = built.field;
+    this.inputs = built.inputs;
+  }
+
+  private buildFieldAndInputs(features: FabricFeature[] | undefined): {
+    field: (x: number, y: number) => { v: number };
+    inputs: { feature: FabricFeature; bbox: BBox; reach: number }[];
+  } {
     const feats = features ?? [];
-    this.field = terrainAt(feats, { base: this.opts.base, campaignSeed: this.opts.campaignSeed, include: opts.include });
-    this.inputs = feats
-      .filter((f) => f.properties.procgen && TERRAIN_INPUT_ALGORITHMS.has(f.properties.procgen.algorithm))
-      .map((f) => ({ feature: f, bbox: bboxOf(f) }));
+    return {
+      field: terrainAt(feats, { base: this.opts.base, campaignSeed: this.opts.campaignSeed, include: this.include }),
+      inputs: feats
+        .filter((f) => f.properties.procgen && TERRAIN_INPUT_ALGORITHMS.has(f.properties.procgen.algorithm))
+        // Per-stamp reach where the field defines one (relief: halfWidth+apron,
+        // exact; inverted-sea landform: Infinity, global) — the same byte-exact
+        // bound the per-tile DEM digest trusts. The blanket `inputMargin`
+        // covers the rest (rivers): it both over-invalidated (an edit dirtied
+        // every leaf within a whole tile-span) and under-invalidated (a stamp
+        // reaching FARTHER than a tile-span never dirtied its far leaves).
+        .map((f) => ({ feature: f, bbox: bboxOf(f), reach: terrainStampSupport(f) ?? this.opts.inputMargin })),
+    };
+  }
+
+  /**
+   * Swap the durable terrain inputs in place, KEEPING the leaf LRU (perf,
+   * 2026-07-16: the manager used to rebuild the whole engine on any terrain
+   * edit, retracing every visible leaf — ~20 on Cradle — when the per-leaf
+   * `tileKey` already scopes invalidation to the tiles the edit reaches).
+   * Leaves whose intersecting inputs (and the global salt) are unchanged keep
+   * matching keys and serve as-is; only touched leaves retrace against the new
+   * field. Base/seed/interval changes must NOT come through here — those change
+   * either the `globalSalt` (all keys mismatch ⇒ full retrace, correct) or the
+   * LOD (the manager rebuilds the engine).
+   */
+  setInputs(features: FabricFeature[] | undefined, globalSalt: string): void {
+    const built = this.buildFieldAndInputs(features);
+    this.field = built.field;
+    this.inputs = built.inputs;
+    this.globalSalt = globalSalt;
   }
 
   get leafCount(): number {
@@ -206,10 +251,10 @@ export class TerrainContourLeaves {
     const tile = this.tileBBox(tx, ty);
     const hits: string[] = [];
     for (const inp of this.inputs) {
-      if (bboxIntersects(inp.bbox, tile, this.opts.inputMargin)) hits.push(inputDigest(inp.feature));
+      if (bboxIntersects(inp.bbox, tile, inp.reach)) hits.push(inputDigest(inp.feature));
     }
     hits.sort();
-    return `${tx}:${ty}|${hits.join("|")}`;
+    return `${tx}:${ty}|${this.globalSalt}|${hits.join("|")}`;
   }
 
   /**
@@ -265,7 +310,11 @@ export class TerrainContourLeaves {
     } finally {
       this.inflight.delete(inflightKey);
     }
-    this.store(mapKey, key, features);
+    // `setInputs` may have swapped the field while this trace was in flight —
+    // storing then would shadow the up-to-date leaf under a stale key. Return
+    // the (stale) features to this caller (the manager's runId guard drops a
+    // superseded paint) but only cache when the key is still current.
+    if (this.tileKey(tx, ty) === key) this.store(mapKey, key, features);
     return { features, cached: false };
   }
 

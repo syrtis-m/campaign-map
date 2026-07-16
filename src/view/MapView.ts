@@ -321,8 +321,8 @@ export class MapView extends ItemView {
         confirm: (message) => this.confirmDialog(message),
       },
       render: {
-        repaintGenerated: (stage?: number) => {
-          this.refreshGeneratedSource(stage);
+        repaintGenerated: (stage?: number, regionId?: string) => {
+          this.refreshGeneratedSource(stage, regionId);
           // Terrain-refresh chokepoint: a generated repaint that moved the
           // elevation field (a terrain stamp created / re-rolled / adopted) busts
           // the DEM + refreshes contours; a pure city repaint is a cheap no-op.
@@ -725,6 +725,11 @@ export class MapView extends ItemView {
       scaleMetersPerUnit: campaign.config.scaleMetersPerUnit,
       getMap: () => this.map,
       getSnapshot: () => {
+        // A live terrain-draft preview (vertex drag on a stamp) supersedes the
+        // durable surface for CONTOURS only — the DEM provider keeps reading
+        // the durable snapshot, so no draft bytes ever reach dem.jsonl.
+        const pre = this.controller.campaignPreviewElevationSnapshot();
+        if (pre) return { digest: pre.digest, inputs: pre.inputs, preview: true };
         const snap = this.controller.campaignElevationSnapshot();
         return snap ? { digest: snap.digest, inputs: snap.inputs } : null;
       },
@@ -851,7 +856,9 @@ export class MapView extends ItemView {
     // Global terrain contours are viewport-keyed (LOD by zoom); recompute the
     // touched tiles once the camera settles (coalesced + off-thread).
     this.map.on("moveend", () => this.refreshTerrainContours());
-    this.map.on("move", () => this.updateScaleBar());
+    // Scale bar depends only on zoom — binding it to `move` wrote the same
+    // text/width to the DOM every pan frame (style-recalc churn for nothing);
+    // the `zoom` binding below covers every case that actually changes it.
     this.map.on("zoom", () => {
       this.updateScaleBar();
       this.updateFocusReadout();
@@ -1370,7 +1377,7 @@ export class MapView extends ItemView {
    * and re-seeds the per-stage id tracking. Visual judgment of the staged path
    * is deferred to normal app use (plan 032 §2, headless-only verification).
    */
-  private refreshGeneratedSource(stage?: number): void {
+  private refreshGeneratedSource(stage?: number, regionId?: string): void {
     if (!this.map || !this.campaign) return;
     const source = this.map.getSource("generated") as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
@@ -1394,8 +1401,23 @@ export class MapView extends ItemView {
       this.paintGeneratedFull(source);
       return;
     }
-    const feats = this.controller.displayGeneratedForStage(stage);
     const oldIds = this.paintedStageIds.get(stage) ?? new Set<string | number>();
+    if (regionId !== undefined) {
+      // Region-scoped diff (2026-07-16): remove only THIS region's previous
+      // features, add its current ones — same-stage siblings never re-ship.
+      // Render ids are tile-key-namespaced `region:<id>:x:y#i`, so the region's
+      // prior ids are recoverable from the stage tracking by prefix.
+      const prefix = `region:${regionId}:`;
+      const remove = [...oldIds].filter((id) => String(id).startsWith(prefix));
+      const feats = this.controller.displayGeneratedForRegion(stage, regionId);
+      source.updateData({ remove, add: feats });
+      const next = new Set(oldIds);
+      for (const id of remove) next.delete(id);
+      for (const f of feats) next.add(f.id as string | number);
+      this.paintedStageIds.set(stage, next);
+      return;
+    }
+    const feats = this.controller.displayGeneratedForStage(stage);
     // Remove the stage's previous features, add its current ones — other stages'
     // features in the source are untouched.
     source.updateData({ remove: [...oldIds], add: feats });
@@ -1880,6 +1902,9 @@ export class MapView extends ItemView {
       }
       this.map.doubleClickZoom.enable();
       this.pencilBtnEl?.toggleClass("is-active", false);
+      // A drag abandoned mid-preview leaves a terrain draft staged — restore
+      // the durable contour surface on mode exit.
+      if (this.controller.clearTerrainPreview()) this.refreshTerrainContours();
       return;
     }
     this.sketchMode = true;
@@ -1895,6 +1920,7 @@ export class MapView extends ItemView {
           window.clearTimeout(this.sketchPreviewTimer);
           this.sketchPreviewTimer = null;
         }
+        this.controller.clearTerrainPreview();
         void this.controller.commitGeometryEdit(featureId, geometry, { debounce: true });
         // Replace-over-add advisory: a landform whose (edited) ring now covers a
         // mountain/relief add-stamp flattens it — warn against the new geometry
@@ -1947,6 +1973,13 @@ export class MapView extends ItemView {
         if (this.sketchPreviewTimer !== null) window.clearTimeout(this.sketchPreviewTimer);
         this.sketchPreviewTimer = window.setTimeout(() => {
           this.sketchPreviewTimer = null;
+          // Terrain stamps (relief/landform/mountain/river) additionally
+          // preview through the ELEVATION field: the draft geometry feeds an
+          // ephemeral snapshot the contour manager traces, so the topo lines
+          // follow the drag (2026-07-16). No DEM bust — 3D settles on release.
+          if (this.controller.setTerrainPreview(featureId, geometry)) {
+            this.refreshTerrainContours();
+          }
           void this.controller.previewRegionGeometry(featureId, geometry);
         }, 250);
       },
@@ -2331,10 +2364,15 @@ export class MapView extends ItemView {
    * mode exit / onClose so it can never fire after teardown. */
   private armSketchRegen(): void {
     if (this.sketchAutoBuildTimer !== null) window.clearTimeout(this.sketchAutoBuildTimer);
+    // 100 ms (was 400, 2026-07-16): the arming events are DISCRETE (a drag
+    // release, a finished shape), not per-frame, so the window only needs to
+    // coalesce a rapid burst of commits — `runForwardPass`'s passChain already
+    // serializes overlapping passes. 400 ms was pure dead time on the
+    // edit-to-repaint path.
     this.sketchAutoBuildTimer = window.setTimeout(() => {
       this.sketchAutoBuildTimer = null;
       void this.controller.flushSketchRegen();
-    }, 400);
+    }, 100);
   }
 
   /** Debounced external-fabric reload (vault-as-source-of-truth). Sync writes

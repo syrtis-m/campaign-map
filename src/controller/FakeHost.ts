@@ -133,6 +133,10 @@ export class FakeHost {
    * a staged repaint, "all" for a full one. A batch fires one entry per touched
    * stage, upstream-first — the staged-repaint assertion surface. */
   readonly repaintGeneratedStages: (number | "all")[] = [];
+  /** The region scope of each `repaintGenerated` call, index-aligned with
+   * `repaintGeneratedStages`: a region id for a region-scoped diff
+   * (2026-07-16), "stage" for a whole-stage or full repaint. */
+  readonly repaintGeneratedRegions: (string | "stage")[] = [];
   repaintFabricCount = 0;
   regenArmedCount = 0;
   /** External-fabric reload arms (mirrors `regenArmedCount`): every
@@ -200,9 +204,10 @@ export class FakeHost {
         },
       },
       render: {
-        repaintGenerated: (stage?: number) => {
+        repaintGenerated: (stage?: number, regionId?: string) => {
           this.repaintGeneratedCount++;
           this.repaintGeneratedStages.push(stage ?? "all");
+          this.repaintGeneratedRegions.push(regionId ?? "stage");
           this.onAnyRepaint?.();
         },
         repaintFabric: () => {

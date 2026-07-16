@@ -683,11 +683,15 @@ anchors name the owner.
 **The moving parts, once.** Four independent debounce timers live on the *view*
 (`MapView`), armed via the controller's render sink so the pure controller owns no
 `window`: **preview** 250 ms (`sketchPreviewTimer`, MapView:1907), **sketch-regen flush**
-400 ms (`armSketchRegen`, MapView:2293), **external-fabric reload** 500 ms
-(`armFabricReload`, MapView:2304), plus MapLibre's own `moveend` → contour refresh
-(MapView:852). One **generation worker** (single-threaded, `maxInFlight = 1`) serves a
+**100 ms** (`armSketchRegen` — dropped from 400 ms 2026-07-16: the arming events are
+discrete releases, not keystrokes; `passChain` already coalesces overlapping passes),
+**external-fabric reload** 500 ms (`armFabricReload`), plus MapLibre's own `moveend` →
+contour refresh (MapView:852). One **generation worker** (single-threaded,
+`maxInFlight = 2` — one computing + one queued worker-side, so a congested main thread
+can't stall the worker between jobs; 2026-07-16, was 1) serves a
 **priority queue** (`workerClient.ts`): `procgen-region` = 0 (a GM edit — preempts the
-backlog) > `dem-tile` / world-tile = 1 > `contour-leaf` = 2, FIFO within a priority. One
+queued backlog at the next slot, waiting behind at most the two posted jobs) >
+`dem-tile` / world-tile = 1 > `contour-leaf` = 2, FIFO within a priority. One
 **persistent cache view** per campaign open (`sessionCache`, read from disk once, mutated
 through `.set`/`.delete` — MapController:450) backs the vector `generated.jsonl`; a
 **separate** `dem.jsonl` view (WeakMap-per-`App`, `demCache.ts`) backs the DEM lattice.
@@ -826,9 +830,20 @@ The per-frame vs. on-release split is the whole performance story of dragging.
   debounce paints **only the root region** via `previewRegionGeometry` (MapController:2512)
   — ephemeral render state, **no cache append, no fingerprint, no downstream, no log**. On
   **release** → `onGeometryEdit` cancels the preview timer and runs `commitGeometryEdit`
-  with `{ debounce: true }` → the 400 ms flush → **one** full `runForwardPass` (root +
+  with `{ debounce: true }` → the 100 ms flush → **one** full `runForwardPass` (root +
   transitive downstream). A pinned-old region previews nothing (consent belongs to the
   commit path).
+- **Terrain-stamp drag preview (2026-07-16)**: for terrain stamps
+  (mountain/relief/landform/river) the same preview tick ALSO stages the draft geometry as
+  an ephemeral elevation override (`setTerrainPreview`, MapController) and refreshes the
+  contour surface against it — the topo lines follow the drag live (~100 ms/tick on
+  Cradle). The draft feeds ONLY the contour manager's snapshot (`preview: true` skips the
+  relief-range recompute); the DEM provider keeps reading the durable snapshot, so no
+  draft bytes reach `dem.jsonl` and no `setTiles` bust fires mid-drag — 3D/hillshade
+  settles on release. The draft pins the fabric collection it was staged against, so any
+  durable edit auto-invalidates it; commit/mode-exit clear it explicitly. Zero-fabric
+  algorithms (relief/landform, `tileGeneratorIds: []`) skip the vector preview entirely —
+  contours ARE their preview.
 - **Extrude-height grip** (relief/landform): a **screen-space DOM overlay** grip
   (`9c40c9e` — vertical at any pitch). Per frame → `onHeightDrag` shows only a ±m readout
   (**no regen**). Release → `onHeightCommit` (MapView:1872) maps the signed value to params
@@ -930,8 +945,16 @@ were invisible until campaign switch/reload).
 | Cost-cap budget / weights | 24 / cheap 1, medium 2, expensive 4 (city) | MapController:1220 |
 | Cache-cost win (per-region shards) | fixture city 55 tile records → 1 network shard (~721 KB); ~170 MB/17 regions was the clip-record bulk | plan 032 |
 | Contour per-settle cap / leaf LRU | `MAX_TILES_PER_UPDATE` 96 / 256 leaves | terrainContourManager.ts |
+| **Relief vertex edit → contours repainted, Cradle, 3D on** (2026-07-16 arc) | **22.1 s → 0.40 s** (56×); worst main-thread task 8.9 s → 0.13 s | this table's five rows below |
+| `makeRegion` interior scan, campaign-sized ring (island coastline) | ~2.5 s/build; fingerprint pass rebuilt ALL 22 regions ×2/edit ⇒ the 9 s main-thread block; fixed by geometry-identity memo (`MapController.regionMemo`) — scan itself unchanged (determinism-pinned) | 2026-07-16 |
+| Composed-field sample, Cradle (island ring + carve) | 43.4 → **6.2 µs** (7×, checksum-identical): coarse ring classifier gives O(1) byte-exact fast paths deep inside/outside the ring (`buildRingClassifier`, terrain.ts) | 2026-07-16 |
+| Contour engine on terrain edit | whole-LRU rebuild (every visible leaf retraced) → in-place `setInputs`, per-leaf keys + per-stamp reach (`terrainStampSupport`) ⇒ ~4 leaves retrace | terrainContourManager.ts, 2026-07-16 |
+| Worker terrain-field rebuild per dem/contour job | ~200–500 ms/job × ~30 jobs/edit → digest-keyed field memo (worker `fieldMemo`, main-thread `elevationSnapshotMemo`) | generationWorker.ts, 2026-07-16 |
+| Staged repaint payload | whole stage (~4.5 k features for Cradle's 4 districts) per edit/preview tick → region-scoped `updateData` diff | MapController/MapView, 2026-07-16 |
 
-Disproven-in-passing (don't re-chase): field-rebuild-per-job (~1%), payload clone (~0.1 ms).
+Disproven-in-passing (don't re-chase): payload clone (~0.1 ms). Superseded: the old
+"field-rebuild-per-job ~1%" figure was measured on 256² DEM tiles — for 625-sample
+contour leaves the rebuild DOMINATED (hence the worker field memo above).
 
 ### 13.12 Hazard patterns (each with its precedent fix)
 

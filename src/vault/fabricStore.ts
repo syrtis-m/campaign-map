@@ -42,29 +42,3 @@ export async function saveFabric(
   await app.vault.adapter.write(fabricPath(campaign), JSON.stringify(fabric, null, 2));
 }
 
-/** Load → append (replace-by-id) → save. Returns the saved collection. */
-export async function addFabricFeature(
-  app: App,
-  campaign: ParsedCampaign,
-  feature: FabricFeature
-): Promise<FabricCollection> {
-  const { fabric } = await loadFabric(app, campaign);
-  const next = withFeature(fabric, feature);
-  await saveFabric(app, campaign, next);
-  return next;
-}
-
-/** Load → remove-by-id → save. Returns the removed feature (for undo's
- * `sketch-remove` log entry) or null if the id wasn't present. */
-export async function removeFabricFeature(
-  app: App,
-  campaign: ParsedCampaign,
-  id: string
-): Promise<{ fabric: FabricCollection; removed: FabricFeature | null }> {
-  const { fabric } = await loadFabric(app, campaign);
-  const removed = fabric.features.find((f) => f.id === id) ?? null;
-  if (!removed) return { fabric, removed: null };
-  const next = withoutFeature(fabric, id);
-  await saveFabric(app, campaign, next);
-  return { fabric: next, removed };
-}

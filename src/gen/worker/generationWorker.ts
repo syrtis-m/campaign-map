@@ -147,9 +147,35 @@ export interface GenerationResponse {
 /** Rebuild the composed campaign terrain field from the plain-data inputs — the
  * SINGLE reconstruct shared by the worker dispatch and the round-trip test, and
  * byte-matched to the main thread's `terrainAt` call in
- * `campaignElevationSnapshot`. Pure/deterministic. */
+ * `campaignElevationSnapshot`. Pure/deterministic.
+ *
+ * MEMOIZED across jobs: one edit fans out to dozens of dem-tile/contour-leaf
+ * jobs carrying byte-identical inputs, and `terrainAt`'s setup (river centerline
+ * resample, spine-clearance occupancy grid, per-stamp segment hashes) costs
+ * hundreds of ms — measured 2026-07-16 on Cradle: ~200–500 ms of every leaf
+ * job was field rebuild. Reusing the closure is byte-safe because a `terrainAt`
+ * field is a pure function of its inputs (no per-call state). Tiny LRU (not
+ * size-1) so a drag preview's draft inputs and the durable inputs can coexist
+ * without thrashing. */
+const FIELD_MEMO_MAX = 4;
+const fieldMemo = new Map<string, ElevationField>();
+
 export function terrainFieldFromInputs(t: SerializableTerrainInputs): ElevationField {
-  return terrainAt(t.features, { base: t.base, campaignSeed: t.campaignSeed, include: t.include });
+  const key = JSON.stringify(t);
+  const hit = fieldMemo.get(key);
+  if (hit) {
+    fieldMemo.delete(key); // LRU touch
+    fieldMemo.set(key, hit);
+    return hit;
+  }
+  const field = terrainAt(t.features, { base: t.base, campaignSeed: t.campaignSeed, include: t.include });
+  fieldMemo.set(key, field);
+  while (fieldMemo.size > FIELD_MEMO_MAX) {
+    const oldest = fieldMemo.keys().next().value;
+    if (oldest === undefined) break;
+    fieldMemo.delete(oldest);
+  }
+  return field;
 }
 
 /**

@@ -60,10 +60,17 @@ export class GenerationWorkerClient {
   private queue: QueuedJob[] = [];
   private inFlight = 0;
   private seqCounter = 0;
-  /** The worker is single-threaded, so 1-in-flight gives STRICT priority order at
-   * a negligible inter-job postMessage round-trip (sub-ms vs 50–450 ms jobs) and
-   * never leaves a lower-priority job blocking a higher one that arrives mid-burst. */
-  private readonly maxInFlight = 1;
+  /** In-flight window 2 (was 1, 2026-07-16): the "sub-ms round-trip" the old
+   * 1-in-flight comment assumed only holds when the MAIN thread is idle — the
+   * next job is dispatched from `onmessage`, so during an edit cascade (MapLibre
+   * mesh rebuild, PNG encodes, repaints hogging the main thread) each job
+   * boundary stalled 100–400 ms waiting for a main-thread turn, serially, across
+   * a 30-job backlog (measured on Cradle: ~20 s to settle). Keeping ONE job
+   * queued worker-side pipelines away that stall while the worker itself stays
+   * single-threaded (byte-determinism per job is untouched). Cost: a newly
+   * arrived priority-0 GM job can now wait at most TWO job durations instead of
+   * one before it runs — still bounded, still ahead of the whole backlog. */
+  private readonly maxInFlight = 2;
 
   private constructor(worker: Worker) {
     this.worker = worker;

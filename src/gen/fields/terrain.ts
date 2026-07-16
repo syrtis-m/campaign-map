@@ -491,6 +491,107 @@ interface MaskSample {
   dmy: number;
 }
 
+/** Coarse ring classifier (BYTE-EXACT fast paths for `ringMaskField`).
+ *
+ * WHY (2026-07-16, Cradle): the mask's bbox reject only helps OUTSIDE the ring.
+ * Deep INSIDE a campaign-sized ring (the island coastline — most land samples),
+ * every field sample still paid a full nearest-coast spiral + an O(ring)
+ * point-in-ring test, only to land in the flat `sd >= band ⇒ {m:1}` branch.
+ * Measured ~100–300 µs/sample on the composed Cradle field — the dominant cost
+ * of every DEM tile, contour leaf, and relief-range estimate.
+ *
+ * MECHANISM (the `buildSpineClearance` occupancy precedent): rasterize the
+ * ring's segments into a coarse grid (conservative bbox-per-segment marking),
+ * chamfer a Chebyshev distance-to-occupied field, and classify each cell once:
+ *   - a boundary-free cell (cheby ≥ 1) is uniformly inside or outside — one
+ *     point-in-ring test of its center decides which;
+ *   - uniformly OUTSIDE ⇒ every sample in it takes the exact `sd ≤ 0 ⇒ zero
+ *     mask` branch — return that constant;
+ *   - uniformly INSIDE with proven clearance `(cheby − 1)·cell > band` ⇒ every
+ *     sample takes the exact `sd ≥ band ⇒ {m:1}` branch — return that constant.
+ * Everything else (boundary cells, the band ramp) falls through to the exact
+ * path. Both fast returns are the very constants the exact path returns in
+ * those regions, so output bytes are IDENTICAL — no version bump (029).
+ */
+type RingClass = Uint8Array; // 0 = exact path, 1 = flat inside, 2 = outside
+const RING_CLASS_EXACT = 0;
+const RING_CLASS_INSIDE = 1;
+const RING_CLASS_OUTSIDE = 2;
+
+function buildRingClassifier(
+  closed: Pt[],
+  bnd: BBox,
+  band: number
+): { cell: number; nx: number; ny: number; cls: RingClass } | null {
+  const spanX = bnd.maxX - bnd.minX;
+  const spanY = bnd.maxY - bnd.minY;
+  const span = Math.max(spanX, spanY);
+  if (!(span > 0)) return null;
+  // Cell ≥ 2·band so "one ring of clearance" (cheby 2) already proves the flat
+  // interior; capped at 128² cells so the build stays trivial.
+  const cell = Math.max(2 * Math.max(1, band), span / 128);
+  const nx = Math.max(1, Math.ceil(spanX / cell));
+  const ny = Math.max(1, Math.ceil(spanY / cell));
+  if (nx * ny > 128 * 128) return null; // degenerate guard
+  // 1. Occupancy: mark every cell a segment's bbox touches (conservative —
+  //    over-marking only shrinks the fast regions, never breaks exactness).
+  const occupied = new Uint8Array(nx * ny);
+  for (let i = 0; i < closed.length - 1; i++) {
+    const [ax, ay] = closed[i];
+    const [bx, by] = closed[i + 1];
+    const x0 = Math.max(0, Math.floor((Math.min(ax, bx) - bnd.minX) / cell));
+    const x1 = Math.min(nx - 1, Math.floor((Math.max(ax, bx) - bnd.minX) / cell));
+    const y0 = Math.max(0, Math.floor((Math.min(ay, by) - bnd.minY) / cell));
+    const y1 = Math.min(ny - 1, Math.floor((Math.max(ay, by) - bnd.minY) / cell));
+    for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) occupied[gy * nx + gx] = 1;
+  }
+  // 2. Chebyshev distance to the nearest occupied cell (two-pass chamfer).
+  const INF = 0x7fff;
+  const cheby = new Int32Array(nx * ny).fill(INF);
+  for (let i = 0; i < nx * ny; i++) if (occupied[i]) cheby[i] = 0;
+  for (let gy = 0; gy < ny; gy++) {
+    for (let gx = 0; gx < nx; gx++) {
+      const i = gy * nx + gx;
+      if (gx > 0) cheby[i] = Math.min(cheby[i], cheby[i - 1] + 1);
+      if (gy > 0) {
+        cheby[i] = Math.min(cheby[i], cheby[i - nx] + 1);
+        if (gx > 0) cheby[i] = Math.min(cheby[i], cheby[i - nx - 1] + 1);
+        if (gx < nx - 1) cheby[i] = Math.min(cheby[i], cheby[i - nx + 1] + 1);
+      }
+    }
+  }
+  for (let gy = ny - 1; gy >= 0; gy--) {
+    for (let gx = nx - 1; gx >= 0; gx--) {
+      const i = gy * nx + gx;
+      if (gx < nx - 1) cheby[i] = Math.min(cheby[i], cheby[i + 1] + 1);
+      if (gy < ny - 1) {
+        cheby[i] = Math.min(cheby[i], cheby[i + nx] + 1);
+        if (gx < nx - 1) cheby[i] = Math.min(cheby[i], cheby[i + nx + 1] + 1);
+        if (gx > 0) cheby[i] = Math.min(cheby[i], cheby[i + nx - 1] + 1);
+      }
+    }
+  }
+  // 3. Classify: boundary-free cells are uniform; one center PIP decides side.
+  //    Any point p in cell C and boundary point q in an occupied cell O at
+  //    Chebyshev cell-distance k satisfy |p−q| ≥ (k−1)·cell, so
+  //    (k−1)·cell > band proves the flat-interior branch for the WHOLE cell.
+  const cls: RingClass = new Uint8Array(nx * ny);
+  for (let gy = 0; gy < ny; gy++) {
+    for (let gx = 0; gx < nx; gx++) {
+      const i = gy * nx + gx;
+      const k = cheby[i];
+      if (k < 1) continue; // boundary cell → exact path
+      const cx = bnd.minX + (gx + 0.5) * cell;
+      const cy = bnd.minY + (gy + 0.5) * cell;
+      const inside = pointInRingClosed(closed, cx, cy);
+      if (!inside) cls[i] = RING_CLASS_OUTSIDE;
+      else if ((k - 1) * cell > band) cls[i] = RING_CLASS_INSIDE;
+      // inside but unproven clearance → exact path
+    }
+  }
+  return { cell, nx, ny, cls };
+}
+
 /** The ring's interior mask + gradient: smoothstep of the signed distance
  * (positive inside) over `band`. Nonzero gradient only in the open band
  * `0 < signedDist < band` (deep interior and exterior are flat, gradient 0 — the
@@ -500,11 +601,24 @@ function ringMaskField(ring: Pt[], band: number): (x: number, y: number) => Mask
   const hash = new SegmentHash(closed, { cellSize: Math.max(32, band) });
   const b = Math.max(1e-6, band);
   const bnd = hash.bounds;
+  const classifier = buildRingClassifier(closed, bnd, band);
   return (x, y): MaskSample => {
     // FAR-FIELD FAST REJECT (BYTE-EXACT): outside the ring's bbox ⇒ outside the
     // ring ⇒ signed distance < 0 ⇒ the full path returns the zero mask — take
     // that branch without the O(dist²) nearest-spiral (the DEM-fill stall).
     if (x < bnd.minX || x > bnd.maxX || y < bnd.minY || y > bnd.maxY) return { m: 0, dmx: 0, dmy: 0 };
+    if (classifier) {
+      // INTERIOR/EXTERIOR FAST PATHS (BYTE-EXACT — see buildRingClassifier):
+      // uniformly-outside and proven-flat-inside cells return the exact
+      // constants the full path returns there, skipping the nearest-spiral +
+      // point-in-ring the deep interior of a campaign-sized ring paid per
+      // sample.
+      const gx = Math.min(classifier.nx - 1, Math.floor((x - bnd.minX) / classifier.cell));
+      const gy = Math.min(classifier.ny - 1, Math.floor((y - bnd.minY) / classifier.cell));
+      const c = classifier.cls[gy * classifier.nx + gx];
+      if (c === RING_CLASS_OUTSIDE) return { m: 0, dmx: 0, dmy: 0 };
+      if (c === RING_CLASS_INSIDE) return { m: 1, dmx: 0, dmy: 0 };
+    }
     const near = hash.nearest(x, y);
     const inside = pointInRingClosed(closed, x, y);
     const sd = inside ? near.dist : -near.dist;

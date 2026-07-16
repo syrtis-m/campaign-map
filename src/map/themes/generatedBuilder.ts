@@ -350,7 +350,12 @@ const RECIPES: Record<string, Recipe> = {
       id: "generated-footprint",
       type: "fill",
       filter: gidFilter("city-footprint"),
-      paint: { "fill-color": roles.built, "fill-opacity": 0.3 },
+      // `fill-antialias:false`: footprints are the single biggest fill count on
+      // a mature campaign (~12k always-visible, a locked decision) and each
+      // antialiased fill pays a per-edge AA pass — the block mask below them
+      // already opted out for the same reason; soft edges are indistinguishable
+      // at footprint scale.
+      paint: { "fill-color": roles.built, "fill-opacity": 0.3, "fill-antialias": false },
     }),
   ],
   "city-parcel": (roles) => [
