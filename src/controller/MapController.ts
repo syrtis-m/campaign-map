@@ -2332,8 +2332,28 @@ export class MapController {
     await this.loadFabric(); // ensure an in-memory baseline to diff against
     if (this.campaign?.id !== campaign.id) return;
 
+    // Snapshot the in-memory collection BEFORE the async disk read. A self-write
+    // (sketch add, procgen attach, vertex commit) can land DURING the read — see
+    // the compare-and-swap guard below.
+    const baseline = this.fabricCollection;
     const { fabric: loaded, invalidCount } = await this.host.vault.loadFabric(campaign);
     if (this.campaign?.id !== campaign.id) return;
+
+    // Compare-and-swap (create-path race, Cradle farmland / forest first-paint
+    // drop): the controller's OWN persist (`addSketchedFeature` → then a
+    // modal-confirm `attachProcgenAndGenerate` self-write) mutated the in-memory
+    // fabric WHILE this reconcile's disk read was in flight, so `loaded` is an
+    // OLDER snapshot than memory (e.g. read BEFORE the procgen block was attached).
+    // Adopting it (`this.fabricCollection = loaded` below) would revert the
+    // just-attached block — the region reverts to a plain sketch, its freshly
+    // generated tiles orphan (bucketed to WORLD_STAGE, dropped from the staged
+    // repaint), and it never paints. Bail: the self-write already armed a
+    // follow-up reload (via `noteExternalFabricChange`) that reconciles against
+    // consistent bytes; we re-arm too so convergence never depends on that timing.
+    if (this.fabricCollection !== baseline) {
+      this.host.render.armFabricReload();
+      return;
+    }
 
     // Malformed external write: keep the last good fabric, surface a badge.
     if (invalidCount > 0) {

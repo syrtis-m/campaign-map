@@ -12,8 +12,8 @@ import { generatedManifestPath } from "../vault/generatedManifestStore";
 import { fabricPath } from "../vault/fabricStore";
 import { discToRing, citySeedFor, type CityDomain } from "../gen/citynet";
 import { regionNetworkKey } from "../map/generation/generationService";
-import { isProcgenRegion, type FabricFeature } from "../model/fabric";
-import { algorithmById } from "../gen/procgen/registry";
+import { isProcgenRegion, makeFabricId, type FabricFeature, type FabricGeometry, type FabricKind } from "../model/fabric";
+import { algorithmById, algorithmForKind, dagRoleFor } from "../gen/procgen/registry";
 import { unionFields } from "../gen/fields";
 import { mountainHeightField } from "../gen/mountain";
 
@@ -3096,4 +3096,84 @@ describe("MapController — external Fabric.geojson reconcile (vault-as-source-o
     await host.controller.reloadFabricFromDisk(); // nothing changed since ⇒ no-op
     expect(host.controller.generatorRunCount - runsBefore).toBe(runsOnePass);
   });
+
+  // ─── Create-path race: a NEW region's first generation must survive the armed
+  //     reconcile watcher (Cradle farmland / forest first-paint drop) ───────────
+  //
+  // In-app, creating a region is TWO self-writes: `addSketchedFeature` persists a
+  // plain shape (arming the debounced fabric reload), then a modal-confirm
+  // `attachProcgenAndGenerate` attaches the procgen block, generates, and paints.
+  // If the reload fires and its async disk read straddles the attach, `loaded` is
+  // an OLDER snapshot than memory (read before the block was attached). Before the
+  // compare-and-swap guard, the reconcile adopted that stale `loaded`, reverting
+  // the just-attached region to a plain sketch: its freshly generated tiles stayed
+  // in the render store but, with no procgen block, bucketed to WORLD_STAGE — so
+  // the staged repaint for the region's real stage found nothing and it never
+  // painted (generatorRunCount advanced, cache held the network record, display
+  // store held ZERO for the region). Jonah hit it on Cradle farmland AND forest;
+  // the bug is kind/stage-agnostic, so guard one region per stage.
+  const SPINE: [number, number][] = [
+    [6, -30],
+    [18, -18],
+    [24, -14],
+  ];
+  const raceCases: { kind: FabricKind; geometry: FabricGeometry }[] = [
+    { kind: "river", geometry: { type: "LineString", coordinates: SPINE } }, // stage 0
+    { kind: "mountain", geometry: { type: "Polygon", coordinates: [[...RING, RING[0]]] } }, // stage 1
+    { kind: "forest", geometry: { type: "Polygon", coordinates: [[...RING, RING[0]]] } }, // stage 2
+    { kind: "district", geometry: { type: "Polygon", coordinates: [[...RING, RING[0]]] } }, // stage 3 (city)
+    { kind: "farmland", geometry: { type: "Polygon", coordinates: [[...RING, RING[0]]] } }, // stage 4
+    { kind: "wall", geometry: { type: "LineString", coordinates: SPINE } }, // stage 5
+  ];
+  for (const { kind, geometry } of raceCases) {
+    it(`a NEW ${kind} region paints on first generation even when the reconcile read straddles the attach`, async () => {
+      const host = cityHost();
+      const algorithm = algorithmForKind(kind)!;
+      const params = algorithm.defaultParams("obsidian-native");
+      const stage = dagRoleFor(algorithm, params).stage;
+
+      // Map is open ⇒ fabric already loaded (so the reconcile's disk read, not the
+      // baseline `loadFabric`, is what straddles the attach — the real in-app case).
+      await host.controller.loadFabric();
+      const feature: FabricFeature = { type: "Feature", id: makeFabricId(), geometry, properties: { kind } };
+      host.controller.addSketchedFeature(feature); // plain shape, self-write #1
+      for (let i = 0; i < 40; i++) await Promise.resolve(); // let the fire-and-forget persist land
+
+      // Barrier the reconcile's disk read so the procgen attach lands mid-read —
+      // reproducing the live debounce/self-write interleaving deterministically.
+      const vault = (host.controller as unknown as { host: { vault: { loadFabric: (c: unknown) => Promise<unknown> } } })
+        .host.vault;
+      const realLoad = vault.loadFabric.bind(vault);
+      let release!: () => void;
+      const barrier = new Promise<void>((r) => (release = r));
+      let armed = true;
+      vault.loadFabric = async (c: unknown) => {
+        const out = await realLoad(c); // read disk (still the plain shape)
+        if (armed) {
+          armed = false;
+          await barrier; // hold the stale read open across the attach
+        }
+        return out;
+      };
+
+      const reloadP = host.controller.reloadFabricFromDisk();
+      for (let i = 0; i < 40; i++) await Promise.resolve(); // reach the barrier
+      await host.controller.attachProcgenAndGenerate(feature, algorithm, params); // self-write #2 + generate + paint
+      release();
+      await reloadP;
+      for (let i = 0; i < 40; i++) await Promise.resolve();
+      vault.loadFabric = realLoad;
+
+      // The region kept its procgen block (reconcile did NOT clobber the attach)…
+      const inMem = host.controller.fabricFeature(feature.id);
+      expect(inMem && isProcgenRegion(inMem)).toBe(true);
+      // …and its first-generation output actually paints at its own stage (drive
+      // the recorded staged repaints through the MapView-faithful mirror).
+      const mirror = repaintMirror(host);
+      mirror.replay();
+      expect((mirror.paintedStageIds.get(stage) ?? new Set()).size).toBeGreaterThan(0);
+      // The network cache record backing that paint exists (generated, not stale).
+      expect((await host.cache()).has(regionNetworkKey(feature.id))).toBe(true);
+    });
+  }
 });
