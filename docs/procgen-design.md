@@ -21,9 +21,9 @@ Why bytes at all? Byte-determinism within a version is what lets the cache be
 **disposable** (delete `.mapcache/` → regenerate identically), sync be
 **conflict-free** (regenerable files are simply excluded), and seams be **provable**
 (§3). The moment a generator consults global state or iteration order, all three
-guarantees rot silently.
+guarantees break, and they break silently.
 
-Two honest nuances:
+Two nuances:
 
 - **Constraints are inputs too.** Sketch a river and regenerate → a *different*
   (still deterministic) map. A cache hit deliberately does not re-check constraints;
@@ -34,8 +34,9 @@ Two honest nuances:
 
 ## 2. D1–D6 — the engineering rules that make sequential reproducible
 
-Growth-style generation is sequential; sequential + sloppy = flaky. These six rules
-are binding for every generator (they are what make *any* version reproducible):
+Growth-style generation is sequential, and sequential code is flaky unless it is
+held to strict rules. These six are binding for every generator (they are what make
+*any* version reproducible):
 
 - **D1 — Integer lattice geometry.** All topology-deciding coordinates live on a
   **1 cm integer lattice** (meters ×100, rounded, stored as int).
@@ -93,8 +94,8 @@ math; it's **scope**: the whole network is computed **once per region** as a pur
 function of `(seed, region, params, constraints)`, cached under
 `region:<id>:network`, and every overlapping tile clips its bbox from that one
 artifact. Tile A and tile B don't need to agree — they read the same bytes. In halo
-terms: the halo became the whole city. Inside the pipeline, sequential still can't
-mean sloppy — that's what D1–D3 are for.
+terms: the halo became the whole city. Inside the pipeline the sequential code
+still has to be reproducible — that's what D1–D3 are for.
 
 Enforcement: 2×2 adjacent-tile seam tests are mandatory for every generator,
 including with sketched constraints deliberately crossing the seams and a region
@@ -111,7 +112,7 @@ this is the rationale that survived two full rewrites.)
   arterials routed to real destinations over a cost field (slope, water,
   canon-clearance), a plaza where they converge, a wall/ring where the profile says
   so. Structure first, texture second.
-- **v2 lesson (honesty about growth):** European fabric cannot be faked with
+- **v2 lesson (growth cannot be faked):** European fabric cannot be faked with
   iso-lines or Voronoi alone; it needs **sequential growth** (Parish & Müller local
   constraints: snap / cut / T-junction / angle+length floors) seeded from the
   skeleton. The cost of sequential is paid with D1–D3, and its seam cost with the
@@ -133,7 +134,7 @@ this is the rationale that survived two full rewrites.)
   the chamfer). Preset-conditional branches inside generator stages are not
   allowed; a genuinely new mechanism becomes a new *operator*, reusable by every
   preset.
-- **The GM's hand always wins:** sketched roads pre-seed the graph as immutable
+- **GM sketches take precedence:** sketched roads pre-seed the graph as immutable
   edges (generated streets snap *to* them); sketched water/walls are hard
   constraints; all output is contained by the sketched ring; canon locations are
   never paved over.

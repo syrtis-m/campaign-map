@@ -65,7 +65,7 @@ obsidian dev:errors                             # MUST be empty
 obsidian dev:screenshot path=shots/latest.png   # then LOOK at it (Read the png)
 ```
 
-A change is not done until: `dev:errors` is clean, and the screenshot has been *viewed* and passes the [quality bar](quality-bar.md) screenshot test. `dev:screenshot` is how the screenshot test stops being aspirational and becomes a check you actually run.
+A change is not done until `dev:errors` is clean and the screenshot has been *viewed* and passes the [quality bar](quality-bar.md) screenshot test.
 
 ## Driving the app for tests
 
@@ -151,7 +151,7 @@ npm run board -- --probe-fail-at=N     # inject ONE probe failure at the Nth gat
 ```
 
 - **Prologue first** (process-independent): `npm test` → `npm run test:fuzz` → `tsc --noEmit` → `npm run build`. A broken build aborts the board before any live gate (a bad bundle makes every gate meaningless). `--changed` drops the fuzz tier (a scoped run isn't a generator-behavior checkpoint) but keeps build. `test:app` is intentionally **not** in the board — it's a single-gate wrapper the board subsumes by running gates from `coverage.json` directly.
-- **Health-probe attribution is the whole point.** Renderer degradation produces not just spurious FAILs but *vacuous PASSes* (a collision check passes when nothing is drawn), so the discriminator is the probe **after** each gate: pre-gate probe unhealthy → relaunch first; post-gate probe unhealthy → the result (pass *or* fail) is untrustworthy → relaunch + **re-run that gate** (capped at 3 relaunches); post-gate probe healthy + gate failed → **genuine RED, never retried**. The probe is `isStyleLoaded` + `loaded()` + a `queryRenderedFeatures()` sanity + background-layer presence on the ashfall map, ~5s budget.
+- **Health-probe attribution is what the board exists for.** Renderer degradation produces not just spurious FAILs but *vacuous PASSes* (a collision check passes when nothing is drawn), so the discriminator is the probe **after** each gate: pre-gate probe unhealthy → relaunch first; post-gate probe unhealthy → the result (pass *or* fail) is untrustworthy → relaunch + **re-run that gate** (capped at 3 relaunches); post-gate probe healthy + gate failed → **genuine RED, never retried**. The probe is `isStyleLoaded` + `loaded()` + a `queryRenderedFeatures()` sanity + background-layer presence on the ashfall map, ~5s budget.
 - **Process control shells out to `scripts/relaunch-obsidian.sh`** (osascript quit → wait for exit → `open -a Obsidian` → poll the plugin ready). The board never relaunches unless a probe fails.
 - **Fixture hygiene is enforced per gate** (§2.4b): after every live gate the board asserts `git status --short dev-vault/` is empty; a gate that passes its own assertions while dirtying committed fixtures is a **RED** gate. The board restores cleanliness (`git checkout -- dev-vault/` + `git clean -fdq -- dev-vault/`, which respects `.gitignore` so `.mapcache/` is untouched) before continuing so one offender doesn't cascade.
 - **The report** is written to `shots/board-report.md` (per-gate pass/fail + wall-clock + relaunch count + post-probe health + totals) — that's the artifact you paste into PROGRESS.md.

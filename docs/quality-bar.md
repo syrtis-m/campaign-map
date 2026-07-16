@@ -1,12 +1,12 @@
 # Quality bar — failure modes, acceptance criteria, pinned aesthetic defaults
 
-*The premise: "yes-and" tools drift toward mess. A map accreted over 30 sessions in
-5-second bursts will look like a corkboard, not an atlas — unless the system itself
-enforces craft. This doc is acceptance criteria: the failure modes the design must
-hold off (F1–F8), the screenshot test that judges any build, and the pinned
-aesthetic defaults agents work within. It was written as a red-team pass in July
-2026 and is kept current; where a countermeasure names a mechanism, the code is the
-truth for how it works.*
+*The premise: quick-add tools drift toward mess. A map built up over 30 sessions in
+5-second bursts ends up looking like a corkboard rather than an atlas unless the
+defaults do the cartographic work. This doc is acceptance criteria: the failure
+modes the design must defend against (F1–F8), the screenshot test that judges any
+build, and the pinned aesthetic defaults agents work within. It was written as a
+red-team pass in July 2026 and is kept current; where a countermeasure names a
+mechanism, the code is the truth for how it works.*
 
 ## The acceptance bar (the screenshot test)
 
@@ -30,21 +30,21 @@ research).
 Thirty sessions of quick-adds = 200 pins of equal weight, colliding labels, a tavern
 as prominent as a nation.
 
-**Countermeasure — the map curates itself.** Every location type carries an
+**Countermeasure.** The map curates itself: every location type carries an
 **importance rank** (label size, halo, collision priority derive from it — the GM
 never sets font sizes). Name reveal is the explicit per-note `visibility` field
 (wide/mid/close) against the campaign's three focus levels — set once in the
 quick-add dialog, changeable from the right-click menu, defaulting to `mid`. The
-5-second flow stays 5 seconds; the cartographic discipline is defaults. **The dot
-always renders at every zoom** — only names reveal progressively (the zoom-LOD
-locked decision).
+5-second flow stays 5 seconds; the cartographic discipline comes from defaults.
+**The dot always renders at every zoom** — only names reveal progressively (the
+zoom-LOD locked decision).
 
 ### F2. Provenance seams
 Sketched and generated fabric of the same kind reading as two different tools — a
-hand-drawn road in one hue and weight, a generated street in another. The eye reads
-"layers of software," not "a map."
+hand-drawn road in one hue and weight, a generated street in another. It reads as
+layers of software instead of a single map.
 
-**Countermeasure — one legend per kind, provenance invisible.** Sketched and
+**Countermeasure.** One legend per kind; provenance stays invisible. Sketched and
 generated fabric of the same kind share theme tokens; generators emit typed
 features only (never styles), and all generated paint derives from the style
 contract × per-theme role maps, so generated and manual content are
@@ -53,7 +53,7 @@ are constraints), so generated streets stop at sketched shorelines instead of
 crossing them. Locations always render above all fabric (the z-order invariant).
 
 ### F3. Tile seams and LOD pops
-Per-tile deterministic generation is famously prone to streets that dead-end at
+Per-tile deterministic generation is prone to streets that dead-end at
 tile boundaries; zoom transitions that pop content look broken.
 
 **Countermeasure.** World tier: order-free construction (position-hashed seeding,
@@ -66,9 +66,9 @@ gates (fabric renders at every zoom; density is handled by theme paint).
 ### F4. Blank-void mid-zoom
 Ungenerated fictional space reads as "broken," not "unexplored."
 
-**Countermeasure.** Unexplored space is an **aesthetic**, not an absence —
-per-theme treatments (sepia wash on `parchment`, smog gradient on `ink-soot`,
-light gray on `modern-clean`), plus the campaign-wide base terrain so a fictional
+**Countermeasure.** Unexplored space gets a deliberate per-theme treatment (sepia
+wash on `parchment`, smog gradient on `ink-soot`, light gray on `modern-clean`)
+rather than reading as empty, plus the campaign-wide base terrain so a fictional
 viewport is never featureless.
 
 ### F5. Name mishmash
@@ -78,22 +78,22 @@ Seeded name generators without a shared culture model produce "Grimhold" next to
 **Countermeasure.** **Naming cultures as regions** (Azgaar's proven model): each
 region carries a phoneme/style profile (`src/gen/naming/cultures/`); all
 generators in a region draw from it, and the quick-add flow offers three
-culture-consistent suggestions (tab to accept) — cohesion becomes the path of
-least resistance. Shipped cultures pair contrast within each genre
+culture-consistent suggestions (tab to accept), so cohesion is the default rather
+than something the GM maintains by hand. Shipped cultures pair contrast within each genre
 (fantasy-brackish/-sunlit, modern-anglo/-mediterranean, neon-corpo/-street).
 
 ### F6. Programmer-art themes
 The biggest risk to "premium feel." A parchment-colored background with default
 fonts is a Google Maps clone in a costume.
 
-**Countermeasure — where the craft budget goes.** Typography is 80% of map feel:
+**Countermeasure.** This is where the craft budget goes. Typography is 80% of map feel:
 per-theme font stacks with real cartographic conventions (letter-spaced small-caps
 for regions, italic serif for water, weight-by-importance). Texture and edge
 treatments (paper grain, coastline double-strokes, rivers tapering by flow order,
 hatch fills on ink-soot). Map furniture (compass rose, scale bar, neatline) per
-theme. ≤8 semantic color tokens per theme; everything draws from them. Accept the
-ceiling honestly: MapLibre gives "fine stylized vector," not Inkarnate — within
-that, typography + texture + furniture carry it.
+theme. ≤8 semantic color tokens per theme; everything draws from them. MapLibre's
+realistic ceiling is fine stylized vector, not Inkarnate; within that ceiling,
+typography, texture, and furniture carry the feel.
 
 ### F7. Vault pollution
 The tool writes into a real campaign vault. Failure mode: frontmatter bloat on
@@ -106,13 +106,13 @@ human's — the plugin never writes below the frontmatter fence.
 
 ### F8. Update jank
 Naive whole-source refreshes on every edit cause label flicker and re-layout churn
-— death by a thousand blinks during a session.
+across a session's many small edits.
 
 **Countermeasure.** Stable feature ids + staged, region-scoped `updateData` diffs
 (never whole-collection `setData` on a routine edit); debounced commit paths with
 cheap per-frame previews (ARCHITECTURE §13 is the authoritative map); generation
 and terrain sampling in the worker so the map thread never stutters; eased `flyTo`
-— motion quality is felt quality.
+for camera moves.
 
 ## The keepsake bar
 

@@ -99,8 +99,8 @@ If a note's frontmatter fails `LocationFrontmatterSchema.safeParse` (missing
 `LocationParseError` instead of a location, and the map surfaces a persistent
 warning badge — `"⚠ N locations with invalid map data"` — until it's fixed
 (`MapView`'s `warningBadgeEl`, driven by `CampaignState.invalid` in
-`src/main.ts`). An external agent's bad output is loud, not silent (CLAUDE.md:
-"bad frontmatter → warning badge, never silent drop").
+`src/main.ts`). An external agent's bad output is therefore visible on the map
+(CLAUDE.md: "bad frontmatter → warning badge, never silent drop").
 
 ### Determinism has nothing to do with this contract
 
