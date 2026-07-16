@@ -16,7 +16,16 @@
  * function of the durable sketch layer, so a leaf is a pure memo.
  */
 import { marchingSquares } from "./marchingSquares";
-import { terrainAt, terrainStampSupport, DEFAULT_TERRAIN_BASE, type TerrainBaseParams, type TerrainOptions } from "./terrain";
+import {
+  terrainAt,
+  terrainStampSupport,
+  carveReachEnvelope,
+  riverCarveReach,
+  riverBedCorridor,
+  DEFAULT_TERRAIN_BASE,
+  type TerrainBaseParams,
+  type TerrainOptions,
+} from "./terrain";
 import type { BBox } from "../spatialHash";
 import type { FabricFeature } from "../../model/fabric";
 
@@ -172,7 +181,7 @@ export class TerrainContourLeaves {
   private readonly opts: Required<Omit<TerrainContourOptions, "include" | "globalSalt">>;
   private readonly include: TerrainOptions["include"];
   private field: (x: number, y: number) => { v: number };
-  private inputs: { feature: FabricFeature; bbox: BBox; reach: number }[];
+  private inputs: { feature: FabricFeature; bbox: BBox; reach: number; digest: string }[];
   private globalSalt: string;
   private readonly leaves = new Map<string, Leaf>();
   private readonly inflight = new Map<string, Promise<GeoJSON.Feature[]>>();
@@ -201,20 +210,56 @@ export class TerrainContourLeaves {
 
   private buildFieldAndInputs(features: FabricFeature[] | undefined): {
     field: (x: number, y: number) => { v: number };
-    inputs: { feature: FabricFeature; bbox: BBox; reach: number }[];
+    inputs: { feature: FabricFeature; bbox: BBox; reach: number; digest: string }[];
   } {
     const feats = features ?? [];
+    const terrain = feats.filter(
+      (f) => f.properties.procgen && TERRAIN_INPUT_ALGORITHMS.has(f.properties.procgen.algorithm)
+    );
+    // Rivers need their PROVABLE carve reach (gorge walls climb far past any
+    // tile-span margin — Cradle: ~3.4 km): a leaf inside the carve's reach but
+    // outside a blanket margin was traced WITH the gorge yet keyed WITHOUT the
+    // river, so moving the river left stale gorge contours behind (Jonah
+    // 2026-07-16: "cliffs appear where I dragged the river away from"). The
+    // envelope is the same closed-form bound the per-tile DEM digest trusts.
+    const env = terrain.some((f) => f.properties.procgen!.algorithm === "river")
+      ? carveReachEnvelope(feats, this.opts.base)
+      : null;
+    // Per-stamp reach where the field defines one (relief: halfWidth+apron,
+    // exact; inverted-sea landform: Infinity, global; river: carve reach) —
+    // the same byte-exact bounds the per-tile DEM digest trusts. The blanket
+    // `inputMargin` remains only as the defensive fallback for a future input
+    // kind with no defined reach. Digests are PRECOMPUTED once per input (they
+    // were re-stringified per intersecting input per tile); a river's digest
+    // additionally folds in its BED INPUTS — stamps whose support touches the
+    // spine corridor feed the bed/centerline, so editing one must re-key every
+    // leaf the carve reaches (mirrors the per-tile DEM digest exactly).
+    const inputs = terrain.map((f) => {
+      const isRiver = f.properties.procgen!.algorithm === "river";
+      let digest = inputDigest(f);
+      if (isRiver) {
+        const corridor = riverBedCorridor(f);
+        const spineBox = bboxOf(f);
+        const bed: string[] = [];
+        for (const g of terrain) {
+          if (g === f) continue;
+          const support = terrainStampSupport(g);
+          if (support === null) continue;
+          if (bboxIntersects(bboxOf(g), spineBox, support + corridor)) bed.push(inputDigest(g));
+        }
+        bed.sort();
+        if (bed.length) digest += `~bed[${bed.join("|")}]`;
+      }
+      return {
+        feature: f,
+        bbox: bboxOf(f),
+        reach: isRiver && env ? riverCarveReach(f, env) : terrainStampSupport(f) ?? this.opts.inputMargin,
+        digest,
+      };
+    });
     return {
       field: terrainAt(feats, { base: this.opts.base, campaignSeed: this.opts.campaignSeed, include: this.include }),
-      inputs: feats
-        .filter((f) => f.properties.procgen && TERRAIN_INPUT_ALGORITHMS.has(f.properties.procgen.algorithm))
-        // Per-stamp reach where the field defines one (relief: halfWidth+apron,
-        // exact; inverted-sea landform: Infinity, global) — the same byte-exact
-        // bound the per-tile DEM digest trusts. The blanket `inputMargin`
-        // covers the rest (rivers): it both over-invalidated (an edit dirtied
-        // every leaf within a whole tile-span) and under-invalidated (a stamp
-        // reaching FARTHER than a tile-span never dirtied its far leaves).
-        .map((f) => ({ feature: f, bbox: bboxOf(f), reach: terrainStampSupport(f) ?? this.opts.inputMargin })),
+      inputs,
     };
   }
 
@@ -251,7 +296,7 @@ export class TerrainContourLeaves {
     const tile = this.tileBBox(tx, ty);
     const hits: string[] = [];
     for (const inp of this.inputs) {
-      if (bboxIntersects(inp.bbox, tile, inp.reach)) hits.push(inputDigest(inp.feature));
+      if (bboxIntersects(inp.bbox, tile, inp.reach)) hits.push(inp.digest);
     }
     hits.sort();
     return `${tx}:${ty}|${this.globalSalt}|${hits.join("|")}`;

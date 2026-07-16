@@ -358,7 +358,7 @@ function stampFingerprint(f: FabricFeature): string {
  * the field itself would use). */
 export function carveReachEnvelope(
   features: FabricFeature[],
-  base: TerrainBaseParams
+  base: Partial<TerrainBaseParams>
 ): { surfMax: number; surfMin: number } {
   const datum = base.seaDatum ?? 0;
   const amp = Math.abs(base.campAmp ?? 0);
@@ -409,6 +409,16 @@ function riverParamsOf(f: FabricFeature): RiverParams {
     braidBias: clamp01(num(p.braidBias, 0)),
     slopeSensitivity: clamp01(num(p.slopeSensitivity, 0)),
   };
+}
+
+/** How far this river's meandered CENTERLINE can stray from its sketched spine
+ * (`riverMaxOffset` over defensively-parsed params) — the corridor a river's
+ * BED INPUTS are gathered from: any terrain stamp within its own support of
+ * this corridor feeds the bed/centerline and so moves the carve's output far
+ * from the stamp itself. Shared by the per-tile DEM digest and the contour
+ * leaf keys so both invalidate identically. */
+export function riverBedCorridor(f: FabricFeature): number {
+  return riverMaxOffset(riverParamsOf(f));
 }
 
 /** A provable upper bound (meters) on how far this river's carve can move the
@@ -498,7 +508,7 @@ export function perTileTerrainDigest(
       // BED INPUTS (see doc): every terrain stamp whose support can touch this
       // river's corridor (spine bbox + centerline stray) feeds the bed/centerline
       // and therefore this tile's bytes wherever the carve is active.
-      const corridor = riverMaxOffset(riverParamsOf(f));
+      const corridor = riverBedCorridor(f);
       const spineBox = stampBBox(f);
       for (const g of features) {
         const support = terrainStampSupport(g);

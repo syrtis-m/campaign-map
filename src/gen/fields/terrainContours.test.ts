@@ -243,3 +243,81 @@ describe("TerrainContourLeaves — leafForAsync (off-thread trace hook)", () => 
     expect(JSON.stringify(viaAsync)).toBe(JSON.stringify(viaSync));
   });
 });
+
+// ─── River reach + bed inputs in leaf keys (2026-07-16 regression) ────────────
+// THE BUG (Jonah: "cliffs appear where I dragged the river away from"): a
+// river's gorge wall reaches kilometres past any tile-span margin, so a leaf
+// inside the carve's reach but outside the blanket `inputMargin` was traced
+// WITH the gorge yet keyed WITHOUT the river — moving the river left stale
+// gorge contours behind. Leaves must key rivers by their PROVABLE carve reach
+// (the same bound the per-tile DEM digest uses), and a river's key must fold in
+// its BED INPUTS (spine-adjacent stamps feed the bed far from themselves).
+import { riverCarveReach, carveReachEnvelope } from "./terrain";
+
+function riverAt(id: string, a: Pt, b: Pt, params: Record<string, unknown> = { width: 30 }): FabricFeature {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "LineString", coordinates: [a, b] },
+    properties: { kind: "river", procgen: { algorithm: "river", seed: 9, version: 2, params } },
+  } as FabricFeature;
+}
+function reliefAt(id: string, a: Pt, b: Pt, height = 4000, halfWidth = 100): FabricFeature {
+  return {
+    type: "Feature",
+    id,
+    geometry: { type: "LineString", coordinates: [a, b] },
+    properties: {
+      kind: "relief",
+      procgen: { algorithm: "relief", seed: 1, version: 1, params: { polarity: "ridge", height, halfWidth, apron: 0 } },
+    },
+  } as FabricFeature;
+}
+
+describe("river carve reach + bed inputs in leaf keys", () => {
+  // A max-height relief far away inflates the campaign envelope so the river's
+  // provable reach comfortably exceeds the blanket margin (default 600 m).
+  const FAR_RELIEF = reliefAt("tall", [50000, 50000], [51000, 50000]);
+  const RIVER_A = riverAt("W", [0, -2000], [0, 2000]);
+  const RIVER_FAR = riverAt("W", [100000, -2000], [100000, 2000]);
+
+  it("a leaf beyond the blanket margin but inside carve reach retraces when the river moves away", () => {
+    const reach = riverCarveReach(RIVER_A, carveReachEnvelope([RIVER_A, FAR_RELIEF], {}));
+    expect(reach).toBeGreaterThan(1500); // the setup really exceeds the 600 m blanket
+    const leaves = new TerrainContourLeaves([RIVER_A, FAR_RELIEF], OPTS);
+    // Tile (3,0) spans x ∈ [1200,1600]: gap from the river bbox (x=0) is 1200 —
+    // beyond the old blanket margin, inside the carve reach.
+    expect(leaves.leafFor(3, 0).cached).toBe(false);
+    expect(leaves.computedLeaves).toBe(1);
+    // Re-touch: cached (key stable while inputs stand still).
+    expect(leaves.leafFor(3, 0).cached).toBe(true);
+    // Move the river far away: the leaf's key drops the river ⇒ retrace.
+    leaves.setInputs([RIVER_FAR, FAR_RELIEF], "");
+    expect(leaves.leafFor(3, 0).cached).toBe(false);
+    expect(leaves.computedLeaves).toBe(2);
+  });
+
+  it("a leaf beyond the carve reach never keys the river (an edit there is a cache hit)", () => {
+    const reach = riverCarveReach(RIVER_A, carveReachEnvelope([RIVER_A, FAR_RELIEF], {}));
+    const leaves = new TerrainContourLeaves([RIVER_A, FAR_RELIEF], OPTS);
+    const farTx = Math.ceil((reach + 2000) / OPTS.tileSpan); // provably beyond reach
+    leaves.leafFor(farTx, 0);
+    expect(leaves.computedLeaves).toBe(1);
+    // Nudge the river (still far from the far tile): its key is unchanged.
+    leaves.setInputs([riverAt("W", [0, -2000], [10, 2000]), FAR_RELIEF], "");
+    expect(leaves.leafFor(farTx, 0).cached).toBe(true);
+    expect(leaves.computedLeaves).toBe(1);
+  });
+
+  it("BED INPUT: editing a spine-adjacent relief re-keys a far leaf the river reaches", () => {
+    const nearSpine = reliefAt("bed", [50, -500], [50, 500], 800, 100);
+    const leaves = new TerrainContourLeaves([RIVER_A, FAR_RELIEF, nearSpine], OPTS);
+    leaves.leafFor(3, 0); // in the river's reach; far outside nearSpine's own support
+    expect(leaves.computedLeaves).toBe(1);
+    // Raise the spine-adjacent relief: the river's bed changes ⇒ the leaf must retrace.
+    const raised = reliefAt("bed", [50, -500], [50, 500], 1200, 100);
+    leaves.setInputs([RIVER_A, FAR_RELIEF, raised], "");
+    expect(leaves.leafFor(3, 0).cached).toBe(false);
+    expect(leaves.computedLeaves).toBe(2);
+  });
+});
