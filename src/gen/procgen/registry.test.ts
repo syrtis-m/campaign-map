@@ -178,8 +178,8 @@ describe("cycle guard — settlement consumers produce nothing the city consumes
 });
 
 describe("farmland peri-urban (plan 035-C) — stage 4, wired settlement + elevation", () => {
-  it("farmland is at contract version 8 (paddy v8 — range-scoped risers, terrace shade fills, no paddy lane web)", () => {
-    expect(algorithmById("farmland")!.currentVersion).toBe(8);
+  it("farmland is at contract version 9 (paddy v9 — warped banks, staggered cross-walls; v8 was range-scoped risers + strips)", () => {
+    expect(algorithmById("farmland")!.currentVersion).toBe(9);
   });
 
   it("farmland sits at stage 4, consumes elevation + settlement + water (plan 037), produces NOTHING", () => {

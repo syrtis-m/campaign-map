@@ -814,6 +814,10 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   // adoption. (Plan 038 items 3/4 — terrain slope-gating / contour strips and
   // forest sketch-adjacency hedgerows — ride this same v4 bump; each stays
   // byte-identical to v3 when its upstream/adjacency is absent.)
+  // Version 9 (2026-07-16, "staggered edges + segmented paddies"): the bank
+  // field gains a small deterministic domain warp (organic hand-built edges)
+  // and each strip is cut into individual paddies by staggered cross-walls
+  // marched downhill from its upper bank. Non-paddy types byte-identical to v8.
   // Version 8 (2026-07-16, "make paddy actually do terraces"): paddy risers
   // interval now comes from the relief RANGE inside the region (the max-only
   // scan fed absolute elevation into the interval — one or two banks on any
@@ -826,7 +830,7 @@ const farmlandAlgorithm: ProcgenAlgorithm = {
   // Version 2 (plan 035, peri-urban move): farmland reads the generated city
   // street network (`upstream.settlement`) — gate lanes radiate from the
   // arterial exits, a field-size gradient runs toward the wall line.
-  currentVersion: 8,
+  currentVersion: 9,
   appliesTo: ["farmland"],
   // Stage 4 (PERI-URBAN, plan 035): farmland is the city's apron, generated
   // AFTER it. Consumes `settlement` (WIRED: lanes orient to the generated

@@ -67,13 +67,14 @@
  * algorithm id — MapController.overlappingRegion).
  */
 import { hashSeed, mulberry32 } from "./rng";
+import { fractalNoise2D } from "./world/noise";
 import {
   distanceToBoundary,
   segmentCrossesBoundary,
   clipPolylineToRegion,
   type ProcgenRegion,
 } from "./region";
-import { marchingSquares, sdfPolygon, contoursToMultiPolygon, type Field } from "./fields";
+import { marchingSquares, sdfPolygon, contoursToMultiPolygon, fDomainWarp, type Field } from "./fields";
 import { macroTerrainField } from "./fields/terrain";
 import { q, blobFeature } from "./waterEmit";
 import { buildUpstreamConstraints, buildUpstreamWaterField, insideUpstreamChannel, splitLineOutsideChannel } from "./upstream";
@@ -195,6 +196,23 @@ const PADDY_MIN_RELIEF_M = 8;
 // 25 m cap still stops alpine overlaps from duplicating the topo layer.
 const PADDY_TARGET_BANDS = 40;
 const PADDY_INTERVAL_LADDER = [1, 2, 5, 10, 20, 25] as const;
+// v9 — organic edges + segmented paddies (Jonah 2026-07-16, "staggered edges,
+// fields segmented like enclosed patchwork"):
+// Domain-warp amplitude/cell for the bank field: terrace walls are hand-built
+// approximations of the contour, so the geometric iso-lines get a small
+// deterministic wobble (the forest-canopy fray idiom, scaled down).
+const PADDY_WARP_AMP_M = 9;
+const PADDY_WARP_OPTS = { octaves: 2, baseCellSize: 70, persistence: 0.5 } as const;
+// Cross-walls: each terrace strip is cut into individual paddies by short
+// walls marched DOWNHILL from the strip's upper bank. Segment length along the
+// bank scales with fieldSize; each level's marks start at a hashed offset, so
+// adjacent strips STAGGER like brickwork instead of aligning.
+const PADDY_SEG_BASE_M = 34;
+const PADDY_SEG_SCALE_M = 90;
+const PADDY_CROSS_STEP_M = 4; // downhill march step
+const PADDY_CROSS_MAX_STEPS = 60; // plan-distance cap on a wall (gentle slopes)
+const PADDY_CROSS_MIN_M = 6; // discard slivers
+const PADDY_GRAD_H_M = 2; // central-difference half-step for the downhill direction
 // ── Riverine long-lots (Quebec rang / arpent — plan 038 item 2) ──────────────
 // Where the GENERATED river channel is present, the fields WITHIN ~1–2 field
 // depths of the bank become long, narrow lots run PERPENDICULAR to the water
@@ -845,8 +863,19 @@ export function generateFarmland(
     // Pick the bank field: real relief → elevation contours; else concentric
     // interior-distance bands (sdf is + inside — same marching machinery).
     const useElev = elevValue !== null && relief >= PADDY_MIN_RELIEF_M;
-    const bankFieldRaw = useElev ? elevValue! : sdfPolygon(region.ring);
-    const { min: minV, max: maxV } = useElev ? elevScan : { min: 0, max: scan(bankFieldRaw).max };
+    // DOMAIN WARP (v9 — "staggered edges"): terrace walls are hand-built
+    // earthworks that only APPROXIMATE the contour, so a small deterministic
+    // warp of the sample position frays the geometric iso-lines into organic,
+    // wobbling bank edges (the forest-canopy idiom). Banks, strips and the
+    // cross-walls all trace the SAME warped field, so everything stays
+    // registered with everything else.
+    const warpW: Field = (x, y) =>
+      (fractalNoise2D(seed, x, y, "paddy-warp-x", PADDY_WARP_OPTS) - 0.5) * 2 * PADDY_WARP_AMP_M;
+    const warpH: Field = (x, y) =>
+      (fractalNoise2D(seed, x, y, "paddy-warp-y", PADDY_WARP_OPTS) - 0.5) * 2 * PADDY_WARP_AMP_M;
+    const bankFieldRaw = fDomainWarp(useElev ? elevValue! : sdfPolygon(region.ring), warpW, warpH);
+    // Level ladder from the WARPED field (the one actually traced), min AND max.
+    const { min: minV, max: maxV } = scan(bankFieldRaw);
     const interval = paddyInterval(maxV - minV);
     // Memoize lattice samples: the bank trace + every terrace-shade trace below
     // sample the SAME world-aligned lattice points, and the composed field is
@@ -875,6 +904,7 @@ export function generateFarmland(
     // absolute-elevation paddy no longer wastes its ladder below the ground.
     const levels: number[] = [];
     for (let lv = (Math.floor(minV / interval) + 1) * interval; lv < maxV; lv += interval) levels.push(lv);
+    const runsByLevel = new Map<number, Pt[][]>(); // level value → clipped runs (cross-wall anchors)
     if (levels.length > 0) {
       for (const c of marchingSquares(bankField, { bbox, step: PADDY_LATTICE_M, levels })) {
         // Position-derived ids (never emission order): the level (dm) + the
@@ -885,6 +915,9 @@ export function generateFarmland(
           // lattice is already dense (10 m) so a vertex-granular split suffices.
           for (const run of splitLineOutsideChannel(clipped, channel)) {
           if (run.length < 2) continue;
+          let anchors = runsByLevel.get(c.level);
+          if (!anchors) runsByLevel.set(c.level, (anchors = []));
+          anchors.push(run);
           const coords = run.map(([x, y]) => [q(x), q(y)] as Pt);
           const [fx, fy] = coords[0];
           out.push({
@@ -955,6 +988,76 @@ export function generateFarmland(
             elevation: Math.round(floorLevel),
           },
         });
+      }
+      // ── Cross-walls (v9 — "fields segmented like enclosed patchwork"): each
+      //    terrace strip is cut into individual paddies by short walls marched
+      //    DOWNHILL from the strip's upper bank line. Marks are arc-length
+      //    spaced along each bank with a per-level hashed phase, so adjacent
+      //    strips STAGGER like brickwork; each wall follows the local gradient
+      //    (central differences on the same warped field) until it reaches the
+      //    next riser down, the region edge, or the step cap. Pure
+      //    f(field, region, seed); emitted as more `farm-bank` lines with a
+      //    `cross` tag (same paint — one continuous wall vocabulary).
+      const segLen = PADDY_SEG_BASE_M + PADDY_SEG_SCALE_M * Math.max(0, Math.min(1, fieldSize));
+      for (let li = 0; li < levels.length; li++) {
+        const lv = levels[li];
+        const lowerStop = lv - interval;
+        const levelKey = Math.round(lv * 10);
+        const phase = segLen * mulberry32(hashSeed(seed, "paddy-seg", levelKey))();
+        const runs = runsByLevel.get(lv) ?? [];
+        for (const run of runs) {
+          let acc = -phase; // first mark lands `phase` into the run
+          for (let vi = 0; vi + 1 < run.length; vi++) {
+            const [ax, ay] = run[vi];
+            const [bx, by] = run[vi + 1];
+            const segD = Math.hypot(bx - ax, by - ay);
+            if (segD === 0) continue;
+            let next = Math.ceil(acc / segLen) * segLen;
+            if (next <= acc) next += segLen;
+            while (next <= acc + segD) {
+              const t = (next - acc) / segD;
+              let cx = ax + (bx - ax) * t;
+              let cy = ay + (by - ay) * t;
+              // March downhill to the next riser.
+              const wall: Pt[] = [[q(cx), q(cy)]];
+              for (let st = 0; st < PADDY_CROSS_MAX_STEPS; st++) {
+                const gx = (bankField(cx + PADDY_GRAD_H_M, cy) - bankField(cx - PADDY_GRAD_H_M, cy)) / (2 * PADDY_GRAD_H_M);
+                const gy = (bankField(cx, cy + PADDY_GRAD_H_M) - bankField(cx, cy - PADDY_GRAD_H_M)) / (2 * PADDY_GRAD_H_M);
+                const gm = Math.hypot(gx, gy);
+                if (gm < 1e-6) break; // flat — nowhere downhill
+                cx -= (gx / gm) * PADDY_CROSS_STEP_M;
+                cy -= (gy / gm) * PADDY_CROSS_STEP_M;
+                if (insideAt(cx, cy) <= 0) break; // stop at the region edge
+                wall.push([q(cx), q(cy)]);
+                if (bankField(cx, cy) <= lowerStop) break; // reached the next riser down
+              }
+              let wallLen = 0;
+              for (let wi = 0; wi + 1 < wall.length; wi++) {
+                wallLen += Math.hypot(wall[wi + 1][0] - wall[wi][0], wall[wi + 1][1] - wall[wi][1]);
+              }
+              if (wall.length >= 2 && wallLen >= PADDY_CROSS_MIN_M) {
+                for (const piece of splitLineOutsideChannel(wall, channel)) {
+                  if (piece.length < 2) continue;
+                  const [wx0, wy0] = piece[0];
+                  out.push({
+                    type: "Feature",
+                    id: hashSeed(seed, "farm-bank-x", levelKey, Math.round(wx0 * 10), Math.round(wy0 * 10)),
+                    geometry: { type: "LineString", coordinates: piece.map(([x, y]) => [q(x), q(y)] as Pt) },
+                    properties: {
+                      generatorId: "farm-bank",
+                      type: "farm-bank",
+                      fieldType,
+                      cross: true,
+                      elevation: Math.round(lv),
+                    },
+                  });
+                }
+              }
+              next += segLen;
+            }
+            acc += segD;
+          }
+        }
       }
     }
   }
