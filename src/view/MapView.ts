@@ -1,5 +1,5 @@
 import { ItemView, WorkspaceLeaf, ViewStateResult, Menu, MarkdownRenderer, Modal, Notice, TFile, TAbstractFile, setIcon, FuzzySuggestModal, App } from "obsidian";
-import maplibregl, { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature, StyleSpecification } from "maplibre-gl";
+import maplibregl, { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature, StyleSpecification, type MapSourceDataEvent } from "maplibre-gl";
 import type { CampaignConfig, ParsedCampaign } from "../model/campaignConfig";
 
 /** The persisted reference-underlay block (plan 041) — the non-optional shape of
@@ -77,6 +77,7 @@ import {
 import { bandValuesFromParams, formatBandReadout } from "./bandGhost";
 import { normalizeTerrainBlock, type TerrainBlock } from "./terrainSettings";
 import { TerrainRefresh } from "./terrainRefresh";
+import { TerrainToggle } from "./terrainToggle";
 import { addConnection, removeConnection, setLocationVisibility } from "../vault/locationOps";
 import { importNotes } from "../vault/importOps";
 import { importGeojson } from "../model/importGeojson";
@@ -222,17 +223,67 @@ export class MapView extends ItemView {
    * chokepoint. Fixes the stale 3D-mesh lag after a landform delete. */
   private terrainRefresh: TerrainRefresh;
 
+  /** The terrain-toggle lifecycle brain (terrainToggle.ts): owns the enabled
+   * state, the digest-gated tile-cache bust (a plain toggle reuses retained
+   * tiles), the pitch-adaptive relief mode, and the bounded source-ready mesh
+   * retry. MapView is a thin adapter: it maps this port onto the live MapLibre
+   * map + controller digest, and forwards `setTerrainEnabled` here. */
+  private terrainToggle: TerrainToggle;
+
   constructor(leaf: WorkspaceLeaf, plugin: CampaignMapPlugin) {
     super(leaf);
     this.plugin = plugin;
+    this.terrainToggle = new TerrainToggle({
+      hasHillshadeLayer: () => !!this.map?.getLayer("hillshade"),
+      setHillshadeVisible: (visible) => {
+        if (this.map?.getLayer("hillshade")) {
+          this.map.setLayoutProperty("hillshade", "visibility", visible ? "visible" : "none");
+        }
+      },
+      getPitch: () => this.map?.getPitch() ?? 0,
+      isMeshActive: () => !!this.map?.getTerrain(),
+      setMesh: (on) => {
+        if (!this.map || !this.campaign) return;
+        if (on) {
+          this.map.setTerrain({ source: `dem-${this.campaign.id}`, exaggeration: MapView.TERRAIN_EXAGGERATION });
+        } else {
+          this.map.setTerrain(null);
+        }
+      },
+      bustDemTiles: () => {
+        if (this.campaign) this.bustDemTileCache(`dem-${this.campaign.id}`);
+      },
+      registerProvider: () => {
+        if (this.campaign) this.registerDemProviderFor(this.campaign);
+      },
+      readDigest: () => this.controller.campaignElevationDigest(),
+      addPitchHandler: (fn) => this.map?.on("pitch", fn),
+      removePitchHandler: (fn) => this.map?.off("pitch", fn),
+      onceSourceReady: (fn) => {
+        const map = this.map;
+        const sourceId = this.campaign ? `dem-${this.campaign.id}` : null;
+        if (!map || !sourceId) return () => {};
+        const handler = (e: MapSourceDataEvent): void => {
+          if (e.sourceId !== sourceId || !e.isSourceLoaded) return;
+          map.off("sourcedata", handler);
+          fn();
+        };
+        map.on("sourcedata", handler);
+        return () => map.off("sourcedata", handler);
+      },
+    });
     this.terrainRefresh = new TerrainRefresh({
       readDigest: () => this.controller.campaignElevationDigest(),
-      terrainEnabled: () => this.terrainEnabled,
+      terrainEnabled: () => this.terrainToggle.isEnabled(),
       registerProvider: () => {
         if (this.campaign) this.registerDemProviderFor(this.campaign);
       },
       bustTileCache: () => {
         if (this.campaign) this.bustDemTileCache(`dem-${this.campaign.id}`);
+        // Keep the toggle's retained-tile digest in lockstep with this on-terrain
+        // bust so a later plain toggle doesn't re-bust the tiles this just
+        // refreshed.
+        this.terrainToggle.markDemTilesFresh();
       },
       refreshContours: () => this.refreshTerrainContours(),
     });
@@ -375,7 +426,7 @@ export class MapView extends ItemView {
     // setCampaign can run before onOpen has created the toolbar element.
     if (this.toolbarEl) this.buildToolbar();
     if (this.map && (isFirstApply || themeChanged || underlayChanged)) {
-      if (switched) this.terrainEnabled = false; // terrain is per-session, never carried across campaigns
+      if (switched) this.terrainToggle.reset(); // terrain is per-session, never carried across campaigns
       if (switched) this.terrainContourManager?.reset(); // drop the prior campaign's contour engine
       this.map.setStyle(this.buildStyle(campaign));
       this.map.once("styledata", () => {
@@ -388,7 +439,7 @@ export class MapView extends ItemView {
         // setStyle rebuilds the hillshade layer default-hidden and drops the 3D
         // terrain mesh — re-apply the GM's toggle across a theme change. setStyle
         // also recreates the (empty) terrain-contour source → repopulate it.
-        if (this.terrainEnabled) this.setTerrainEnabled(true);
+        if (this.terrainToggle.isEnabled()) this.setTerrainEnabled(true);
         this.refreshTerrainContours();
       });
       this.updateTerrainButton();
@@ -540,65 +591,28 @@ export class MapView extends ItemView {
    * without the sheer-cliff artifact (the foothill-apron falloff is the
    * generator-side other half of the same fix). */
   private static readonly TERRAIN_EXAGGERATION = 3;
-  private terrainEnabled = false;
-  private terrainPitchHandler: (() => void) | null = null;
 
   isTerrainEnabled(): boolean {
-    return this.terrainEnabled;
+    return this.terrainToggle.isEnabled();
   }
 
-  /** The single terrain toggle (button + headless twin). ON is
-   * PITCH-ADAPTIVE (applyTerrainMode): top-down → the hillshade layer (2D
-   * shaded relief); pitched → the 3D terrain mesh with hillshade hidden. The
-   * two never render together: maplibre-gl 4.7.1 misrenders the hillshade
-   * layer while a terrain mesh is active (the draped hillshade texture smears/
-   * stretches past the relief), so each mode uses the one that renders
-   * correctly, and the draped hachures/contours carry the relief read in 3D.
-   * VISIBILITY + mesh only — never generation (explicit-only survives: DEM
+  /** The single terrain toggle (button + headless twin). The lifecycle lives on
+   * `this.terrainToggle` (terrainToggle.ts): ON is PITCH-ADAPTIVE — top-down →
+   * the hillshade layer (2D shaded relief); pitched → the 3D terrain mesh with
+   * hillshade hidden. The two never render together: maplibre-gl 4.7.1 misrenders
+   * the hillshade layer while a terrain mesh is active (the draped hillshade
+   * texture smears/stretches past the relief), so each mode uses the one that
+   * renders correctly, and the draped hachures/contours carry the relief read in
+   * 3D. VISIBILITY + mesh only — never generation (explicit-only survives: DEM
    * tiles are field evaluation, generatorRunCount stays flat). Fictional
-   * campaigns only (the DEM source exists only there). */
+   * campaigns only (the DEM source exists only there). A plain toggle no longer
+   * refetches tiles: the toggle busts only when the elevation field moved while
+   * terrain was off (see terrainToggle). */
   setTerrainEnabled(on: boolean): boolean {
     if (!this.map || !this.campaign || this.campaign.config.crs !== "fictional") return false;
-    if (!this.map.getLayer("hillshade")) return false;
-    this.terrainEnabled = on;
-    // Re-point the provider at the current mountain set + bust MapLibre's raster
-    // cache so an edit made while terrain was off is picked up on (re)enable.
-    this.registerDemProviderFor(this.campaign);
-    if (on) {
-      this.bustDemTileCache(`dem-${this.campaign.id}`);
-      if (!this.terrainPitchHandler) {
-        this.terrainPitchHandler = () => this.applyTerrainMode();
-        this.map.on("pitch", this.terrainPitchHandler);
-      }
-    } else if (this.terrainPitchHandler) {
-      this.map.off("pitch", this.terrainPitchHandler);
-      this.terrainPitchHandler = null;
-    }
-    this.applyTerrainMode();
-    this.updateTerrainButton();
-    return true;
-  }
-
-  /** Apply the current relief mode (see setTerrainEnabled): OFF → no hillshade,
-   * no mesh; ON + top-down → hillshade; ON + pitched → mesh, hillshade hidden. */
-  private applyTerrainMode(): void {
-    if (!this.map || !this.campaign) return;
-    const pitched = this.map.getPitch() > 0.5;
-    const wantMesh = this.terrainEnabled && pitched;
-    const wantHillshade = this.terrainEnabled && !pitched;
-    if (this.map.getLayer("hillshade")) {
-      this.map.setLayoutProperty("hillshade", "visibility", wantHillshade ? "visible" : "none");
-    }
-    try {
-      const current = this.map.getTerrain();
-      if (wantMesh && !current) {
-        this.map.setTerrain({ source: `dem-${this.campaign.id}`, exaggeration: MapView.TERRAIN_EXAGGERATION });
-      } else if (!wantMesh && current) {
-        this.map.setTerrain(null);
-      }
-    } catch {
-      /* setTerrain can throw if the source isn't ready yet — visibility already set */
-    }
+    const ok = this.terrainToggle.setEnabled(on);
+    if (ok) this.updateTerrainButton();
+    return ok;
   }
 
   /** Force MapLibre to refetch DEM tiles (their URL is stable, so a mountain
@@ -627,7 +641,7 @@ export class MapView extends ItemView {
   }
 
   private updateTerrainButton(): void {
-    this.terrainBtnEl?.toggleClass("is-active", this.terrainEnabled);
+    this.terrainBtnEl?.toggleClass("is-active", this.terrainToggle.isEnabled());
   }
 
   private buildStyle(campaign: ParsedCampaign): StyleSpecification {
@@ -910,7 +924,7 @@ export class MapView extends ItemView {
     this.terrainBtnEl = null;
     if (this.campaign?.config.crs === "fictional") {
       this.terrainBtnEl = btn("mountain", "Toggle terrain relief (hillshade + 3D)", () =>
-        this.setTerrainEnabled(!this.terrainEnabled)
+        this.setTerrainEnabled(!this.terrainToggle.isEnabled())
       );
       this.updateTerrainButton();
     }
@@ -1004,6 +1018,10 @@ export class MapView extends ItemView {
       this.sketchKeyHandler = null;
     }
     if (this.campaign) unregisterDemProvider(this.campaign.id);
+    // Drop the terrain toggle's pitch + source-ready listeners symmetrically
+    // (map.remove() would drop them too, but this keeps the toggle's own
+    // bookkeeping honest and leak-free across re-opens).
+    this.terrainToggle.dispose();
     this.map?.remove();
     this.map = null;
   }
@@ -2701,7 +2719,7 @@ export class MapView extends ItemView {
       this.refreshGeneratedSource();
       this.applyFocusReveal();
       // css-change setStyle also resets hillshade/terrain — restore the toggle.
-      if (this.terrainEnabled) this.setTerrainEnabled(true);
+      if (this.terrainToggle.isEnabled()) this.setTerrainEnabled(true);
       // ...and recreates the empty terrain-contour source → repopulate it.
       this.refreshTerrainContours();
     });
