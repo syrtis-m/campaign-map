@@ -37,6 +37,13 @@ const DRAFT_LAYERS = [
  * grip is NOT here — it is a screen-space DOM overlay (see the grip section
  * below), never a draped GeoJSON feature. */
 const HANDLE_LAYERS = ["fabric-draft-center", "fabric-draft-vertex", "fabric-draft-midpoint"];
+/** Screen-space skirt (px) around the selected shape's projected vertex/center
+ * bbox inside which the per-mousemove hover hit-test is worth running. Covers the
+ * handle hit box (±8 px) plus the largest rendered handle radius with headroom, so
+ * the pre-check NEVER skips a real handle — a false "near" merely runs the
+ * (correct) query; only a false "far" could miss one, and this margin makes that
+ * impossible. See `cursorNearHandles`. */
+const HOVER_PRECHECK_MARGIN_PX = 24;
 /** Idle grip offset (px) from the anchor caps here so a tall stamp's grip
  * stays on screen; during a drag the grip follows the cursor 1:1. */
 const HEIGHT_REST_CAP_PX = 100;
@@ -246,12 +253,49 @@ export class SketchController {
    * Delete-hovered-vertex path and the move cursor). No-op while drawing. */
   private readonly hoverHandler = (e: MapMouseEvent): void => {
     if (!this.active || this.tool !== "select" || !this.edit || this.dragVertexIndex !== null) return;
+    // Cheap screen-space pre-check FIRST (Jonah 2026-07-15, Cradle: "everything
+    // feels very slow to click around"). Projecting the edit vertices is O(N)
+    // matrix math — orders of magnitude cheaper than a queryRenderedFeatures
+    // render-tree walk, which this handler otherwise ran on EVERY mousemove while
+    // a big shape (the 128-vertex coast donut) was selected. The pointer is far
+    // from every handle for almost all of its travel, so skip the query then.
+    if (!this.cursorNearHandles(e.point.x, e.point.y)) {
+      this.hoverVertexIndex = null;
+      this.map.getCanvas().style.cursor = "";
+      return;
+    }
     const hit = this.handleAt(e.point.x, e.point.y);
     this.hoverVertexIndex = hit && hit.handle === "vertex" ? hit.index : null;
     // The extrude grip owns its own ns-resize cursor (it is a DOM element); the
     // map-canvas hit-test only cues the move handles now.
     this.map.getCanvas().style.cursor = hit ? "move" : "";
   };
+
+  /** Is the cursor within the hover-hit skirt of the selected shape's handles?
+   * Projects the edit vertices (+ the region center handle) to a screen bbox and
+   * tests the cursor against it expanded by `HOVER_PRECHECK_MARGIN_PX`. Handles
+   * only ever sit at a vertex, an edge midpoint (inside the vertex bbox), or the
+   * center — all covered — so a "false" here provably means no handle is hittable
+   * and the queryRenderedFeatures can be skipped. */
+  private cursorNearHandles(x: number, y: number): boolean {
+    const edit = this.edit;
+    if (!edit) return false;
+    const pts = edit.center ? [...edit.vertices, edit.center] : edit.vertices;
+    if (pts.length === 0) return false;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const v of pts) {
+      const p = this.map.project(v as Pt);
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const m = HOVER_PRECHECK_MARGIN_PX;
+    return x >= minX - m && x <= maxX + m && y >= minY - m && y <= maxY + m;
+  }
 
   private readonly downHandler = (e: MapMouseEvent): void => {
     this.interactionConsumed = false; // defensive: never let a stale flag eat a click

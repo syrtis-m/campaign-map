@@ -211,6 +211,54 @@ describe("campaigndem protocol — revisit is a pure serve (retention half)", ()
   });
 });
 
+describe("campaigndem protocol — encode concurrency is BOUNDED (Cradle: cold-fill jank)", () => {
+  const registered: string[] = [];
+  beforeEach(() => {
+    for (const id of registered.splice(0)) unregisterDemProvider(id);
+  });
+
+  it("a cold-fill burst never runs more than the encode cap concurrently (leaves the main thread for input)", async () => {
+    const id = uid();
+    registered.push(id);
+    registerDemProvider(id, makeProvider(fakeApp()));
+
+    // A controllable encoder: each call blocks on a deferred we release manually,
+    // so we can observe how many serves sit in the encode critical section at once.
+    let active = 0;
+    let maxActive = 0;
+    const releases: Array<() => void> = [];
+    const encode = async (rgba: Uint8ClampedArray): Promise<ArrayBuffer> => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active--;
+      return rgba.buffer.slice(0) as ArrayBuffer;
+    };
+
+    // Flush pending microtasks + the async persist path so every job that CAN
+    // acquire an encode slot has reached (and blocked in) the encoder.
+    const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+    // Fire 20 DISTINCT tiles at once (a cold Cradle viewport fill) — none cached.
+    const jobs: Promise<ArrayBuffer>[] = [];
+    for (let i = 0; i < 20; i++) jobs.push(resolveDemPngForTest(id, 6, 24 + i, 36, encode));
+
+    await settle();
+    // The semaphore caps concurrent encodes at 3 — the other 17 jobs are parked
+    // awaiting a slot, so only 3 sit in the synchronous-fill + encode section.
+    expect(maxActive).toBeLessThanOrEqual(3);
+    expect(active).toBe(3);
+
+    // Drain: releasing one encode admits exactly one waiter, never exceeding the cap.
+    while (releases.length > 0) {
+      releases.shift()!();
+      await settle();
+    }
+    await Promise.all(jobs);
+    expect(maxActive).toBeLessThanOrEqual(3);
+  });
+});
+
 describe("campaigndem protocol — PNG LRU is digest-keyed (never serves a stale tile)", () => {
   const registered: string[] = [];
   beforeEach(() => {

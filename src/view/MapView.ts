@@ -2087,11 +2087,30 @@ export class MapView extends ItemView {
       candidates.push({
         id,
         kind: feature.properties.kind,
-        area: polygonNetArea(feature as unknown as GeoJSON.Feature),
+        area: this.fabricAreaOf(feature),
         rank: candidates.length,
       });
     }
     return candidates;
+  }
+
+  /**
+   * `polygonNetArea` memoized per feature GEOMETRY (Jonah 2026-07-15, Cradle:
+   * "everything feels slow to click around"). Every fabric click computes the net
+   * area of each overlapping candidate to order them; on the Cradle a water click
+   * hits the huge inverted-sea donut (bounds ring + 128-vertex coast + islet
+   * holes), so its shoelace re-ran over hundreds of vertices per click. A geometry
+   * edit replaces the geometry object (`commitGeometryEdit`: `{ ...before,
+   * geometry }`), so keying the WeakMap on `feature.geometry` invalidates the
+   * cached area exactly when — and only when — the shape actually changes. */
+  private readonly fabricAreaCache = new WeakMap<object, number>();
+  private fabricAreaOf(feature: FabricFeature): number {
+    const geom = feature.geometry as unknown as object;
+    const cached = this.fabricAreaCache.get(geom);
+    if (cached !== undefined) return cached;
+    const area = polygonNetArea(feature as unknown as GeoJSON.Feature);
+    this.fabricAreaCache.set(geom, area);
+    return area;
   }
 
   /** Best single fabric id under a screen point (topmost-detail rule, no

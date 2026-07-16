@@ -74,6 +74,34 @@ function flatRGBA(): Uint8ClampedArray {
   return rgba;
 }
 
+/**
+ * Concurrency BOUND on PNG serves (Jonah 2026-07-15, Cradle: "everything feels
+ * very slow to click around"). A cold Cradle view resolves dozens of DEM tiles at
+ * once; each serve runs `latticeToRGBA` (res² fill) + `ImageData`/`putImageData`
+ * SYNCHRONOUSLY on the main thread before the async `convertToBlob`. Unbounded,
+ * that whole burst lands in one long task and starves input/render. This semaphore
+ * lets at most N serves sit in the encode critical section at once, so the excess
+ * AWAIT (yielding the thread to input + rendering) instead of piling their
+ * synchronous work into a single frame — the burst is spread across event-loop
+ * turns. Small: the point is to leave headroom for interaction, not to throttle
+ * throughput (the worker lattice fill is already off-thread). */
+const MAX_CONCURRENT_ENCODES = 3;
+let activeEncodes = 0;
+const encodeWaiters: Array<() => void> = [];
+async function acquireEncodeSlot(): Promise<void> {
+  if (activeEncodes < MAX_CONCURRENT_ENCODES) {
+    activeEncodes++;
+    return;
+  }
+  await new Promise<void>((resolve) => encodeWaiters.push(resolve));
+  activeEncodes++;
+}
+function releaseEncodeSlot(): void {
+  activeEncodes--;
+  const next = encodeWaiters.shift();
+  if (next) next();
+}
+
 /** Encode an RGBA lattice to PNG bytes via a canvas (host API; not determinism-
  * bearing). OffscreenCanvas where available (worker-safe), else a DOM canvas. */
 async function encodePng(rgba: Uint8ClampedArray, res: number): Promise<ArrayBuffer> {
@@ -281,9 +309,21 @@ async function resolveTilePng(
   const pngKey = `${campaignId}:${demTileKey(z, x, y)}:${digest}`;
   const hit = pngCacheGet(pngKey);
   if (hit) return hit;
-  const bytes = await encode(latticeToRGBA(heights, DEM_TILE_RES), DEM_TILE_RES);
-  pngCacheSet(pngKey, bytes);
-  return bytes;
+  // Gate the RGBA fill + encode behind the concurrency semaphore so a cold-fill
+  // burst can't run every tile's synchronous work in one frame (acquire BEFORE
+  // latticeToRGBA — that res² fill is itself main-thread). Re-check the memo after
+  // acquiring: a concurrent serve of the same tile may have populated it while we
+  // waited, so we never double-encode.
+  await acquireEncodeSlot();
+  try {
+    const hit2 = pngCacheGet(pngKey);
+    if (hit2) return hit2;
+    const bytes = await encode(latticeToRGBA(heights, DEM_TILE_RES), DEM_TILE_RES);
+    pngCacheSet(pngKey, bytes);
+    return bytes;
+  } finally {
+    releaseEncodeSlot();
+  }
 }
 
 /** Register the shared `campaigndem` protocol once (idempotent). */

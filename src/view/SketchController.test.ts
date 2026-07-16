@@ -123,6 +123,32 @@ function selectReliefWithHeight(c: SketchController, value = 300) {
   c.select({ id: "R1", geometry: RELIEF_LINE, kind: "relief", center: null, height: { value, min: -4000, max: 4000 } });
 }
 
+describe("SketchController — hover hit-test is gated (Cradle: 'slow to click around')", () => {
+  it("a mousemove FAR from the selected shape runs NO queryRenderedFeatures; a near one does", () => {
+    const { c, map } = makeController();
+    c.activate("landform");
+    c.setTool("select");
+    c.select({ id: "L1", geometry: POLY, kind: "landform", center: null }); // verts project to screen x[0..40], y[-40..0]
+
+    // Count the render-tree query the hover hit-test would otherwise run per frame.
+    let queries = 0;
+    const orig = map.queryRenderedFeatures;
+    map.queryRenderedFeatures = (...args: unknown[]) => {
+      queries++;
+      return orig(...args);
+    };
+
+    // Roam the pointer far from every handle (screen ~10000,10000) many times —
+    // the cheap projected-bbox pre-check must short-circuit before any query.
+    for (let i = 0; i < 30; i++) map.fire("mousemove", ev(1000 + i, 1000 + i));
+    expect(queries).toBe(0);
+
+    // A mousemove onto a vertex ([0,0] → screen 0,0) is inside the skirt → query runs.
+    map.fire("mousemove", ev(0, 0));
+    expect(queries).toBe(1);
+  });
+});
+
 describe("SketchController — click-out contract (plan 040 Phase 0)", () => {
   it("deselecting a persisted shape (click empty) never mutates it", () => {
     const { c, edits, drafts } = makeController();
