@@ -1534,71 +1534,6 @@
     },
     {
       "type": "Feature",
-      "id": "fabric-mrnsqfcy-hd0vdj",
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            2.8179931640625,
-            3.7820405282110414
-          ],
-          [
-            1.60400390625,
-            3.798483975036973
-          ],
-          [
-            1.087646484375,
-            2.959498545196155
-          ],
-          [
-            0.340576171875,
-            1.5104451350115653
-          ],
-          [
-            0.1922607421875,
-            0.6207153969631349
-          ],
-          [
-            0.889892578125,
-            -0.021972655711422817
-          ],
-          [
-            1.614990234375,
-            0.043945308191354115
-          ],
-          [
-            3.702392578125,
-            1.724593043197899
-          ],
-          [
-            5.460205078125,
-            1.4061088354351625
-          ],
-          [
-            6.56982421875,
-            1.296276119641817
-          ]
-        ]
-      },
-      "properties": {
-        "kind": "river",
-        "procgen": {
-          "algorithm": "river",
-          "seed": 2758437576,
-          "version": 3,
-          "params": {
-            "windiness": 0.85,
-            "braiding": 0.5,
-            "width": 26,
-            "widthGrowth": 0.7,
-            "braidBias": 0.2,
-            "slopeSensitivity": 0.2
-          }
-        }
-      }
-    },
-    {
-      "type": "Feature",
       "id": "fabric-mrnstwfi-nqeukm",
       "geometry": {
         "type": "Polygon",
@@ -1668,6 +1603,71 @@
     },
     {
       "type": "Feature",
+      "id": "fabric-mrnsqfcy-hd0vdj",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            2.8179931640625,
+            3.7820405282110414
+          ],
+          [
+            1.60400390625,
+            3.798483975036973
+          ],
+          [
+            1.087646484375,
+            2.959498545196155
+          ],
+          [
+            0.340576171875,
+            1.5104451350115653
+          ],
+          [
+            0.1922607421875,
+            0.6207153969631349
+          ],
+          [
+            0.889892578125,
+            -0.021972655711422817
+          ],
+          [
+            1.614990234375,
+            0.043945308191354115
+          ],
+          [
+            3.702392578125,
+            1.724593043197899
+          ],
+          [
+            5.460205078125,
+            1.4061088354351625
+          ],
+          [
+            6.56982421875,
+            1.296276119641817
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "river",
+        "procgen": {
+          "algorithm": "river",
+          "seed": 2758437576,
+          "version": 3,
+          "params": {
+            "windiness": 0.85,
+            "braiding": 0.5,
+            "width": 26,
+            "widthGrowth": 0.7,
+            "braidBias": 0.2,
+            "slopeSensitivity": 0.2
+          }
+        }
+      }
+    },
+    {
+      "type": "Feature",
       "id": "fabric-mrmsqruz-hn9qt8",
       "geometry": {
         "type": "Polygon",
@@ -1709,7 +1709,7 @@
         "procgen": {
           "algorithm": "farmland",
           "seed": 575377332,
-          "version": 7,
+          "version": 8,
           "params": {
             "fieldType": "paddy-terraces",
             "fieldSize": 0.35,
