@@ -951,6 +951,7 @@ were invisible until campaign switch/reload).
 | Contour engine on terrain edit | whole-LRU rebuild (every visible leaf retraced) → in-place `setInputs`, per-leaf keys + per-stamp reach (`terrainStampSupport`) ⇒ ~4 leaves retrace | terrainContourManager.ts, 2026-07-16 |
 | Worker terrain-field rebuild per dem/contour job | ~200–500 ms/job × ~30 jobs/edit → digest-keyed field memo (worker `fieldMemo`, main-thread `elevationSnapshotMemo`) | generationWorker.ts, 2026-07-16 |
 | Staged repaint payload | whole stage (~4.5 k features for Cradle's 4 districts) per edit/preview tick → region-scoped `updateData` diff | MapController/MapView, 2026-07-16 |
+| River edit DEM invalidation | global (river fp in EVERY tile's digest) → provable carve reach (`riverCarveReach`: centerline stray + halfWidth + worst-case gorge climb from a closed-form surface envelope — never grid-sampled; Cradle ≈ 3.45 km corridor). In-reach tiles also fold in the river's BED INPUTS (stamps whose support touches spine bbox + `riverMaxOffset`) — closes a latent stale-serve where a spine-adjacent relief moved a far tile's bytes through the bed unseen | terrain.ts `carveReachEnvelope`/`riverCarveReach`, 2026-07-16 |
 
 Disproven-in-passing (don't re-chase): payload clone (~0.1 ms). Superseded: the old
 "field-rebuild-per-job ~1%" figure was measured on 256² DEM tiles — for 625-sample
